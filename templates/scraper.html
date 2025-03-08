@@ -4,11 +4,10 @@
 <meta name="theme-color" content="#333333">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_trending.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
 <style>
-    @import url('{{ url_for('static', filename='css/scraper.css') }}');
-    @import url('{{ url_for('static', filename='css/scraper_trending.css') }}');
-    @import url('{{ url_for('static', filename='css/scraper-mobile.css') }}');
-
     .trending-container p {
         font-style: italic;
         color: #888;
@@ -22,6 +21,16 @@
         color: #be1600;
         font-style: italic;
         text-align: center;
+    }
+
+    .requester-notice {
+        background-color: #f39c12;
+        color: white;
+        padding: 10px 15px;
+        text-align: center;
+        border-radius: 5px;
+        margin: 10px 0;
+        font-weight: bold;
     }
 
     .loading {
@@ -138,10 +147,252 @@
     .checkbox-container {
         display: none !important;
     }
+
+    /* Request icon styling - Current blue plus style */
+    .request-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background-color: #3498db; /* Blue */
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 5;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .request-icon:hover {
+        transform: scale(1.1);
+        background-color: #2980b9; /* Darker blue on hover */
+    }
+
+    /* Additional color options - Uncomment to use
+    
+    /* Purple style 
+    .request-icon {
+        background-color: #9b59b6;
+    }
+    .request-icon:hover {
+        background-color: #8e44ad;
+    }
+    */
+    
+    /* Teal style 
+    .request-icon {
+        background-color: #1abc9c;
+    }
+    .request-icon:hover {
+        background-color: #16a085;
+    }
+    */
+    
+    /* Orange style 
+    .request-icon {
+        background-color: #e67e22;
+    }
+    .request-icon:hover {
+        background-color: #d35400;
+    }
+    */
+
+    /* Make request icon follow poster hover animation */
+    .media-poster:hover .request-icon {
+        transform: translateY(-8px);
+    }
+
+    /* Combine hover effects when hovering directly on the icon */
+    .media-poster:hover .request-icon:hover {
+        transform: translateY(-8px) scale(1.1);
+        background-color: #2980b9; /* Match the darker blue for consistency */
+    }
+
+    .request-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    /* Version Modal Styles */
+    .version-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .version-modal-content {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 5px;
+        width: 300px;
+        max-width: 90%;
+        color: white;
+    }
+
+    .version-modal h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    .version-checkbox {
+        margin-bottom: 10px;
+    }
+
+    .version-checkbox input[type="checkbox"] {
+        margin-right: 10px;
+    }
+
+    .version-modal-buttons {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 20px;
+    }
+
+    .version-modal-buttons button {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .version-modal-buttons button:first-child {
+        background-color: #2ecc71;
+        color: white;
+    }
+
+    .version-modal-buttons button:last-child {
+        background-color: #7f8c8d;
+        color: white;
+    }
+
+    .media-poster {
+        position: relative;
+    }
+    
+    /* Season selection styles */
+    .version-section-header {
+        margin: 15px 0 10px;
+        border-bottom: 1px solid #555;
+        padding-bottom: 5px;
+    }
+    
+    .version-section-header h4 {
+        margin: 0;
+        font-size: 16px;
+        color: #ccc;
+    }
+    
+    .selection-type-container {
+        margin: 10px 0;
+    }
+    
+    .selection-type-option {
+        margin-bottom: 8px;
+    }
+    
+    .selection-type-option input[type="radio"] {
+        margin-right: 8px;
+    }
+    
+    .season-selection-container {
+        margin: 10px 0;
+        max-height: 200px;
+        overflow-y: auto;
+        padding: 5px;
+        background-color: #444;
+        border-radius: 4px;
+    }
+    
+    .seasons-list {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    .season-checkbox {
+        margin-bottom: 5px;
+    }
+    
+    hr {
+        border: 0;
+        height: 1px;
+        background-color: #555;
+        margin: 15px 0;
+    }
+
+    .sresult {
+        position: relative;
+        margin-bottom: 15px;
+        /* Remove all transitions */
+        transition: none;
+    }
+    
+    .sresult .media-poster {
+        position: relative;
+        display: inline-block;
+        overflow: hidden;
+        border-radius: 5px;
+        /* Remove all transitions */
+        transition: none;
+    }
+    
+    /* Remove hover effects completely */
+    .sresult .media-poster:hover {
+        transform: none;
+        /* Ensure no other effects are applied */
+        box-shadow: none;
+    }
+    
+    .sresult .media-poster img {
+        max-width: 100%;
+        display: block;
+        /* Remove transitions for images */
+        transition: none;
+    }
+    
+    .sresult .request-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        z-index: 5;
+    }
+    
+    /* Remove all effects on poster hover */
+    .sresult .media-poster:hover .request-icon {
+        transform: none;
+    }
+
+    /* Keep only the icon hover effect */
+    .sresult .media-poster .request-icon:hover {
+        transform: scale(1.1);
+        background-color: #2980b9;
+    }
+
+    /* Style for the Request Season button */
+    #requestSeasonButton {
+        background-color: #3498db;
+    }
+    
+    #requestSeasonButton:hover {
+        background-color: #2980b9;
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
-        <form id="search-form">
+        <form id="search-form" onsubmit="return false;">
             <input type="hidden" id="tmdb_api_key_set" value="{{ 'True' if tmdb_api_key_set else 'False' }}">
+            <input type="hidden" id="is_requester" value="{{ 'True' if is_requester else 'False' }}">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
                 {% for version in versions %}
@@ -153,7 +404,7 @@
                 <input type="checkbox" id="skip-cache-check" name="skip_cache_check">
                 <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
             </div>
-            <button id="searchformButton" type="button">Search</button>
+            <button id="searchformButton" type="submit">Search</button>
         </form>
         {% if not compact_view and not tmdb_api_key_set %}
         <div class="tmdb-info">
@@ -199,6 +450,7 @@
             <div class="season-controls">
                 <select id="seasonDropdown"></select>
                 <button id="seasonPackButton">Season Pack</button>
+                <button id="requestSeasonButton">Request Season</button>
             </div>
             <div id="episodeResults"></div>
         </div>
@@ -213,6 +465,20 @@
         <div id="searchResults" style="display: none;">
             <h2>Search Results</h2>
             <div id="resultsList"></div>
+        </div>
+
+        <!-- Version Selection Modal -->
+        <div id="versionModal" class="version-modal">
+            <div class="version-modal-content">
+                <h3>Select Versions</h3>
+                <div id="versionCheckboxes">
+                    <!-- Version checkboxes will be dynamically inserted here -->
+                </div>
+                <div class="version-modal-buttons">
+                    <button id="confirmVersions">Request</button>
+                    <button id="cancelVersions">Cancel</button>
+                </div>
+            </div>
         </div>
     </div>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>

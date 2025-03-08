@@ -56,6 +56,7 @@ class ScrapingQueue:
     def process(self, queue_manager):
         processed_count = 0
         had_error = False
+        today = date.today()
         
         if self.items:
             item = self.items.pop(0)
@@ -77,7 +78,6 @@ class ScrapingQueue:
                     # Only check release date for non-early release items
                     if not item.get('early_release', False) and item['release_date'] != 'Unknown':
                         release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
-                        today = date.today()
 
                         # Check if version requires physical release
                         scraping_versions = get_setting('Scraping', 'versions', {})

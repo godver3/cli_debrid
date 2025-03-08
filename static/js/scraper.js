@@ -1,4 +1,11 @@
 function addToRealDebrid(magnetLink, torrent) {
+    // Check if user is a requester before making the request
+    const isRequesterEl = document.getElementById('is_requester');
+    if (isRequesterEl && isRequesterEl.value === 'True') {
+        // Silently return without showing an error for requesters
+        return;
+    }
+
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Confirm Action',
@@ -24,6 +31,11 @@ function addToRealDebrid(magnetLink, torrent) {
                 body: formData
             })
             .then(response => {
+                if (response.status === 403) {
+                    hideLoadingState();
+                    return { abort: true };  // Signal to not continue processing, but don't show error
+                }
+                
                 if (!response.ok) {
                     return response.json().then(errorData => {
                         throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
@@ -32,6 +44,9 @@ function addToRealDebrid(magnetLink, torrent) {
                 return response.json();
             })
             .then(data => {
+                // Skip further processing if aborted
+                if (data && data.abort) return;
+                
                 hideLoadingState();
 
                 if (data.error) {
@@ -197,6 +212,10 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         return;
     }
     
+    // Get requester status
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
     toggleResultsVisibility('displayEpisodeResults');
     const episodeResultsDiv = document.getElementById('episodeResults');
     episodeResultsDiv.innerHTML = '';
@@ -214,7 +233,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         var options = {year: 'numeric', month: 'long', day: 'numeric' };
         var date = item.air_date ? new Date(item.air_date) : null;
         episodeDiv.innerHTML = `        
-            <button><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
+            <button ${isRequester ? 'disabled' : ''}><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
             <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}" 
                 alt="${item.episode_title || ''}" 
                 class="${item.still_path ? '' : 'placeholder-episode'}">
@@ -223,9 +242,18 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
                 <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
             </div></button>
         `;
-        episodeDiv.onclick = function() {
-            selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi, genre_ids);
-        };
+        
+        // Only add click handler for non-requester users
+        if (!isRequester) {
+            episodeDiv.onclick = function() {
+                selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi, genre_ids);
+            };
+        } else {
+            // Apply visual styling to show it's not clickable for requesters
+            episodeDiv.style.cursor = 'default';
+            episodeDiv.style.opacity = '0.8';
+        }
+        
         gridContainer.appendChild(episodeDiv);
     });
 
@@ -239,12 +267,18 @@ function toggleResultsVisibility(section) {
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
     const episodeResultsDiv = document.getElementById('episodeResults');
+    
+    // Check if user is a requester
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
     if (section === 'displayEpisodeResults') {
         trendingContainer.style.display = 'none';
         searchResult.style.display = 'none';
         seasonResults.style.display = 'block';
         dropdown.style.display = 'block';
-        seasonPackButton.style.display = 'block';
+        // Only show season pack button for non-requester users
+        seasonPackButton.style.display = isRequester ? 'none' : 'block';
         episodeResultsDiv.style.display = 'block';
     }
     if (section === 'displaySearchResults') {
@@ -386,13 +420,35 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
     overlay.style.display = 'block';
 }
 
+// Add event listeners when DOM content is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    // Add event listener for search button
-    const searchButton = document.getElementById('searchformButton');
-    if (searchButton) {
-        searchButton.addEventListener('click', searchMedia);
+    // Set up search form behavior 
+    const searchForm = document.getElementById('search-form');
+    if (searchForm) {
+        searchForm.addEventListener('submit', function(event) {
+            searchMedia(event);
+        });
+    
+        // Bind the button click as well
+        const searchButton = document.getElementById('searchformButton');
+        if (searchButton) {
+            searchButton.addEventListener('click', function(event) {
+                searchMedia(event);
+            });
+        }
     }
-
+    
+    // Set up version modal buttons
+    const confirmVersionsButton = document.getElementById('confirmVersions');
+    if (confirmVersionsButton) {
+        confirmVersionsButton.addEventListener('click', handleVersionConfirm);
+    }
+    
+    const cancelVersionsButton = document.getElementById('cancelVersions');
+    if (cancelVersionsButton) {
+        cancelVersionsButton.addEventListener('click', closeVersionModal);
+    }
+    
     // Close the overlay when the close button is clicked
     const closeButton = document.querySelector('.close-btn');
     if (closeButton) {
@@ -400,229 +456,691 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('overlay').style.display = 'none';
         };
     }
-  
+    
+    // Initialize the Loading object
+    Loading.init();
+    
+    // Setup scroll functionality for movie container
     const container_mv = document.getElementById('movieContainer');
     const scrollLeftBtn_mv = document.getElementById('scrollLeft_mv');
     const scrollRightBtn_mv = document.getElementById('scrollRight_mv');
+    
+    // Initialize button states
     if (scrollLeftBtn_mv) {
         scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
     }
+    
     function updateButtonStates_mv() {
-        scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
-        scrollRightBtn_mv.disabled = container_mv.scrollLeft >= container_mv.scrollWidth - container_mv.offsetWidth;
+        if (container_mv) {
+            scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
+            scrollRightBtn_mv.disabled = container_mv.scrollLeft >= container_mv.scrollWidth - container_mv.offsetWidth;
+        }
     }
-
+    
     function scroll_mv(direction) {
-        const scrollAmount = container_mv.offsetWidth;
-        const newPosition = direction === 'left'
-            ? Math.max(container_mv.scrollLeft - scrollAmount, 0)
-            : Math.min(container_mv.scrollLeft + scrollAmount, container_mv.scrollWidth - container_mv.offsetWidth);
-        
-        container_mv.scrollTo({ left: newPosition, behavior: 'smooth' });
+        if (container_mv) {
+            const scrollAmount = container_mv.offsetWidth;
+            const newPosition = direction === 'left'
+                ? Math.max(container_mv.scrollLeft - scrollAmount, 0)
+                : Math.min(container_mv.scrollLeft + scrollAmount, container_mv.scrollWidth - container_mv.offsetWidth);
+            
+            container_mv.scrollTo({ left: newPosition, behavior: 'smooth' });
+        }
     }
-
+    
     if (container_mv) {
-        scrollLeftBtn_mv.addEventListener('click', () => scroll_mv('left'));
-        scrollRightBtn_mv.addEventListener('click', () => scroll_mv('right'));
         container_mv.addEventListener('scroll', updateButtonStates_mv);
     }
-
+    
+    // Setup scroll functionality for TV shows container
     const container_tv = document.getElementById('showContainer');
     const scrollLeftBtn_tv = document.getElementById('scrollLeft_tv');
     const scrollRightBtn_tv = document.getElementById('scrollRight_tv');
+    
+    // Initialize button states
     if (scrollLeftBtn_tv) {
         scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
     }
+    
     function updateButtonStates_tv() {
-        scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
-        scrollRightBtn_tv.disabled = container_tv.scrollLeft >= container_tv.scrollWidth - container_tv.offsetWidth;
+        if (container_tv) {
+            scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
+            scrollRightBtn_tv.disabled = container_tv.scrollLeft >= container_tv.scrollWidth - container_tv.offsetWidth;
+        }
     }
-
+    
     function scroll_tv(direction) {
-        const scrollAmount = container_tv.offsetWidth;
-        const newPosition = direction === 'left'
-            ? Math.max(container_tv.scrollLeft - scrollAmount, 0)
-            : Math.min(container_tv.scrollLeft+ scrollAmount, container_tv.scrollWidth - container_tv.offsetWidth);
-        
-        container_tv.scrollTo({ left: newPosition, behavior: 'smooth' });
+        if (container_tv) {
+            const scrollAmount = container_tv.offsetWidth;
+            const newPosition = direction === 'left'
+                ? Math.max(container_tv.scrollLeft - scrollAmount, 0)
+                : Math.min(container_tv.scrollLeft + scrollAmount, container_tv.scrollWidth - container_tv.offsetWidth);
+            
+            container_tv.scrollTo({ left: newPosition, behavior: 'smooth' });
+        }
     }
+    
     if (container_tv) {
-        scrollLeftBtn_tv.addEventListener('click', () => scroll_tv('left'));
-        scrollRightBtn_tv.addEventListener('click', () => scroll_tv('right'));
         container_tv.addEventListener('scroll', updateButtonStates_tv);
     }
-
-    function createMovieElement(data) {
-        const movieElement = document.createElement('div');
-        movieElement.className = 'media-card';
-        movieElement.innerHTML = `
-            <div class="media-poster">
-                <span id="trending-rating">${(data.rating).toFixed(1)}</span>
-                <span id="trending-watchers">👁 ${data.watcher_count}</span>
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                    alt="${data.title}" 
-                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
-                <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                    <h2>${data.title}</h2>
-                    <p>${data.year}</p>
-                </div>
-            </div>
-        `;
-        movieElement.onclick = function() {
-            selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.version);
-        };
-        return movieElement;
-    }
     
-    function createShowElement(data) {
-        const movieElement = document.createElement('div');
-        movieElement.className = 'media-card';
-        movieElement.innerHTML = `
-            <div class="media-poster">
-                <span id="trending-rating">${(data.rating).toFixed(1)}</span>
-                <span id="trending-watchers">👁 ${data.watcher_count}</span>
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                    alt="${data.title}" 
-                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
-                <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                    <h2>${data.title}</h2>
-                    <p>${data.year}</p>
-                </div>
-            </div>
-        `;
-        movieElement.onclick = function() {
-            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set)
-        };
-        return movieElement;
-    }
-    
-    function get_trendingMovies() {
-        toggleResultsVisibility('get_trendingMovies');
-        fetch('/scraper/movies_trending', {
-            method: 'GET'
+    // Check if Trakt is authorized before attempting to load trending content
+    fetch('/trakt/trakt_auth_status', { method: 'GET' })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}`);
+            }
+            return response.json();
         })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                displayError(data.error);
+        .then(status => {
+            if (status.status == 'authorized') {
+                get_trendingMovies();
+                get_trendingShows();
             } else {
-                const trendingMovies = data.trendingMovies;
-                trendingMovies.forEach(item => {
-                    const movieElement = createMovieElement(item);
-                    container_mv.appendChild(movieElement);
-                });
-
+                displayTraktAuthMessage();
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            displayError('An error occurred.');
+            console.error('Trakt Auth Check Error:', error);
+            // Fallback to show trending content even if auth check fails
+            get_trendingMovies();
+            get_trendingShows();
         });
-    }
-
-    function get_trendingShows() {
-        toggleResultsVisibility('get_trendingMovies');
-        fetch('/scraper/shows_trending', {
-            method: 'GET'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.error) {
-                displayError(data.error);
-            } else {
-                const trendingShows = data.trendingShows;
-                trendingShows.forEach(item => {
-                    const showElement = createShowElement(item);
-                    container_tv.appendChild(showElement);
-                });
-
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            displayError('An error occurred.');
-        });
-    }
-
-    // Add event listener for search form
-    const searchForm = document.getElementById('search-form');
-    if (searchForm) {
-        fetch('/trakt/trakt_auth_status')
-            .then(response => response.json())
-            .then(status => {
-                if (status.status == 'authorized') {
-                    get_trendingMovies();
-                    get_trendingShows();
-                } else {
-                    displayTraktAuthMessage();
-                }
-            });
-        searchForm.addEventListener('submit', searchMedia);
-    }
-
-    // Initialize the Loading object
-    Loading.init();
+    
+    // Setup scroll buttons for trending sections
+    document.getElementById('scrollLeft_mv').addEventListener('click', function() {
+        scroll_mv('left');
+    });
+    document.getElementById('scrollRight_mv').addEventListener('click', function() {
+        scroll_mv('right');
+    });
+    document.getElementById('scrollLeft_tv').addEventListener('click', function() {
+        scroll_tv('left');
+    });
+    document.getElementById('scrollRight_tv').addEventListener('click', function() {
+        scroll_tv('right');
+    });
+    
+    // Initialize the button states
+    updateButtonStates_mv();
+    updateButtonStates_tv();
+    
+    // Add window resize listener to update button states
+    window.addEventListener('resize', function() {
+        updateButtonStates_mv();
+        updateButtonStates_tv();
+    });
+    
+    // Fetch available versions
+    fetchVersions();
 });
+
+// Available versions and selected content
+let availableVersions = [];
+let selectedContent = null;
+
+// Fetch available versions
+async function fetchVersions() {
+    try {
+        const response = await fetch('/content/versions');
+        const data = await response.json();
+        if (data.versions) {
+            availableVersions = data.versions;
+        }
+    } catch (error) {
+        console.error('Error fetching versions:', error);
+        displayError('Error fetching versions');
+    }
+}
+
+// Show version selection modal
+function showVersionModal(content) {
+    selectedContent = content;
+    const modal = document.getElementById('versionModal');
+    const versionCheckboxes = document.getElementById('versionCheckboxes');
+    
+    // Clear existing checkboxes
+    versionCheckboxes.innerHTML = '';
+    
+    // If this is a TV show, add options for whole show or seasons
+    if (content.mediaType === 'tv') {
+        // Add a heading for show selection
+        const showSelectionHeader = document.createElement('div');
+        showSelectionHeader.className = 'version-section-header';
+        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
+        versionCheckboxes.appendChild(showSelectionHeader);
+        
+        // Add radio buttons for selection type
+        const selectionTypeContainer = document.createElement('div');
+        selectionTypeContainer.className = 'selection-type-container';
+        selectionTypeContainer.innerHTML = `
+            <div class="selection-type-option">
+                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
+                <label for="whole-show">Whole Show</label>
+            </div>
+            <div class="selection-type-option">
+                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
+                <label for="specific-seasons">Specific Seasons</label>
+            </div>
+        `;
+        versionCheckboxes.appendChild(selectionTypeContainer);
+        
+        // Container for season selection (initially hidden)
+        const seasonSelectionContainer = document.createElement('div');
+        seasonSelectionContainer.className = 'season-selection-container';
+        seasonSelectionContainer.id = 'season-selection-container';
+        seasonSelectionContainer.style.display = 'none';
+        seasonSelectionContainer.innerHTML = '<p>Loading seasons...</p>';
+        versionCheckboxes.appendChild(seasonSelectionContainer);
+        
+        // Add handlers for radio buttons
+        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
+        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
+        
+        wholeShowRadio.addEventListener('change', function() {
+            if (this.checked) {
+                document.getElementById('season-selection-container').style.display = 'none';
+            }
+        });
+        
+        specificSeasonsRadio.addEventListener('change', function() {
+            if (this.checked) {
+                document.getElementById('season-selection-container').style.display = 'block';
+                // Fetch seasons if not already loaded
+                if (document.getElementById('season-selection-container').innerHTML === '<p>Loading seasons...</p>') {
+                    fetchShowSeasons(content.id);
+                }
+            }
+        });
+        
+        // Add a separator
+        const separator = document.createElement('hr');
+        versionCheckboxes.appendChild(separator);
+    }
+    
+    // Add a heading for version selection
+    const versionHeader = document.createElement('div');
+    versionHeader.className = 'version-section-header';
+    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
+    versionCheckboxes.appendChild(versionHeader);
+    
+    // Create checkboxes for each version
+    availableVersions.forEach(version => {
+        const div = document.createElement('div');
+        div.className = 'version-checkbox';
+        div.innerHTML = `
+            <input type="checkbox" id="${version}" name="versions" value="${version}">
+            <label for="${version}">${version}</label>
+        `;
+        versionCheckboxes.appendChild(div);
+    });
+    
+    modal.style.display = 'flex';
+}
+
+// Show version selection modal for a specific season
+function showVersionModalForSeason(content) {
+    selectedContent = content;
+    const modal = document.getElementById('versionModal');
+    const versionCheckboxes = document.getElementById('versionCheckboxes');
+    
+    // Clear existing checkboxes
+    versionCheckboxes.innerHTML = '';
+    
+    // Add a heading for the season being requested
+    const seasonHeader = document.createElement('div');
+    seasonHeader.className = 'version-section-header';
+    seasonHeader.innerHTML = `<h4>Requesting: ${content.title} - Season ${content.seasons[0]}</h4>`;
+    versionCheckboxes.appendChild(seasonHeader);
+    
+    // Add a separator
+    const separator = document.createElement('hr');
+    versionCheckboxes.appendChild(separator);
+    
+    // Add a heading for version selection
+    const versionHeader = document.createElement('div');
+    versionHeader.className = 'version-section-header';
+    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
+    versionCheckboxes.appendChild(versionHeader);
+    
+    // Create checkboxes for each version
+    availableVersions.forEach(version => {
+        const div = document.createElement('div');
+        div.className = 'version-checkbox';
+        div.innerHTML = `
+            <input type="checkbox" id="${version}" name="versions" value="${version}">
+            <label for="${version}">${version}</label>
+        `;
+        versionCheckboxes.appendChild(div);
+    });
+    
+    modal.style.display = 'flex';
+}
+
+// Function to fetch show seasons from the server
+async function fetchShowSeasons(tmdbId) {
+    try {
+        console.log(`Fetching seasons for TMDB ID: ${tmdbId}`);
+        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}`, {
+            method: 'GET'
+        });
+        
+        // Log the HTTP status
+        console.log(`Show seasons fetch response status: ${response.status}`);
+        
+        const data = await response.json();
+        console.log('Show seasons API response:', data);
+        
+        if (data.success && data.seasons && data.seasons.length > 0) {
+            // Update the season selection container
+            const seasonContainer = document.getElementById('season-selection-container');
+            seasonContainer.innerHTML = '<div class="seasons-list"></div>';
+            const seasonsList = seasonContainer.querySelector('.seasons-list');
+            
+            // Sort seasons in numerical order
+            const seasons = data.seasons.sort((a, b) => a - b);
+            console.log(`Found ${seasons.length} seasons:`, seasons);
+            
+            // Create checkbox for each season
+            seasons.forEach(season => {
+                const seasonDiv = document.createElement('div');
+                seasonDiv.className = 'season-checkbox';
+                seasonDiv.innerHTML = `
+                    <input type="checkbox" id="season-${season}" name="seasons" value="${season}">
+                    <label for="season-${season}">Season ${season}</label>
+                `;
+                seasonsList.appendChild(seasonDiv);
+            });
+        } else {
+            console.warn('No seasons found or invalid response format:', data);
+            let errorMessage = 'Could not load seasons. Please try again or request the whole show.';
+            if (data.error) {
+                console.error('API error message:', data.error);
+                errorMessage = `Error: ${data.error}`;
+            }
+            document.getElementById('season-selection-container').innerHTML = `<p>${errorMessage}</p>`;
+        }
+    } catch (error) {
+        console.error('Error fetching show seasons:', error);
+        document.getElementById('season-selection-container').innerHTML = 
+            '<p>Error loading seasons. Please try again later.</p>';
+    }
+}
+
+// Close version selection modal
+function closeVersionModal() {
+    document.getElementById('versionModal').style.display = 'none';
+}
+
+// Handle version confirmation
+async function handleVersionConfirm() {
+    const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
+    const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
+    
+    if (selectedVersions.length === 0) {
+        displayError('Please select at least one version');
+        return;
+    }
+    
+    // Check if this is a TV show
+    if (selectedContent.mediaType === 'tv') {
+        // Check if the whole-show radio button exists (it won't exist when using showVersionModalForSeason)
+        const wholeShowRadio = document.querySelector('#whole-show');
+        
+        // If the radio buttons exist, process the selection
+        if (wholeShowRadio) {
+            const wholeShowSelected = wholeShowRadio.checked;
+            
+            if (!wholeShowSelected) {
+                // Get selected seasons
+                const seasonCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="seasons"]:checked');
+                const selectedSeasons = Array.from(seasonCheckboxes).map(cb => parseInt(cb.value));
+                
+                if (selectedSeasons.length === 0) {
+                    displayError('Please select at least one season or choose "Whole Show"');
+                    return;
+                }
+                
+                // Add seasons to selectedContent
+                selectedContent.seasons = selectedSeasons;
+            }
+        }
+        // If radio buttons don't exist, the seasons are already pre-selected in selectedContent
+        // from the showVersionModalForSeason function, so we don't need to do anything
+    }
+    
+    await requestContent(selectedContent, selectedVersions);
+    closeVersionModal();
+}
+
+// Request content
+async function requestContent(content, selectedVersions) {
+    showLoadingState();
+    try {
+        const requestData = {
+            id: content.id,
+            mediaType: content.mediaType,
+            title: content.title,
+            versions: selectedVersions
+        };
+        
+        // Add seasons if specified for TV shows
+        if (content.mediaType === 'tv' && content.seasons) {
+            requestData.seasons = content.seasons;
+        }
+        
+        const response = await fetch('/content/request', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            displaySuccess(`Successfully requested ${content.title}`);
+        } else {
+            displayError(result.error || 'Failed to request content');
+        }
+    } catch (error) {
+        console.error('Error requesting content:', error);
+        displayError('Error requesting content');
+    } finally {
+        hideLoadingState();
+    }
+}
 
 function displayTraktAuthMessage() {
     const trendingContainer = document.getElementById('trendingContainer');
     trendingContainer.innerHTML = '<p>Please authenticate with Trakt to see trending movies and shows.</p>';
 }
 
+function createMovieElement(data) {
+    const movieElement = document.createElement('div');
+    movieElement.className = 'media-card';
+    
+    // Get the isRequester value from the DOM
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
+    // Always include the request icon HTML regardless of user type
+    const requestIconHTML = `
+        <div class="request-icon" title="Request this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+        </div>
+    `;
+    
+    movieElement.innerHTML = `
+        <div class="media-poster">
+            <span id="trending-rating">${(data.rating).toFixed(1)}</span>
+            <span id="trending-watchers">👁 ${data.watcher_count}</span>
+            <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                alt="${data.title}" 
+                class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+            <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                <h2>${data.title}</h2>
+                <p>${data.year}</p>
+            </div>
+            ${requestIconHTML}
+        </div>
+    `;
+    
+    // Add click handlers for the poster
+    movieElement.onclick = function() {
+        selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.genre_ids);
+    };
+    
+    // Add click handler for the request icon for all users
+    const requestIcon = movieElement.querySelector('.request-icon');
+    if (requestIcon) {
+        requestIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Show version modal with content info
+            showVersionModal({
+                id: data.tmdb_id,
+                title: data.title,
+                mediaType: 'movie',
+                year: data.year
+            });
+            
+            return false;
+        };
+    }
+    
+    return movieElement;
+}
+
+function createShowElement(data) {
+    const showElement = document.createElement('div');
+    showElement.className = 'media-card';
+    
+    // Get the isRequester value from the DOM
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
+    // Always include the request icon HTML regardless of user type
+    const requestIconHTML = `
+        <div class="request-icon" title="Request this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+        </div>
+    `;
+    
+    showElement.innerHTML = `
+        <div class="media-poster">
+            <span id="trending-rating">${(data.rating).toFixed(1)}</span>
+            <span id="trending-watchers">👁 ${data.watcher_count}</span>
+            <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                alt="${data.title}" 
+                class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+            <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                <h2>${data.title}</h2>
+                <p>${data.year}</p>
+            </div>
+            ${requestIconHTML}
+        </div>
+    `;
+    
+    // Add click handlers for the poster
+    showElement.onclick = function() {
+        selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+    };
+    
+    // Add click handler for the request icon for all users
+    const requestIcon = showElement.querySelector('.request-icon');
+    if (requestIcon) {
+        requestIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Show version modal with content info
+            showVersionModal({
+                id: data.tmdb_id,
+                title: data.title,
+                mediaType: 'tv',
+                year: data.year
+            });
+            
+            return false;
+        };
+    }
+    
+    return showElement;
+}
+
+function get_trendingMovies() {
+    toggleResultsVisibility('get_trendingMovies');
+    const container_mv = document.getElementById('movieContainer');
+    
+    fetch('/scraper/movies_trending', {
+        method: 'GET'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            const trendingMovies = data.trendingMovies;
+            trendingMovies.forEach(item => {
+                const movieElement = createMovieElement(item);
+                container_mv.appendChild(movieElement);
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred.');
+    });
+}
+
+function get_trendingShows() {
+    toggleResultsVisibility('get_trendingMovies');
+    const container_tv = document.getElementById('showContainer');
+    
+    fetch('/scraper/shows_trending', {
+        method: 'GET'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            const trendingShows = data.trendingShows;
+            trendingShows.forEach(item => {
+                const showElement = createShowElement(item);
+                container_tv.appendChild(showElement);
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred.');
+    });
+}
+
 function searchMedia(event) {
-    event.preventDefault();
+    console.log('searchMedia called', event);
+    
+    // Prevent the default form submission which would reload the page
+    if (event) {
+        event.preventDefault();
+        console.log('Event default prevented');
+    }
+    
+    // Get the isRequester value
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
+    let searchTerm = document.querySelector('input[name="search_term"]').value;
+    let version = document.getElementById('version-select').value;
+    
+    console.log('Search parameters:', { searchTerm, version });
+    
+    if (!searchTerm) {
+        displayError('Please enter a search term');
+        return;
+    }
+    
     showLoadingState();
-    const searchTerm = document.querySelector('input[name="search_term"]').value;
-    const version = document.querySelector('select[name="version"]').value;
-    fetch('/scraper', {
+    
+    console.log('Submitting search to /scraper/');
+    
+    fetch('/scraper/', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log('Search response status:', response.status);
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        return response.json();
+    })
     .then(data => {
+        console.log('Search response data:', data);
         hideLoadingState();
-        console.log('Received data:', JSON.stringify(data, null, 2));  // Pretty print the entire response
+        
         if (data.error) {
             displayError(data.error);
-        } else if (data.results && Array.isArray(data.results)) {
+        } else if (data.results) {
+            // Display search results for all users
             displaySearchResults(data.results, version);
+            
+            // For requesters, also show a reminder that they can only browse
+            if (isRequester) {
+
+                // Insert at the top of search results
+                const searchResultDiv = document.getElementById('searchResult');
+
+            }
         } else {
-            displayError('Invalid response from server');
+            displayError('No results found or invalid response format');
         }
     })
     .catch(error => {
         hideLoadingState();
-        console.error('Error:', error);
-        displayError('An error occurred while searching.');
+        console.error('Search Error:', error);
+        displayError('An error occurred while searching: ' + error.message);
     });
 }
 
 function displaySearchResults(results, version) {
     console.log('Displaying results:', results);
+    
+    // First hide trending container and show search results
     toggleResultsVisibility('displaySearchResults');
+    
+    // Get the search results container and clear it
     const searchResultsDiv = document.getElementById('searchResult');
+    if (!searchResultsDiv) {
+        console.error('Search result div not found!');
+        return;
+    }
+    
+    console.log('Updating search results HTML');
     searchResultsDiv.innerHTML = '<div class="search-results-container"></div>';
     
     const gridContainer = searchResultsDiv.querySelector('.search-results-container');
     gridContainer.style.display = 'flex';
     gridContainer.style.flexWrap = 'wrap';
     gridContainer.style.gap = '20px';
-    const mediaQuery = window.matchMedia('(max-width: 1024px)');
-    function handleScreenChange(e) {
-        if (e.matches) {
-            gridContainer.style.justifyContent = 'center';
-        } else {
-            gridContainer.style.justifyContent = 'flex-start';
-        }
+    
+    // Check if we have results
+    if (!results || results.length === 0) {
+        console.log('No results found');
+        gridContainer.innerHTML = '<p>No results found. Try a different search term.</p>';
+        return;
     }
-    mediaQuery.addListener(handleScreenChange);
-    handleScreenChange(mediaQuery);
-
+    
     // Get TMDB API key status
     const tmdb_api_key_set = document.getElementById('tmdb_api_key_set').value === 'True';
+    // Check if user is a requester
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+
+    // Request icon HTML
+    const requestIconHTML = `
+        <div class="request-icon" title="Request this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+        </div>
+    `;
 
     results.forEach(item => {
         console.log('Creating element for item:', item);  // Debug log
@@ -643,29 +1161,74 @@ function displaySearchResults(results, version) {
             posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`; // Use our proxy route
         }
         console.log('Final poster URL:', posterUrl);
+        
+        // Create the container with a relative position for the request icon
         searchResDiv.innerHTML = `
-            <button>${item.media_type === 'show' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-            <img src="${posterUrl}" 
-                alt="${item.title}" 
-                class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
-            <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
-                <h2 class="searchresult-item">${item.title}</h2>
-                <p class="searchresult-year">${item.year || 'N/A'}</p>
-            </div></button>                
+            <div class="media-poster">
+                <button>
+                    ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
+                    <img src="${posterUrl}" 
+                        alt="${item.title}" 
+                        class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
+                    <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                        <h2 class="searchresult-item">${item.title}</h2>
+                        <p class="searchresult-year">${item.year || 'N/A'}</p>
+                    </div>
+                </button>
+                ${requestIconHTML}
+            </div>
         `;
+        
         console.log('Created HTML:', searchResDiv.innerHTML);  // Debug log
-        searchResDiv.onclick = function() {
-            if (item.media_type === 'movie') {
-                selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
-            } else {
-                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
-            }
-        };
+        
+        // Add click handler for the main content area
+        const button = searchResDiv.querySelector('button');
+        if (button) {
+            button.onclick = function() {
+                // Display a message for requesters instead of attempting to scrape
+                if (isRequester) {
+                    return;
+                }
+                
+                if (item.media_type === 'movie') {
+                    selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
+                } else {
+                    selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
+                }
+            };
+        }
+        
+        // Add click handler for the request icon
+        const requestIcon = searchResDiv.querySelector('.request-icon');
+        if (requestIcon) {
+            requestIcon.onclick = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Show version modal with content info
+                showVersionModal({
+                    id: item.id,
+                    title: item.title,
+                    mediaType: item.media_type === 'show' ? 'tv' : item.media_type,
+                    year: item.year
+                });
+                
+                return false;
+            };
+        }
+        
         gridContainer.appendChild(searchResDiv);
     });
 }
 
 async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
+    // Check if user is a requester before making the request
+    const isRequesterEl = document.getElementById('is_requester');
+    if (isRequesterEl && isRequesterEl.value === 'True') {
+        // Display error message for requesters
+        return;
+    }
+
     showLoadingState();
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
@@ -684,9 +1247,24 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        // Check if response status is 403 (Forbidden) - which means the user is a requester trying to scrape
+        if (response.status === 403) {
+            hideLoadingState();
+            displayError("Access forbidden. You don't have permission to perform this action.");
+            return { abort: true };  // Signal to not continue processing
+        }
+        return response.json();
+    })
     .then(data => {
+        // Skip further processing if aborted
+        if (data.abort) return;
+        
         hideLoadingState();
+        if (data.error) {
+            displayError(data.error);
+            return;
+        }
         displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         
         // Start background cache checking if we have results and not skipping cache check
@@ -705,7 +1283,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     .catch(error => {
         hideLoadingState();
         console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
+        displayError('An error occurred while processing your request.');
     });
 }
 
@@ -928,7 +1506,24 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     const resultsDiv = document.getElementById('seasonResults');
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
+    const requestSeasonButton = document.getElementById('requestSeasonButton');
     const version = document.getElementById('version-select').value;
+    
+    // Get requester status for later use
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
+    // Show/hide buttons based on requester status
+    if (isRequester) {
+        // For requesters: hide season pack button, show request season button
+        if (seasonPackButton) seasonPackButton.style.display = 'none';
+        if (requestSeasonButton) requestSeasonButton.style.display = 'inline-block';
+    } else {
+        // For non-requesters: show season pack button, hide request season button
+        if (seasonPackButton) seasonPackButton.style.display = 'inline-block';
+        if (requestSeasonButton) requestSeasonButton.style.display = 'inline-block';
+    }
+    
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
@@ -943,8 +1538,19 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        // Check if response status is 403 (Forbidden) - which means the user is a requester trying to scrape
+        if (response.status === 403) {
+            hideLoadingState();
+            displayError("Access forbidden. You don't have permission to perform this action.");
+            return { abort: true };  // Signal to not continue processing
+        }
+        return response.json();
+    })
     .then(data => {
+        // Skip further processing if aborted
+        if (data && data.abort) return;
+        
         hideLoadingState();
         if (data.error) {
             displayError(data.error);
@@ -975,8 +1581,33 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
             });
 
             seasonPackButton.onclick = function() {
+                // Check if user is a requester before proceeding
+                if (isRequester) {
+                    return;
+                }
+                
                 const selectedItem = JSON.parse(dropdown.value);
                 selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
+            };
+            
+            // Add event handler for the request season button
+            requestSeasonButton.onclick = function() {
+
+                
+                const selectedItem = JSON.parse(dropdown.value);
+                
+                // Create content object for the version modal
+                const content = {
+                    id: selectedItem.id,
+                    title: selectedItem.title,
+                    year: selectedItem.year,
+                    mediaType: 'tv',
+                    // Pre-select the current season
+                    seasons: [selectedItem.season_num]
+                };
+                
+                // Show the version modal with the current season pre-selected
+                showVersionModalForSeason(content);
             };
 
             resultsDiv.style.display = 'block';
@@ -1051,6 +1682,10 @@ function displaySeasonInfoTextOnly(title, season_num) {
 }
 
 function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
+    // Get requester status for later use
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+
     showLoadingState();
     const version = document.getElementById('version-select').value;
     let formData = new FormData();
@@ -1067,20 +1702,32 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        // Check if response status is 403 (Forbidden) - which means the user is a requester trying to scrape
+        if (response.status === 403) {
+            hideLoadingState();
+            displayError("Access forbidden. You don't have permission to perform this action.");
+            return { abort: true };  // Signal to not continue processing
+        }
+        return response.json();
+    })
     .then(data => {
+        // Skip further processing if aborted
+        if (data && data.abort) return;
+        
         hideLoadingState();
         if (data.error) {
             displayError(data.error);
         } else if (!data.episode_results) {
             displayError('No episode results found');
         } else {
+            // Allow requesters to view episodes, but they won't be able to select them
             displayEpisodeResults(data.episode_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         }
     })
     .catch(error => {
         hideLoadingState();
         console.error('Error:', error);
-        displayError('An error occurred while selecting media.');
+        displayError('An error occurred while fetching episodes.');
     });
 }

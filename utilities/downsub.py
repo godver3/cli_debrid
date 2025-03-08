@@ -10,7 +10,7 @@ from subliminal.cache import region
 from .config.downsub_config import (
     SUBTITLES_ENABLED, VIDEO_FOLDERS, SCAN_CACHE_FILE, DIR_CACHE_FILE,
     LOG_LEVEL, LOG_FORMAT, LOG_FILE, VIDEO_EXTENSIONS,
-    SUBTITLE_LANGUAGES, SUBLIMINAL_USER_AGENT, SUBTITLE_PROVIDERS
+    SUBTITLE_LANGUAGES, SUBLIMINAL_USER_AGENT, SUBTITLE_PROVIDERS, ONLY_CURRENT_FILE
 )
 
 # Configure global in-memory cache for subliminal
@@ -125,14 +125,27 @@ def download_subtitles(files):
     except Exception as e:
         logging.error(f"🚨 Subtitle download failed: {e}")
 
-def main():
+def main(specific_file=None):
     """
     Main function that processes videos in the configured folders.
     Uses cache to track processed files and only downloads subtitles for new or modified files.
+    
+    Args:
+        specific_file (str, optional): Path to a specific file to process. If provided and ONLY_CURRENT_FILE is True,
+                                      only this file will be processed. Defaults to None.
     """
     # Skip everything if subtitles are not enabled
     if not SUBTITLES_ENABLED:
         logging.info("Subtitle downloading is disabled in settings")
+        return
+
+    # If we're only processing the current file and a specific file is provided
+    if ONLY_CURRENT_FILE and specific_file:
+        logging.info(f"Only processing specific file: {specific_file}")
+        if os.path.isfile(specific_file) and specific_file.lower().endswith(VIDEO_EXTENSIONS):
+            download_subtitles([specific_file])
+        else:
+            logging.warning(f"Specified file is not a valid video file: {specific_file}")
         return
 
     # Load caches

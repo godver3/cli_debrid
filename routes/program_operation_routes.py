@@ -294,7 +294,8 @@ def check_service_connectivity():
                     services_reachable = False
                     failed_services.append("Plex (for symlink updates)")
                 else:
-                    logging.info(f"Successfully validated Plex connection for symlink updates (Server: {root.get('friendlyName', 'Unknown')})")
+                    services_reachable = True  # Set to True when Plex is reachable
+                    logging.debug("Plex connectivity check passed")
             except (RequestException, ET.ParseError) as e:
                 error_msg = f"Cannot connect to Plex server for symlink updates. Error: {str(e)}"
                 logging.error(error_msg)
@@ -558,6 +559,9 @@ def get_task_timings():
             "tasks": []
         })
 
+    # Ensure content sources are loaded
+    program_runner.get_content_sources()
+
     current_time = time.time()
     task_timings = {}
     
@@ -597,6 +601,11 @@ def get_task_timings():
             grouped_timings["content_sources"][task] = timing
         else:
             grouped_timings["system_tasks"][task] = timing
+    
+    # Log content source tasks for debugging
+    content_source_tasks = [task for task in task_timings.keys() if task.endswith('_wanted')]
+    logging.debug(f"Content source tasks: {content_source_tasks}")
+    logging.debug(f"Content sources in grouped_timings: {list(grouped_timings['content_sources'].keys())}")
 
     return jsonify({
         "success": True,
@@ -658,4 +667,58 @@ def disable_task():
         program_runner.disable_task(task_name)
         return jsonify({'success': True, 'message': f'Successfully disabled task: {task_name}'})
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+@program_operation_bp.route('/save_task_toggles', methods=['POST'])
+@admin_required
+def save_task_toggles():
+    """Save the current state of task toggles to a JSON file."""
+    try:
+        import os
+        import json
+        
+        # Get task states from request
+        data = request.json
+        if not data or 'task_states' not in data:
+            return jsonify({'success': False, 'error': 'No task states provided'})
+        
+        task_states = data['task_states']
+        
+        # Get the user_db_content directory from environment variable
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+        
+        # Save to JSON file
+        with open(toggles_file_path, 'w') as f:
+            json.dump(task_states, f, indent=4)
+        
+        logging.info(f"Task toggle states saved to {toggles_file_path}")
+        return jsonify({'success': True, 'message': 'Task toggle states saved successfully'})
+    except Exception as e:
+        logging.error(f"Error saving task toggles: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)})
+
+@program_operation_bp.route('/load_task_toggles', methods=['GET'])
+@admin_required
+def load_task_toggles():
+    """Load saved task toggle states from a JSON file."""
+    try:
+        import os
+        import json
+        
+        # Get the user_db_content directory from environment variable
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+        
+        # Check if file exists
+        if not os.path.exists(toggles_file_path):
+            return jsonify({'success': True, 'task_states': {}})
+        
+        # Load from JSON file
+        with open(toggles_file_path, 'r') as f:
+            saved_states = json.load(f)
+        
+        return jsonify({'success': True, 'task_states': saved_states})
+    except Exception as e:
+        logging.error(f"Error loading task toggles: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})

@@ -65,22 +65,28 @@ def update_cache_with_new_entries():
     current_time = datetime.now()
     new_entries_count = 0
     for i, line in enumerate(lines, start=last_processed_line):
-        match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - API Call: (\w+) (.*) - Domain: (.*)', line)
+        match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - INFO - (\w+) ([^\s]+).*', line)
         if match:
-            timestamp, method, url, domain = match.groups()
-            dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S,%f')
+            timestamp, method, url = match.groups()
+            domain_match = re.match(r'([^/]+).*', url)
+            domain = domain_match.group(1) if domain_match else "unknown"
             
-            hour_key = dt.strftime('%Y-%m-%d %H:00')
-            day_key = dt.strftime('%Y-%m-%d')
-            month_key = dt.strftime('%Y-%m')
-            
-            for time_frame, key in [('hour', hour_key), ('day', day_key), ('month', month_key)]:
-                if key not in cache[time_frame]:
-                    cache[time_frame][key] = {}
-                if domain not in cache[time_frame][key]:
-                    cache[time_frame][key][domain] = 0
-                cache[time_frame][key][domain] += 1
-            new_entries_count += 1
+            try:
+                dt = datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S')
+                
+                hour_key = dt.strftime('%Y-%m-%d %H:00')
+                day_key = dt.strftime('%Y-%m-%d')
+                month_key = dt.strftime('%Y-%m')
+                
+                for time_frame, key in [('hour', hour_key), ('day', day_key), ('month', month_key)]:
+                    if key not in cache[time_frame]:
+                        cache[time_frame][key] = {}
+                    if domain not in cache[time_frame][key]:
+                        cache[time_frame][key][domain] = 0
+                    cache[time_frame][key][domain] += 1
+                new_entries_count += 1
+            except ValueError as e:
+                logging.warning(f"Error parsing timestamp '{timestamp}': {str(e)}")
     
     logging.debug(f"Processed {new_entries_count} new entries")
 
@@ -155,8 +161,6 @@ def api_latest_calls():
     
     return jsonify(filtered_calls)
 
-
-
 @api_summary_bp.route('/clear_api_summary_cache', methods=['POST'])
 @admin_required
 def clear_api_summary_cache():
@@ -165,25 +169,57 @@ def clear_api_summary_cache():
     save_cache(cache)
     return jsonify({"status": "success", "message": "API summary cache cleared"})
 
+@api_summary_bp.route('/api/summary')
+def api_summary():
+    update_cache_with_new_entries()
+    
+    time_frame = request.args.get('time_frame', 'day')
+    if time_frame not in ['hour', 'day', 'month']:
+        time_frame = 'day'
+    
+    summary = cache[time_frame]
+    
+    # Get a sorted list of all domains
+    all_domains = sorted(set(domain for period in summary.values() for domain in period))
+    
+    # Transform the data for JSON response
+    json_data = {
+        'time_frame': time_frame,
+        'domains': all_domains,
+        'periods': {}
+    }
+    
+    # Add data for each period
+    for period, domains in summary.items():
+        json_data['periods'][period] = {
+            'by_domain': domains,
+            'total': sum(domains.values())
+        }
+    
+    return jsonify(json_data)
+
 def get_latest_api_calls(limit=100):
     calls = []
     with open(API_LOG_FILE, 'r') as log_file:
         for line in reversed(list(log_file)):
-            parts = line.strip().split(' - ', 1)
-            if len(parts) == 2:
-                timestamp, message = parts
-                call_info = message.split(': ', 1)
-                if len(call_info) == 2:
-                    method_and_url = call_info[1].split(' ', 1)
+            # Update parsing logic to match the actual log format
+            parts = line.strip().split(' - ', 2)
+            if len(parts) == 3:
+                timestamp, level, message = parts
+                if level.strip() == 'INFO':
+                    # Message format: "METHOD domain/path"
+                    method_and_url = message.split(' ', 1)
                     if len(method_and_url) == 2:
                         method, url = method_and_url
-                        domain = url.split('/')[2] if url.startswith('http') else 'unknown'
+                        # Extract domain from the URL
+                        domain = url.split('/')[0] if '/' in url else url
+                        endpoint = '/'.join(url.split('/')[1:]) if '/' in url else ''
                         calls.append({
                             'timestamp': timestamp,
                             'method': method,
                             'url': url,
                             'domain': domain,
-                            'endpoint': '/'.join(url.split('/')[3:]) if url.startswith('http') else url,
+                            'endpoint': endpoint,
                             'status_code': 'N/A'
                         })
                         if len(calls) >= limit:

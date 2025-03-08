@@ -16,7 +16,32 @@
     .stats-box.recently-aired .show-title.uncollected {
         color: #ff4444;
     }
+    .modal-content {
+        background-color: #1e1e1e !important;
+    }
 </style>
+
+<!-- Add modal for external links -->
+<div id="external-links-modal" class="modal">
+    <div class="modal-content">
+        <span class="close-modal">&times;</span>
+        <h3 id="modal-title">View on External Sites</h3>
+        <div class="external-links">
+            <a id="trakt-link" href="#" target="_blank" class="external-link">
+                <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="provider-icon">
+                <span>Trakt</span>
+            </a>
+            <a id="tmdb-link" href="#" target="_blank" class="external-link">
+                <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="provider-icon">
+                <span>TMDB</span>
+            </a>
+            <a id="imdb-link" href="#" target="_blank" class="external-link">
+                <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDB" class="provider-icon">
+                <span>IMDB</span>
+            </a>
+        </div>
+    </div>
+</div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -399,7 +424,12 @@
                 <ul>
                     {% for item in recently_aired %}
                     <li>
-                        <div class="show-info">
+                        <div class="show-info clickable" 
+                             data-title="{{ item.title }}"
+                             data-imdb-id="{{ item.imdb_id }}"
+                             data-tmdb-id="{{ item.tmdb_id }}"
+                             data-season="{{ item.season_number }}"
+                             data-episode="{{ item.episode_number }}">
                             <span class="show-title{% if not item.is_collected %} uncollected{% endif %}">{{ item.title }}</span>
                             <span class="air-time">{{ item.formatted_datetime }}</span>
                         </div>
@@ -422,7 +452,12 @@
                 <h3>Airing Soon</h3>
                 <ul>
                     {% for item in airing_soon %}
-                    <li>
+                    <li class="clickable"
+                        data-title="{{ item.title }}"
+                        data-imdb-id="{{ item.imdb_id }}"
+                        data-tmdb-id="{{ item.tmdb_id }}"
+                        data-season="{{ item.season_number }}"
+                        data-episode="{{ item.episode_number }}">
                         <span class="show-title">{{ item.title }}</span>
                         <span class="air-time">{{ item.formatted_datetime }}</span>
                     </li>
@@ -434,7 +469,11 @@
                 <h3>Upcoming Releases</h3>
                 <ul>
                     {% for release in upcoming_releases %}
-                    <li>
+                    <li class="clickable"
+                        data-title="{{ release.titles[0] if release.titles else '' }}"
+                        data-release-date="{{ release.release_date }}"
+                        data-tmdb-id="{{ release.tmdb_ids[0] if release.tmdb_ids and release.tmdb_ids|length > 0 else '' }}"
+                        data-imdb-id="{{ release.imdb_ids[0] if release.imdb_ids and release.imdb_ids|length > 0 else '' }}">
                         <span class="titles">{{ release.titles | join(', ') }}</span>
                         <span class="release-date">{{ release.formatted_date }}</span>
                     </li>
@@ -689,5 +728,332 @@
             this.disabled = false;
         });
     });
+</script>
+
+<!-- Add JavaScript for external links modal -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Get modal elements
+        const modal = document.getElementById('external-links-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const traktLink = document.getElementById('trakt-link');
+        const tmdbLink = document.getElementById('tmdb-link');
+        const imdbLink = document.getElementById('imdb-link');
+        const closeModal = document.querySelector('.close-modal');
+        
+        // Add click event listeners to clickable items
+        document.querySelectorAll('.clickable').forEach(item => {
+            item.addEventListener('click', function(e) {
+                // Prevent event from bubbling to parent elements
+                e.stopPropagation();
+                
+                // Get data attributes
+                const title = this.dataset.title;
+                const imdbId = this.dataset.imdbId;
+                const tmdbId = this.dataset.tmdbId;
+                const season = this.dataset.season;
+                const episode = this.dataset.episode;
+                
+                // Log the values for debugging
+                console.log('Clicked item data:', {
+                    title,
+                    imdbId,
+                    tmdbId,
+                    season,
+                    episode,
+                    'has-imdb': !!imdbId,
+                    'has-tmdb': !!tmdbId
+                });
+                
+                // Set modal title
+                modalTitle.textContent = `View "${title}" on External Sites`;
+                
+                // Extract base show title (remove season/episode info)
+                const baseTitle = title.split(' S')[0];
+                
+                // Set links based on available IDs
+                
+                // IMDB links
+                if (imdbId) {
+                    // For TV shows with season and episode
+                    if (season && episode) {
+                        imdbLink.href = `https://www.imdb.com/title/${imdbId}/episodes?season=${season}`;
+                    } else {
+                        // For movies or shows without season/episode info
+                        imdbLink.href = `https://www.imdb.com/title/${imdbId}/`;
+                    }
+                    imdbLink.style.display = 'flex';
+                } else {
+                    // Fallback to search
+                    imdbLink.href = `https://www.imdb.com/find?q=${encodeURIComponent(baseTitle)}`;
+                    imdbLink.style.display = 'flex';
+                }
+                
+                // TMDB links
+                if (tmdbId) {
+                    // For TV shows with season and episode
+                    if (season && episode) {
+                        tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}/season/${season}/episode/${episode}`;
+                    } else {
+                        // Check if it's a movie or TV show based on title format
+                        if (title.includes(' S') && title.includes('E')) {
+                            tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}`;
+                        } else {
+                            tmdbLink.href = `https://www.themoviedb.org/movie/${tmdbId}`;
+                        }
+                    }
+                    tmdbLink.style.display = 'flex';
+                } else {
+                    // Fallback to search
+                    tmdbLink.href = `https://www.themoviedb.org/search?query=${encodeURIComponent(baseTitle)}`;
+                    tmdbLink.style.display = 'flex';
+                }
+                
+                // Trakt links
+                if (imdbId || tmdbId) {
+                    // For TV shows with season and episode
+                    if (season && episode) {
+                        if (imdbId) {
+                            // Direct link to episode using IMDB ID
+                            traktLink.href = `https://trakt.tv/shows/${imdbId}/seasons/${season}/episodes/${episode}`;
+                        } else if (tmdbId) {
+                            // Direct link to episode using TMDB ID
+                            traktLink.href = `https://trakt.tv/shows/${tmdbId}/seasons/${season}/episodes/${episode}`;
+                        }
+                    } else if (title.includes(' S') && title.includes('E')) {
+                        // For TV shows without specific episode - go to show page
+                        if (imdbId) {
+                            traktLink.href = `https://trakt.tv/shows/${imdbId}`;
+                        } else if (tmdbId) {
+                            traktLink.href = `https://trakt.tv/shows/${tmdbId}`;
+                        }
+                    } else {
+                        // For movies
+                        if (imdbId) {
+                            traktLink.href = `https://trakt.tv/movies/${imdbId}`;
+                        } else if (tmdbId) {
+                            traktLink.href = `https://trakt.tv/movies/${tmdbId}`;
+                        }
+                    }
+                } else {
+                    // Fallback to search by title when no IDs available
+                    traktLink.href = `https://trakt.tv/search?query=${encodeURIComponent(baseTitle)}`;
+                }
+                traktLink.style.display = 'flex';
+                
+                // Show modal
+                modal.style.display = 'block';
+            });
+        });
+        
+        // Close modal when clicking the close button
+        closeModal.addEventListener('click', function() {
+            modal.style.display = 'none';
+        });
+        
+        // Close modal when clicking outside the modal content
+        window.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    });
+</script>
+
+<style>
+    /* Modal styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+    }
+    
+    .modal-content {
+        background-color: #1e1e1e !important;
+    }
+    
+    .close-modal {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    
+    .close-modal:hover {
+        color: #fff;
+    }
+    
+    .external-links {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-top: 20px;
+    }
+    
+    .external-link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 15px;
+        background-color: #2a2a2a;
+        border-radius: 4px;
+        text-decoration: none;
+        color: #fff;
+        transition: background-color 0.2s;
+    }
+    
+    .external-link:hover {
+        background-color: #3498db;
+        color: white;
+    }
+    
+    .provider-icon {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+    }
+    
+    .clickable {
+        cursor: pointer;
+    }
+    
+    .clickable:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+    
+    /* Make sure the rescrape button doesn't trigger the modal */
+    .rescrape-btn {
+        z-index: 5;
+        position: relative;
+    }
+    
+    @media (max-width: 768px) {
+        .modal-content {
+            margin: 30% auto;
+            width: 90%;
+        }
+    }
+</style>
+
+<script>
+    // Auto-refresh functionality
+    (function() {
+        console.log('Auto-refresh script initialized');
+        
+        // Configuration
+        const refreshInterval = 30000; // 30 seconds (shorter for testing)
+        let refreshTimer = null;
+        
+        // Function to refresh stats without full page reload
+        function refreshStats() {
+            console.log('Attempting to refresh stats...');
+            
+            fetch('/statistics/api/index')
+                .then(response => {
+                    console.log('Response received:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    // Log the entire data object for debugging
+                    console.log('Raw data received:', data);
+                    
+                    // Now we can check the structure and update accordingly
+                    if (data) {
+                        // Use the existing function to update UI if available
+                        console.log('Updating UI with new data');
+                        
+                        // Extract the pieces we need whether or not they're nested
+                        const activeDownloadsData = data.active_downloads_data || 
+                                                  (data.stats && data.stats.active_downloads_data) || 
+                                                  {};
+                        
+                        const usageStatsData = data.usage_stats_data || 
+                                             (data.stats && data.stats.usage_stats_data) || 
+                                             {};
+                        
+                        // Update active downloads
+                        const activeDownloadsElement = document.getElementById('active_downloads');
+                        const downloadLimitElement = document.getElementById('download_limit');
+                        if (activeDownloadsElement && downloadLimitElement && activeDownloadsData) {
+                            activeDownloadsElement.textContent = activeDownloadsData.count || "0";
+                            downloadLimitElement.textContent = activeDownloadsData.limit || "25";
+                            
+                            // Also update class if status is provided
+                            if (activeDownloadsData.status) {
+                                const statusElement = activeDownloadsElement.parentElement;
+                                statusElement.classList.remove('warning', 'critical');
+                                if (activeDownloadsData.status === 'critical') {
+                                    statusElement.classList.add('critical');
+                                } else if (activeDownloadsData.status === 'warning') {
+                                    statusElement.classList.add('warning');
+                                }
+                            }
+                        }
+                        
+                        // Update usage stats
+                        const dailyUsageElement = document.getElementById('daily_usage');
+                        const dailyLimitElement = document.getElementById('daily_limit');
+                        if (dailyUsageElement && dailyLimitElement && usageStatsData) {
+                            dailyUsageElement.textContent = usageStatsData.used || "0";
+                            dailyLimitElement.textContent = usageStatsData.limit || "0";
+                            
+                            // Update styling based on percentage
+                            const usageElement = dailyUsageElement.parentElement;
+                            usageElement.classList.remove('warning', 'critical');
+                            if (usageStatsData.percentage >= 90) {
+                                usageElement.classList.add('critical');
+                            } else if (usageStatsData.percentage >= 75) {
+                                usageElement.classList.add('warning');
+                            }
+                        }
+                        
+                        // Try to update other elements if the data is suitable format
+                        // Only call updateUIWithTimePreference if it exists and data seems right
+                        if (typeof updateUIWithTimePreference === 'function' && 
+                            (data.status === 'OK' || data.recently_aired || data.airing_soon)) {
+                            try {
+                                updateUIWithTimePreference(data);
+                                console.log('Full UI update successful');
+                            } catch (err) {
+                                console.error('Error in updateUIWithTimePreference:', err);
+                            }
+                        }
+                        
+                        console.log('Stats refreshed successfully');
+                    } else {
+                        console.warn('No data received from API');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error refreshing stats:', error);
+                })
+                .finally(() => {
+                    console.log('Scheduling next refresh in', refreshInterval, 'ms');
+                    scheduleNextRefresh();
+                });
+        }
+        
+        // Schedule the next refresh
+        function scheduleNextRefresh() {
+            clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(refreshStats, refreshInterval);
+            console.log('Next refresh scheduled at:', new Date(Date.now() + refreshInterval).toLocaleTimeString());
+        }
+        
+        // Start the refresh cycle - with a slight delay to ensure page is fully loaded
+        setTimeout(() => {
+            console.log('Starting initial refresh cycle');
+            scheduleNextRefresh();
+        }, 5000);
+        
+        // Log that the script is ready
+        console.log('Auto-refresh setup complete');
+    })(); // Self-executing function
 </script>
 {% endblock %}

@@ -163,5 +163,9 @@ def logout():
 
 @auth_bp.route('/unauthorized')
 def unauthorized():
-    flash('You are not authorized to access this page.', 'error')
-    return redirect(url_for('auth.login'))
+    if current_user.is_authenticated and current_user.role == 'requester':
+        flash('As a requester, you can only request content but not scrape directly. Please use the content request feature.', 'error')
+        return redirect(url_for('content.index'))
+    else:
+        flash('You are not authorized to access this page.', 'error')
+        return redirect(url_for('auth.login'))

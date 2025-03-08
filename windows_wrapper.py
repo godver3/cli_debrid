@@ -9,6 +9,9 @@ import appdirs
 import socket
 import select
 import threading
+import psutil  # For memory and process monitoring
+import gc      # For garbage collection monitoring
+import datetime
 
 # Default ports configuration
 DEFAULT_PORTS = {
@@ -27,20 +30,68 @@ DEFAULT_PORTS = {
 }
 
 # Set up logging to write to a file
-log_file = os.path.join(
+log_dir = os.path.join(
     os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd(),
-    'cli_debrid.log'
+    'logs'
 )
+os.makedirs(log_dir, exist_ok=True)
+
+# Use timestamp in log filename to avoid overwriting previous logs
+timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+log_file = os.path.join(log_dir, f'cli_debrid_{timestamp}.log')
+
 logging.basicConfig(
     filename=log_file,
     level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s'
 )
 
 # Also print to console
 console = logging.StreamHandler()
 console.setLevel(logging.INFO)
 logging.getLogger('').addHandler(console)
+
+# Create a logger for resource monitoring
+resource_logger = logging.getLogger('resource_monitor')
+
+# Track active threads and connections
+active_threads = {}
+active_connections = {}
+
+def log_system_resources():
+    """Log current system resource usage"""
+    try:
+        process = psutil.Process()
+        mem_info = process.memory_info()
+        
+        resource_logger.info(f"Memory usage: {mem_info.rss / (1024 * 1024):.2f} MB")
+        resource_logger.info(f"CPU usage: {process.cpu_percent(interval=0.1)}%")
+        resource_logger.info(f"Open files: {len(process.open_files())}")
+        resource_logger.info(f"Active threads: {threading.active_count()}")
+        resource_logger.info(f"Active connections: {len(active_connections)}")
+        
+        # Log garbage collector stats
+        gc_counts = gc.get_count()
+        resource_logger.info(f"GC counts: {gc_counts}")
+        
+        # Log thread names
+        thread_names = [t.name for t in threading.enumerate()]
+        resource_logger.debug(f"Thread names: {thread_names}")
+    except Exception as e:
+        resource_logger.error(f"Error logging system resources: {str(e)}")
+
+# Start periodic resource logging
+def start_resource_monitoring(interval=60):
+    """Start a thread to periodically log resource usage"""
+    def monitor_resources():
+        while True:
+            log_system_resources()
+            time.sleep(interval)
+    
+    monitor_thread = threading.Thread(target=monitor_resources, name="ResourceMonitor")
+    monitor_thread.daemon = True
+    monitor_thread.start()
+    return monitor_thread
 
 def setup_environment():
     # Set default ports based on platform
@@ -138,7 +189,16 @@ def is_service_ready(port, max_attempts=30, delay=0.5):
 
 def create_tunnel(remote_port, local_port, buffer_size=4096):
     """Creates a tunnel from a remote port to a local port."""
-    def handle_client(client_sock, local_port):
+    def handle_client(client_sock, local_port, client_id):
+        thread_name = threading.current_thread().name
+        active_threads[thread_name] = time.time()
+        active_connections[client_id] = {
+            'start_time': time.time(),
+            'bytes_sent': 0,
+            'bytes_received': 0,
+            'last_activity': time.time()
+        }
+        
         try:
             # Connect to local service with retry
             local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -155,35 +215,76 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
                         return
                     time.sleep(0.5)
             
+            idle_timeout = 300  # 5 minutes
+            last_activity = time.time()
+            
             while True:
-                # Wait for data from either socket
-                readable, _, exceptional = select.select([client_sock, local_sock], [], [client_sock, local_sock], 60)
-                
-                if exceptional:
+                # Check for idle timeout
+                if time.time() - last_activity > idle_timeout:
+                    logging.warning(f"Connection {client_id} timed out after {idle_timeout} seconds of inactivity")
                     break
                 
-                for sock in readable:
-                    other_sock = local_sock if sock is client_sock else client_sock
-                    try:
-                        data = sock.recv(buffer_size)
-                        if not data:
+                # Wait for data from either socket with timeout
+                try:
+                    readable, _, exceptional = select.select([client_sock, local_sock], [], [client_sock, local_sock], 60)
+                    
+                    if exceptional:
+                        logging.warning(f"Exceptional condition on sockets for client {client_id}")
+                        break
+                    
+                    if not readable:  # Timeout occurred
+                        continue
+                    
+                    for sock in readable:
+                        other_sock = local_sock if sock is client_sock else client_sock
+                        try:
+                            data = sock.recv(buffer_size)
+                            if not data:
+                                logging.debug(f"No data received from {'client' if sock is client_sock else 'local'} socket for client {client_id}")
+                                return
+                            
+                            bytes_count = len(data)
+                            if sock is client_sock:
+                                active_connections[client_id]['bytes_received'] += bytes_count
+                            else:
+                                active_connections[client_id]['bytes_sent'] += bytes_count
+                                
+                            other_sock.sendall(data)
+                            last_activity = time.time()
+                            active_connections[client_id]['last_activity'] = last_activity
+                        except Exception as e:
+                            logging.error(f"Socket error for client {client_id}: {str(e)}")
                             return
-                        other_sock.sendall(data)
-                    except:
-                        return
+                except Exception as e:
+                    logging.error(f"Select error for client {client_id}: {str(e)}")
+                    break
         except Exception as e:
-            logging.error(f"Error in tunnel connection: {str(e)}")
+            logging.error(f"Error in tunnel connection for client {client_id}: {str(e)}")
             logging.debug(f"Detailed error: {traceback.format_exc()}")
         finally:
             try:
+                if client_id in active_connections:
+                    conn_stats = active_connections.pop(client_id)
+                    duration = time.time() - conn_stats['start_time']
+                    logging.info(f"Connection {client_id} closed. Duration: {duration:.2f}s, Bytes sent: {conn_stats['bytes_sent']}, Bytes received: {conn_stats['bytes_received']}")
+                
+                if thread_name in active_threads:
+                    del active_threads[thread_name]
+                
                 client_sock.close()
                 local_sock.close()
-            except:
-                pass
+            except Exception as e:
+                logging.error(f"Error closing sockets for client {client_id}: {str(e)}")
 
     def tunnel_server():
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
+        # Set socket timeout to prevent blocking indefinitely
+        server.settimeout(300)  # 5 minute timeout
+        
+        client_counter = 0
+        
         try:
             server.bind(('0.0.0.0', remote_port))
             server.listen(5)
@@ -192,12 +293,22 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
             while True:
                 try:
                     client_sock, addr = server.accept()
+                    client_counter += 1
+                    client_id = f"{addr[0]}:{addr[1]}_{client_counter}"
+                    
+                    logging.info(f"New connection from {addr[0]}:{addr[1]} (ID: {client_id})")
+                    
                     client_thread = threading.Thread(
                         target=handle_client,
-                        args=(client_sock, local_port)
+                        args=(client_sock, local_port, client_id),
+                        name=f"Tunnel-{client_id}"
                     )
                     client_thread.daemon = True
                     client_thread.start()
+                except socket.timeout:
+                    # Just a timeout on accept, continue
+                    logging.debug("Socket accept timeout, continuing...")
+                    continue
                 except Exception as e:
                     logging.error(f"Error accepting connection: {str(e)}")
                     logging.debug(f"Detailed error: {traceback.format_exc()}")
@@ -210,7 +321,7 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
             except:
                 pass
 
-    tunnel_thread = threading.Thread(target=tunnel_server)
+    tunnel_thread = threading.Thread(target=tunnel_server, name=f"TunnelServer-{remote_port}")
     tunnel_thread.daemon = True
     tunnel_thread.start()
     return tunnel_thread
@@ -242,6 +353,9 @@ def run_script(script_name, port=None, battery_port=None, host=None):
 
 def run_main():
     logging.info("Starting run_main()")
+    
+    # Start resource monitoring
+    monitor_thread = start_resource_monitoring(interval=30)  # Log every 30 seconds
     
     # Parse command line arguments
     import argparse
@@ -293,7 +407,8 @@ def run_main():
                 kwargs={
                     'battery_port': battery_port,
                     'host': battery_host
-                }
+                },
+                name=f"Process-{script_name}"
             )
             logging.info(f"Starting battery process on {battery_host}:{battery_port}")
         else:
@@ -303,7 +418,8 @@ def run_main():
                 kwargs={
                     'port': main_port,
                     'host': main_host
-                }
+                },
+                name=f"Process-{script_name}"
             )
             logging.info(f"Starting main process on {main_host}:{main_port}")
         
@@ -347,6 +463,23 @@ def run_main():
         os.environ.pop('CLI_DEBRID_TUNNEL_PORT', None)
         os.environ.pop('CLI_DEBRID_BATTERY_TUNNEL_PORT', None)
 
+    # Set up process monitoring
+    def monitor_processes():
+        while any(p.is_alive() for p in processes):
+            for i, p in enumerate(processes):
+                if p.is_alive():
+                    try:
+                        proc = psutil.Process(p.pid)
+                        mem_info = proc.memory_info()
+                        logging.info(f"Process {p.name} (PID {p.pid}) - Memory: {mem_info.rss / (1024 * 1024):.2f} MB, CPU: {proc.cpu_percent(interval=0.1)}%")
+                    except Exception as e:
+                        logging.error(f"Error monitoring process {p.name}: {str(e)}")
+            time.sleep(60)  # Check every minute
+    
+    monitor_proc_thread = threading.Thread(target=monitor_processes, name="ProcessMonitor")
+    monitor_proc_thread.daemon = True
+    monitor_proc_thread.start()
+
     try:
         # Wait for both processes to complete
         for process in processes:
@@ -355,8 +488,19 @@ def run_main():
         logging.info("Keyboard interrupt received. Terminating scripts.")
         for process in processes:
             if process.is_alive():
-                process.terminate()
-                process.join()
+                try:
+                    process.terminate()
+                    process.join(timeout=5)  # Wait up to 5 seconds
+                    if process.is_alive():
+                        logging.warning(f"Process {process.name} did not terminate gracefully, killing it")
+                        process.kill()
+                        process.join(timeout=2)
+                except Exception as e:
+                    logging.error(f"Error terminating process {process.name}: {str(e)}")
+    finally:
+        # Final resource log before exit
+        log_system_resources()
+        logging.info("All processes have exited")
 
 if __name__ == "__main__":
     logging.info("Starting cli_debrid.exe")
@@ -367,7 +511,10 @@ if __name__ == "__main__":
     except Exception as e:
         logging.error(f"Unhandled exception: {str(e)}")
         logging.error(traceback.format_exc())
-    logging.info("cli_debrid.exe execution completed")
+    finally:
+        # Force garbage collection before exit
+        gc.collect()
+        logging.info("cli_debrid.exe execution completed")
     
     # Keep console window open
     input("Press Enter to exit...")

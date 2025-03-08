@@ -2,7 +2,7 @@ from flask import jsonify, request, render_template, session, Blueprint
 import logging
 from debrid import get_debrid_provider
 from debrid.real_debrid.client import RealDebridProvider
-from .models import user_required, onboarding_required, admin_required
+from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts
 from web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
@@ -24,6 +24,7 @@ from debrid.common.torrent import torrent_to_magnet
 import hashlib
 from datetime import datetime, timezone, timedelta
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
+from flask_login import current_user
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -125,6 +126,8 @@ def _download_and_get_hash(url: str) -> str:
         raise Exception(f"Failed to process torrent URL: {str(e)}")
 
 @scraper_bp.route('/add_to_debrid', methods=['POST'])
+@user_required
+@scraper_permission_required
 def add_torrent_to_debrid():
     try:
         magnet_link = request.form.get('magnet_link')
@@ -490,58 +493,80 @@ def add_torrent_to_debrid():
         return jsonify({'error': error_message}), 500
 
 @scraper_bp.route('/movies_trending', methods=['GET', 'POST'])
+@user_required
+@scraper_view_access_required
 def movies_trending():
     from web_scraper import get_available_versions
 
     versions = get_available_versions()
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
     if request.method == 'GET':
         trendingMovies = trending_movies()
         if trendingMovies:
             return jsonify(trendingMovies)
         else:
             return jsonify({'error': 'Error retrieving trending movies'})
-    return render_template('scraper.html', versions=versions)
+    return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/shows_trending', methods=['GET', 'POST'])
+@user_required
+@scraper_view_access_required
 def shows_trending():
     from web_scraper import get_available_versions
 
     versions = get_available_versions()
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
     if request.method == 'GET':
         trendingShows = trending_shows()
         if trendingShows:
             return jsonify(trendingShows)
         else:
             return jsonify({'error': 'Error retrieving trending shows'})
-    return render_template('scraper.html', versions=versions)
+    return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/', methods=['GET', 'POST'])
 @user_required
+@scraper_view_access_required
 @onboarding_required
 def index():
     from web_scraper import get_available_versions, web_scrape
 
     versions = get_available_versions()
+    # Check if the user is a requester
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
     if request.method == 'POST':
         search_term = request.form.get('search_term')
         version = request.form.get('version')
         if search_term:
             session['search_term'] = search_term  # Store the search term in the session
             session['version'] = version  # Store the version in the session
+            
+            # Allow requesters to search and see results
             results = web_scrape(search_term, version)
             return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})
-        # Check if TMDB API key is set
+    
+    # For GET requests, check if TMDB API key is set
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     tmdb_api_key_set = bool(tmdb_api_key)
-    return render_template('scraper.html', versions=versions, tmdb_api_key_set=tmdb_api_key_set)
+    
+    # Pass the is_requester flag to the template
+    return render_template('scraper.html', versions=versions, tmdb_api_key_set=tmdb_api_key_set, is_requester=is_requester)
 
 @scraper_bp.route('/select_season', methods=['GET', 'POST'])
+@user_required
+@scraper_view_access_required
 def select_season():
     from web_scraper import get_available_versions
 
     versions = get_available_versions()
+    # Check if the user is a requester
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
     if request.method == 'POST':
         media_id = request.form.get('media_id')
         title = request.form.get('title')
@@ -549,6 +574,7 @@ def select_season():
         
         if media_id:
             try:
+                # Allow both requesters and regular users to get season data for browsing
                 results = web_scrape_tvshow(media_id, title, year)
                 if not results:
                     return jsonify({'error': 'No results found'}), 404
@@ -565,13 +591,18 @@ def select_season():
         else:
             return jsonify({'error': 'No media_id provided'}), 400
     
-    return render_template('scraper.html', versions=versions)
+    return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/select_episode', methods=['GET', 'POST'])
+@user_required
+@scraper_view_access_required
 def select_episode():
     from web_scraper import get_available_versions
     
     versions = get_available_versions()
+    # Check if the user is a requester
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
     if request.method == 'POST':
         media_id = request.form.get('media_id')
         season = request.form.get('season')
@@ -580,6 +611,7 @@ def select_episode():
         
         if media_id:
             try:
+                # Allow episode data to be retrieved for both requesters and regular users
                 episodeResults = web_scrape_tvshow(media_id, title, year, season)
                 if not episodeResults:
                     return jsonify({'error': 'No results found'}), 404
@@ -587,7 +619,7 @@ def select_episode():
                     return jsonify({'error': episodeResults['error']}), 404
                 elif 'episode_results' not in episodeResults or not episodeResults['episode_results']:
                     return jsonify({'error': 'No episode results found'}), 404
-                    
+                
                 # Ensure each episode has required fields
                 for episode in episodeResults['episode_results']:
                     if 'vote_average' not in episode:
@@ -596,7 +628,7 @@ def select_episode():
                         episode['still_path'] = episode.get('poster_path')
                     if 'episode_title' not in episode:
                         episode['episode_title'] = f"Episode {episode.get('episode_num', '?')}"
-                            
+                        
                 return jsonify(episodeResults)
             except Exception as e:
                 logging.error(f"Error in select_episode: {str(e)}", exc_info=True)
@@ -604,11 +636,21 @@ def select_episode():
         else:
             return jsonify({'error': 'No media_id provided'}), 400
     
-    return render_template('scraper.html', versions=versions)
+    return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/select_media', methods=['POST'])
+@user_required
+@scraper_view_access_required  # Changed from scraper_permission_required to allow requesters to view but not scrape
 def select_media():
     try:
+        # Check if the user is a requester and block the scraping action if true
+        is_requester = current_user.is_authenticated and current_user.role == 'requester'
+        if is_requester:
+            return jsonify({
+                'error': 'As a Requester, you can view content but cannot perform scraping actions.',
+                'torrent_results': []  # Return empty results to avoid errors in the UI
+            }), 403  # 403 Forbidden status code
+            
         media_id = request.form.get('media_id')
         title = request.form.get('title')
         year = request.form.get('year')
@@ -671,6 +713,8 @@ def select_media():
         return jsonify({'error': 'An error occurred while processing your request'}), 500
 
 @scraper_bp.route('/add_torrent', methods=['POST'])
+@user_required
+@scraper_permission_required
 def add_torrent():
     torrent_index = int(request.form.get('torrent_index'))
     torrent_results = session.get('torrent_results', [])
@@ -749,6 +793,8 @@ def get_item_details():
         return jsonify({'error': 'Could not fetch details'}), 400
     
 @scraper_bp.route('/run_scrape', methods=['POST'])
+@user_required
+@scraper_permission_required
 def run_scrape():
     data = request.json
     try:
@@ -860,6 +906,8 @@ def run_scrape():
         return jsonify({'error': str(e)}), 500
 
 @scraper_bp.route('/remove_uncached_item', methods=['POST'])
+@user_required
+@scraper_permission_required
 def remove_uncached_item():
     """Remove an uncached item from the database and debrid provider"""
     try:
@@ -996,6 +1044,8 @@ def tmdb_image_proxy(image_path):
         return make_response('Image not found', 404)
 
 @scraper_bp.route('/check_cache_status', methods=['POST'])
+@user_required
+@scraper_permission_required
 def check_cache_status():
     try:
         hashes = request.json.get('hashes', [])

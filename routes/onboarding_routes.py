@@ -8,6 +8,9 @@ import logging
 import platform
 from routes.trakt_routes import check_trakt_auth_status
 import json
+import requests
+import uuid
+import urllib.parse
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
@@ -578,4 +581,339 @@ def validate_onboarding_settings():
                 'valid': False,
                 'message': str(e)
             }]
+        }), 500
+
+@onboarding_bp.route('/plex/discover', methods=['GET'])
+@login_required
+def discover_plex_servers():
+    """Discover available Plex servers using X-Plex-Token."""
+    try:
+        from plexapi.myplex import MyPlexAccount
+        from plexapi.exceptions import Unauthorized, NotFound
+        
+        token = request.args.get('token')
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'No token provided'
+            }), 400
+            
+        try:
+            account = MyPlexAccount(token=token)
+            resources = account.resources()
+            servers = []
+            
+            for resource in resources:
+                if resource.provides == 'server':
+                    connections = []
+                    for connection in resource.connections:
+                        if connection.local:
+                            connections.append({
+                                'uri': connection.uri,
+                                'local': True
+                            })
+                        else:
+                            connections.append({
+                                'uri': connection.uri,
+                                'local': False
+                            })
+                    
+                    servers.append({
+                        'name': resource.name,
+                        'clientIdentifier': resource.clientIdentifier,
+                        'connections': connections,
+                        'owned': resource.owned,
+                        'home': resource.home
+                    })
+            
+            return jsonify({
+                'success': True,
+                'servers': servers,
+                'username': account.username
+            })
+            
+        except Unauthorized:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid Plex token'
+            }), 401
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@onboarding_bp.route('/plex/libraries', methods=['GET'])
+@login_required
+def get_plex_libraries():
+    """Get available libraries from a Plex server."""
+    try:
+        from plexapi.server import PlexServer
+        from plexapi.exceptions import Unauthorized, NotFound
+        
+        url = request.args.get('url')
+        token = request.args.get('token')
+        
+        if not url or not token:
+            return jsonify({
+                'success': False,
+                'error': 'URL and token are required'
+            }), 400
+            
+        try:
+            # Clean up URL
+            url = url.rstrip('/')
+            plex = PlexServer(url, token)
+            sections = plex.library.sections()
+            
+            libraries = []
+            for section in sections:
+                libraries.append({
+                    'key': section.key,
+                    'title': section.title,
+                    'type': section.type,
+                    'locations': section.locations
+                })
+            
+            return jsonify({
+                'success': True,
+                'libraries': libraries
+            })
+            
+        except Unauthorized:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid Plex token'
+            }), 401
+        except NotFound:
+            return jsonify({
+                'success': False,
+                'error': 'Could not connect to Plex server'
+            }), 404
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@onboarding_bp.route('/plex/auth/pin', methods=['POST'])
+def create_plex_pin():
+    try:
+        import uuid
+        
+        # Get the client ID from the session or generate a new one
+        client_id = session.get('plex_client_id', str(uuid.uuid4()))
+        session['plex_client_id'] = client_id  # Store for future use
+        
+        # Define headers for Plex API
+        headers = {
+            'Accept': 'application/json',
+            'X-Plex-Product': 'cli_debrid',
+            'X-Plex-Version': '0.6.06',
+            'X-Plex-Client-Identifier': client_id,
+            'X-Plex-Platform': 'Web',
+            'X-Plex-Platform-Version': '1.0',
+            'X-Plex-Device': 'Browser',
+            'X-Plex-Device-Name': 'cli_debrid_browser',
+            'X-Plex-Device-Screen-Resolution': '1920x1080',
+            'X-Plex-Language': 'en',
+            'X-Plex-Model': 'hosted'
+        }
+        
+        # Make request to Plex to create a pin
+        response = requests.post(
+            'https://plex.tv/api/v2/pins',
+            headers=headers,
+            json={'strong': True}
+        )
+        
+        if response.status_code == 201:
+            pin_data = response.json()
+            
+            # Store pin data in session
+            session['plex_pin_id'] = pin_data['id']
+            
+            # Construct the auth URL - using the correct format
+            auth_url = (
+                'https://app.plex.tv/auth#?' + 
+                f'clientID={client_id}&' +
+                f'code={pin_data["code"]}&' +
+                'context%5Bdevice%5D%5Bproduct%5D=cli_debrid&' +
+                'context%5Bdevice%5D%5Bversion%5D=0.6.06&' +
+                'context%5Bdevice%5D%5Bplatform%5D=Web&' +
+                'context%5Bdevice%5D%5BplatformVersion%5D=1.0&' +
+                'context%5Bdevice%5D%5Bdevice%5D=Browser&' +
+                'context%5Bdevice%5D%5BdeviceName%5D=cli_debrid_browser&' +
+                'context%5Bdevice%5D%5Bmodel%5D=hosted&' +
+                'context%5Bdevice%5D%5BscreenResolution%5D=1920x1080&' +
+                'context%5Bdevice%5D%5Blanguage%5D=en&' +
+                f'forwardUrl={urllib.parse.quote(url_for("onboarding.plex_auth_callback", pinId=pin_data["id"], clientId=client_id, _external=True))}'
+            )
+            
+            return jsonify({
+                'success': True,
+                'pin': {
+                    'id': pin_data['id'],
+                    'code': pin_data['code'],
+                    'clientId': client_id,
+                    'authUrl': auth_url
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to create pin: {response.status_code}'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@onboarding_bp.route('/plex/auth/callback')
+def plex_auth_callback():
+    """Handle Plex OAuth callback."""
+    try:
+        pin_id = request.args.get('pinId')
+        client_id = request.args.get('clientId')
+        
+        if not pin_id or not client_id:
+            return render_template('plex_auth_callback.html', 
+                                 success=False, 
+                                 error='Missing required parameters')
+        
+        return render_template('plex_auth_callback.html')
+            
+    except Exception as e:
+        return render_template('plex_auth_callback.html', 
+                             success=False, 
+                             error=str(e))
+
+@onboarding_bp.route('/plex/verify_token', methods=['POST'])
+def verify_plex_token():
+    """Verify if a Plex token is valid."""
+    try:
+        token = request.json.get('token')
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'Token is required'
+            }), 400
+            
+        # Get client ID from session or request
+        client_id = session.get('plex_client_id') or request.json.get('clientId')
+        if not client_id:
+            return jsonify({
+                'success': False,
+                'error': 'No client ID found'
+            }), 400
+            
+        # Make request to verify token
+        response = requests.get(
+            'https://plex.tv/api/v2/user',
+            headers={
+                'Accept': 'application/json',
+                'X-Plex-Token': token,
+                'X-Plex-Client-Identifier': client_id,
+                'X-Plex-Product': 'cli_debrid'
+            }
+        )
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            return jsonify({
+                'success': True,
+                'valid': True,
+                'username': user_data.get('username', 'Unknown')
+            })
+        elif response.status_code == 401:
+            return jsonify({
+                'success': True,
+                'valid': False,
+                'error': 'Invalid token'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to verify token: {response.status_code}'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@onboarding_bp.route('/plex/auth/pin/check', methods=['POST'])
+def check_plex_pin():
+    """Check the status of a Plex auth pin."""
+    try:
+        pin_id = request.json.get('pin_id')
+        if not pin_id:
+            return jsonify({
+                'success': False,
+                'error': 'Pin ID is required'
+            }), 400
+
+        # Get the client ID from session
+        client_id = session.get('plex_client_id')
+        if not client_id:
+            return jsonify({
+                'success': False,
+                'error': 'No client ID found in session'
+            }), 400
+
+        # Make request to check pin status
+        headers = {
+            'Accept': 'application/json',
+            'X-Plex-Client-Identifier': client_id
+        }
+
+        response = requests.get(
+            f'https://plex.tv/api/v2/pins/{pin_id}',
+            headers=headers
+        )
+
+        if response.status_code == 200:
+            pin_data = response.json()
+            if pin_data.get('authToken'):
+                # Pin has been authorized
+                return jsonify({
+                    'success': True,
+                    'token': pin_data['authToken']
+                })
+            else:
+                # Pin is still waiting for authorization
+                return jsonify({
+                    'success': False,
+                    'error': 'waiting_for_auth'
+                })
+        elif response.status_code == 404:
+            return jsonify({
+                'success': False,
+                'error': 'Pin not found'
+            }), 404
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to check pin status: {response.status_code}'
+            }), response.status_code
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
