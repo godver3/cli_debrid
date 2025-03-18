@@ -67,7 +67,7 @@ Supports either a Plex or Symlinked library:
 - Plex: Uses Plex's API to get your library and track what you have.
 - Symlinked: Uses a local folder structure to track your library.
 - *Important - if running on Windows, Developer Mode must be enabled to allow symlinking!*
-  
+
 ### Settings
 
 A settings menu allows you to configure all program settings:
