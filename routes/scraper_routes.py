@@ -25,6 +25,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 from flask_login import current_user
+import re
 
 scraper_bp = Blueprint('scraper', __name__)
 
