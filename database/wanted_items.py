@@ -1,17 +1,17 @@
 import logging
 from .core import get_db_connection, normalize_string, get_existing_airtime
-from manual_blacklist import is_blacklisted
+from database.manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
 from datetime import datetime, timezone
 from metadata.metadata import get_tmdb_id_and_media_type
 import random
 import os
-from config_manager import load_config
+from queues.config_manager import load_config
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
     from metadata.metadata import get_show_airtime_by_imdb_id
-    from settings import get_setting
+    from utilities.settings import get_setting
 
     conn = get_db_connection()
     try:
@@ -450,7 +450,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     
                     airtime = item.get('airtime') or '19:00'
                     
-                    from settings import get_setting
+                    from utilities.settings import get_setting
 
                     if get_setting('Debug', 'allow_partial_overseerr_requests'):
                         initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'

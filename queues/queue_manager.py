@@ -3,7 +3,11 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, Any, List
 
-from database import update_media_item_state, get_media_item_by_id, update_media_item
+from database.database_writing import update_media_item_state
+from database.database_reading import get_media_item_by_id
+from database.collected_items import add_to_collected_notifications
+from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
+
 from queues.wanted_queue import WantedQueue
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
@@ -13,7 +17,7 @@ from queues.unreleased_queue import UnreleasedQueue
 from queues.blacklisted_queue import BlacklistedQueue
 from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
-from wake_count_manager import wake_count_manager
+from queues.wake_count_manager import wake_count_manager
 
 class QueueManager:
     _instance = None
@@ -213,7 +217,7 @@ class QueueManager:
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
         
-        from settings import get_setting
+        from utilities.settings import get_setting
 
         '''
         # Check if Plex library checks are disabled
@@ -253,8 +257,6 @@ class QueueManager:
             logging.info(f"Moved item {item_identifier} to Collected state")
             return
         '''
-
-        # Normal flow - move to checking
         update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -275,7 +277,7 @@ class QueueManager:
         
         wake_count = wake_count_manager.get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
-        
+
         update_media_item_state(item['id'], 'Sleeping')
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -289,6 +291,7 @@ class QueueManager:
     def move_to_unreleased(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Unreleased queue")
+
         update_media_item_state(item['id'], 'Unreleased')
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -301,6 +304,7 @@ class QueueManager:
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Blacklisted queue")
+
         update_media_item_state(item['id'], 'Blacklisted')
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -313,6 +317,7 @@ class QueueManager:
     def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Pending Uncached Additions queue")
+
         update_media_item_state(item['id'], 'Pending Uncached', filled_by_title=title, filled_by_magnet=link, scrape_results=scrape_results)
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
@@ -336,7 +341,6 @@ class QueueManager:
             if reason:
                 pause_message += f": {reason}"
             logging.info(pause_message)
-            from notifications import send_queue_pause_notification
             send_queue_pause_notification(pause_message)
         else:
             logging.warning("Queue is already paused")
@@ -345,7 +349,6 @@ class QueueManager:
         if self.paused:
             self.paused = False
             logging.info("Queue processing resumed")
-            from notifications import send_queue_resume_notification
             send_queue_resume_notification("Queue processing resumed")
         else:
             logging.warning("Queue is not paused")
@@ -362,7 +365,6 @@ class QueueManager:
         collected_at = datetime.now()
         
         # Update the item state in the database
-        from database import update_media_item_state, get_media_item_by_id
         update_media_item_state(item['id'], 'Collected', collected_at=collected_at)
         
         # Get the updated item
@@ -374,7 +376,6 @@ class QueueManager:
             
             # Add to collected notifications if not skipped
             if not skip_notification:
-                from database.collected_items import add_to_collected_notifications
                 updated_item_dict = dict(updated_item)
                 updated_item_dict['is_upgrade'] = False  # Not an upgrade since it's a new collection
                 updated_item_dict['original_collected_at'] = collected_at

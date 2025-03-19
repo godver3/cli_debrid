@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Dict, Any
 from utilities.anidb_functions import get_anidb_metadata_for_item, format_filename_with_anidb
-from settings import get_setting
+from utilities.settings import get_setting
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG,

@@ -5,7 +5,13 @@
 {% block content %}
 <h2>Debug - Database Content</h2>
 
-<button id="deleteAllItems">Delete All Items</button>
+<div class="controls">
+    <button id="deleteAllItems">Delete All Items</button>
+    <div class="search-container">
+        <input type="text" id="searchInput" placeholder="Search by title, IMDB ID, or metadata...">
+        <span class="item-count">Showing {{ [items|length, 100]|min }} of {{ items|length }} items</span>
+    </div>
+</div>
 
 <h3>Items</h3>
 <table id="itemTable">
@@ -18,8 +24,8 @@
         </tr>
     </thead>
     <tbody>
-    {% for item in items %}
-        <tr>
+    {% for item in items[:100] %}
+        <tr class="item-row">
             <td data-label="Title">{{ item.title }}</td>
             <td data-label="Year">
                 {{ item.display_year or 'N/A' }}
@@ -33,11 +39,21 @@
         <tr class="details" style="display: none;">
             <td colspan="4">
                 <h4>Metadata:</h4>
-                <ul>
+                <div class="metadata-container">
                 {% for metadata in item.item_metadata %}
-                    <li>{{ metadata.key }}: {{ metadata.value }} ({{ metadata.provider }})</li>
+                    <div class="metadata-item">
+                        <strong>{{ metadata.key }}</strong>
+                        <span class="provider">({{ metadata.provider }})</span>
+                        <div class="metadata-value">
+                            {% if metadata.value.startswith('{') or metadata.value.startswith('[') %}
+                                <pre>{{ metadata.value | safe | json_pretty }}</pre>
+                            {% else %}
+                                {{ metadata.value }}
+                            {% endif %}
+                        </div>
+                    </div>
                 {% endfor %}
-                </ul>
+                </div>
             </td>
         </tr>
     {% endfor %}
@@ -45,6 +61,37 @@
 </table>
 
 <style>
+    .controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        gap: 1rem;
+    }
+    .search-container {
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+    }
+    #searchInput {
+        flex-grow: 1;
+        padding: 0.5rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        background: #2a2a2a;
+        color: #fff;
+        font-size: 1rem;
+    }
+    #searchInput:focus {
+        outline: none;
+        border-color: #666;
+    }
+    .item-count {
+        color: #666;
+        font-size: 0.9em;
+        white-space: nowrap;
+    }
     #itemTable {
         width: 100%;
         border-collapse: collapse;
@@ -64,22 +111,59 @@
     .toggleDetails, .deleteItem {
         margin-right: 5px;
     }
+    .metadata-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1rem;
+        padding: 1rem;
+    }
+    .metadata-item {
+        background: #1a1a1a;
+        padding: 1rem;
+        border-radius: 4px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .metadata-item strong {
+        display: block;
+        margin-bottom: 0.5rem;
+        color: #b2b2b2;
+    }
+    .provider {
+        color: #666;
+        font-size: 0.9em;
+        margin-left: 0.5rem;
+    }
+    .metadata-value {
+        margin-top: 0.5rem;
+        overflow-x: auto;
+    }
+    .metadata-value pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        background: #2a2a2a;
+        padding: 0.5rem;
+        border-radius: 3px;
+    }
     @media (max-width: 768px) {
+        .controls {
+            flex-direction: column;
+        }
+        .search-container {
+            width: 100%;
+        }
         #itemTable {
             font-size: 14px;
         }
-
         #itemTable th {
             display: none;
         }
-
         #itemTable td {
             display: block;
             position: relative;
             padding-left: 50%;
             text-align: right;
         }
-
         #itemTable td:before {
             content: attr(data-label);
             position: absolute;
@@ -90,7 +174,6 @@
             text-align: left;
             font-weight: bold;
         }
-
         .toggleDetails, .deleteItem {
             display: inline-block;
             width: calc(50% - 5px);
@@ -98,15 +181,83 @@
             padding: 8px 0;
             text-align: center;
         }
+        .metadata-container {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 
 <script>
-document.querySelectorAll('.deleteItem').forEach(button => {
-    button.addEventListener('click', function() {
-        const imdbId = this.getAttribute('data-imdb-id');
-        if (confirm('Are you sure you want to delete this item?')) {
-            fetch(`/debug/delete_item/${imdbId}`, {
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    
+    // Debounce function
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+    
+    // Server-side search function
+    const performSearch = debounce(function(searchTerm) {
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('search', searchTerm);
+        window.location.href = currentUrl.toString();
+    }, 500);
+    
+    searchInput.addEventListener('input', (e) => {
+        performSearch(e.target.value);
+    });
+    
+    // Set search input value from URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const searchQuery = urlParams.get('search');
+    if (searchQuery) {
+        searchInput.value = searchQuery;
+    }
+    
+    document.querySelectorAll('.deleteItem').forEach(button => {
+        button.addEventListener('click', function() {
+            const imdbId = this.getAttribute('data-imdb-id');
+            if (confirm('Are you sure you want to delete this item?')) {
+                fetch(`/debug/delete_item/${imdbId}`, {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('Error deleting item');
+                    }
+                });
+            }
+        });
+    });
+
+    document.querySelectorAll('.toggleDetails').forEach(button => {
+        button.addEventListener('click', function() {
+            const imdbId = this.getAttribute('data-imdb-id');
+            const detailsRow = this.closest('tr').nextElementSibling;
+            if (detailsRow.style.display === 'none') {
+                detailsRow.style.display = 'table-row';
+                this.textContent = 'Hide Details';
+            } else {
+                detailsRow.style.display = 'none';
+                this.textContent = 'Show Details';
+            }
+        });
+    });
+
+    document.getElementById('deleteAllItems').addEventListener('click', function() {
+        if (confirm('Are you sure you want to delete all items? This action cannot be undone.')) {
+            fetch('/api/debug/delete_all_items', {
                 method: 'POST'
             })
             .then(response => response.json())
@@ -114,41 +265,11 @@ document.querySelectorAll('.deleteItem').forEach(button => {
                 if (data.success) {
                     location.reload();
                 } else {
-                    alert('Error deleting item');
+                    alert('Error deleting all items: ' + (data.error || 'Unknown error'));
                 }
             });
         }
     });
-});
-
-document.querySelectorAll('.toggleDetails').forEach(button => {
-    button.addEventListener('click', function() {
-        const imdbId = this.getAttribute('data-imdb-id');
-        const detailsRow = this.closest('tr').nextElementSibling;
-        if (detailsRow.style.display === 'none') {
-            detailsRow.style.display = 'table-row';
-            this.textContent = 'Hide Details';
-        } else {
-            detailsRow.style.display = 'none';
-            this.textContent = 'Show Details';
-        }
-    });
-});
-
-document.getElementById('deleteAllItems').addEventListener('click', function() {
-    if (confirm('Are you sure you want to delete all items? This action cannot be undone.')) {
-        fetch('/api/debug/delete_all_items', {
-            method: 'POST'
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                location.reload();
-            } else {
-                alert('Error deleting all items: ' + (data.error || 'Unknown error'));
-            }
-        });
-    }
 });
 </script>
 {% endblock %}

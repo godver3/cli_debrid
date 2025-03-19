@@ -1,5 +1,5 @@
 from typing import Optional
-from settings import get_setting, ensure_settings_file
+from utilities.settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
 from .common import (

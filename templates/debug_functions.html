@@ -67,7 +67,13 @@
                         <option value="all">All Enabled Sources</option>
                         {% for source in content_sources %}
                             {% if content_sources[source].enabled %}
-                                <option value="{{ source }}">{{ source }}</option>
+                                {% set display_name = content_sources[source].get('display_name') %}
+                                {% if display_name %}
+                                    <option value="{{ source }}">{{ display_name }}</option>
+                                {% else %}
+                                    {% set formatted_name = source.replace('_', ' ') %}
+                                    <option value="{{ source }}">{{ formatted_name | title }}</option>
+                                {% endif %}
                             {% endif %}
                         {% endfor %}
                     </select>
@@ -879,11 +885,21 @@
         getWantedForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
+            
+            // Get the selected source text (display name) and value
+            const sourceSelect = document.getElementById('wanted_source');
+            const sourceValue = sourceSelect.value;
+            const sourceDisplayName = sourceSelect.options[sourceSelect.selectedIndex].textContent;
+            
+            let confirmMessage = 'Are you sure you want to get wanted items?';
+            if (sourceValue !== 'all') {
+                confirmMessage = `Are you sure you want to get wanted items from "${sourceDisplayName}"?`;
+            }
 
-            // Adding a confirmation popup similar to getCollectedForm
+            // Adding a confirmation popup
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
-                message: 'Are you sure you want to get wanted items?',
+                message: confirmMessage,
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();
@@ -922,12 +938,40 @@
             .then(response => response.json())
             .then(data => {
                 const taskSelect = document.getElementById('task_select');
-                data.tasks.forEach(task => {
-                    const option = document.createElement('option');
-                    option.value = task;
-                    option.textContent = task;
-                    taskSelect.appendChild(option);
-                });
+                
+                // Clear any existing options
+                taskSelect.innerHTML = '';
+                
+                // Check if we have the new structured format
+                if (data.task_map) {
+                    // Sort tasks alphabetically by display name
+                    data.task_map.sort((a, b) => a.display_name.localeCompare(b.display_name));
+                    
+                    // Add options with display names
+                    data.task_map.forEach(task => {
+                        const option = document.createElement('option');
+                        option.value = task.id;
+                        option.textContent = task.display_name;
+                        taskSelect.appendChild(option);
+                    });
+                } else {
+                    // Fallback to old format if task_map is not available
+                    data.tasks.forEach(task => {
+                        const option = document.createElement('option');
+                        option.value = task;
+                        
+                        // Format the task name
+                        let displayName = task;
+                        if (task.startsWith('task_')) {
+                            displayName = task.replace('task_', '').replace(/_/g, ' ');
+                            // Capitalize first letter of each word
+                            displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
+                        }
+                        
+                        option.textContent = displayName;
+                        taskSelect.appendChild(option);
+                    });
+                }
             })
             .catch(error => console.error('Error fetching available tasks:', error));
 
@@ -935,11 +979,13 @@
         const runTaskForm = document.getElementById('run-task-form');
         runTaskForm.addEventListener('submit', function(e) {
             e.preventDefault();
-            const taskName = document.getElementById('task_select').value;
+            const taskSelect = document.getElementById('task_select');
+            const taskName = taskSelect.value;
+            const taskDisplayName = taskSelect.options[taskSelect.selectedIndex].textContent;
             
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
-                message: `Are you sure you want to run the task "${taskName}"?`,
+                message: `Are you sure you want to run the task "${taskDisplayName}"?`,
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();

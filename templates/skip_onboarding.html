@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Skip Onboarding{% endblock %}
+{% block content %}
+<div class="onboarding-container">
+    <h1 class="onboarding-title">Skip Onboarding</h1>
+    <p class="onboarding-text">Are you sure you want to skip the onboarding process? You can always configure settings later.</p>
+    <button id="skip-onboarding-btn" class="onboarding-btn">Skip Onboarding</button>
+</div>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const skipButton = document.getElementById('skip-onboarding-btn');
+    
+    skipButton.addEventListener('click', function() {
+        fetch('{{ url_for("onboarding.skip_onboarding") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Onboarding skipped successfully!',
+                    onClose: () => {
+                        window.location.href = '{{ url_for("root.root") }}';
+                    }
+                });
+            } else {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: data.error || 'Failed to skip onboarding'
+                });
+            }
+        })
+        .catch(error => {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'An unexpected error occurred'
+            });
+        });
+    });
+});
+</script>
+{% endblock %} 

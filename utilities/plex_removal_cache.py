@@ -4,7 +4,7 @@ import time
 from datetime import datetime, timedelta
 import logging
 from typing import Dict, List, Optional, Tuple
-from settings import get_setting
+from utilities.settings import get_setting
 
 # Cache file path
 CACHE_FILE = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'plex_removal_cache.pkl')

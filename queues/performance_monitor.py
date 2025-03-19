@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import time
 import json
 import platform
-from settings import get_setting
+from utilities.settings import get_setting
 
 class PerformanceMonitor:
     """Monitor system performance metrics"""

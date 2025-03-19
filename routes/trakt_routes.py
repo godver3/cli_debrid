@@ -1,12 +1,12 @@
 from flask import jsonify, Blueprint, current_app
-from settings import get_setting
+from utilities.settings import get_setting
 from trakt.core import get_device_code, get_device_token
 import time
 import json
 import os
 import sys
 import traceback
-from api_tracker import api
+from routes.api_tracker import api
 import logging
 from pathlib import Path
 import re

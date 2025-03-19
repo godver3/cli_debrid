@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 from plexapi.server import PlexServer
 
-from settings import get_setting
+from utilities.settings import get_setting
 from database.symlink_verification import (
     get_unverified_files,
     mark_file_as_verified,

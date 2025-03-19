@@ -1,8 +1,8 @@
 from flask import Blueprint, jsonify, request, render_template, Response, current_app
-from settings import load_config, validate_url
-from settings_schema import SETTINGS_SCHEMA
+from utilities.settings import load_config, validate_url
+from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
-from config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
+from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
 from routes.models import admin_required, onboarding_required
 from .utils import is_user_system_enabled
 import traceback
@@ -10,7 +10,7 @@ import json
 import os
 import platform
 from datetime import datetime
-from notifications import (
+from routes.notifications import (
     send_telegram_notification, 
     send_discord_notification, 
     send_ntfy_notification, 
@@ -471,24 +471,46 @@ def index():
 def api_program_settings():
     try:
         config = load_config()
-        program_settings = {
-            'Scrapers': config.get('Scrapers', {}),
-            'Content Sources': config.get('Content Sources', {}),
-            'Debug': config.get('Debug', {}),
-            'Plex': {
-                'url': config.get('Plex', {}).get('url', ''),
-                'token': config.get('Plex', {}).get('token', '')
-            },
-            'Metadata Battery': {
-                'url': config.get('Metadata Battery', {}).get('url', '')
-            },
-            'Debrid Provider': {
-                'provider': config.get('Debrid Provider', {}).get('provider', ''),
-                'api_key': config.get('Debrid Provider', {}).get('api_key', '')
-            }
-        }
+        
+        def merge_defaults(config_section, schema_section):
+            if not isinstance(schema_section, dict):
+                return config_section
+                
+            result = config_section.copy() if config_section else {}
+            
+            # Handle schema sections with explicit type and default
+            if 'type' in schema_section and 'default' in schema_section:
+                if not config_section:  # If no user value, use default
+                    return schema_section['default']
+            
+            # Handle nested schema sections
+            for key, schema_value in schema_section.items():
+                if isinstance(schema_value, dict):
+                    if 'default' in schema_value and key not in result:
+                        result[key] = schema_value['default']
+                    elif 'schema' in schema_value:
+                        if key not in result:
+                            result[key] = {}
+                        result[key] = merge_defaults(result.get(key, {}), schema_value['schema'])
+            
+            return result
+
+        # Merge defaults for each section
+        program_settings = {}
+        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider']
+        
+        for section in sections_to_include:
+            if section in SETTINGS_SCHEMA:
+                program_settings[section] = merge_defaults(
+                    config.get(section, {}),
+                    SETTINGS_SCHEMA[section]
+                )
+            else:
+                program_settings[section] = config.get(section, {})
+
         return jsonify(program_settings)
     except Exception as e:
+        logging.error(f"Error in api_program_settings: {str(e)}", exc_info=True)
         return jsonify({"error": "An error occurred while loading program settings."}), 500
     
 @settings_bp.route('/scraping/get')
@@ -506,6 +528,39 @@ def update_settings():
         logging.info("Received settings update:")
         logging.info(f"File Management: {json.dumps(new_settings.get('File Management', {}), indent=2)}")
         logging.info(f"Plex: {json.dumps(new_settings.get('Plex', {}), indent=2)}")
+
+        # Handle staleness threshold update in settings.json
+        if 'Staleness Threshold' in new_settings and 'staleness_threshold' in new_settings['Staleness Threshold']:
+            try:
+                # Get the absolute path to settings.json
+                settings_json_path = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'settings.json')
+                logging.info(f"Attempting to update settings.json at path: {settings_json_path}")
+
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(settings_json_path), exist_ok=True)
+
+                # Load existing settings or create new
+                settings_json = {}
+                if os.path.exists(settings_json_path):
+                    with open(settings_json_path, 'r') as f:
+                        settings_json = json.load(f)
+                        logging.info(f"Loaded existing settings.json: {json.dumps(settings_json, indent=2)}")
+                else:
+                    logging.info("settings.json does not exist, creating new file")
+
+                # Update staleness_threshold in settings.json
+                staleness_value = new_settings['Staleness Threshold']['staleness_threshold']
+                settings_json['staleness_threshold'] = staleness_value
+                logging.info(f"Setting staleness_threshold to: {staleness_value}")
+
+                # Write back to settings.json
+                with open(settings_json_path, 'w') as f:
+                    json.dump(settings_json, f, indent=4)
+                    
+                logging.info(f"Successfully updated settings.json with new staleness_threshold: {staleness_value}")
+            except Exception as e:
+                logging.error(f"Error updating settings.json: {str(e)}")
+                logging.error(f"Full traceback: {traceback.format_exc()}")
 
         # Validate Plex libraries if Plex is selected
         file_management = new_settings.get('File Management', {})
@@ -564,9 +619,9 @@ def update_settings():
         # Save config only once at the end
         from debrid import reset_provider
         reset_provider()
-        from queue_manager import QueueManager
+        from queues.queue_manager import QueueManager
         QueueManager().reinitialize_queues()
-        from run_program import ProgramRunner
+        from queues.run_program import ProgramRunner
         ProgramRunner().reinitialize()
 
         return jsonify({"status": "success", "message": "Settings updated successfully"})
@@ -752,8 +807,6 @@ def rename_version():
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Version not found'}), 404
-    else:
-        return jsonify({'success': False, 'error': 'Scraping versions not found in config'}), 404
 
 @settings_bp.route('/versions/duplicate', methods=['POST'])
 def duplicate_version():
@@ -1331,4 +1384,144 @@ def test_notification():
             
     except Exception as e:
         logging.error(f"Error testing notification: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/settings_schema', methods=['GET'])
+def api_settings_schema():
+    try:
+        return jsonify(SETTINGS_SCHEMA)
+    except Exception as e:
+        return jsonify({"error": "An error occurred while loading settings schema."}), 500
+
+@settings_bp.route('/api/phalanx-disclaimer-status')
+def get_phalanx_disclaimer_status():
+    try:
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        disclaimer_file = os.path.join(db_content_dir, 'phalanx_disclaimer.json')
+        if os.path.exists(disclaimer_file):
+            with open(disclaimer_file, 'r') as f:
+                status = json.load(f)
+                # Only return True if they've actually made a choice (accepted or declined)
+                return jsonify({'hasSeenDisclaimer': 'accepted' in status})
+        return jsonify({'hasSeenDisclaimer': False})
+    except Exception as e:
+        logging.error(f"Error checking Phalanx disclaimer status: {str(e)}")
+        return jsonify({'hasSeenDisclaimer': False})
+
+@settings_bp.route('/api/phalanx-disclaimer-accept', methods=['POST'])
+def accept_phalanx_disclaimer():
+    try:
+        data = request.json
+        accepted = data.get('accepted', False)
+        print(f"Accepted: {accepted}")
+        
+        # Ensure db_content directory exists
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        os.makedirs(db_content_dir, exist_ok=True)
+        
+        # Save the disclaimer status
+        disclaimer_file = os.path.join(db_content_dir, 'phalanx_disclaimer.json')
+        
+        # Create the file with proper permissions
+        with open(disclaimer_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'accepted': accepted,
+                'timestamp': datetime.now().isoformat()
+            }, f, indent=4)
+        
+        # Update the UI Settings based on user choice
+        config = load_config()
+        if 'UI Settings' not in config:
+            config['UI Settings'] = {}
+        config['UI Settings']['enable_phalanx_db'] = accepted
+        save_config(config)
+        
+        logging.info(f"Phalanx disclaimer status saved: accepted={accepted}")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error saving Phalanx disclaimer status: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# Support modal status endpoints
+@settings_bp.route('/api/support-modal-status')
+def get_support_modal_status():
+    try:
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        status_file = os.path.join(db_content_dir, 'support_modal.json')
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                # Return both seen status and page views
+                return jsonify({
+                    'hasSeenSupport': status.get('seen', False),
+                    'pageViews': status.get('pageViews', 0)
+                })
+        return jsonify({
+            'hasSeenSupport': False,
+            'pageViews': 0
+        })
+    except Exception as e:
+        logging.error(f"Error checking support modal status: {str(e)}")
+        return jsonify({
+            'hasSeenSupport': False,
+            'pageViews': 0
+        })
+
+@settings_bp.route('/api/support-modal-seen', methods=['POST'])
+def mark_support_modal_seen():
+    try:
+        # Ensure db_content directory exists
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        os.makedirs(db_content_dir, exist_ok=True)
+        
+        # Save the status
+        status_file = os.path.join(db_content_dir, 'support_modal.json')
+        
+        # Create the file with proper permissions
+        with open(status_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'seen': True,
+                'pageViews': 0,  # Reset page views when marked as seen
+                'timestamp': datetime.now().isoformat()
+            }, f, indent=4)
+        
+        logging.info("Support modal marked as seen")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error saving support modal status: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/support-modal-pageview', methods=['POST'])
+def increment_pageview():
+    try:
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        os.makedirs(db_content_dir, exist_ok=True)
+        status_file = os.path.join(db_content_dir, 'support_modal.json')
+        
+        # Load existing status or create new
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+        else:
+            status = {
+                'seen': False,
+                'pageViews': 0,
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Only increment if not already seen
+        if not status.get('seen', False):
+            status['pageViews'] = status.get('pageViews', 0) + 1
+            
+            # Save updated status
+            with open(status_file, 'w', encoding='utf-8') as f:
+                json.dump(status, f, indent=4)
+        
+        return jsonify({
+            'success': True,
+            'pageViews': status['pageViews'],
+            'hasSeenSupport': status.get('seen', False)
+        })
+    except Exception as e:
+        logging.error(f"Error incrementing page views: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

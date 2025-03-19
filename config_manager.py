@@ -1,15 +1,15 @@
 import json
-from settings_schema import SETTINGS_SCHEMA
+from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
 import uuid
 import os
 import sys
 import shutil
-from datetime import datetime
+from datetime import datetime, date
 from debrid import reset_provider
 from utilities.file_lock import FileLock
 import importlib
-from poster_cache import CACHE_FILE
+from routes.poster_cache import CACHE_FILE
 
 # Get the base config directory from an environment variable, with a fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
@@ -49,8 +49,57 @@ def release_lock(lock_file_handle):
 def load_config():
     if not os.path.exists(CONFIG_FILE):
         return {}
+        
     with open(CONFIG_FILE, 'r') as file:
-        return json.load(file)
+        config = json.load(file)
+        
+    # Merge defaults from schema
+    def merge_defaults(config_section, schema_section):
+        # If schema_section isn't a dict, return config_section as is
+        if not isinstance(schema_section, dict):
+            return config_section
+            
+        # If config_section is a primitive type (not dict), and schema has a default, use the config value
+        if not isinstance(config_section, dict) and config_section is not None:
+            return config_section
+            
+        # Initialize result as empty dict if config_section is None or not a dict
+        result = config_section.copy() if isinstance(config_section, dict) else {}
+        
+        # Handle schema sections with explicit type and default
+        if 'type' in schema_section and 'default' in schema_section:
+            if config_section is None:  # If no user value, use default
+                return schema_section['default']
+            return config_section  # Otherwise use user value
+                
+        # Handle nested schema sections
+        if 'schema' in schema_section:
+            schema_items = schema_section['schema']
+            for key, schema_value in schema_items.items():
+                if key not in result and 'default' in schema_value:
+                    result[key] = schema_value['default']
+                elif isinstance(schema_value, dict) and 'schema' in schema_value:
+                    if key not in result:
+                        result[key] = {}
+                    result[key] = merge_defaults(result.get(key, {}), schema_value)
+        else:
+            # Handle regular sections
+            for key, schema_value in schema_section.items():
+                if isinstance(schema_value, dict):
+                    if 'default' in schema_value and key not in result:
+                        result[key] = schema_value['default']
+                    elif key in result:
+                        result[key] = merge_defaults(result[key], schema_value)
+        
+        return result
+
+    # Merge defaults for each section in the schema
+    for section, schema in SETTINGS_SCHEMA.items():
+        if section not in config:
+            config[section] = {}
+        config[section] = merge_defaults(config[section], schema)
+
+    return config
 
 def sync_plex_settings(config):
     """Synchronize shared settings between Plex and File Management sections."""
@@ -271,9 +320,9 @@ def update_content_source(source_id, source_config):
         
         # Explicitly reset provider and reinitialize components after content source update
         reset_provider()
-        from queue_manager import QueueManager
+        from queues.queue_manager import QueueManager
         QueueManager().reinitialize_queues()
-        from run_program import ProgramRunner
+        from queues.run_program import ProgramRunner
         ProgramRunner().reinitialize()
         logging.debug(f"[{process_id}] Successfully updated content source: {source_id}")
         return True
@@ -292,9 +341,9 @@ def update_all_content_sources(content_sources):
     
     # Explicitly reset provider and reinitialize components after updating all content sources
     reset_provider()
-    from queue_manager import QueueManager
+    from queues.queue_manager import QueueManager
     QueueManager().reinitialize_queues()
-    from run_program import ProgramRunner
+    from queues.run_program import ProgramRunner
     ProgramRunner().reinitialize()
     logging.debug(f"[{process_id}] Successfully updated all content sources")
     return True

@@ -4,7 +4,7 @@ import pickle
 from datetime import datetime, timedelta
 import feedparser
 from typing import List, Dict, Any, Tuple, Union
-from settings import get_setting
+from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence
 from cli_battery.app.metadata_manager import MetadataManager
 from cli_battery.app.trakt_metadata import TraktMetadata

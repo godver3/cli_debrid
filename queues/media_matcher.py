@@ -105,7 +105,7 @@ class MediaMatcher:
         is_anime = any('anime' in genre.lower() for genre in genres)
         
         # Check if using Plex library management
-        from settings import get_setting
+        from utilities.settings import get_setting
         file_collection_management = get_setting('File Management', 'file_collection_management')
         using_plex = file_collection_management == 'Plex'
         
@@ -186,7 +186,7 @@ class MediaMatcher:
                 
                 if has_date and not has_seasons and not has_episodes:
                     try:
-                        from web_scraper import get_tmdb_data
+                        from utilities.web_scraper import get_tmdb_data
                         episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item.get('season_number'), item.get('episode_number'))
                         
                         if episode_data:
@@ -206,7 +206,7 @@ class MediaMatcher:
                     if not season_episode_match and result_info.get('date'):
                         try:
                             if item_season is not None and item_episode is not None:
-                                from web_scraper import get_tmdb_data
+                                from utilities.web_scraper import get_tmdb_data
                                 episode_data = get_tmdb_data(int(item.get('tmdb_id')), 'tv', item_season, item_episode)
                                 
                                 if episode_data:

@@ -9,6 +9,12 @@ def create_database():
     create_tables()
     create_torrent_tracking_table()
     #TODO: create_upgrading_table()
+    
+    # Add statistics-specific indexes
+    create_statistics_indexes()
+    
+    # Create materialized views for statistics
+    create_statistics_summary_table()
 
 def migrate_schema():
     conn = get_db_connection()
@@ -334,3 +340,98 @@ def purge_database(content_type=None, state=None):
     finally:
         conn.close()
     create_tables()
+
+def create_statistics_indexes():
+    """Create indexes specifically for statistics queries"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Drop existing indexes if they exist to allow recreation
+    cursor.execute("DROP INDEX IF EXISTS idx_media_airing_improved")
+    cursor.execute("DROP INDEX IF EXISTS idx_media_airing_prefilter")
+    cursor.execute("DROP INDEX IF EXISTS idx_media_episodes_min_rowid")
+    cursor.execute("DROP INDEX IF EXISTS idx_media_episodes_min_id")
+    
+    # Create specific index for release date filtering on episodes (helps with temp table creation)
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_media_airing_prefilter ON media_items (
+        type, release_date, title
+    ) WHERE type = 'episode'
+    """)
+    
+    # Create index to help with the min id subquery
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_media_episodes_min_id ON media_items (
+        title, season_number, episode_number, id
+    ) WHERE type = 'episode'
+    """)
+    
+    # Create more specific index for the main airing query with ordered columns
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_media_airing_improved ON media_items (
+        type, title, release_date, airtime, season_number, episode_number, state
+    ) WHERE type = 'episode'
+    """)
+    
+    conn.commit()
+    conn.close()
+
+def create_statistics_summary_table():
+    """Create and maintain a summarized statistics table for faster queries"""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Create the table if it doesn't exist
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS statistics_summary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            total_movies INTEGER,
+            total_shows INTEGER,
+            total_episodes INTEGER,
+            latest_movie_collected TEXT,
+            latest_episode_collected TEXT,
+            latest_upgraded TEXT,
+            last_updated TEXT
+        )
+        ''')
+        
+        # Create trigger to update the summary table when media_items changes
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS update_statistics_summary_after_media_update
+        AFTER UPDATE ON media_items
+        WHEN new.state IN ('Collected', 'Upgrading') OR old.state IN ('Collected', 'Upgrading')
+        BEGIN
+            -- Mark that we need to update the stats
+            INSERT OR REPLACE INTO statistics_summary (id, last_updated)
+            VALUES (1, datetime('now', 'localtime'));
+        END;
+        ''')
+        
+        # Create trigger for inserts
+        cursor.execute('''
+        CREATE TRIGGER IF NOT EXISTS update_statistics_summary_after_media_insert
+        AFTER INSERT ON media_items
+        WHEN new.state IN ('Collected', 'Upgrading')
+        BEGIN
+            -- Mark that we need to update the stats
+            INSERT OR REPLACE INTO statistics_summary (id, last_updated)
+            VALUES (1, datetime('now', 'localtime'));
+        END;
+        ''')
+        
+        # Initialize with a row if empty
+        cursor.execute('SELECT COUNT(*) FROM statistics_summary')
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+            INSERT INTO statistics_summary 
+            (id, total_movies, total_shows, total_episodes, last_updated)
+            VALUES (1, 0, 0, 0, datetime('now', 'localtime'))
+            ''')
+        
+        conn.commit()
+        logging.info("Created statistics summary table and triggers")
+    except Exception as e:
+        logging.error(f"Error creating statistics summary table: {str(e)}")
+    finally:
+        conn.close()

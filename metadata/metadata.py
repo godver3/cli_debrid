@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import sys, os
 import json
 import time
-from settings import get_setting
+from utilities.settings import get_setting
 import re
 import pytz
 import time
@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from settings import get_setting
+from utilities.settings import get_setting
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.database import DatabaseManager
@@ -249,9 +249,10 @@ def _get_local_timezone():
     logging.getLogger('tzlocal').setLevel(logging.WARNING)
     
     from tzlocal import get_localzone
-    from settings import get_setting
+    from utilities.settings import get_setting
     from datetime import timezone
     import os
+    import re
     
     try:
         def is_valid_timezone(tz_str):
@@ -265,33 +266,76 @@ def _get_local_timezone():
             except Exception:
                 return False
         
+        def fix_common_timezone_errors(tz_str):
+            """Fix common timezone format errors."""
+            if not tz_str:
+                return tz_str
+                
+            # Common timezone format errors and their corrections
+            corrections = {
+                # Common continent pluralization errors
+                r'^Americas/': 'America/',
+                r'^Europes/': 'Europe/',
+                r'^Asias/': 'Asia/',
+                r'^Africas/': 'Africa/',
+                r'^Australias/': 'Australia/',
+                
+                # Common format corrections
+                r'^EST$': 'America/New_York',
+                r'^CST$': 'America/Chicago',
+                r'^MST$': 'America/Denver',
+                r'^PST$': 'America/Los_Angeles',
+                r'^GMT$': 'Etc/GMT',
+                
+                # Remove any spaces in timezone strings
+                r'\s+': '',
+            }
+            
+            # Apply corrections
+            corrected_tz = tz_str
+            for pattern, replacement in corrections.items():
+                corrected_tz = re.sub(pattern, replacement, corrected_tz)
+                
+            if corrected_tz != tz_str:
+                logging.warning(f"Corrected timezone format from '{tz_str}' to '{corrected_tz}'")
+                
+            return corrected_tz
+        
         # First try: Check for override in settings
         timezone_override = get_setting('Debug', 'timezone_override', '')
-        if timezone_override and is_valid_timezone(timezone_override):
-            try:
-                from zoneinfo import ZoneInfo
-                return ZoneInfo(timezone_override)
-            except Exception as e:
-                logging.error(f"Error creating ZoneInfo for override {timezone_override}: {e}")
+        if timezone_override:
+            # Try to fix common format errors
+            corrected_timezone = fix_common_timezone_errors(timezone_override)
+            if is_valid_timezone(corrected_timezone):
+                try:
+                    from zoneinfo import ZoneInfo
+                    return ZoneInfo(corrected_timezone)
+                except Exception as e:
+                    logging.error(f"Error creating ZoneInfo for override {corrected_timezone}: {e}")
         
         # Second try: Try getting from environment variable
         tz_env = os.environ.get('TZ')
-        if tz_env and is_valid_timezone(tz_env):
-            try:
-                from zoneinfo import ZoneInfo
-                return ZoneInfo(tz_env)
-            except Exception as e:
-                logging.error(f"Error creating ZoneInfo from TZ env {tz_env}: {e}")
+        if tz_env:
+            # Try to fix common format errors
+            corrected_tz_env = fix_common_timezone_errors(tz_env)
+            if is_valid_timezone(corrected_tz_env):
+                try:
+                    from zoneinfo import ZoneInfo
+                    return ZoneInfo(corrected_tz_env)
+                except Exception as e:
+                    logging.error(f"Error creating ZoneInfo from TZ env {corrected_tz_env}: {e}")
         
         # Third try: Try tzlocal with exception handling
         try:
             local_tz = get_localzone()
-            if hasattr(local_tz, 'zone') and is_valid_timezone(local_tz.zone):
-                try:
-                    from zoneinfo import ZoneInfo
-                    return ZoneInfo(local_tz.zone)
-                except Exception:
-                    return local_tz
+            if hasattr(local_tz, 'zone'):
+                corrected_zone = fix_common_timezone_errors(local_tz.zone)
+                if is_valid_timezone(corrected_zone):
+                    try:
+                        from zoneinfo import ZoneInfo
+                        return ZoneInfo(corrected_zone)
+                    except Exception:
+                        pass
             return local_tz
         except Exception as e:
             logging.error(f"Error getting local timezone from tzlocal: {str(e)}")
@@ -386,7 +430,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     from database.database_writing import update_blacklisted_date, update_media_item
     from database.core import get_db_connection
     from database.wanted_items import add_wanted_items
-    from run_program import program_runner
+    from queues.run_program import program_runner
 
     processed_items = {'movies': [], 'episodes': []}
     trakt_metadata = TraktMetadata()
@@ -507,7 +551,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
 
                 # Only add items with Overseerr versions if this is from an Overseerr webhook
                 if item.get('from_overseerr'):
-                    from settings import get_all_settings
+                    from utilities.settings import get_all_settings
                     content_sources = get_all_settings().get('Content Sources', {})
                     overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
                     versions = overseerr_settings.get('versions', {})

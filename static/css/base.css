@@ -59,7 +59,7 @@ body.has-visible-section {
     padding-top: 90px;
 }
 
-@media (max-width: 776px) {
+@media (max-width: 1045px) {
     body {
         padding-top: 60px !important;
     }
@@ -208,7 +208,6 @@ nav ul li a:hover::after {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
     min-height: 35px;
 }
 
@@ -380,25 +379,17 @@ tr:hover {
 }
 
 /* Filter and sort styles */
-#filter-sort {
-    margin-bottom: 20px;
+#filter-sort, #sort-container, #filter-buttons {
     background-color: #2c2c2c;
     padding: 15px;
     border-radius: 4px;
 }
 
-#filter-form {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-}
-
-#filter-form label {
+#filter-form label, #sort-container label, #filter-buttons label {
     margin-right: 5px;
 }
 
-#filter-form select,
+#filter-form select, #sort-container select, #filter-buttons select,
 #filter-form input[type="text"] {
     padding: 5px;
     border-radius: 4px;
@@ -407,7 +398,7 @@ tr:hover {
     color: #f4f4f4;
 }
 
-#filter-form button {
+#filter-form button, #sort-container button, #filter-buttons button {
     background-color: #4CAF50;
     color: white;
     border: none;
@@ -447,7 +438,7 @@ tr:hover {
 }
 
 /* Media Queries */
-@media (max-width: 1360px) {
+@media (max-width: 1045px) {
     .user-info {
         margin-left: 10px;
         display: flex;
@@ -479,7 +470,7 @@ tr:hover {
     }
 
     /* Preserve button text on larger screens */
-    @media (min-width: 777px) {
+    @media (min-width: 1045px) {
         .action-controls .icon-button, 
         .action-controls .start-program,
         .action-controls #programControlButton {
@@ -502,7 +493,7 @@ tr:hover {
 }
 
 /* Mobile-specific styles */
-@media (max-width: 776px) {
+@media (max-width: 1045px) {
     .header-controls {
         margin-right: 0px;  /* Increased right margin */
     }
@@ -572,7 +563,7 @@ tr:hover {
 }
 
 /* Desktop styles */
-@media (min-width: 777px) {
+@media (min-width: 1045px) {
     .action-controls .icon-button, 
     .action-controls .start-program,
     .action-controls #programControlButton {
@@ -655,22 +646,8 @@ tr:hover {
         gap: 12px;  /* Increase gap between buttons */
     }
 }
-@media (max-width: 1360px) and (min-width: 777px) {
-    .header-content {
-        flex: 0 0 auto;
-    }
-    
-    nav {
-        left: calc(50%); 
-    }
-    
-    .header-controls {
-        flex: 0 0 auto;
-    }
-}
 
-
-@media (max-width: 776px) {
+@media (max-width: 1045px) {
     nav ul {
         flex-direction: column;
         position: absolute;
@@ -1002,26 +979,22 @@ h2 {
 }
 
 /* Mobile-specific styles */
-@media (max-width: 768px) {
-    .icon-button {
-        min-width: 44px;  /* Minimum touch target size */
-        min-height: 44px;
-        padding: 12px 16px;
-        margin: 4px;
-        touch-action: manipulation;  /* Optimize for touch */
-    }
-    
-    .button-text {
-        font-size: 16px;  /* Larger text on mobile */
-    }
-    
-    .action-controls {
-        display: flex;
-        gap: 0px;  /* More spacing between buttons on mobile */
+@media (max-width: 1045px) {
+    .task-monitor-container {
+        display: none;
     }
 
-    body {
-        padding-top: 70px;
+    .rate-limits-section-toggle {
+        display: none;
+    }
+
+    .task-monitor-toggle {
+        display: none !important;
+    }
+    
+    .current-task-display,
+    .task-monitor-dropdown {
+        width: auto;
     }
 }
 
@@ -1118,7 +1091,7 @@ h2 {
     font-style: italic;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1045px) {
     .release-notes-popup {
         width: 95%;
         padding: 20px;
@@ -1387,7 +1360,7 @@ h2 {
     display: none;
 }
 
-@media (max-width: 768px) {
+@media (max-width: 1045px) {
     .task-monitor-container {
         display: none;
     }
@@ -1402,8 +1375,21 @@ h2 {
     }
 }
 
-/* Add task monitor mobile styles */
-@media (max-width: 776px) {
+/* Update this media query to include all task monitor mobile styles */
+@media (max-width: 1045px) {
+    .task-monitor-container {
+        display: none;
+    }
+
+    .task-monitor-toggle {
+        display: none;
+    }
+    
+    .current-task-display,
+    .task-monitor-dropdown {
+        width: auto;
+    }
+    
     .task-monitor-button {
         min-width: 40px;
         min-height: 40px;
@@ -1468,6 +1454,7 @@ h2 {
     font-size: 14px;
     cursor: pointer;
     animation: strobe 4s ease-in-out infinite;
+    scale: 0.8;
 }
 
 .update-indicator.hidden {
@@ -1480,7 +1467,7 @@ h2 {
     100% { color: #FFA500; opacity: 0.4; }
 }
 
-@media (max-width: 776px) {
+@media (max-width: 1045px) {
     .user-info {
         display: none;
     }
@@ -1509,4 +1496,28 @@ header:hover ~ .rate-limits-section {
     top: 50px;
     left: 50%;
     width: auto;
+}
+
+/* Mobile-specific styles */
+@media (max-width: 1045px) {
+    .icon-button {
+        min-width: 44px;  /* Minimum touch target size */
+        min-height: 44px;
+        padding: 12px 16px;
+        margin: 4px;
+        touch-action: manipulation;  /* Optimize for touch */
+    }
+    
+    .button-text {
+        font-size: 16px;  /* Larger text on mobile */
+    }
+    
+    .action-controls {
+        display: flex;
+        gap: 0px;  /* More spacing between buttons on mobile */
+    }
+
+    body {
+        padding-top: 70px;
+    }
 }

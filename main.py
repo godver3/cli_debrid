@@ -1,5 +1,6 @@
 import sys
 import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import appdirs
 import threading
 import time
@@ -22,12 +23,12 @@ import shutil
 import requests
 import re
 import subprocess
-from settings import set_setting
-from settings import get_setting
+from utilities.settings import set_setting
+from utilities.settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 from content_checkers.plex_watchlist import validate_plex_tokens
-from notifications import (
+from routes.notifications import (
     setup_crash_handler, 
     register_shutdown_handler, 
     register_startup_handler,
@@ -58,11 +59,11 @@ import logging
 import shutil
 import signal
 import time
-from api_tracker import api
-from settings import get_setting
+from routes.api_tracker import api
+from utilities.settings import get_setting
 import requests
 import re
-from settings import set_setting
+from utilities.settings import set_setting
 import subprocess
 import threading
 from logging_config import stop_global_profiling, start_global_profiling
@@ -192,41 +193,6 @@ def update_web_ui_state(state):
     except api.exceptions.RequestException:
         logging.error("Failed to update web UI state")
 
-def check_metadata_service():
-    grpc_url = get_setting('Metadata Battery', 'url')
-    battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
-    
-    # Remove leading "http://" or "https://"
-    grpc_url = re.sub(r'^https?://', '', grpc_url)
-    
-    # Remove any trailing port numbers and slashes
-    grpc_url = re.sub(r':\d+/?$', '', grpc_url)
-    
-    # Append ":50051"
-    grpc_url += ':50051'
-    
-    try:
-        channel = grpc.insecure_channel(grpc_url)
-        stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
-        # Try to make a simple call to check connectivity
-        stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
-        logging.info(f"Successfully connected to metadata service at {grpc_url}")
-        return grpc_url
-    except grpc.RpcError:
-        logging.warning(f"Failed to connect to {grpc_url}, falling back to localhost")
-        fallback_urls = ['localhost:50051', 'cli_battery_app:50051']
-        for url in fallback_urls:
-            try:
-                channel = grpc.insecure_channel(url)
-                stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
-                stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
-                logging.info(f"Successfully connected to metadata service at {url}")
-                return url
-            except grpc.RpcError:
-                logging.warning(f"Failed to connect to metadata service at {url}")
-        logging.error("Failed to connect to metadata service on all fallback options")
-        return None
-
 def package_app():
     try:
         # Determine the path to version.txt and other resources
@@ -333,6 +299,11 @@ def setup_tray_icon():
     def delayed_browser_launch():
         time.sleep(2)  # Wait for 2 seconds
         try:
+            # Check if auto browser launch is disabled in settings
+            if get_setting('UI Settings', 'disable_auto_browser', False):
+                logging.info("Automatic browser launch is disabled in settings")
+                return
+                
             port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
             if check_localhost_binding(port):
                 webbrowser.open(f'http://localhost:{port}')
@@ -367,6 +338,9 @@ def setup_tray_icon():
             if "cli_debrid" in window_text.lower() and window_text.lower().endswith(".exe"):
                 logging.info(f"Hiding window: {window_text}")
                 win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            elif "npm" in window_text.lower():
+                logging.info(f"Hiding window: {window_text}")
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
         win32gui.EnumWindows(enum_windows_callback, None)
 
     def restore_from_tray(icon):
@@ -374,6 +348,9 @@ def setup_tray_icon():
         def enum_windows_callback(hwnd, _):
             window_text = win32gui.GetWindowText(hwnd)
             if "cli_debrid" in window_text.lower() and window_text.lower().endswith(".exe"):
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                win32gui.SetForegroundWindow(hwnd)
+            elif "npm" in window_text.lower():
                 win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                 win32gui.SetForegroundWindow(hwnd)
         win32gui.EnumWindows(enum_windows_callback, None)
@@ -406,6 +383,31 @@ def setup_tray_icon():
                 except subprocess.TimeoutExpired:
                     metadata_process.kill()
                 print("Metadata battery stopped.")
+
+        # Terminate any running phalanx_db processes
+        try:
+            # Find any node/npm processes running phalanx_db
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.cmdline()
+                    # Check for both direct node processes and npm start processes
+                    is_target = (
+                        (any('node' in cmd.lower() for cmd in cmdline) and any('phalanx_db' in cmd.lower() for cmd in cmdline)) or
+                        (any('npm' in cmd.lower() for cmd in cmdline) and any('start' in cmd.lower() for cmd in cmdline))
+                    )
+                    if is_target:
+                        print(f"Stopping process: {proc.pid} - {' '.join(cmdline)}")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except psutil.TimeoutExpired:
+                            print(f"Force killing process: {proc.pid}")
+                            proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            print("Phalanx DB service stopped.")
+        except Exception as e:
+            print(f"Error stopping phalanx_db service: {e}")
 
         # Find and terminate all related processes
         current_process = psutil.Process()
@@ -691,7 +693,7 @@ def open_log_file():
 def fix_notification_settings():
     """Check and fix notification settings during startup."""
     try:
-        from settings import load_config, save_config
+        from utilities.settings import load_config, save_config
         config = load_config()
         needs_update = False
 
@@ -811,17 +813,16 @@ def main():
     register_shutdown_handler()
     register_startup_handler()
 
-    from settings import ensure_settings_file, get_setting, set_setting
+    from utilities.settings import ensure_settings_file, get_setting, set_setting
     from database import verify_database
     from database.statistics import get_cached_download_stats
-    from not_wanted_magnets import validate_not_wanted_entries
-    from config_manager import load_config, save_config
+    from database.not_wanted_magnets import validate_not_wanted_entries
+    from queues.config_manager import load_config, save_config
 
     # Batch set deprecated settings
     set_setting('Debug', 'skip_initial_plex_update', False)
     set_setting('Scraping', 'jackett_seeders_only', True)
     set_setting('Scraping', 'enable_upgrading_cleanup', True)
-    set_setting('Staleness Threshold', 'staleness_threshold', 7)
     set_setting('Sync Deletions', 'sync_deletions', True)
     set_setting('Debrid Provider', 'provider', 'RealDebrid')
     set_setting('Debug', 'rescrape_missing_files', True)
@@ -862,6 +863,37 @@ def main():
             del config['Debug']['enabled_separate_anime_folders']
             save_config(config)
         logging.info("Migrating enable_separate_anime_folders to True and removing old key")
+
+    # Migrate Emby settings to Emby/Jellyfin settings
+    config = load_config()
+    if 'Debug' in config:
+        emby_settings_updated = False
+        
+        # Check for old 'emby_url' setting and migrate to 'emby_jellyfin_url'
+        if 'emby_url' in config['Debug']:
+            emby_url = config['Debug']['emby_url']
+            if 'emby_jellyfin_url' not in config['Debug'] or not config['Debug']['emby_jellyfin_url']:
+                config['Debug']['emby_jellyfin_url'] = emby_url
+                emby_settings_updated = True
+                logging.info(f"Migrating 'emby_url' to 'emby_jellyfin_url': {emby_url}")
+            # Remove the old setting
+            del config['Debug']['emby_url']
+            emby_settings_updated = True
+        
+        # Check for old 'emby_token' setting and migrate to 'emby_jellyfin_token'
+        if 'emby_token' in config['Debug']:
+            emby_token = config['Debug']['emby_token']
+            if 'emby_jellyfin_token' not in config['Debug'] or not config['Debug']['emby_jellyfin_token']:
+                config['Debug']['emby_jellyfin_token'] = emby_token
+                emby_settings_updated = True
+                logging.info(f"Migrating 'emby_token' to 'emby_jellyfin_token'")
+            # Remove the old setting
+            del config['Debug']['emby_token']
+            emby_settings_updated = True
+        
+        if emby_settings_updated:
+            save_config(config)
+            logging.info("Successfully migrated Emby settings to Emby/Jellyfin settings")
 
     # Add migration for media_type setting
     config = load_config()
@@ -1096,6 +1128,18 @@ def main():
     except Exception as e:
         logging.error(f"Error initializing download stats cache: {str(e)}")
 
+    try:
+        from database.schema_management import create_statistics_summary_table
+        from database.statistics import update_statistics_summary
+        from database.schema_management import create_statistics_indexes
+        create_statistics_indexes()  # Explicitly create statistics indexes
+        create_statistics_summary_table()
+        
+        # Now update statistics summary
+        update_statistics_summary()
+    except Exception as e:
+        logging.error(f"Error during statistics summary initialization: {e}")
+
     # Add delay to ensure server is ready
     time.sleep(2)
 
@@ -1182,7 +1226,7 @@ def main():
         while True:
             time.sleep(5)
     except KeyboardInterrupt:
-        from program_operation_routes import cleanup_port
+        from routes.program_operation_routes import cleanup_port
         cleanup_port()
         stop_program()
         stop_global_profiling()
@@ -1210,9 +1254,9 @@ if __name__ == "__main__":
             setup_logging()
             start_global_profiling()
             
-            from api_tracker import setup_api_logging
+            from routes.api_tracker import setup_api_logging
             setup_api_logging()
-            from web_server import start_server
+            from routes.web_server import start_server
             
             print_version()
             print("\ncli_debrid is initialized.")

@@ -3,8 +3,8 @@ import random
 import time
 import os
 import sqlite3
-from initialization import initialize
-from settings import get_setting, get_all_settings
+from queues.initialization import initialize
+from utilities.settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
@@ -14,13 +14,13 @@ from metadata.metadata import process_metadata, refresh_release_dates, get_runti
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.content_source_detail import append_content_source_detail
 from database import add_collected_items, add_wanted_items
-from not_wanted_magnets import purge_not_wanted_magnets_file
+from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
 from datetime import datetime, timedelta
 from database import get_db_connection
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
-from notifications import send_notifications
+from routes.notifications import send_notifications
 import requests
 from pathlib import Path
 import pickle
@@ -29,7 +29,7 @@ import ntplib
 from content_checkers.trakt import check_trakt_early_releases
 from debrid.base import TooManyDownloadsError, RateLimitError
 import tempfile
-from api_tracker import api  # Add this import for the api module
+from routes.api_tracker import api  # Add this import for the api module
 from plexapi.server import PlexServer
 from database.core import get_db_connection
 import json
@@ -38,6 +38,7 @@ from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
     should_process_item, update_cache_for_item
 )
+from database.statistics import update_statistics_summary  # Explicitly import for statistics updates
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -62,7 +63,7 @@ class ProgramRunner:
         self.connectivity_failure_time = None  # Track when connectivity failed
         self.connectivity_retry_count = 0  # Track number of retries
         
-        from queue_manager import QueueManager
+        from queues.queue_manager import QueueManager
         
         # Initialize queue manager with logging
         logging.info("Initializing QueueManager")
@@ -114,6 +115,8 @@ class ProgramRunner:
             'task_check_database_health': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60,  # Run every twelve hours
             'task_verify_symlinked_files': 900,  # Run every 15 minutes
+            'task_update_statistics_summary': 300,  # Run every 5 minutes
+            'precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
         }
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
@@ -142,7 +145,9 @@ class ProgramRunner:
             'task_update_movie_ids',
             'task_update_movie_titles',
             'task_refresh_plex_tokens',
-            'task_check_database_health'
+            'task_check_database_health',
+            'task_update_statistics_summary',
+            'precompute_airing_shows'
         }
         
         # Load saved task toggle states from JSON file
@@ -283,7 +288,7 @@ class ProgramRunner:
 
     def handle_connectivity_failure(self, failed_services=None):
         from routes.program_operation_routes import stop_program, check_service_connectivity
-        from extensions import app  # Import the Flask app
+        from routes.extensions import app  # Import the Flask app
 
         # Create a descriptive message about which services failed
         if failed_services and len(failed_services) > 0:
@@ -304,7 +309,7 @@ class ProgramRunner:
     def check_connectivity_status(self):
         """Check connectivity status during normal program cycle"""
         from routes.program_operation_routes import stop_program, check_service_connectivity
-        from extensions import app
+        from routes.extensions import app
 
         if not self.connectivity_failure_time:
             return
@@ -342,14 +347,14 @@ class ProgramRunner:
                 self.connectivity_retry_count = 0
 
     def pause_queue(self):
-        from queue_manager import QueueManager
+        from queues.queue_manager import QueueManager
         
         QueueManager().pause_queue(reason=self.pause_reason)
         self.queue_paused = True
         logging.info("Queue paused")
 
     def resume_queue(self):
-        from queue_manager import QueueManager
+        from queues.queue_manager import QueueManager
 
         QueueManager().resume_queue()
         self.queue_paused = False
@@ -524,6 +529,7 @@ class ProgramRunner:
                 wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
             elif source_type == 'Other Plex Watchlist':
                 other_watchlists = []
+                wanted_content = []  # Initialize wanted_content as empty list
                 for source_id, source_data in self.get_content_sources().items():
                     if source_id.startswith('Other Plex Watchlist_') and source_data.get('enabled', False):
                         other_watchlists.append({
@@ -540,6 +546,7 @@ class ProgramRunner:
                                 token=watchlist['token'],
                                 versions=watchlist['versions']
                             )
+                            # Each watchlist_content is a list of tuples, so extend wanted_content with it
                             wanted_content.extend(watchlist_content)
                         except Exception as e:
                             logging.error(f"Failed to fetch Other Plex watchlist for {watchlist['username']}: {str(e)}")
@@ -804,7 +811,13 @@ class ProgramRunner:
 
         try:
             with open(heartbeat_file, 'r') as f:
-                last_heartbeat = int(f.read().strip())
+                content = f.read().strip()
+                if not content:
+                    logging.warning("Heartbeat file exists but is empty - updating it")
+                    self.update_heartbeat()
+                    return True
+                    
+                last_heartbeat = int(content)
                 current_time = int(time.time())
                 time_diff = current_time - last_heartbeat
 
@@ -1090,9 +1103,9 @@ class ProgramRunner:
 
                 # Send notification for collected item
                 try:
-                    from notifications import send_notifications
+                    from routes.notifications import send_notifications
                     from routes.settings_routes import get_enabled_notifications_for_category
-                    from extensions import app
+                    from routes.extensions import app
 
                     with app.app_context():
                         response = get_enabled_notifications_for_category('collected')
@@ -1402,6 +1415,15 @@ class ProgramRunner:
         from database.maintenance import run_library_maintenance
         run_library_maintenance()
 
+    def task_update_statistics_summary(self):
+        """Update the statistics summary table for faster statistics page loading"""
+        try:
+            # Use the directly imported function with force=True
+            update_statistics_summary(force=True)
+            logging.debug("Scheduled statistics summary update complete")
+        except Exception as e:
+            logging.error(f"Error updating statistics summary: {str(e)}")
+            
     def task_check_database_health(self):
         """Periodic task to verify database health and handle any corruption."""
         from main import verify_database_health
@@ -1415,7 +1437,7 @@ class ProgramRunner:
                 
                 # Send notification about database corruption
                 try:
-                    from notifications import send_program_crash_notification                    
+                    from routes.notifications import send_program_crash_notification                    
                     send_program_crash_notification("Database corruption detected - program must be restarted to recreate databases")
 
                 except Exception as e:
@@ -1467,6 +1489,21 @@ class ProgramRunner:
                 
         except Exception as e:
             logging.error(f"Error verifying symlinked files: {e}")
+
+    def task_precompute_airing_shows(self):
+        """Precompute the recently aired and airing soon shows in a background task"""
+        try:
+            from routes.statistics_routes import get_recently_aired_and_airing_soon
+            
+            # Actually call the function to populate the cache
+            logging.info("Precomputing airing shows data...")
+            start_time = time.time()
+            recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+            
+            duration = time.time() - start_time
+            logging.info(f"Precomputed airing shows data in {duration:.2f}s. Found {len(recently_aired)} recently aired and {len(airing_soon)} airing soon shows.")
+        except Exception as e:
+            logging.error(f"Error precomputing airing shows: {e}")
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

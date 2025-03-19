@@ -100,7 +100,7 @@ def update_show_ids():
                                         if tmdb_id:
                                             logging.info(f"Attempting to get IMDb ID from TMDB (ID: {tmdb_id})")
                                             # TMDB API requires an API key - we should get this from config
-                                            from settings import get_setting
+                                            from utilities.settings import get_setting
                                             tmdb_api_key = get_setting('TMDB','api_key')
                                             if tmdb_api_key:
                                                 import requests
@@ -382,7 +382,7 @@ def update_movie_ids():
                                         if tmdb_id:
                                             logging.info(f"Attempting to get IMDb ID from TMDB (ID: {tmdb_id})")
                                             # TMDB API requires an API key - we should get this from config
-                                            from settings import get_setting
+                                            from utilities.settings import get_setting
                                             tmdb_api_key = get_setting('TMDB','api_key')
                                             if tmdb_api_key:
                                                 import requests
@@ -572,7 +572,7 @@ def run_plex_library_maintenance():
     """
     logging.info("Starting Plex library maintenance tasks")
     try:
-        from settings import get_setting
+        from utilities.settings import get_setting
         from utilities.plex_removal_cache import cache_plex_removal
         from routes.debug_routes import move_item_to_wanted
         import os
@@ -1099,7 +1099,7 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
     """
     logging.info("Starting Symlinked/Local library maintenance tasks")
     try:
-        from settings import get_setting
+        from utilities.settings import get_setting
         import os
         import sqlite3
         
@@ -1205,7 +1205,7 @@ def run_library_maintenance():
     logging.info("Starting library maintenance task")
     
     try:
-        from settings import get_setting
+        from utilities.settings import get_setting
         from utilities.plex_removal_cache import process_removal_cache
 
         # Remove previous Plex removals

@@ -12,6 +12,11 @@ import threading
 import psutil  # For memory and process monitoring
 import gc      # For garbage collection monitoring
 import datetime
+import subprocess  # For running system commands
+from utilities.settings import get_setting  # Import the proper get_setting function
+import platform
+import requests
+import tempfile
 
 # Default ports configuration
 DEFAULT_PORTS = {
@@ -351,6 +356,215 @@ def run_script(script_name, port=None, battery_port=None, host=None):
         logging.error(f"Error running script {script_name}: {str(e)}")
         logging.error(traceback.format_exc())
 
+def check_npm_available():
+    try:
+        import subprocess
+        result = subprocess.run(['npm', '--version'], 
+                             shell=True,
+                             capture_output=True,
+                             text=True)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def install_nodejs():
+    try:
+        if platform.system() != 'Windows':
+            logging.warning("Node.js automatic installation is only supported on Windows")
+            return False
+            
+        logging.info("Attempting to install Node.js using winget...")
+        # Check if winget is available first
+        try:
+            subprocess.run(['winget', '--version'], capture_output=True, timeout=5, check=True)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            logging.info("Winget not available or not responding, attempting manual Node.js installation...")
+            try:
+                # Download Node.js installer
+                url = 'https://nodejs.org/dist/v20.11.1/node-v20.11.1-x64.msi'  # LTS version
+                logging.info("Downloading Node.js installer...")
+                response = requests.get(url, stream=True, timeout=30)
+                
+                # Save installer to temp file
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.msi') as tmp_file:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            tmp_file.write(chunk)
+                    installer_path = tmp_file.name
+                
+                # Run installer silently and wait for completion
+                logging.info("Running Node.js installer (this may take a few minutes)...")
+                process = subprocess.Popen(
+                    ['msiexec', '/i', installer_path, '/qn', '/norestart'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True
+                )
+                
+                # Wait for installation to complete with timeout
+                try:
+                    stdout, stderr = process.communicate(timeout=300)  # 5 minute timeout
+                    if process.returncode == 0:
+                        logging.info("Node.js MSI installation completed")
+                    else:
+                        logging.error(f"MSI installation failed with return code {process.returncode}")
+                        if stderr:
+                            logging.error(f"Installation error: {stderr}")
+                        return False
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    logging.error("Node.js installation timed out after 5 minutes")
+                    return False
+                
+                # Clean up installer
+                try:
+                    os.unlink(installer_path)
+                except Exception as e:
+                    logging.warning(f"Failed to clean up installer file: {e}")
+                
+                # Verify installation by checking npm
+                logging.info("Verifying Node.js installation...")
+                for _ in range(5):  # Try up to 5 times with delays
+                    try:
+                        # Update PATH to include the new Node.js installation
+                        os.environ['PATH'] = os.environ['PATH'] + ';C:\\Program Files\\nodejs'
+                        verify_process = subprocess.run(
+                            ['npm', '--version'],
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if verify_process.returncode == 0:
+                            logging.info(f"Node.js installation verified. npm version: {verify_process.stdout.strip()}")
+                            return True
+                    except Exception:
+                        pass
+                    time.sleep(2)  # Wait 2 seconds before retrying
+                
+                logging.error("Failed to verify Node.js installation")
+                return False
+                    
+            except Exception as e:
+                logging.error(f"Error during manual Node.js installation: {e}")
+                return False
+        
+        # Install Node.js using winget with auto-accept
+        try:
+            logging.info("Installing Node.js (this may take a few minutes)...")
+            process = subprocess.Popen(
+                ['winget', 'install', '--id', 'OpenJS.NodeJS.LTS', '--source', 'winget', '--accept-package-agreements'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                bufsize=1  # Line buffered
+            )
+            
+            # Print output in real-time
+            try:
+                while True:
+                    output = process.stdout.readline()
+                    if output:
+                        output = output.strip()
+                        if output:  # Only log non-empty lines
+                            logging.info(f"winget: {output}")
+                            if "Downloading" in output:
+                                logging.info("Download started - please wait...")
+                    error = process.stderr.readline()
+                    if error:
+                        error = error.strip()
+                        if error:  # Only log non-empty lines
+                            logging.error(f"winget error: {error}")
+                    # If process has finished and no more output, break
+                    if output == '' and error == '' and process.poll() is not None:
+                        break
+            except KeyboardInterrupt:
+                logging.warning("Installation interrupted by user")
+                process.terminate()
+                return False
+            
+            # Wait for winget to complete and verify installation
+            if process.returncode == 0:
+                logging.info("Node.js installed successfully via winget")
+                # Verify installation
+                logging.info("Verifying Node.js installation...")
+                for _ in range(5):  # Try up to 5 times with delays
+                    try:
+                        # Update PATH to include the new Node.js installation
+                        os.environ['PATH'] = os.environ['PATH'] + ';C:\\Program Files\\nodejs'
+                        verify_process = subprocess.run(
+                            ['npm', '--version'],
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if verify_process.returncode == 0:
+                            logging.info(f"Node.js installation verified. npm version: {verify_process.stdout.strip()}")
+                            return True
+                    except Exception:
+                        pass
+                    time.sleep(2)  # Wait 2 seconds before retrying
+                
+                logging.error("Failed to verify Node.js installation")
+                return False
+            else:
+                logging.error(f"Failed to install Node.js with winget (exit code: {process.returncode})")
+                # Fallback to manual installation
+                logging.info("Falling back to manual installation...")
+                return install_nodejs()  # Recursive call will try manual installation
+        except subprocess.TimeoutExpired:
+            logging.error("Winget installation timed out, falling back to manual installation...")
+            return install_nodejs()  # Recursive call will try manual installation
+            
+    except Exception as e:
+        logging.error(f"Error installing Node.js: {e}")
+        return False
+
+def run_phalanx_db():
+    try:
+        phalanx_dir = os.path.join(os.path.dirname(get_script_path('main.py')), 'phalanx_db')
+        
+        # Check if phalanx_db directory exists and is valid
+        if not os.path.exists(os.path.join(phalanx_dir, 'package.json')):
+            logging.error(f"phalanx_db directory not found or invalid at {phalanx_dir}")
+            return
+        
+        logging.info(f"Starting phalanx_db service in {phalanx_dir}")
+        
+        # First run npm install if node_modules doesn't exist
+        if not os.path.exists(os.path.join(phalanx_dir, 'node_modules')):
+            logging.info("Installing phalanx_db dependencies...")
+            try:
+                subprocess.run(['npm', 'install'], 
+                             cwd=phalanx_dir,
+                             shell=True,
+                             check=True,
+                             capture_output=True)
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to install phalanx_db dependencies: {e.stderr}")
+                return
+            except Exception as e:
+                logging.error(f"Error during npm install: {str(e)}")
+                return
+            logging.info("Successfully installed phalanx_db dependencies")
+
+        # Start the service
+        try:
+            subprocess.run(['npm', 'start'], 
+                         cwd=phalanx_dir, 
+                         shell=True,
+                         check=True,
+                         env=dict(os.environ))
+        except subprocess.CalledProcessError as e:
+            logging.error(f"phalanx_db service failed to start: {e.stderr if hasattr(e, 'stderr') else str(e)}")
+        except Exception as e:
+            logging.error(f"Failed to start phalanx_db service: {str(e)}")
+            logging.debug(traceback.format_exc())
+    except Exception as e:
+        logging.error(f"Unexpected error in phalanx_db service: {str(e)}")
+        logging.debug(traceback.format_exc())
+
 def run_main():
     logging.info("Starting run_main()")
     
@@ -363,7 +577,34 @@ def run_main():
     parser.add_argument('--port', '--cli-port', type=int, help='Port for remote access to main service (tunnels to local service)')
     parser.add_argument('--battery-port', '--cli-battery-port', type=int, help='Port for remote access to battery service (tunnels to local service)')
     parser.add_argument('--no-tunnel', action='store_true', help='Disable automatic tunneling')
+    parser.add_argument('--enable-phalanx-db', action='store_true', help='Enable phalanx db integration')
     args = parser.parse_args()
+    
+    # Set up environment first to ensure we can read settings
+    setup_environment()
+    
+    # Check both command line argument and settings for phalanx db
+    phalanx_enabled = args.enable_phalanx_db or get_setting('UI Settings', 'enable_phalanx_db', default=True)
+    os.environ['ENABLE_PHALANX_DB'] = str(phalanx_enabled).lower()
+    
+    if phalanx_enabled:
+        logging.info("Phalanx DB integration enabled")
+        # Check Node.js installation before proceeding
+        if not check_npm_available():
+            logging.warning("npm is not installed. Installing Node.js (this may take a few minutes)...")
+            if not install_nodejs():
+                logging.error("Failed to install Node.js. Phalanx DB integration will be disabled.")
+                phalanx_enabled = False
+                os.environ['ENABLE_PHALANX_DB'] = 'false'
+            else:
+                logging.info("Node.js installed successfully.")
+                # Verify npm is now available
+                if not check_npm_available():
+                    logging.error("Node.js installation verified but npm still not available. Phalanx DB integration will be disabled.")
+                    phalanx_enabled = False
+                    os.environ['ENABLE_PHALANX_DB'] = 'false'
+    else:
+        logging.info("Phalanx DB integration disabled")
     
     # On Windows, use different default ports and check availability
     if sys.platform.startswith('win'):
@@ -394,11 +635,21 @@ def run_main():
     os.environ['CLI_DEBRID_PORT'] = str(main_port)
     os.environ['CLI_DEBRID_BATTERY_PORT'] = str(battery_port)
     
-    # Start services first
-    script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
+    # Start services
     processes = []
 
+    # Add phalanx_db to services if enabled and Node.js is properly installed
+    if phalanx_enabled:
+        process = multiprocessing.Process(
+            target=run_phalanx_db,
+            name="Process-phalanx_db"
+        )
+        processes.append(process)
+        process.start()
+        logging.info("Started phalanx_db process")
+
     # Start both processes in parallel with appropriate ports
+    script_names = ['main.py', os.path.join('cli_battery', 'main.py')]
     for script_name in script_names:
         if 'cli_battery' in script_name:
             process = multiprocessing.Process(
@@ -481,7 +732,7 @@ def run_main():
     monitor_proc_thread.start()
 
     try:
-        # Wait for both processes to complete
+        # Wait for all processes to complete
         for process in processes:
             process.join()
     except KeyboardInterrupt:

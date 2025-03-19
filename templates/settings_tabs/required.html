@@ -297,7 +297,7 @@
         </div>
     </div>
         {% for key, value in settings_schema['File Management'].items() %}
-            {% if key != 'tab' and key != 'symlink_organize_by_type' %}
+            {% if key != 'tab' and key != 'symlink_organize_by_type' and key != 'symlink_organize_by_resolution' %}
             <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
                 <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}

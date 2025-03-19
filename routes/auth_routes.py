@@ -5,9 +5,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import os
 import logging
-from settings import load_config
+from utilities.settings import load_config
 from routes.onboarding_routes import get_next_onboarding_step
-from extensions import db, login_manager
+from routes.extensions import db, login_manager
 from .utils import is_user_system_enabled
 import random
 import string
@@ -86,7 +86,7 @@ def login():
     response = make_response(render_template('login.html', 
         show_login_reminder=User.query.filter_by(is_default=False).count() == 0))
     
-    from extensions import get_root_domain
+    from routes.extensions import get_root_domain
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
     
     # Clear existing cookies on GET request to ensure clean state
@@ -144,7 +144,7 @@ def logout():
     # Create response with redirect
     response = make_response(redirect(url_for('auth.login')))
     
-    from extensions import get_root_domain
+    from routes.extensions import get_root_domain
     # Get domain for cookie cleanup
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
     

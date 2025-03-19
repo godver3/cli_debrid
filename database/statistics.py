@@ -3,8 +3,8 @@ from .core import get_db_connection
 import asyncio
 import aiohttp
 from .poster_management import get_poster_url
-from poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
-from settings import get_setting
+from routes.poster_cache import get_cached_poster_url, cache_poster_url, clean_expired_cache
+from utilities.settings import get_setting
 from flask import request, url_for
 from urllib.parse import urlparse
 from datetime import datetime
@@ -12,6 +12,8 @@ import time
 from functools import wraps
 import random
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
+import threading
+import sqlite3
 
 def format_bytes(size):
     """Convert bytes to human readable format."""
@@ -256,35 +258,61 @@ def cache_for_seconds(seconds):
         return sync_wrapper
     return decorator
 
+@cache_for_seconds(60)  # Cache collection counts for 1 minute
 def get_collected_counts():
+    """
+    Get counts of collected media items.
+    This function is optimized to use indexes and minimize computation.
+    """
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
-        # Count unique collected movies
+        # First try to get data from the statistics summary table which should be faster
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
+        if cursor.fetchone():
+            cursor.execute('''
+                SELECT total_movies, total_shows, total_episodes
+                FROM statistics_summary
+                WHERE id = 1
+            ''')
+            result = cursor.fetchone()
+            if result and all(count is not None for count in result):
+                return {
+                    'total_movies': result[0],
+                    'total_shows': result[1],
+                    'total_episodes': result[2]
+                }
+        
+        # If we don't have the summary table or data is incomplete, fall back to direct counts
+        # Use optimized individual queries with indexed fields
+        # Get total movies count
         cursor.execute('''
-            SELECT COUNT(DISTINCT imdb_id) 
+            SELECT COUNT(DISTINCT imdb_id)
             FROM media_items 
             WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
         ''')
         total_movies = cursor.fetchone()[0]
-
-        # Count unique collected TV shows
+        
+        # Get total shows count
         cursor.execute('''
-            SELECT COUNT(DISTINCT imdb_id) 
+            SELECT COUNT(DISTINCT imdb_id)
             FROM media_items 
             WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
         ''')
         total_shows = cursor.fetchone()[0]
-
-        # Count unique collected episodes
+        
+        # Get total episodes count
         cursor.execute('''
-            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number) 
-            FROM media_items 
-            WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            SELECT COUNT(*)
+            FROM (
+                SELECT DISTINCT imdb_id, season_number, episode_number
+                FROM media_items
+                WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            )
         ''')
         total_episodes = cursor.fetchone()[0]
-
+        
         return {
             'total_movies': total_movies,
             'total_shows': total_shows,
@@ -302,13 +330,14 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
     try:
         cursor = conn.cursor()
         
-        # Combined query for both movies and episodes with UNION
+        # Fixed query - using subqueries to properly apply ORDER BY and LIMIT before UNION
         combined_query = """
-        WITH MovieItems AS (
+        SELECT * FROM (
+            -- First get the most recent movies
             SELECT 
                 title,
                 year,
-                type,
+                'movie' as type,
                 collected_at,
                 imdb_id,
                 tmdb_id,
@@ -316,16 +345,24 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                 filled_by_title,
                 filled_by_file,
                 NULL as season_number,
-                NULL as episode_number,
-                ROW_NUMBER() OVER (PARTITION BY title, year ORDER BY collected_at DESC) as rn
+                NULL as episode_number
             FROM media_items
-            WHERE type = 'movie' AND collected_at IS NOT NULL AND state IN ('Collected', 'Upgrading')
-        ),
-        ShowItems AS (
+            WHERE type = 'movie' 
+              AND collected_at IS NOT NULL 
+              AND state IN ('Collected', 'Upgrading')
+            GROUP BY title, year -- Group to get one movie per title/year
+            ORDER BY collected_at DESC
+            LIMIT ?
+        )
+        
+        UNION ALL
+        
+        SELECT * FROM (
+            -- Then get the most recent show episodes
             SELECT 
                 title,
                 year,
-                type,
+                'episode' as type,
                 collected_at,
                 imdb_id,
                 tmdb_id,
@@ -333,19 +370,15 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                 filled_by_title,
                 filled_by_file,
                 season_number,
-                episode_number,
-                ROW_NUMBER() OVER (PARTITION BY title ORDER BY collected_at DESC) as rn
+                episode_number
             FROM media_items
-            WHERE type = 'episode' AND collected_at IS NOT NULL AND state IN ('Collected', 'Upgrading')
+            WHERE type = 'episode' 
+              AND collected_at IS NOT NULL 
+              AND state IN ('Collected', 'Upgrading')
+            GROUP BY title
+            ORDER BY collected_at DESC
+            LIMIT ?
         )
-        SELECT * FROM (
-            SELECT * FROM MovieItems WHERE rn = 1 ORDER BY collected_at DESC LIMIT ?
-        )
-        UNION ALL
-        SELECT * FROM (
-            SELECT * FROM ShowItems WHERE rn = 1 ORDER BY collected_at DESC LIMIT ?
-        )
-        ORDER BY collected_at DESC
         """
         
         cursor.execute(combined_query, (movie_limit, show_limit))
@@ -354,6 +387,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         movies_list = []
         shows_list = []
         
+        # Process results and get poster urls
         async with aiohttp.ClientSession() as session:
             # Process all items and create poster tasks in parallel
             poster_tasks = []
@@ -434,39 +468,31 @@ async def get_recently_upgraded_items(upgraded_limit=5):
     try:
         cursor = conn.cursor()
         
-        # Optimized query for upgrades - sort by collected_at for better differentiation
+        # Simplified query for upgrades - directly get the most recent upgrades
         upgraded_query = """
-        WITH LatestUpgrades AS (
-            SELECT 
-                title,
-                year,
-                type,
-                imdb_id,
-                tmdb_id,
-                version,
-                filled_by_title,
-                filled_by_file,
-                upgrading_from,
-                last_updated,
-                collected_at,
-                original_collected_at,
-                season_number,
-                episode_number,
-                ROW_NUMBER() OVER (
-                    PARTITION BY 
-                        CASE 
-                            WHEN type = 'movie' THEN title || year
-                            ELSE title || season_number || episode_number
-                        END 
-                    ORDER BY collected_at DESC
-                ) as rn
-            FROM media_items
-            WHERE upgraded = 1
-            AND collected_at IS NOT NULL
-        )
-        SELECT *
-        FROM LatestUpgrades
-        WHERE rn = 1
+        SELECT 
+            title,
+            year,
+            type,
+            imdb_id,
+            tmdb_id,
+            version,
+            filled_by_title,
+            filled_by_file,
+            upgrading_from,
+            last_updated,
+            collected_at,
+            original_collected_at,
+            season_number,
+            episode_number
+        FROM media_items
+        WHERE upgraded = 1
+          AND collected_at IS NOT NULL
+        GROUP BY 
+            CASE 
+                WHEN type = 'movie' THEN title || year
+                ELSE title || COALESCE(season_number, '') || COALESCE(episode_number, '')
+            END
         ORDER BY collected_at DESC
         LIMIT ?
         """
@@ -543,3 +569,286 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         return []
     finally:
         conn.close()
+
+# Create a lock to prevent concurrent updates
+statistics_update_lock = threading.Lock()
+last_update_time = 0
+
+def update_statistics_summary(force=False):
+    """Update the statistics summary table with the latest data.
+    This should be called periodically from the background task manager."""
+    global last_update_time
+    
+    # Add throttling to prevent excessive updates
+    current_time = time.time()
+    if not force and current_time - last_update_time < 5:  # At least 5 seconds between updates
+        logging.debug("Skipping statistics update - throttled (updated %0.2f seconds ago)", 
+                      current_time - last_update_time)
+        return
+
+    # Use a lock to ensure only one update happens at a time
+    if not statistics_update_lock.acquire(blocking=False):
+        logging.debug("Statistics summary update already in progress, skipping")
+        return
+    
+    try:
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # First check if the table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
+            if not cursor.fetchone():
+                # Table doesn't exist, close connection and create it first
+                conn.close()
+                from database.schema_management import create_statistics_summary_table
+                create_statistics_summary_table()
+                # Re-open connection after table creation
+                conn = get_db_connection()
+                cursor = conn.cursor()
+            
+            # Check if we need to update
+            if not force:
+                cursor.execute("""
+                    SELECT last_updated, datetime('now', '-1 minute')
+                    FROM statistics_summary 
+                    WHERE id=1
+                """)
+                last_update_check = cursor.fetchone()
+                
+                # If updated within the last minute, skip the update
+                if last_update_check and last_update_check[0] >= last_update_check[1]:
+                    logging.debug("Statistics updated recently, skipping update")
+                    return
+            
+            # Check if we need to initialize
+            cursor.execute("SELECT id FROM statistics_summary WHERE id=1")
+            if not cursor.fetchone():
+                # Initialize if not exists
+                cursor.execute('''
+                INSERT INTO statistics_summary 
+                (id, total_movies, total_shows, total_episodes, last_updated)
+                VALUES (1, 0, 0, 0, datetime('now', 'localtime'))
+                ''')
+                conn.commit()
+            
+            # Get the latest statistics
+            # Count unique collected movies
+            cursor.execute('''
+                SELECT COUNT(DISTINCT imdb_id) 
+                FROM media_items 
+                WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
+            ''')
+            total_movies = cursor.fetchone()[0]
+
+            # Count unique collected TV shows
+            cursor.execute('''
+                SELECT COUNT(DISTINCT imdb_id) 
+                FROM media_items 
+                WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            ''')
+            total_shows = cursor.fetchone()[0]
+
+            # Count unique collected episodes
+            cursor.execute('''
+                SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number) 
+                FROM media_items 
+                WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            ''')
+            total_episodes = cursor.fetchone()[0]
+            
+            # Get latest collected movie
+            cursor.execute('''
+                SELECT collected_at 
+                FROM media_items 
+                WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
+                ORDER BY collected_at DESC
+                LIMIT 1
+            ''')
+            latest_movie = cursor.fetchone()
+            latest_movie_collected = latest_movie[0] if latest_movie else None
+            
+            # Get latest collected episode
+            cursor.execute('''
+                SELECT collected_at
+                FROM media_items 
+                WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+                ORDER BY collected_at DESC
+                LIMIT 1
+            ''')
+            latest_episode = cursor.fetchone()
+            latest_episode_collected = latest_episode[0] if latest_episode else None
+            
+            # Get latest upgraded item
+            cursor.execute('''
+                SELECT collected_at
+                FROM media_items 
+                WHERE upgraded = 1
+                ORDER BY collected_at DESC
+                LIMIT 1
+            ''')
+            latest_upgraded = cursor.fetchone()
+            latest_upgraded_date = latest_upgraded[0] if latest_upgraded else None
+            
+            # Update the summary table
+            cursor.execute('''
+                UPDATE statistics_summary
+                SET total_movies = ?,
+                    total_shows = ?,
+                    total_episodes = ?,
+                    latest_movie_collected = ?,
+                    latest_episode_collected = ?,
+                    latest_upgraded = ?,
+                    last_updated = datetime('now', 'localtime')
+                WHERE id = 1
+            ''', (total_movies, total_shows, total_episodes, 
+                latest_movie_collected, latest_episode_collected, latest_upgraded_date))
+            
+            conn.commit()
+            last_update_time = current_time
+
+            
+        except Exception as e:
+            logging.error(f"Error updating statistics summary: {str(e)}", exc_info=True)
+        finally:
+            conn.close()
+    finally:
+        statistics_update_lock.release()
+
+def get_statistics_summary():
+    """Get the statistics summary from the dedicated table"""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # First check if the table exists
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
+            if not cursor.fetchone():
+                # Table doesn't exist, create it first
+                if conn:
+                    conn.close()
+                    conn = None
+                
+                try:
+                    from database.schema_management import create_statistics_summary_table
+                    create_statistics_summary_table()
+                    
+                    # Instead of recursively calling, continue with the logic inline
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    
+                    # Initialize with direct counts
+                    initial_counts = get_collected_counts()
+                    conn.execute('''
+                        INSERT OR IGNORE INTO statistics_summary 
+                        (id, total_movies, total_shows, total_episodes, last_updated)
+                        VALUES (1, ?, ?, ?, datetime('now', 'localtime'))
+                    ''', (
+                        initial_counts['total_movies'],
+                        initial_counts['total_shows'],
+                        initial_counts['total_episodes']
+                    ))
+                    conn.commit()
+                    
+                    # Return the counts we just calculated
+                    return initial_counts
+                except Exception as e:
+                    logging.error(f"Error creating statistics table: {str(e)}")
+                    return get_collected_counts()  # Fallback on error
+        except sqlite3.OperationalError as e:
+            if "no such table: sqlite_master" in str(e):
+                logging.error("Database connection issue: sqlite_master not found")
+            else:
+                logging.error(f"SQLite error checking for statistics_summary table: {str(e)}")
+            return get_collected_counts()
+        
+        # Check if summary data exists and needs updating
+        try:
+            cursor.execute('''
+                SELECT total_movies, total_shows, total_episodes, 
+                    last_updated, 
+                    datetime('now', '-5 minute')
+                FROM statistics_summary 
+                WHERE id = 1
+            ''')
+            result = cursor.fetchone()
+        except sqlite3.OperationalError as e:
+            if "no such table: statistics_summary" in str(e):
+                logging.error("statistics_summary table doesn't exist despite earlier check")
+                return get_collected_counts()
+            else:
+                logging.error(f"SQLite error querying statistics_summary: {str(e)}")
+                return get_collected_counts()
+        
+        if not result:
+            # No data yet, initialize it
+            try:
+                # Get fresh counts
+                counts = get_collected_counts()
+                
+                # Insert the initial data
+                cursor.execute('''
+                    INSERT OR IGNORE INTO statistics_summary 
+                    (id, total_movies, total_shows, total_episodes, last_updated)
+                    VALUES (1, ?, ?, ?, datetime('now', 'localtime'))
+                ''', (counts['total_movies'], counts['total_shows'], counts['total_episodes']))
+                conn.commit()
+                
+                return counts
+            except sqlite3.Error as e:
+                logging.error(f"SQLite error initializing statistics_summary: {str(e)}")
+                return get_collected_counts()
+                
+        elif result[3] < result[4]:
+            # Data exists but is too old
+            if conn:
+                conn.close()
+                conn = None
+            
+            try:
+                # Update data
+                update_statistics_summary(force=True)
+                
+                # Open a new connection to get the fresh data
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT total_movies, total_shows, total_episodes, last_updated
+                    FROM statistics_summary 
+                    WHERE id = 1
+                ''')
+                updated_result = cursor.fetchone()
+                
+                if updated_result:
+                    return {
+                        'total_movies': updated_result[0],
+                        'total_shows': updated_result[1],
+                        'total_episodes': updated_result[2],
+                        'last_updated': updated_result[3]
+                    }
+                else:
+                    logging.error("Failed to retrieve updated statistics")
+                    return get_collected_counts()
+            except Exception as e:
+                logging.error(f"Error updating statistics: {str(e)}")
+                return get_collected_counts()
+            
+        # Return the valid data we found
+        return {
+            'total_movies': result[0],
+            'total_shows': result[1],
+            'total_episodes': result[2],
+            'last_updated': result[3]
+        }
+    except Exception as e:
+        logging.error(f"Unexpected error getting statistics summary: {str(e)}", exc_info=True)
+        return get_collected_counts()  # Fallback to direct count
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass

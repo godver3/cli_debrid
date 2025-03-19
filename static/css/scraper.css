@@ -129,11 +129,14 @@ form#search-form input:-ms-input-placeholder {
     overflow-x: auto;
     gap: 0;
     padding: 40px var(--spacing-md);
+    padding-right: 40px;
     margin: -40px 0;
     scroll-behavior: smooth;
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none;  /* IE and Edge */
     -webkit-overflow-scrolling: touch;
+    width: 100%;
+    min-width: 0;
 }
 
 .scroll-container::-webkit-scrollbar {
@@ -148,22 +151,106 @@ form#search-form input:-ms-input-placeholder {
     transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
     padding: 16px;
-    margin: -8px 8px; /* Restore original margin */
-    z-index: 1; /* Keep z-index for proper stacking */
+    margin: -8px 8px;
+    z-index: 1;
 }
 
-.sresult .media-poster {
-    margin-bottom: 20px;
+/* Apply consistent hover behavior */
+.media-card:hover,
+.sresult:hover {
+    transform: none;
 }
 
-.media-card:first-child,
-.sresult:first-child {
-    margin-left: 0;
+/* Ensure consistent poster container styling */
+.media-card .poster-container,
+.sresult .poster-container {
+    position: relative;
+    width: 176px;
+    height: 264px;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0);
+    border-radius: var(--border-radius-lg);
+    background-color: #000;
+    box-shadow: 
+        0 4px 6px rgba(0, 0, 0, 0.2),
+        0 0 25px rgba(255, 255, 255, 0.15);
+    overflow: hidden;
 }
 
-.media-card:last-child,
-.sresult:last-child {
-    margin-right: 0;
+/* Consistent hover transform for both types */
+.media-card .poster-container:hover,
+.sresult .poster-container:hover {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 255, 255, 0.5);
+}
+
+/* Ensure request-icon is consistent */
+.media-card .poster-container .request-icon,
+.sresult .poster-container .request-icon {
+    position: absolute;
+    bottom: -6px;
+    right: -1px;
+    z-index: 10;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1), 
+                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 40px 40px;
+    border-color: transparent transparent var(--primary-color) transparent;
+    background-color: transparent !important;
+    transform-origin: bottom right;
+    transform: none !important;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+}
+
+/* Mirrored tester-icon */
+.media-card .poster-container .tester-icon,
+.sresult .poster-container .tester-icon {
+    position: absolute;
+    bottom: -6px;
+    left: -1px;
+    z-index: 10;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1), 
+                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 40px 0 0 40px;
+    border-color: transparent transparent transparent var(--primary-color);
+    background-color: transparent !important;
+    transform-origin: bottom left;
+    transform: none !important;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-start;
+}
+
+/* Consistent poster overlay styling */
+.media-card .poster-overlay,
+.sresult .poster-overlay {
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    right: 0;
+    padding: var(--spacing-md);
+    color: var(--text-primary);
+    z-index: 3;
+    text-align: center;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+}
+
+/* Remove the old sresult specific image styling */
+.sresult img {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--border-radius-lg);
+    object-fit: cover;
+    position: relative;
+    z-index: 1;
 }
 
 .media-poster,
@@ -183,29 +270,75 @@ form#search-form input:-ms-input-placeholder {
 .media-poster-img,
 .mediatype-tv,
 .mediatype-mv {
-    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    transform: translateY(0);
+    transition: box-shadow var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Apply the same transitions to search result elements */
 .sresult img,
 .sresult .mediatype-tv,
 .sresult .mediatype-mv {
-    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    transform: translateY(0);
+    transition: box-shadow var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .media-poster-img {
-    width: 176px;
-    height: 264px;
+    width: 100%;
+    height: 100%;
     border-radius: var(--border-radius-lg);
-    overflow: hidden;
     object-fit: cover;
     position: relative;
     z-index: 1;
+    display: block;
+    mask-image: linear-gradient(
+        to bottom,
+        black 95%,
+        transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        black 95%,
+        transparent 100%
+    );
+}
+
+.poster-container {
+    position: relative;
+    width: 176px;
+    height: 264px;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0);
+    border-radius: var(--border-radius-lg);
+    background-color: #000; /* Dark background to prevent white edges */
     box-shadow: 
         0 4px 6px rgba(0, 0, 0, 0.2),
         0 0 25px rgba(255, 255, 255, 0.15);
+    overflow: hidden; /* Ensure the triangle is cut off at the poster boundaries */
+}
+
+.poster-container::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 30%;
+    background: linear-gradient(to top, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.80) 60%, rgba(0, 0, 0, 0.6) 85%, transparent 100%);
+    z-index: 2;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    pointer-events: none; /* Allow clicks to pass through */
+}
+
+/* Add a darkening gradient overlay for the bottom 5% */
+.poster-container::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 5%;
+    background: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.8) 100%);
+    z-index: 2;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    pointer-events: none;
 }
 
 /* Apply the same box-shadow to search result images */
@@ -253,7 +386,6 @@ form#search-form input:-ms-input-placeholder {
     background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
     color: var(--text-primary);
     opacity: 0;
-    transform: translateY(20px);
     transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
     text-align: center;
     backdrop-filter: blur(4px);
@@ -269,27 +401,152 @@ form#search-form input:-ms-input-placeholder {
     display: block;
 }
 
+/* Title/Year overlay for posters - now positioned over the ::after gradient */
+.poster-overlay {
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    right: 0;
+    padding: var(--spacing-md);
+    background: none; /* Remove background as it's now handled by ::after */
+    color: var(--text-primary);
+    z-index: 3; /* Above the gradient */
+    text-align: center;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+}
+
+.poster-overlay h3 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #ffffff; /* Pure white */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); /* Add shadow for better readability */
+}
+
+.poster-overlay p {
+    margin: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7); /* Lighter grey */
+    opacity: 1; /* Override previous opacity */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); /* Add shadow for better readability */
+}
+
 /* Keep hover effects for regular media items */
-.media-poster:hover .media-poster-img {
-    transform: translateY(-8px);
+.media-poster:hover .poster-container {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 255, 255, 0.5);
 }
 
-/* Apply same hover animations for search results */
-.sresult:hover {
-    transform: translateY(-8px);
-    z-index: 2; /* Keep raised z-index on hover */
+/* Override the template-defined animation for request-icon */
+.media-poster:hover .request-icon {
+    transform: none !important;
 }
 
-.sresult:hover .mediatype-tv,
-.sresult:hover .mediatype-mv {
-    transform: none;
+/* Remove hover effect for overlay as it now moves with the container */
+.media-poster:hover .poster-overlay {
+    /* No separate transform needed */
 }
 
 /* Enhanced media poster image box-shadow on hover (keep this enhancement) */
 .media-poster:hover .media-poster-img {
-    box-shadow: 
-        0 8px 16px rgba(0, 0, 0, 0.3),
-        0 0 50px rgba(255, 255, 255, 0.5);
+    /* No separate box-shadow needed as it's on the container */
+    transform: none !important; /* Force no transform on the img itself */
+}
+
+.poster-container .request-icon {
+    position: absolute;
+    bottom: -6px;
+    right: -1px;
+    z-index: 10;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1), 
+                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    /* Corner triangle styling */
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 40px 40px; /* Larger triangle */
+    border-color: transparent transparent var(--primary-color) transparent;
+    background-color: transparent !important; /* Override any background */
+    transform-origin: bottom right;
+    transform: none !important;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+}
+
+/* Style for the plus icon that sits inside the triangle */
+.poster-container .request-icon::after {
+    content: "+";
+    position: absolute;
+    bottom: -30px; /* Adjusted for larger triangle */
+    right: 5px; /* Adjusted for larger triangle */
+    color: white;
+    font-size: 18px; /* Slightly larger for better visibility */
+    font-weight: bold;
+    line-height: 1;
+}
+/* Style specifically for search results to adjust the plus size */
+.sresult .poster-container .request-icon::after {
+    font-size: 12px; /* Smaller font size to better match trending page */
+    bottom: -28px; /* Further adjust vertical position */
+    right: 8px;
+    scale: 1.2;
+}
+
+/* Only scale when directly hovering the icon */
+.request-icon:hover {
+    transform: scale(1) !important;
+    border-color: transparent transparent #2980b9 transparent;
+    background-color: transparent !important;
+}
+
+/* Hover styles for tester-icon */
+.tester-icon:hover {
+    transform: none !important;
+    border-color: transparent transparent transparent #2980b9;
+    background-color: transparent !important;
+}
+
+/* Fix for combined hover - override template styles */
+.media-poster:hover .request-icon:hover {
+    transform: scale(1) !important;
+    border-color: transparent transparent #2980b9 transparent;
+    background-color: transparent !important;
+}
+
+/* Fix for combined hover - tester-icon */
+.media-poster:hover .tester-icon:hover {
+    transform: none !important;
+    border-color: transparent transparent transparent #2980b9;
+    background-color: transparent !important;
+}
+
+/* Apply same hover animations for search results */
+.sresult:hover {
+    z-index: 2; /* Keep raised z-index on hover */
+}
+
+/* Ensure nested elements in search results don't have their own transforms */
+.sresult:hover .poster-container,
+.sresult:hover .media-poster,
+.sresult:hover .media-poster-img {
+    transform: none !important; /* Prevent double animations */
+}
+
+/* Apply same hover animations for search results */
+.sresult:hover .mediatype-tv,
+.sresult:hover .mediatype-mv {
+    transform: none !important;
+}
+
+/* Keep effects for regular media titles */
+.media-poster:hover .media-title {
+    opacity: 1;
+    transform: none !important; /* Don't move the title independently */
 }
 
 /* Apply enhanced box-shadow for search results */
@@ -324,12 +581,6 @@ form#search-form input:-ms-input-placeholder {
     content: none;
 }
 
-/* Keep effects for regular media titles */
-.media-poster:hover .media-title {
-    opacity: 1;
-    transform: translateY(-8px);
-}
-
 /* Apply same effects for search result info */
 .sresult:hover .searchresult-info {
     opacity: 1;
@@ -343,11 +594,6 @@ form#search-form input:-ms-input-placeholder {
 .placeholder-poster:hover + .media-title,
 .placeholder-poster:hover + .searchresult-info {
     transform: none; /* Remove transform as it's now on the parent */
-}
-
-/* Add hover effect for the entire search result card in no-tmdb-api mode */
-.no-tmdb-api .sresult:hover {
-    transform: translateY(-8px);
 }
 
 /* Ensure the badge stays visible for placeholder posters */
@@ -811,7 +1057,6 @@ h2.episode-title {
 }
 
 .torresult:hover {
-    transform: translateY(-4px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
@@ -890,7 +1135,8 @@ p.torresult-title {
 .search-results-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
-    gap: var(--spacing-md);
+    row-gap: 40px;
+    column-gap: var(--spacing-md);
     justify-items: center;
     margin: 30px;
 }
@@ -1039,4 +1285,60 @@ p.torresult-title {
 
 .media-card:hover::after {
     content: none;
+}
+
+.trending-nav-button {
+    background-color: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6); /* Light grey when active but not hovered */
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.trending-nav-button:hover {
+    color: rgba(255, 255, 255, 1); /* Brighter white when hovered */
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.trending-nav-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
+
+/* Additional styling for the trending navigation section */
+.trending-navigation {
+    display: flex;
+    gap: 8px;
+}
+
+/* Normalize hover animation distances between search results and media posters */
+.media-card {
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.media-card:hover {
+    transform: none; /* Keep this to ensure consistency with posters */
+}
+
+.media-poster:hover .poster-overlay {
+    transform: translateY(0); /* Keep overlay aligned with container during animation */
+}
+
+/* Style for the plus icon that sits inside the tester-icon triangle */
+.tester-icon::after {
+    content: "⚙";
+    position: absolute;
+    bottom: 8px;
+    left: -35px;
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    line-height: 1;
+    scale: 0.7;
 }

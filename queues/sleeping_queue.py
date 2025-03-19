@@ -2,10 +2,9 @@ import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
-from database import get_all_media_items, get_media_item_by_id
-from settings import get_setting
-from wake_count_manager import wake_count_manager
-from config_manager import load_config
+from utilities.settings import get_setting
+from queues.wake_count_manager import wake_count_manager
+from queues.config_manager import load_config
 
 class SleepingQueue:
     def __init__(self):
@@ -13,6 +12,7 @@ class SleepingQueue:
         self.sleeping_queue_times = {}
 
     def update(self):
+        from database import get_all_media_items, get_media_item_by_id
         self.items = [dict(row) for row in get_all_media_items(state="Sleeping")]
         # Initialize sleeping times for new items
         for item in self.items:
@@ -29,9 +29,9 @@ class SleepingQueue:
         self.sleeping_queue_times[item['id']] = datetime.now()
         logging.debug(f"Added item to Sleeping queue: {item['id']}")
                 
-        from notifications import send_notifications
+        from routes.notifications import send_notifications
         from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
-        from extensions import app
+        from routes.extensions import app
 
         # Send notification for the state change
         try:

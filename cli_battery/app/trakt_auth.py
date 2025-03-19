@@ -11,7 +11,7 @@ import traceback
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from settings import get_setting  # Add this import
+from utilities.settings import get_setting  # Add this import
 
 TRAKT_API_URL = "https://api.trakt.tv"
 REQUEST_TIMEOUT = 10  # seconds

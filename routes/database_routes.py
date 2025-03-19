@@ -1,32 +1,57 @@
 from flask import jsonify, request, render_template, session, flash, Blueprint, current_app
 import sqlite3
 import string
-from database import get_db_connection, get_all_media_items, update_media_item_state
 import logging
 from sqlalchemy import text, inspect
-from extensions import db
-from database import remove_from_media_items
-from settings import get_setting
+from routes.extensions import db
+from utilities.settings import get_setting
 import json
-from reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
+from utilities.reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
 from .models import admin_required
 from utilities.plex_functions import remove_file_from_plex
 from database.database_reading import get_media_item_by_id
 import os
 from datetime import datetime
 from time import sleep
+from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
+from database.torrent_tracking import get_torrent_history
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
+    # Initialize data dictionary with default values
+    data = {
+        'items': [],
+        'all_columns': [],
+        'selected_columns': [],
+        'filters': [],
+        'sort_column': 'id',
+        'sort_order': 'asc',
+        'alphabet': list(string.ascii_uppercase),
+        'current_letter': 'A',
+        'content_type': 'movie',
+        'column_values': {},
+        'operators': [
+            {'value': 'contains', 'label': 'Contains'},
+            {'value': 'equals', 'label': 'Equals'},
+            {'value': 'starts_with', 'label': 'Starts With'},
+            {'value': 'ends_with', 'label': 'Ends With'},
+            {'value': 'greater_than', 'label': 'Greater Than'},
+            {'value': 'less_than', 'label': 'Less Than'}
+        ]
+    }
+
+    conn = None
     try:
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
 
         # Get all column names
         cursor.execute("PRAGMA table_info(media_items)")
         all_columns = [column[1] for column in cursor.fetchall()]
+        data['all_columns'] = all_columns
 
         # Define the default columns
         default_columns = [
@@ -39,7 +64,15 @@ def index():
             selected_columns = request.form.getlist('columns')
             session['selected_columns'] = selected_columns
         else:
-            selected_columns = session.get('selected_columns')
+            # Try to get selected columns from request parameters first
+            selected_columns_json = request.args.get('selected_columns')
+            if selected_columns_json:
+                try:
+                    selected_columns = json.loads(selected_columns_json)
+                except json.JSONDecodeError:
+                    selected_columns = None
+            else:
+                selected_columns = session.get('selected_columns')
 
         # If no columns are selected, use the default columns
         if not selected_columns:
@@ -52,8 +85,14 @@ def index():
             selected_columns = ['id']
 
         # Get filter and sort parameters
-        filter_column = request.args.get('filter_column', '')
-        filter_value = request.args.get('filter_value', '')
+        filters = []
+        filter_data = request.args.get('filters', '')
+        if filter_data:
+            try:
+                filters = json.loads(filter_data)
+            except json.JSONDecodeError:
+                filters = []
+
         sort_column = request.args.get('sort_column', 'id')  # Default sort by id
         sort_order = request.args.get('sort_order', 'asc')
         content_type = request.args.get('content_type', 'movie')  # Default to 'movie'
@@ -75,11 +114,34 @@ def index():
         where_clauses = []
         params = []
 
-        # Apply custom filter if present, otherwise apply content type and letter filters
-        if filter_column and filter_value:
-            where_clauses.append(f"{filter_column} LIKE ?")
-            params.append(f"%{filter_value}%")
-            # Reset content_type and current_letter when custom filter is applied
+        # Apply filters if present, otherwise apply content type and letter filters
+        if filters:
+            for filter_item in filters:
+                column = filter_item.get('column')
+                value = filter_item.get('value')
+                operator = filter_item.get('operator', 'contains')  # Default to contains
+                
+                if column and value and column in all_columns:
+                    if operator == 'contains':
+                        where_clauses.append(f"{column} LIKE ?")
+                        params.append(f"%{value}%")
+                    elif operator == 'equals':
+                        where_clauses.append(f"{column} = ?")
+                        params.append(value)
+                    elif operator == 'starts_with':
+                        where_clauses.append(f"{column} LIKE ?")
+                        params.append(f"{value}%")
+                    elif operator == 'ends_with':
+                        where_clauses.append(f"{column} LIKE ?")
+                        params.append(f"%{value}")
+                    elif operator == 'greater_than':
+                        where_clauses.append(f"{column} > ?")
+                        params.append(value)
+                    elif operator == 'less_than':
+                        where_clauses.append(f"{column} < ?")
+                        params.append(value)
+            
+            # Reset content_type and current_letter when custom filters are applied
             content_type = 'all'
             current_letter = ''
         else:
@@ -117,24 +179,27 @@ def index():
         # Log the number of items fetched
         logging.debug(f"Fetched {len(items)} items from the database")
 
-        conn.close()
-
         # Convert items to a list of dictionaries, always including 'id'
         items = [dict(zip(query_columns, item)) for item in items]
 
-        # Prepare the data dictionary
-        data = {
+        # Get unique values for each column for filter dropdowns
+        column_values = {}
+        for column in all_columns:
+            if column in ['state', 'type', 'version']:  # Add more columns as needed
+                cursor.execute(f"SELECT DISTINCT {column} FROM media_items WHERE {column} IS NOT NULL ORDER BY {column}")
+                column_values[column] = [row[0] for row in cursor.fetchall()]
+
+        # Update data dictionary instead of creating new one
+        data.update({
             'items': items,
-            'all_columns': all_columns,
             'selected_columns': selected_columns,
-            'filter_column': filter_column,
-            'filter_value': filter_value,
+            'filters': filters,
             'sort_column': sort_column,
             'sort_order': sort_order,
-            'alphabet': alphabet,
             'current_letter': current_letter,
-            'content_type': content_type
-        }
+            'content_type': content_type,
+            'column_values': column_values,
+        })
 
         if request.args.get('ajax') == '1':
             return jsonify(data)
@@ -147,13 +212,15 @@ def index():
     except Exception as e:
         logging.error(f"Unexpected error in database route: {str(e)}")
         error_message = "An unexpected error occurred. Please try again later."
+    finally:
+        if conn:
+            conn.close()
 
     if request.args.get('ajax') == '1':
         return jsonify({'error': error_message}), 500
     else:
         flash(error_message, "error")
-        # Remove 'items' from the arguments here
-        return render_template('database.html', **{**data, 'items': []})
+        return render_template('database.html', **data)
 
 @database_bp.route('/bulk_queue_action', methods=['POST'])
 def bulk_queue_action():
@@ -209,6 +276,7 @@ def bulk_queue_action():
                         
             elif action == 'move' and target_queue:
                 # Keep existing move functionality
+                from database import get_db_connection
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
@@ -227,6 +295,7 @@ def bulk_queue_action():
                 finally:
                     conn.close()
             elif action == 'change_version' and target_queue:  # target_queue contains the version in this case
+                from database import get_db_connection
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
@@ -345,8 +414,10 @@ def delete_item():
 
         # Handle database operation based on blacklist flag
         if blacklist:
+            from database import update_media_item_state
             update_media_item_state(item_id, 'Blacklisted')
         else:
+            from database import remove_from_media_items
             remove_from_media_items(item_id)
 
         return jsonify({'success': True})
@@ -382,6 +453,7 @@ def reverse_parser():
         'sort_order': 'asc'
     }
     try:
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
 
@@ -469,6 +541,7 @@ def reverse_parser():
 @database_bp.route('/apply_parsed_versions', methods=['POST'])
 def apply_parsed_versions():
     try:
+        from database import get_all_media_items
         items = get_all_media_items()
         updated_count = 0
         for item in items:
@@ -479,6 +552,7 @@ def apply_parsed_versions():
                 current_version = item['version'] if 'version' in item.keys() else None
                 if parsed_version != current_version:
                     try:
+                        from database import update_media_item_state
                         update_media_item_state(item['id'], item['state'], version=parsed_version)
                         updated_count += 1
                     except Exception as e:
@@ -596,3 +670,35 @@ def clear_watch_history():
     except Exception as e:
         logging.error(f"Error clearing watch history: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
+
+@database_bp.route('/phalanxdb')
+@admin_required
+def phalanxdb_status():
+    """Display the PhalanxDB status and contents"""
+    try:
+        # Initialize cache manager
+        phalanx_manager = PhalanxDBClassManager()
+        
+        # No need for event loop with synchronous methods
+        connection_status = phalanx_manager.test_connection()
+        mesh_status = phalanx_manager.get_mesh_status()
+        cache_entries = phalanx_manager.get_all_entries()
+        
+        return render_template(
+            'phalanxdb_status.html',
+            connection_status=connection_status,
+            mesh_status=mesh_status,
+            cache_entries=cache_entries,
+            total_entries=len(cache_entries)
+        )
+        
+    except Exception as e:
+        logging.error(f"Error in PhalanxDB status route: {str(e)}")
+        flash(f"Error retrieving PhalanxDB status: {str(e)}", "error")
+        return render_template(
+            'phalanxdb_status.html',
+            connection_status=False,
+            mesh_status={'peers': [], 'mesh_status': {}, 'last_sync': None},
+            cache_entries=[],
+            total_entries=0
+        )

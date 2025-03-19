@@ -8,7 +8,7 @@ from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
 from .old_nyaa import scrape_nyaa_instance as scrape_old_nyaa_instance
-from settings import get_setting
+from utilities.settings import get_setting
 
 class ScraperManager:
     def __init__(self, config: Dict[str, Any]):

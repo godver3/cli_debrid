@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 import os
-from settings import get_setting
+from utilities.settings import get_setting
 import shutil
 from pathlib import Path
 import re
@@ -10,7 +10,6 @@ import time
 from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
-from database import get_media_item_by_id
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -30,7 +29,8 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         
         symlinked_path = get_setting('File Management', 'symlinked_files_path')
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
-        logging.debug(f"Settings: symlinked_path={symlinked_path}, enable_separate_anime_folders={get_setting('Debug', 'enable_separate_anime_folders', False)}")
+        organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False)
+        logging.debug(f"Settings: symlinked_path={symlinked_path}, enable_separate_anime_folders={get_setting('Debug', 'enable_separate_anime_folders', False)}, organize_by_resolution={organize_by_resolution}")
         
         # Get the original extension
         _, extension = os.path.splitext(original_file)
@@ -38,6 +38,22 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         # Build the path
         parts = []
         media_type = item.get('type', 'movie')
+        
+        # If organizing by resolution is enabled, get the resolution from the version
+        if organize_by_resolution:
+            version = item.get('version', '')
+            # If we have a version, check if there are corresponding version settings
+            if version:
+                try:
+                    # Import here to avoid circular imports
+                    from queues.config_manager import get_version_settings
+                    version_settings = get_version_settings(version)
+                    if version_settings and 'max_resolution' in version_settings:
+                        resolution_folder = version_settings['max_resolution']
+                        parts.append(resolution_folder)
+                        logging.debug(f"Added resolution folder: {resolution_folder}")
+                except Exception as e:
+                    logging.error(f"Error getting version settings: {str(e)}")
         
         # Check if this is an anime
         genres = item.get('genres', '') or ''
@@ -85,7 +101,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         logging.debug(f"parts after adding folder name: {parts}")
         
         # Create root folder if it doesn't exist
-        root_folder_path = os.path.join(symlinked_path, folder_name)
+        root_folder_path = os.path.join(symlinked_path, *parts)
         if not os.path.exists(root_folder_path):
             try:
                 os.makedirs(root_folder_path, exist_ok=True)
@@ -439,8 +455,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         # Wait for media server to detect the removed symlink
                         time.sleep(1)
                         
-                        # Remove the old file from Plex or Emby
-                        if get_setting('Debug', 'emby_url', default=False):
+                        # Remove the old file from Plex or Emby/Jellyfin
+                        if get_setting('Debug', 'emby_jellyfin_url', default=False):
                             from utilities.emby_functions import remove_file_from_emby
                             remove_file_from_emby(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
                         elif get_setting('File Management', 'plex_url_for_symlink', default=False):
@@ -499,6 +515,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 update_media_item(item['id'], **update_values)
 
                 # Add post-processing call after state update
+                from database import get_media_item_by_id
                 updated_item = get_media_item_by_id(item['id'])
                 if updated_item:
                     if new_state == 'Collected':
@@ -547,88 +564,8 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
     Returns:
         Dict mapping item IDs to their found file information
     """
-    try:
-        original_path = get_setting('File Management', 'original_files_path')
-        
-        if not os.path.exists(original_path):
-            logging.error(f"Original files path does not exist: {original_path}")
-            return {}
-            
-        found_items = {}
-        
-        # Create a map of filenames to look for
-        target_files = {item.get('filled_by_file'): item for item in items if item.get('filled_by_file')}
-        
-        if not target_files:
-            logging.debug("No files to scan for")
-            return {}
-            
-        logging.info(f"Scanning for {len(target_files)} files")
-        
-        # Define common media file extensions
-        media_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.m4v'}
-        
-        # Keep track of processed files to avoid duplicates
-        processed_files = set()
-        
-        # Walk through the original files directory
-        for root, _, files in os.walk(original_path):
-            for file in files:
-                # Skip if not a media file
-                if not any(file.lower().endswith(ext) for ext in media_extensions):
-                    continue
-                    
-                if file in target_files and file not in processed_files:
-                    source_file = os.path.join(root, file)
-                    item = target_files[file]
-                    
-                    try:
-                        # Get destination path based on settings
-                        dest_file = get_symlink_path(item, source_file)
-                        if not dest_file:
-                            continue
-                        
-                        # Create symlink if it doesn't exist
-                        success = False
-                        if not os.path.exists(dest_file):
-                            success = create_symlink(source_file, dest_file, item.get('id'))
-                        else:
-                            # Verify existing symlink points to correct source
-                            if os.path.islink(dest_file):
-                                real_source = os.path.realpath(dest_file)
-                                if real_source == source_file:
-                                    success = True
-                                else:
-                                    # Recreate symlink if pointing to wrong source
-                                    os.unlink(dest_file)
-                                    success = create_symlink(source_file, dest_file, item.get('id'))
-                            else:
-                                logging.warning(f"Destination exists but is not a symlink: {dest_file}")
-                                continue
-                        
-                        if success:
-                            found_items[item['id']] = {
-                                'location': dest_file,
-                                'original_path': source_file,
-                                'filename': file,
-                                'item': item
-                            }
-                            processed_files.add(file)
-                            
-                            # Update database with location
-                            from database.database_writing import update_media_item
-                            update_media_item(item['id'], location_on_disk=dest_file, collected_at=datetime.now())
-                            
-                    except Exception as e:
-                        logging.error(f"Error processing file {file}: {str(e)}")
-                        continue
-                        
-        logging.info(f"Local library scan found {len(found_items)} matching items")
-        return found_items
-        
-    except Exception as e:
-        logging.error(f"Error during local library scan: {e}", exc_info=True)
-        return {}
+    # Disabled for now
+    return {}
 
 def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500) -> Dict[str, Dict[str, Any]]:
     """
@@ -642,66 +579,8 @@ def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500)
     Returns:
         Dict mapping item IDs to their found file information
     """
-    try:
-        original_path = get_setting('File Management', 'original_files_path')
-        symlinked_path = get_setting('File Management', 'symlinked_files_path')
-        
-        if not os.path.exists(original_path):
-            logging.error(f"Original files path does not exist: {original_path}")
-            return {}
-            
-        # Create a map of filenames to look for
-        target_files = {item.get('filled_by_file'): item for item in items if item.get('filled_by_file')}
-        
-        if not target_files:
-            logging.debug("No files to scan for")
-            return {}
-            
-        # Get all media files sorted by modification time
-        media_files = []
-        for root, _, files in os.walk(original_path):
-            for file in files:
-                if file in target_files:
-                    full_path = os.path.join(root, file)
-                    media_files.append((full_path, os.path.getmtime(full_path)))
-                    
-        # Sort by modification time and take the most recent
-        media_files.sort(key=lambda x: x[1], reverse=True)
-        recent_files = media_files[:max_files]
-        
-        found_items = {}
-        for source_file, _ in recent_files:
-            filename = os.path.basename(source_file)
-            if filename in target_files:
-                relative_path = get_relative_path(source_file)
-                dest_file = os.path.join(symlinked_path, relative_path)
-                
-                # Create symlink if it doesn't exist
-                if not os.path.exists(dest_file):
-                    if create_symlink(source_file, dest_file, target_files[filename].get('id')):
-                        item = target_files[filename]
-                        found_items[item['id']] = {
-                            'location': dest_file,
-                            'original_path': source_file,
-                            'filename': filename,
-                            'item': item
-                        }
-                else:
-                    # File already symlinked
-                    item = target_files[filename]
-                    found_items[item['id']] = {
-                        'location': dest_file,
-                        'original_path': source_file,
-                        'filename': filename,
-                        'item': item
-                    }
-                    
-        logging.info(f"Recent local library scan found {len(found_items)} matching items")
-        return found_items
-        
-    except Exception as e:
-        logging.error(f"Error during recent local library scan: {e}", exc_info=True)
-        return {}
+    # Disabled for now
+    return {}
 
 def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
     """

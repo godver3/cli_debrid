@@ -3,11 +3,10 @@ from typing import Dict, Any, List
 from datetime import datetime, date, timedelta
 import json
 
-from database import get_all_media_items, get_media_item_by_id
-from settings import get_setting
+from utilities.settings import get_setting
 from scraper.scraper import scrape
-from not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
-from wake_count_manager import wake_count_manager
+from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
+from queues.wake_count_manager import wake_count_manager
 from cli_battery.app.direct_api import DirectAPI
 
 class ScrapingQueue:
@@ -15,6 +14,7 @@ class ScrapingQueue:
         self.items = []
 
     def update(self):
+        from database import get_all_media_items, get_media_item_by_id
         self.items = [dict(row) for row in get_all_media_items(state="Scraping")]
         
         # Get the queue sort order setting
@@ -277,6 +277,7 @@ class ScrapingQueue:
         item_identifier = queue_manager.generate_identifier(item)
 
         # Add check for fall_back_to_single_scraper flag
+        from database import get_media_item_by_id
         if get_media_item_by_id(item['id']).get('fall_back_to_single_scraper'):
             is_multi_pack = False
 

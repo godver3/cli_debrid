@@ -3,7 +3,7 @@ from debrid import get_debrid_provider
 from database.database_writing import add_media_item
 from metadata.metadata import get_metadata, _get_local_timezone, get_all_season_episode_counts
 from .models import admin_required
-from config_manager import load_config
+from queues.config_manager import load_config
 from queues.checking_queue import CheckingQueue
 from datetime import datetime, timezone
 from queues.media_matcher import MediaMatcher
@@ -64,8 +64,8 @@ def assign_magnet():
                 return redirect(url_for('magnet.assign_magnet'))
 
             # Search Trakt for media
-            from web_scraper import search_trakt
-            search_results = search_trakt(search_term, content_type)
+            from utilities.web_scraper import search_trakt
+            search_results = search_trakt(search_term)
             
             # Filter results based on content type
             if content_type != 'all':
@@ -331,9 +331,9 @@ def assign_magnet():
                     # Send notifications for all added items
                     if added_items:
                         try:
-                            from notifications import send_notifications
+                            from routes.notifications import send_notifications
                             from routes.settings_routes import get_enabled_notifications_for_category
-                            from extensions import app
+                            from routes.extensions import app
 
                             with app.app_context():
                                 response = get_enabled_notifications_for_category('checking')

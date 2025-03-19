@@ -111,13 +111,17 @@ class DebridProvider(ABC):
         pass
     
     @abstractmethod
-    def is_cached(self, magnet_or_url: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
+    def is_cached(self, magnet_or_url: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, Optional[bool]]]:
         """
         Check if a magnet link or torrent file is cached on the service.
         
         Args:
             magnet_or_url: Magnet link, hash, or URL to check
             temp_file_path: Optional path to torrent file
+            result_title: Optional result title for cached content
+            result_index: Optional result index for cached content
+            remove_uncached: Whether to remove uncached content
+            skip_phalanx_db: Whether to skip phalanx database check
             
         Returns:
             - For single input: bool or None (error)
@@ -187,3 +191,22 @@ class DebridProvider(ABC):
         active_torrents = self.list_active_torrents()
         active_count, max_downloads = self.get_active_downloads()
         return active_torrents, (active_count, max_downloads)
+
+    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
+        """Synchronous version of is_cached"""
+        import asyncio
+        try:
+            # Create a new event loop for this thread if one doesn't exist
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the async method in the event loop
+            return loop.run_until_complete(
+                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, skip_phalanx_db=skip_phalanx_db)
+            )
+        except Exception as e:
+            logging.error(f"Error in is_cached_sync: {str(e)}")
+            return None

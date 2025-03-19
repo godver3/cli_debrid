@@ -25,6 +25,14 @@
         background-color: #d35400;
     }    
     
+    #bulk-rescrape {
+        background-color: #e67e22;
+    }
+
+    #bulk-rescrape:hover {
+        background-color: #d35400;
+    }
+    
     #column-selector {
         background-color: #444;
         padding: 15px;
@@ -76,36 +84,36 @@
         border-radius: 4px;
     }
 
+    .sort-section {
+        margin-bottom: 15px;
+    }
+
     .filter-buttons {
         display: flex;
-        justify-content: space-between;
         margin-bottom: 10px;
         gap: 10px;
+    }
+
+    .filter-value {
+        min-width: 170px;
     }
 
     #filter-sort {
         margin-bottom: 20px;
     }
 
-    #filter-form {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        align-items: center;
-    }
-
-    #filter-form label {
+    #filter-form label, #sort-container label, #filter-buttons label {
         margin-right: 5px;
     }
 
-    #filter-form select,
+    #filter-form select, #sort-container select, #filter-buttons select,
     #filter-form input[type="text"] {
         padding: 5px;
         border-radius: 4px;
         border: 1px solid #ccc;
     }
 
-    #filter-form button {
+    #filter-form button, #sort-container button, #filter-buttons button {
         background-color: #008CBA;
 
     }
@@ -206,6 +214,8 @@
             margin-bottom: 10px;
         }
 
+
+
         .content-type-filter,
         .pagination {
             width: 100%;
@@ -303,6 +313,10 @@
     /* Remove any tooltip-specific styles if they exist */
     .mobile-tooltip-button {
         display: none;  /* This will hide any existing tooltip buttons */
+    }
+
+    .remove-filter {
+        padding: 0 !important;
     }
 
     /* Bulk actions styles */

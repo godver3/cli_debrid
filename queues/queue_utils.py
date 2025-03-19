@@ -1,4 +1,4 @@
-from queue_manager import QueueManager
+from queues.queue_manager import QueueManager
 import logging
 
 queue_manager = QueueManager()

@@ -1,5 +1,5 @@
 import re
-from settings import get_setting
+from utilities.settings import get_setting
 import logging
 import json
 

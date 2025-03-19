@@ -1,7 +1,7 @@
 import pickle
 import os
 import logging
-from settings import get_setting
+from utilities.settings import get_setting
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')

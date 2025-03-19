@@ -89,6 +89,7 @@ export function showPopup(options) {
         .universal-popup .popup-content h3 {
             margin: 0 0 15px;
             font-size: 1.2em;
+            text-align: center;
         }
         .universal-popup .popup-content p {
             margin-bottom: 15px;

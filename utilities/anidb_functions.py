@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # Add the root directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from settings import get_setting
+from utilities.settings import get_setting
 
 # Jikan API constants
 JIKAN_API_URL = "https://api.jikan.moe/v4"

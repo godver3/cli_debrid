@@ -1,18 +1,17 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime, timezone, timedelta
-import logging
+from app.logger_config import logger
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy import func
 from flask import current_app
 import time
+import requests
 
 from .database import DatabaseManager, Item, init_db, Session as DbSession
 from .metadata_manager import MetadataManager
 from .settings import Settings
 from metadata.metadata import _get_local_timezone
-
-logger = logging.getLogger(__name__)
 
 class BackgroundJobManager:
     def __init__(self):
@@ -58,11 +57,11 @@ class BackgroundJobManager:
             self.scheduler.add_job(
                 func=self.refresh_stale_metadata,
                 trigger='date',  # Run once
-                run_date=datetime.now(local_tz) + timedelta(seconds=30),  # 30 second delay
+                run_date=datetime.now(local_tz) + timedelta(seconds=5),
                 id='initial_refresh',
                 name='Initial Metadata Refresh'
             )
-            logger.info("Initial metadata refresh scheduled in 30 seconds")
+            logger.info("Initial metadata refresh scheduled in 5 seconds")
             
         except Exception as e:
             logger.error(f"Failed to start background job scheduler: {e}")
@@ -101,15 +100,34 @@ class BackgroundJobManager:
                                 
                                 if MetadataManager.is_metadata_stale(item.updated_at):
                                     stale_count += 1
-                                    try:
-                                        # Pass the current session to refresh_metadata
-                                        MetadataManager.refresh_metadata(item.imdb_id, existing_session=session)
-                                        refreshed_count += 1
-                                        # Re-query the item to ensure it's still bound to the session
-                                        item = session.query(Item).get(item.id)
-                                    except Exception as e:
-                                        logger.error(f"Failed to refresh metadata for {item.title} ({item.imdb_id}): {e}")
-                                        continue
+                                    retry_count = 0
+                                    max_retries = 3
+                                    while retry_count < max_retries:
+                                        try:
+                                            # Pass the current session to refresh_metadata
+                                            MetadataManager.refresh_metadata(item.imdb_id, existing_session=session)
+                                            refreshed_count += 1
+                                            # Re-query the item to ensure it's still bound to the session
+                                            item = session.query(Item).get(item.id)
+                                            # Add delay between items to avoid rate limiting
+                                            time.sleep(1)  # 1 second delay between items
+                                            break  # Success, exit retry loop
+                                        except requests.exceptions.HTTPError as e:
+                                            if e.response is not None and e.response.status_code == 429:
+                                                retry_count += 1
+                                                logger.warning(f"Rate limit hit (429) while processing {item.title} ({item.imdb_id}). Attempt {retry_count}/{max_retries}")
+                                                if retry_count < max_retries:
+                                                    logger.info("Pausing for 30 seconds before retry...")
+                                                    time.sleep(30)  # 30 second pause on rate limit
+                                                else:
+                                                    logger.error(f"Max retries reached for {item.title} ({item.imdb_id})")
+                                                    break
+                                            else:
+                                                logger.error(f"HTTP error refreshing metadata for {item.title} ({item.imdb_id}): {e}")
+                                                break
+                                        except Exception as e:
+                                            logger.error(f"Failed to refresh metadata for {item.title} ({item.imdb_id}): {e}")
+                                            break
                             except Exception as e:
                                 logger.error(f"Error processing item {item.imdb_id}: {e}")
                                 continue
@@ -121,8 +139,8 @@ class BackgroundJobManager:
                         if (offset + batch_size) % (batch_size * 5) == 0:
                             logger.info(f"Progress: {min(offset + batch_size, total_items)}/{total_items} items checked")
                         
-                        # Small delay between batches to reduce database pressure
-                        time.sleep(0.1)
+                        # Increase delay between batches to reduce API pressure
+                        time.sleep(3)  # 3 second delay between batches
                     
                     logger.info(
                         f"Metadata refresh complete: {refreshed_count}/{stale_count} stale items refreshed "

@@ -3,7 +3,7 @@ import logging
 from urllib.parse import urlparse
 import json
 import ast
-from settings_schema import SETTINGS_SCHEMA
+from utilities.settings_schema import SETTINGS_SCHEMA
 from utilities.file_lock import FileLock
 import time
 

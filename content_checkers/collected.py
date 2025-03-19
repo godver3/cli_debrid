@@ -1,7 +1,6 @@
 import logging
 from typing import List, Dict, Any, Tuple
-from database import get_all_media_items
-from settings import get_all_settings, get_setting
+from utilities.settings import get_all_settings, get_setting
 import os
 import pickle
 from datetime import datetime, timedelta
@@ -41,6 +40,7 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     cache = {} if disable_caching else load_collected_cache()
     current_time = datetime.now()
 
+    from database import get_all_media_items
     for source in collected_sources:
         versions = source.get('versions', {})
 

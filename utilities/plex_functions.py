@@ -1,7 +1,7 @@
 import asyncio
 import aiohttp
 import logging
-from settings import get_setting
+from utilities.settings import get_setting
 import time
 from typing import Dict, List, Any
 import ast

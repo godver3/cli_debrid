@@ -5,8 +5,8 @@ import os
 import uuid
 import requests
 from datetime import datetime, timedelta
-from settings import load_config
-from config_manager import add_content_source, save_config
+from utilities.settings import load_config
+from queues.config_manager import add_content_source, save_config
 
 trakt_friends_bp = Blueprint('trakt_friends', __name__)
 

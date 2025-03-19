@@ -23,7 +23,7 @@
 
 <!-- Add modal for external links -->
 <div id="external-links-modal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" id="external-links-modal-content">
         <span class="close-modal">&times;</span>
         <h3 id="modal-title">View on External Sites</h3>
         <div class="external-links">
@@ -75,14 +75,37 @@
     </div>
 
     <script>
-        // Initialize toggles based on session state
+        // Initialize displays when page loads
         document.addEventListener('DOMContentLoaded', function() {
+            // Check if on mobile
+            if (window.innerWidth <= 768) {
+                // Add compact-view class to statistics-wrapper
+                document.querySelector('.statistics-wrapper').classList.add('compact-view');
+            }
+
+            // Initialize toggles based on session state
             const timeFormatToggle = document.getElementById('time-format-toggle');
             const compactToggle = document.getElementById('compact-toggle');
             
             // Set initial states
             timeFormatToggle.checked = {{ 'true' if use_24hour_format else 'false' }};
             compactToggle.checked = {{ 'true' if compact_view else 'false' }};
+
+            // Update displays
+            updateActiveDownloadsDisplay();
+            updateUsageStatsDisplay();
+
+            // Add click handler for rescrape buttons
+            document.querySelectorAll('.rescrape-btn').forEach(button => {
+                button.addEventListener('click', handleRescrapeClick);
+            });
+
+            // Initialize the external links modal
+            if (typeof initializeExternalLinksModal === 'function') {
+                initializeExternalLinksModal();
+            } else if (typeof reattachExternalLinksListeners === 'function') {
+                reattachExternalLinksListeners();
+            }
         });
 
         document.getElementById('time-format-toggle').addEventListener('change', function() {
@@ -138,7 +161,12 @@
                 console.log('Updating recently aired items');
                 recentlyAiredList.innerHTML = data.recently_aired.map(item => `
                     <li>
-                        <div class="show-info">
+                        <div class="show-info clickable" 
+                             data-title="${item.title}"
+                             data-imdb-id="${item.imdb_id}"
+                             data-tmdb-id="${item.tmdb_id}"
+                             data-season="${item.season_number}"
+                             data-episode="${item.episode_number}">
                             <span class="show-title${item.is_collected ? '' : ' uncollected'}">${item.title}</span>
                             <span class="air-time">${item.formatted_datetime}</span>
                         </div>
@@ -166,7 +194,12 @@
             if (airingSoonList && data.airing_soon) {
                 console.log('Updating airing soon items');
                 airingSoonList.innerHTML = data.airing_soon.map(item => `
-                    <li>
+                    <li class="clickable"
+                        data-title="${item.title}"
+                        data-imdb-id="${item.imdb_id}"
+                        data-tmdb-id="${item.tmdb_id}"
+                        data-season="${item.season_number}"
+                        data-episode="${item.episode_number}">
                         <span class="show-title">${item.title}</span>
                         <span class="air-time">${item.formatted_datetime}</span>
                     </li>
@@ -178,7 +211,11 @@
             if (upcomingReleasesList && data.upcoming_releases) {
                 console.log('Updating upcoming releases');
                 upcomingReleasesList.innerHTML = data.upcoming_releases.map(release => `
-                    <li>
+                    <li class="clickable"
+                        data-title="${release.titles[0] || ''}"
+                        data-release-date="${release.release_date || ''}"
+                        data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids[0] : ''}"
+                        data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids[0] : ''}">
                         <span class="titles">${release.titles.join(', ')}</span>
                         <span class="release-date">${release.formatted_date}</span>
                     </li>
@@ -301,6 +338,130 @@
                 
                 recentlyUpgradedContainer.innerHTML = upgradeHtml;
             }
+            
+            // Reattach click event listeners for external links modal after updating content
+            reattachExternalLinksListeners();
+        }
+
+        // Function to reattach external links listeners
+        function reattachExternalLinksListeners() {
+            console.log('Reattaching external links event listeners');
+            
+            // Get modal elements
+            const modal = document.getElementById('external-links-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const traktLink = document.getElementById('trakt-link');
+            const tmdbLink = document.getElementById('tmdb-link');
+            const imdbLink = document.getElementById('imdb-link');
+            
+            // Add click event listeners to clickable items
+            document.querySelectorAll('.clickable').forEach(item => {
+                // Remove existing event listeners to prevent duplicates
+                const newItem = item.cloneNode(true);
+                item.parentNode.replaceChild(newItem, item);
+                
+                newItem.addEventListener('click', function(e) {
+                    // Prevent event from bubbling to parent elements
+                    e.stopPropagation();
+                    
+                    // Get data attributes
+                    const title = this.dataset.title;
+                    const imdbId = this.dataset.imdbId;
+                    const tmdbId = this.dataset.tmdbId;
+                    const season = this.dataset.season;
+                    const episode = this.dataset.episode;
+                    
+                    // Log the values for debugging
+                    console.log('Clicked item data:', {
+                        title,
+                        imdbId,
+                        tmdbId,
+                        season,
+                        episode,
+                        'has-imdb': !!imdbId,
+                        'has-tmdb': !!tmdbId
+                    });
+                    
+                    // Set modal title
+                    modalTitle.textContent = `View "${title}" on External Sites`;
+                    
+                    // Extract base show title (remove season/episode info)
+                    const baseTitle = title.split(' S')[0];
+                    
+                    // Set links based on available IDs
+                    
+                    // IMDB links
+                    if (imdbId) {
+                        // For TV shows with season and episode
+                        if (season && episode) {
+                            imdbLink.href = `https://www.imdb.com/title/${imdbId}/episodes?season=${season}`;
+                        } else {
+                            // For movies or shows without season/episode info
+                            imdbLink.href = `https://www.imdb.com/title/${imdbId}/`;
+                        }
+                        imdbLink.style.display = 'flex';
+                    } else {
+                        // Fallback to search
+                        imdbLink.href = `https://www.imdb.com/find?q=${encodeURIComponent(baseTitle)}`;
+                        imdbLink.style.display = 'flex';
+                    }
+                    
+                    // TMDB links
+                    if (tmdbId) {
+                        // For TV shows with season and episode
+                        if (season && episode) {
+                            tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}/season/${season}/episode/${episode}`;
+                        } else {
+                            // Check if it's a movie or TV show based on title format
+                            if (title.includes(' S') && title.includes('E')) {
+                                tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}`;
+                            } else {
+                                tmdbLink.href = `https://www.themoviedb.org/movie/${tmdbId}`;
+                            }
+                        }
+                        tmdbLink.style.display = 'flex';
+                    } else {
+                        // Fallback to search
+                        tmdbLink.href = `https://www.themoviedb.org/search?query=${encodeURIComponent(baseTitle)}`;
+                        tmdbLink.style.display = 'flex';
+                    }
+                    
+                    // Trakt links
+                    if (imdbId || tmdbId) {
+                        // For TV shows with season and episode
+                        if (season && episode) {
+                            if (imdbId) {
+                                // Direct link to episode using IMDB ID
+                                traktLink.href = `https://trakt.tv/shows/${imdbId}/seasons/${season}/episodes/${episode}`;
+                            } else if (tmdbId) {
+                                // Direct link to episode using TMDB ID
+                                traktLink.href = `https://trakt.tv/shows/${tmdbId}/seasons/${season}/episodes/${episode}`;
+                            }
+                        } else if (title.includes(' S') && title.includes('E')) {
+                            // For TV shows without specific episode - go to show page
+                            if (imdbId) {
+                                traktLink.href = `https://trakt.tv/shows/${imdbId}`;
+                            } else if (tmdbId) {
+                                traktLink.href = `https://trakt.tv/shows/${tmdbId}`;
+                            }
+                        } else {
+                            // For movies
+                            if (imdbId) {
+                                traktLink.href = `https://trakt.tv/movies/${imdbId}`;
+                            } else if (tmdbId) {
+                                traktLink.href = `https://trakt.tv/movies/${tmdbId}`;
+                            }
+                        }
+                    } else {
+                        // Fallback to search by title when no IDs available
+                        traktLink.href = `https://trakt.tv/search?query=${encodeURIComponent(baseTitle)}`;
+                    }
+                    traktLink.style.display = 'flex';
+                    
+                    // Show modal
+                    modal.style.display = 'block';
+                });
+            });
         }
 
         // Separate the click handler function for reusability
@@ -613,32 +774,6 @@
         }
     }
 
-    // Initialize displays when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        // Check if on mobile
-        if (window.innerWidth <= 768) {
-            // Add compact-view class to statistics-wrapper
-            document.querySelector('.statistics-wrapper').classList.add('compact-view');
-        }
-
-        // Initialize toggles based on session state
-        const timeFormatToggle = document.getElementById('time-format-toggle');
-        const compactToggle = document.getElementById('compact-toggle');
-        
-        // Set initial states
-        timeFormatToggle.checked = {{ 'true' if use_24hour_format else 'false' }};
-        compactToggle.checked = {{ 'true' if compact_view else 'false' }};
-
-        // Update displays
-        updateActiveDownloadsDisplay();
-        updateUsageStatsDisplay();
-
-        // Add click handler for rescrape buttons
-        document.querySelectorAll('.rescrape-btn').forEach(button => {
-            button.addEventListener('click', handleRescrapeClick);
-        });
-    });
-
     document.getElementById('time-format-toggle').addEventListener('change', function() {
         const isChecked = this.checked;
         
@@ -733,6 +868,14 @@
 <!-- Add JavaScript for external links modal -->
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // Initialize external links modal
+        initializeExternalLinksModal();
+    });
+
+    // Function to initialize the external links modal
+    function initializeExternalLinksModal() {
+        console.log('Initializing external links modal');
+        
         // Get modal elements
         const modal = document.getElementById('external-links-modal');
         const modalTitle = document.getElementById('modal-title');
@@ -741,110 +884,8 @@
         const imdbLink = document.getElementById('imdb-link');
         const closeModal = document.querySelector('.close-modal');
         
-        // Add click event listeners to clickable items
-        document.querySelectorAll('.clickable').forEach(item => {
-            item.addEventListener('click', function(e) {
-                // Prevent event from bubbling to parent elements
-                e.stopPropagation();
-                
-                // Get data attributes
-                const title = this.dataset.title;
-                const imdbId = this.dataset.imdbId;
-                const tmdbId = this.dataset.tmdbId;
-                const season = this.dataset.season;
-                const episode = this.dataset.episode;
-                
-                // Log the values for debugging
-                console.log('Clicked item data:', {
-                    title,
-                    imdbId,
-                    tmdbId,
-                    season,
-                    episode,
-                    'has-imdb': !!imdbId,
-                    'has-tmdb': !!tmdbId
-                });
-                
-                // Set modal title
-                modalTitle.textContent = `View "${title}" on External Sites`;
-                
-                // Extract base show title (remove season/episode info)
-                const baseTitle = title.split(' S')[0];
-                
-                // Set links based on available IDs
-                
-                // IMDB links
-                if (imdbId) {
-                    // For TV shows with season and episode
-                    if (season && episode) {
-                        imdbLink.href = `https://www.imdb.com/title/${imdbId}/episodes?season=${season}`;
-                    } else {
-                        // For movies or shows without season/episode info
-                        imdbLink.href = `https://www.imdb.com/title/${imdbId}/`;
-                    }
-                    imdbLink.style.display = 'flex';
-                } else {
-                    // Fallback to search
-                    imdbLink.href = `https://www.imdb.com/find?q=${encodeURIComponent(baseTitle)}`;
-                    imdbLink.style.display = 'flex';
-                }
-                
-                // TMDB links
-                if (tmdbId) {
-                    // For TV shows with season and episode
-                    if (season && episode) {
-                        tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}/season/${season}/episode/${episode}`;
-                    } else {
-                        // Check if it's a movie or TV show based on title format
-                        if (title.includes(' S') && title.includes('E')) {
-                            tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}`;
-                        } else {
-                            tmdbLink.href = `https://www.themoviedb.org/movie/${tmdbId}`;
-                        }
-                    }
-                    tmdbLink.style.display = 'flex';
-                } else {
-                    // Fallback to search
-                    tmdbLink.href = `https://www.themoviedb.org/search?query=${encodeURIComponent(baseTitle)}`;
-                    tmdbLink.style.display = 'flex';
-                }
-                
-                // Trakt links
-                if (imdbId || tmdbId) {
-                    // For TV shows with season and episode
-                    if (season && episode) {
-                        if (imdbId) {
-                            // Direct link to episode using IMDB ID
-                            traktLink.href = `https://trakt.tv/shows/${imdbId}/seasons/${season}/episodes/${episode}`;
-                        } else if (tmdbId) {
-                            // Direct link to episode using TMDB ID
-                            traktLink.href = `https://trakt.tv/shows/${tmdbId}/seasons/${season}/episodes/${episode}`;
-                        }
-                    } else if (title.includes(' S') && title.includes('E')) {
-                        // For TV shows without specific episode - go to show page
-                        if (imdbId) {
-                            traktLink.href = `https://trakt.tv/shows/${imdbId}`;
-                        } else if (tmdbId) {
-                            traktLink.href = `https://trakt.tv/shows/${tmdbId}`;
-                        }
-                    } else {
-                        // For movies
-                        if (imdbId) {
-                            traktLink.href = `https://trakt.tv/movies/${imdbId}`;
-                        } else if (tmdbId) {
-                            traktLink.href = `https://trakt.tv/movies/${tmdbId}`;
-                        }
-                    }
-                } else {
-                    // Fallback to search by title when no IDs available
-                    traktLink.href = `https://trakt.tv/search?query=${encodeURIComponent(baseTitle)}`;
-                }
-                traktLink.style.display = 'flex';
-                
-                // Show modal
-                modal.style.display = 'block';
-            });
-        });
+        // Attach click event listeners to clickable items
+        reattachExternalLinksListeners();
         
         // Close modal when clicking the close button
         closeModal.addEventListener('click', function() {
@@ -857,7 +898,7 @@
                 modal.style.display = 'none';
             }
         });
-    });
+    }
 </script>
 
 <style>
@@ -1022,6 +1063,17 @@
                                 console.log('Full UI update successful');
                             } catch (err) {
                                 console.error('Error in updateUIWithTimePreference:', err);
+                            }
+                        } else {
+                            // If we can't use the existing update function, at least make sure
+                            // click event listeners are reattached
+                            if (typeof reattachExternalLinksListeners === 'function') {
+                                try {
+                                    reattachExternalLinksListeners();
+                                    console.log('Reattached external links listeners');
+                                } catch (err) {
+                                    console.error('Error reattaching external links listeners:', err);
+                                }
                             }
                         }
                         

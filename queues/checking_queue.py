@@ -1,16 +1,16 @@
 import logging
 import time
 from typing import Dict, Any, Optional
-from database import get_all_media_items
-from run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
+from queues.run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
 from utilities.local_library_scan import check_local_file_for_item, local_library_scan
 from utilities.plex_functions import plex_update_item
 from utilities.emby_functions import emby_update_item
-from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from queues.adding_queue import AddingQueue
 from debrid import get_debrid_provider
-from settings import get_setting
-from debrid.common import timed_lru_cache
+from utilities.settings import get_setting
+from debrid.common import timed_lru_cache, extract_hash_from_magnet, download_and_extract_hash
+from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from pathlib import Path
 import os
 
@@ -25,6 +25,7 @@ class CheckingQueue:
             cls._instance.checking_queue_times = {}
             cls._instance.progress_checks = {}
             cls._instance.debrid_provider = get_debrid_provider()
+            cls._instance.uncached_torrents = {}  # Dict of {torrent_hash: {last_check_time, item_ids[]}}
         return cls._instance
 
     def __init__(self):
@@ -32,6 +33,7 @@ class CheckingQueue:
         pass
 
     def update(self):
+        from database import get_all_media_items
         db_items = get_all_media_items(state="Checking")
         old_item_ids = {item['id'] for item in self.items}
         old_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
@@ -141,20 +143,18 @@ class CheckingQueue:
         for magnet in magnets_to_add:
             try:
                 logging.info(f"Adding magnet to not-wanted list: {magnet[:50]}...")
-                from not_wanted_magnets import add_to_not_wanted
+                from database.not_wanted_magnets import add_to_not_wanted
                 from debrid.common import extract_hash_from_magnet
                 
                 # Check if magnet is actually an HTTP link
                 if magnet.startswith('http'):
-                    from debrid.common import download_and_extract_hash
                     hash_value = download_and_extract_hash(magnet)
                     add_to_not_wanted(hash_value)
-                    from not_wanted_magnets import add_to_not_wanted_urls
+                    from database.not_wanted_magnets import add_to_not_wanted_urls
                     add_to_not_wanted_urls(magnet)
                 else:
                     # Extract hash from magnet link
                     try:
-                        from debrid.common import extract_hash_from_magnet
                         hash_value = extract_hash_from_magnet(magnet)
                         add_to_not_wanted(hash_value)
                     except:
@@ -207,7 +207,7 @@ class CheckingQueue:
                 # This is likely a 404 error, so we should handle the missing torrent
                 try:
                     # Import QueueManager here to avoid circular imports
-                    from queue_manager import QueueManager
+                    from queues.queue_manager import QueueManager
                     queue_manager = QueueManager()
                     self.handle_missing_torrent(torrent_id, queue_manager)
                     return 'missing'
@@ -240,10 +240,23 @@ class CheckingQueue:
         self.items.append(item)
         self.checking_queue_times[item['id']] = time.time()
         logging.debug(f"Added item {item['id']} to checking queue")
+        
+        # Check if this might be an uncached torrent based on initial progress
+        torrent_id = item.get('filled_by_torrent_id')
+        if torrent_id:
+            try:
+                initial_progress = self.get_torrent_progress(torrent_id)
+                logging.debug(f"Initial progress for torrent {torrent_id}: {initial_progress}")
+                # If progress is 0%, likely uncached and needs tracking
+                if initial_progress == 0:
+                    self.register_uncached_torrent(item)
+                    logging.debug(f"Registered item {item['id']} for cache status tracking (initial progress: 0%)")
+            except Exception as e:
+                logging.error(f"Failed to check initial progress for item {item['id']}: {str(e)}")
 
-        from notifications import send_notifications
+        from routes.notifications import send_notifications
         from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
-        from extensions import app
+        from routes.extensions import app
         from database.database_reading import get_media_item_by_id
 
         item['upgrading'] = get_media_item_by_id(item['id'])['upgrading']
@@ -265,8 +278,9 @@ class CheckingQueue:
                                 'type': item.get('type', 'unknown'),
                                 'year': item.get('year', ''),
                                 'version': item.get('version', ''),
-                                'season_number': item.get('season_number'),
-                                'episode_number': item.get('episode_number'),
+                                # Convert season_number and episode_number to strings to avoid type comparison issues
+                                'season_number': str(item.get('season_number', '')) if item.get('season_number') is not None else None,
+                                'episode_number': str(item.get('episode_number', '')) if item.get('episode_number') is not None else None,
                                 'new_state': 'Downloading' if item.get('downloading') else 'Checking',
                                 'is_upgrade': False,
                                 'upgrading_from': None
@@ -275,6 +289,89 @@ class CheckingQueue:
                             logging.debug(f"Sent notification for item {item['id']}")
         except Exception as e:
             logging.error(f"Failed to send state change notification: {str(e)}")
+
+    def register_uncached_torrent(self, item):
+        """Register a torrent for cache status tracking"""
+        if not item.get('filled_by_magnet'):
+            return
+            
+        try:
+            # Extract hash from magnet or URL
+            hash_value = None
+            magnet = item.get('filled_by_magnet')
+            
+            if magnet.startswith('http'):
+                hash_value = download_and_extract_hash(magnet)
+            else:
+                hash_value = extract_hash_from_magnet(magnet)
+                
+            if hash_value:
+                if hash_value not in self.uncached_torrents:
+                    self.uncached_torrents[hash_value] = {
+                        'last_check_time': time.time(),
+                        'item_ids': [item['id']]
+                    }
+                    logging.debug(f"Added new uncached torrent with hash {hash_value[:8]}... for tracking")
+                else:
+                    # Add the item ID if not already tracked
+                    if item['id'] not in self.uncached_torrents[hash_value]['item_ids']:
+                        self.uncached_torrents[hash_value]['item_ids'].append(item['id'])
+                        logging.debug(f"Added item {item['id']} to existing tracked hash {hash_value[:8]}...")
+        except Exception as e:
+            logging.error(f"Failed to register uncached torrent: {str(e)}")
+
+    def check_uncached_torrents(self, phalanx_db_manager):
+        """Periodically check if uncached torrents have become cached"""
+        current_time = time.time()
+        cache_check_interval = get_setting('Debug', 'cache_check_interval', default=900)  # 15 minutes default
+        
+        hashes_to_remove = []
+        
+        for hash_value, data in list(self.uncached_torrents.items()):
+            # Only check if enough time has passed since last check
+            if current_time - data['last_check_time'] >= cache_check_interval:
+                try:
+                    # Create a magnet link from the hash for direct cache check
+                    magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
+                    
+                    # Use is_cached_sync method and pass skip_phalanx_db=True to force a direct check
+                    # This bypasses the PhalanxDB cache check at line 126 in the is_cached method
+                    is_cached = self.debrid_provider.is_cached_sync(
+                        magnet_link,
+                        skip_phalanx_db=True,  # Skip PhalanxDB cache check to get fresh status
+                        remove_uncached=True,   # Remove uncached torrents after checking
+                        remove_cached=False     # Keep cached torrents
+                    )
+                    
+                    if is_cached:
+                        logging.info(f"Hash {hash_value[:8]}... is now cached based on direct check with Real-Debrid.")
+                        
+                        # Update cache status in Phalanx DB
+                        try:
+                            update_result = phalanx_db_manager.update_cache_status(hash_value, True)
+                            if update_result:
+                                logging.debug(f"Successfully updated cache status for hash {hash_value[:8]}...")
+                            else:
+                                logging.warning(f"Failed to update cache status for hash {hash_value[:8]}...")
+                        except Exception as e:
+                            logging.error(f"Failed to update cache status for hash {hash_value[:8]}...: {str(e)}")
+                        
+                        # Remove this hash from tracking
+                        hashes_to_remove.append(hash_value)
+                    else:
+                        # Update last check time
+                        self.uncached_torrents[hash_value]['last_check_time'] = current_time
+                        logging.debug(f"Hash {hash_value[:8]}... still not cached according to direct check. Updated check time.")
+                        
+                except Exception as e:
+                    logging.error(f"Failed to check cache status for hash {hash_value[:8]}...: {str(e)}")
+                    # Still update last check time to prevent rapid retries
+                    self.uncached_torrents[hash_value]['last_check_time'] = current_time
+        
+        # Remove hashes that are now cached
+        for hash_value in hashes_to_remove:
+            del self.uncached_torrents[hash_value]
+            logging.info(f"Removed hash {hash_value[:8]}... from uncached tracking as it's now cached")
 
     def remove_item(self, item: Dict[str, Any]):
         torrent_id = item.get('filled_by_torrent_id')
@@ -290,6 +387,29 @@ class CheckingQueue:
         if not remaining_items_with_torrent and torrent_id in self.progress_checks:
             del self.progress_checks[torrent_id]
             logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items")
+        
+        # Also clean up any uncached torrent tracking if this was the last item
+        try:
+            if item.get('filled_by_magnet'):
+                magnet = item.get('filled_by_magnet')
+                hash_value = None
+                if magnet.startswith('http'):
+                    hash_value = download_and_extract_hash(magnet)
+                else:
+                    hash_value = extract_hash_from_magnet(magnet)
+                
+                if hash_value and hash_value in self.uncached_torrents:
+                    # Remove this item ID from tracking
+                    if item['id'] in self.uncached_torrents[hash_value]['item_ids']:
+                        self.uncached_torrents[hash_value]['item_ids'].remove(item['id'])
+                        logging.debug(f"Removed item {item['id']} from uncached torrent tracking for hash {hash_value[:8]}...")
+                    
+                    # If no more items with this hash, remove the hash from tracking
+                    if not self.uncached_torrents[hash_value]['item_ids']:
+                        del self.uncached_torrents[hash_value]
+                        logging.debug(f"Removed hash {hash_value[:8]}... from uncached tracking as it has no more items")
+        except Exception as e:
+            logging.error(f"Error cleaning up uncached torrent tracking for item {item['id']}: {str(e)}")
 
     def _calculate_dynamic_queue_period(self, items):
         """Calculate a dynamic queue period based on the number of items.
@@ -346,6 +466,14 @@ class CheckingQueue:
         items_to_remove = []
         current_time = time.time()
 
+        # Create phalanx DB manager for cache status updates
+        phalanx_db_manager = PhalanxDBClassManager()
+        
+        # Periodically check cache status of tracked torrents
+        if self.uncached_torrents:
+            logging.debug(f"Checking cache status for {len(self.uncached_torrents)} tracked torrents")
+            self.check_uncached_torrents(phalanx_db_manager)
+
         # Group all items by their torrent ID and log the grouping
         for item in self.items:
             torrent_id = item['filled_by_torrent_id']
@@ -385,7 +513,34 @@ class CheckingQueue:
                 last_check = self.progress_checks[torrent_id]['last_check']
                 last_progress = self.progress_checks[torrent_id]['last_progress']
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
-                            
+                
+                # Check if progress just hit 100% (transition from downloading to downloaded)
+                if current_progress == 100 and last_progress is not None and last_progress < 100:
+                    logging.info(f"Torrent {torrent_id} just finished downloading. Updating cache status.")
+                    
+                    # Get hash from any item's magnet link
+                    for item in items:
+                        magnet = item.get('filled_by_magnet')
+                        if magnet:
+                            try:
+                                # Extract hash from magnet link
+                                hash_value = None
+                                if magnet.startswith('http'):
+                                    hash_value = download_and_extract_hash(magnet)
+                                else:
+                                    hash_value = extract_hash_from_magnet(magnet)
+                                
+                                if hash_value:
+                                    # Update cache status synchronously
+                                    logging.info(f"Updating cache status for hash {hash_value} to cached=True")
+                                    try:
+                                        phalanx_db_manager.update_cache_status(hash_value, True)
+                                    except Exception as e:
+                                        logging.error(f"Failed to update cache status for hash {hash_value}: {str(e)}")
+                                    break  # We only need to update once per torrent
+                            except Exception as e:
+                                logging.error(f"Failed to update cache status: {str(e)}")
+                
                 if current_progress == 100:
                     # Process collected content based on symlink setting
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
@@ -410,9 +565,9 @@ class CheckingQueue:
                             if file_found:
                                 logging.info(f"Local file found and symlinked for item {item['id']}")
 
-                                # Check for Plex or Emby configuration and update accordingly
-                                if get_setting('Debug', 'emby_url', default=False):
-                                    # Call Emby update for the item if we have an Emby URL
+                                # Check for Plex or Emby/Jellyfin configuration and update accordingly
+                                if get_setting('Debug', 'emby_jellyfin_url', default=False):
+                                    # Call Emby/Jellyfin update for the item if we have an Emby/Jellyfin URL
                                     emby_update_item(item)
                                 elif get_setting('File Management', 'plex_url_for_symlink', default=False):
                                     # Call Plex update for the item if we have a Plex URL
@@ -485,7 +640,7 @@ class CheckingQueue:
                                 upgrading_queue = UpgradingQueue()
                                 
                                 # Send failed upgrade notification
-                                from notifications import send_upgrade_failed_notification
+                                from routes.notifications import send_upgrade_failed_notification
                                 notification_data = {
                                     'title': item.get('title', 'Unknown Title'),
                                     'year': item.get('year', ''),
@@ -525,13 +680,11 @@ class CheckingQueue:
                             if magnet:
                                 try:
                                     if magnet.startswith('http'):
-                                        from debrid.common import download_and_extract_hash
                                         hash_value = download_and_extract_hash(magnet)
                                         add_to_not_wanted(hash_value)
                                         add_to_not_wanted_urls(magnet)
                                         logging.info(f"Added hash {hash_value} and URL to not wanted lists")
                                     else:
-                                        from debrid.common import extract_hash_from_magnet
                                         hash_value = extract_hash_from_magnet(magnet)
                                         add_to_not_wanted(hash_value)
                                         logging.info(f"Added hash {hash_value} to not wanted list")
@@ -590,17 +743,15 @@ class CheckingQueue:
                 # Check if magnet is actually an HTTP link
                 if magnet.startswith('http'):
                     logging.debug(f"Magnet is HTTP link, downloading torrent first for {item_identifier}")
-                    from debrid.common import download_and_extract_hash
                     hash_value = download_and_extract_hash(magnet)
-                    from not_wanted_magnets import add_to_not_wanted
+                    from database.not_wanted_magnets import add_to_not_wanted
                     add_to_not_wanted(hash_value)
-                    from not_wanted_magnets import add_to_not_wanted_urls
+                    from database.not_wanted_magnets import add_to_not_wanted_urls
                     add_to_not_wanted_urls(magnet)
                     logging.info(f"Added hash {hash_value} and URL to not wanted lists for {item_identifier}")
                 else:
-                    from debrid.common import extract_hash_from_magnet
                     hash_value = extract_hash_from_magnet(magnet)
-                    from not_wanted_magnets import add_to_not_wanted
+                    from database.not_wanted_magnets import add_to_not_wanted
                     add_to_not_wanted(hash_value)
                     logging.info(f"Added hash {hash_value} to not wanted list for {item_identifier}")
             except Exception as e:
@@ -627,3 +778,25 @@ class CheckingQueue:
         # Clean up progress cache for removed torrents
         current_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
         logging.debug(f"Cleaned up checking time for item ID: {current_item_ids}")
+        
+        # Clean up uncached torrents tracking
+        all_tracking_item_ids = set()
+        for hash_data in self.uncached_torrents.values():
+            all_tracking_item_ids.update(hash_data['item_ids'])
+        
+        valid_tracking_item_ids = all_tracking_item_ids.intersection(current_item_ids)
+        invalid_tracking_item_ids = all_tracking_item_ids - valid_tracking_item_ids
+        
+        if invalid_tracking_item_ids:
+            # Remove invalid item IDs from uncached torrents tracking
+            for hash_value in list(self.uncached_torrents.keys()):
+                self.uncached_torrents[hash_value]['item_ids'] = [
+                    item_id for item_id in self.uncached_torrents[hash_value]['item_ids'] 
+                    if item_id in valid_tracking_item_ids
+                ]
+                
+                # If no valid item IDs left, remove this hash from tracking
+                if not self.uncached_torrents[hash_value]['item_ids']:
+                    del self.uncached_torrents[hash_value]
+            
+            logging.debug(f"Cleaned up {len(invalid_tracking_item_ids)} invalid item IDs from uncached torrents tracking")

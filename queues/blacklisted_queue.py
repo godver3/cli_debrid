@@ -2,8 +2,7 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 
-from database import get_all_media_items, get_media_item_by_id, update_media_item_state, update_blacklisted_date
-from settings import get_setting
+from utilities.settings import get_setting
 
 class BlacklistedQueue:
     def __init__(self):
@@ -11,6 +10,7 @@ class BlacklistedQueue:
         self.blacklist_times = {}
 
     def update(self):
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Blacklisted")]
         # Initialize blacklist times for new items
         for item in self.items:
@@ -45,6 +45,7 @@ class BlacklistedQueue:
         for item in self.items:
             if 'blacklisted_date' not in item or item['blacklisted_date'] is None:
                 item['blacklisted_date'] = current_time
+                from database import update_blacklisted_date
                 update_blacklisted_date(item['id'], item['blacklisted_date'])
                 logging.warning(f"Item {queue_manager.generate_identifier(item)} had no blacklisted_date. Setting it to current time.")
             
@@ -81,6 +82,7 @@ class BlacklistedQueue:
         logging.info(f"Unblacklisting item: {item_identifier}")
         
         # Reset the blacklisted_date to None when unblacklisting
+        from database import update_blacklisted_date
         update_blacklisted_date(item['id'], None)
         
         # Move the item back to the Wanted queue
@@ -90,6 +92,7 @@ class BlacklistedQueue:
     def blacklist_item(self, item: Dict[str, Any], queue_manager):
         item_id = item['id']
         item_identifier = queue_manager.generate_identifier(item)
+        from database import update_media_item_state, update_blacklisted_date
         update_media_item_state(item_id, 'Blacklisted')
         
         # Update the blacklisted_date in the database

@@ -3,7 +3,7 @@ import re
 from typing import List, Dict, Any
 from fuzzywuzzy import fuzz
 from PTT import parse_title
-from settings import get_setting
+from utilities.settings import get_setting
 from scraper.functions.similarity_checks import improved_title_similarity, normalize_title
 from scraper.functions.file_processing import compare_resolutions, parse_size, calculate_bitrate
 from scraper.functions.other_functions import smart_search
@@ -67,6 +67,13 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 logging.debug("❌ Failed: Missing parsed info")
                 continue
             
+            # Check if it's marked as trash by PTT and filter_trash_releases is enabled
+            filter_trash_releases = get_setting('Scraping', 'filter_trash_releases', True)
+            if filter_trash_releases and parsed_info.get('trash', False):
+                result['filter_reason'] = "Marked as trash by parser"
+                logging.debug("❌ Failed: Release marked as trash by parser")
+                continue
+            
             # Store original title in parsed_info
             parsed_info['original_title'] = original_title
             
@@ -86,6 +93,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     logging.debug(f"Corrected season_episode_info after DOC handling: {parsed_info['season_episode_info']}")
             
             result['parsed_info'] = parsed_info
+
             
             # Title similarity check
             normalized_result_title = normalize_title(parsed_info.get('title', original_title)).lower()
@@ -96,6 +104,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                 normalized_result_title = f"{normalized_result_title} documentary"
             
             title_sim = fuzz.ratio(normalized_result_title, normalized_query) / 100.0
+            
             
             # Check against main title and aliases
             if title_sim < similarity_threshold:
@@ -304,7 +313,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                                 
                             elif anime_format == 'absolute' or anime_format == 'absolute_with_e':
                                 # Calculate expected absolute episode number based on season episode counts if available
-                                from web_scraper import get_all_season_episode_counts
+                                from utilities.web_scraper import get_all_season_episode_counts
                                 try:
                                     season_episode_counts = get_all_season_episode_counts(tmdb_id)
                                     total_episodes_in_prev_seasons = sum(season_episode_counts.get(s, 13) for s in range(1, season))
@@ -326,7 +335,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                                 
                             elif anime_format == 'combined':
                                 # Combined format (S01E018)
-                                from web_scraper import get_all_season_episode_counts
+                                from utilities.web_scraper import get_all_season_episode_counts
                                 try:
                                     season_episode_counts = get_all_season_episode_counts(tmdb_id)
                                     total_episodes_in_prev_seasons = sum(season_episode_counts.get(s, 13) for s in range(1, season))
@@ -365,6 +374,8 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'N/A':
                         size_per_episode_gb = size_gb
+                        # For single episodes, use the normal runtime
+                        total_runtime = runtime
                     else:
                         if season_pack == 'Complete':
                             episode_count = total_episodes
@@ -372,8 +383,11 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
                             season_numbers = [int(s) for s in season_pack.split(',')]
                             episode_count = sum(season_episode_counts.get(s, 0) for s in season_numbers)
                         size_per_episode_gb = size_gb / episode_count if episode_count > 0 else size_gb
+                        # For season packs, calculate total runtime for all episodes
+                        total_runtime = runtime * episode_count if episode_count > 0 else runtime
                     result['size'] = size_per_episode_gb
-                    bitrate = calculate_bitrate(size_per_episode_gb, runtime)
+                    # Use total runtime for the entire pack to calculate proper bitrate
+                    bitrate = calculate_bitrate(size_gb, total_runtime)
                 else:
                     result['size'] = size_gb
                     bitrate = calculate_bitrate(size_gb, runtime)
@@ -404,13 +418,14 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             max_bitrate_mbps = float(version_settings.get('max_bitrate_mbps', float('inf')) or float('inf'))
             
             if result.get('bitrate', 0) > 0:
-                if result['bitrate'] < min_bitrate_mbps:
-                    result['filter_reason'] = f"Bitrate too low: {result['bitrate']:.2f} Mbps (min: {min_bitrate_mbps} Mbps)"
-                    logging.debug(f"❌ Failed: Bitrate {result['bitrate']:.2f}Mbps below minimum {min_bitrate_mbps}Mbps")
+                bitrate_mbps = result['bitrate'] / 1000  # Convert Kbps to Mbps for comparison
+                if bitrate_mbps < min_bitrate_mbps:
+                    result['filter_reason'] = f"Bitrate too low: {bitrate_mbps:.2f} Mbps (min: {min_bitrate_mbps} Mbps)"
+                    logging.debug(f"❌ Failed: Bitrate {bitrate_mbps:.2f}Mbps below minimum {min_bitrate_mbps}Mbps")
                     continue
-                if result['bitrate'] > max_bitrate_mbps:
-                    result['filter_reason'] = f"Bitrate too high: {result['bitrate']:.2f} Mbps (max: {max_bitrate_mbps} Mbps)"
-                    logging.debug(f"❌ Failed: Bitrate {result['bitrate']:.2f}Mbps above maximum {max_bitrate_mbps}Mbps")
+                if bitrate_mbps > max_bitrate_mbps:
+                    result['filter_reason'] = f"Bitrate too high: {bitrate_mbps:.2f} Mbps (max: {max_bitrate_mbps} Mbps)"
+                    logging.debug(f"❌ Failed: Bitrate {bitrate_mbps:.2f}Mbps above maximum {max_bitrate_mbps}Mbps")
                     continue
             #logging.debug("✓ Passed bitrate checks")
             

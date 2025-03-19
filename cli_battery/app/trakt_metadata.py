@@ -45,8 +45,9 @@ class TraktMetadata:
             self.request_times.popleft()
         
         # Check if we've hit the rate limit
-        # if len(self.request_times) >= self.max_requests:
-        #     return False
+        #if len(self.request_times) >= self.max_requests:
+        #    logger.warning(f"Rate limit reached. Currently at {len(self.request_times)} requests in the last {self.time_window} seconds.")
+        #    return False
         
         # Add the current request time
         self.request_times.append(current_time)

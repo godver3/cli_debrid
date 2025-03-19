@@ -71,7 +71,7 @@ def should_process_item(item: Dict[str, Any], source_id: str, cache: Dict[str, A
     Returns True if item should be processed, False if it should be skipped.
     """
     # Check if cache checking is disabled in debug settings
-    from settings import get_setting
+    from utilities.settings import get_setting
     
     # If cache checking is disabled, always process the item
     if get_setting('Debug', 'disable_content_source_caching', False):

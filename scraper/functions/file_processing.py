@@ -9,7 +9,6 @@ from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
-from guessit import guessit
 
 # Pre-compile regex patterns
 _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
@@ -17,8 +16,20 @@ _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
 @lru_cache(maxsize=1024)
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
     """Cached PTT parsing"""
-    result = parse_title(title)
-
+    # Get the raw result from PTT
+    raw_result = parse_title(title)
+    
+    # Log the raw PTT results for debugging
+    logging.debug(f"RAW PTT RESULT: {raw_result}")
+    
+    # Create a copy to avoid modifying the original
+    result = raw_result.copy()
+    
+    # Make sure the site is not included in the title
+    if 'site' in result and result.get('title', ''):
+        # Ensure we're using just the movie/show title without the site prefix
+        result['original_site'] = result['site']
+    
     '''
     # Special handling for shows where the title is a year (e.g. "1923")
     if result.get('year'):
@@ -47,23 +58,6 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
                 result['title'] = first_part
                 result['year'] = None  # Clear the year since it's actually the title
     '''
-
-    '''
-    if "french" in title.lower():
-        try:
-            # First parse with PTT to get all the normal fields
-            ptt_result = parse_title(title)
-            
-            # Then use guessit to get a better title for French content
-            guess = guessit(title)
-            
-            # Only replace the title field from guessit
-            ptt_result['title'] = guess.get('title')
-                
-            return ptt_result
-        except Exception as e:
-            logging.warning(f"Error using guessit for '{title}': {e}. Falling back to PTT.")
-    '''
     
     return result
 
@@ -73,15 +67,7 @@ def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
     if hdr_info:
         return True
 
-    # Fallback to checking title for HDR terms
-    title = parsed_info.get('title', '').upper()
-    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'HDR10+', 'HDR10', 'HLG']
-    for term in hdr_terms:
-        if term in title:
-            # Special case for 'DV' to exclude 'DVDRIP'
-            if term == 'DV' and 'DVDRIP' in title:
-                continue
-            return True
+    # No fallback method - removed to prevent false positives with titles like "Devil's Advocate"
     return False
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
@@ -136,13 +122,46 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
             
             # Parse with PTT (cached)
             try:
+                # Get the parsed info from PTT
                 parsed_info = _parse_with_ptt(title)
-
-                #logging.info(f"Parsed info: {parsed_info}")
+                
+                # Log the full parsed info at this stage
+                logging.debug(f"PTT parsed info before processing: {parsed_info}")
+                
+                # Extract the clean title - if there's a site field, make sure it's not in the title
+                clean_title = parsed_info.get('title', title)
+                site = parsed_info.get('site')
+                
+                # If PTT didn't detect a site but the title looks like it contains site info, try to extract it
+                if not site and isinstance(clean_title, str):
+                    # Look for common patterns like "www.site.com - " or "site.ms - " at the beginning of titles
+                    site_pattern = re.compile(r'^(www\s+\S+\s+\S+|www\.\S+\.\S+|[a-zA-Z0-9]+\s*\.\s*[a-zA-Z]+)\s*-\s*', re.IGNORECASE)
+                    site_match = site_pattern.search(clean_title)
+                    if site_match:
+                        site = site_match.group(1).strip()
+                        # Clean the title by removing the site prefix
+                        clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
+                        logging.debug(f"Extracted site '{site}' from title, cleaned title: '{clean_title}'")
+                
+                # If site exists in PTT result but the title still starts with it, clean it
+                if site and isinstance(clean_title, str) and clean_title.lower().startswith(site.lower()):
+                    # Strip the site and any trailing dash/space from the title
+                    clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
+                    logging.debug(f"Cleaned title from site prefix: '{clean_title}'")
+                
+                # Further cleaning - if title still contains site-like patterns at the beginning
+                if isinstance(clean_title, str):
+                    # Look for common patterns that might indicate a site prefix wasn't properly removed
+                    leftover_pattern = re.compile(r'^(www\s+\S+\s+\S+|www\.\S+\.\S+|[a-zA-Z0-9]+\s*\.\s*[a-zA-Z]+)\s*-\s*', re.IGNORECASE)
+                    if leftover_pattern.search(clean_title):
+                        # Further clean the title
+                        cleaned_title = leftover_pattern.sub("", clean_title)
+                        logging.debug(f"Further cleaned site prefix from title: '{cleaned_title}'")
+                        clean_title = cleaned_title
                 
                 # Convert PTT result to our standard format
                 processed_info = {
-                    'title': parsed_info.get('title', title),
+                    'title': clean_title,  # Use the clean title without site info
                     'original_title': title,  # Store original title
                     'year': parsed_info.get('year'),
                     'resolution': parsed_info.get('resolution', 'Unknown'),
@@ -151,14 +170,19 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                     'codec': parsed_info.get('codec'),
                     'group': parsed_info.get('group'),
                     'season': parsed_info.get('season'),
-                    'seasons': parsed_info.get('seasons'),  # Add seasons field
+                    'seasons': parsed_info.get('seasons', []),  # Add seasons field
                     'episode': parsed_info.get('episode'),
-                    'episodes': parsed_info.get('episodes'),
+                    'episodes': parsed_info.get('episodes', []),
                     'type': parsed_info.get('type'),
                     'country': parsed_info.get('country'),
                     'date': parsed_info.get('date'),
                     'documentary': parsed_info.get('documentary', False),  # Preserve documentary field
+                    'site': site,  # Store site info separately
+                    'trash': parsed_info.get('trash', False)  # Include trash flag
                 }
+                
+                # Log the processed info
+                logging.debug(f"Processed title info: {processed_info}")
                 
                 # Handle size if provided
                 if size is not None:
