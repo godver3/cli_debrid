@@ -14,6 +14,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -65,6 +66,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
+          submodules: recursive
 
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
