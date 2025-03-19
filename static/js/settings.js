@@ -100,10 +100,15 @@ export function updateSettings() {
         const name = input.name;
         if (!name) return; // Skip inputs without names
         
+        // Skip radio buttons that are not checked
+        if (input.type === 'radio' && !input.checked) return;
+        
         let value = input.value;
         
         if (input.type === 'checkbox') {
             value = input.checked;
+        } else if (input.type === 'number') {
+            value = parseFloat(value) || 0;
         } else if (value.toLowerCase() === 'true') {
             value = true;
         } else if (value.toLowerCase() === 'false') {
@@ -122,6 +127,20 @@ export function updateSettings() {
         
         current[nameParts[nameParts.length - 1]] = value;
     });
+
+    // Ensure Staleness Threshold section exists and has a value
+    if (!settingsData['Staleness Threshold']) {
+        settingsData['Staleness Threshold'] = {};
+    }
+    const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
+    if (stalenessThresholdInput) {
+        const value = parseInt(stalenessThresholdInput.value) || 7;
+        settingsData['Staleness Threshold']['staleness_threshold'] = value;
+        console.log(`Setting staleness threshold to: ${value}`);
+    } else {
+        settingsData['Staleness Threshold']['staleness_threshold'] = 7; // Default value
+        console.log('Using default staleness threshold: 7');
+    }
 
     // Create Custom Post-Processing section if it doesn't exist
     if (!settingsData['Custom Post-Processing']) {
@@ -146,6 +165,17 @@ export function updateSettings() {
     const userSystemEnabledCheckbox = document.querySelector('input[name="UI Settings.enable_user_system"]');
     if (userSystemEnabledCheckbox) {
         settingsData['UI Settings']['enable_user_system'] = userSystemEnabledCheckbox.checked;
+    }
+    
+    // Ensure program_logo is correctly captured from radio buttons
+    const selectedLogoRadio = document.querySelector('input[name="UI Settings.program_logo"]:checked');
+    if (selectedLogoRadio) {
+        settingsData['UI Settings']['program_logo'] = selectedLogoRadio.value;
+        console.log("Program logo set to:", selectedLogoRadio.value);
+    } else {
+        // Fallback to default if no radio is checked
+        settingsData['UI Settings']['program_logo'] = 'Default';
+        console.log("No program logo radio selected, using default");
     }
 
     // Process Notification settings
@@ -677,7 +707,7 @@ export function updateSettings() {
     }
 
 
-    const stalenessThreshold = document.getElementById('staleness threshold-staleness_threshold');
+    const stalenessThreshold = document.getElementById('debug-staleness_threshold');
     console.log("Staleness Threshold element:", stalenessThreshold);
     
     if (stalenessThreshold) {
@@ -1062,6 +1092,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     loadSettingsData().then(() => {
+        // Setup radio button handling for program_logo
+        const logoRadioButtons = document.querySelectorAll('input[type="radio"][name="UI Settings.program_logo"]');
+        logoRadioButtons.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.checked) {
+                    saveSingleSetting('UI Settings', 'program_logo', this.value);
+                }
+            });
+        });
+        
         // Initial toggle of Plex section
         togglePlexSection();
         
@@ -1152,6 +1192,7 @@ function syncDebugSettings() {
     // Get the debug settings from the true_debug tab
     const ultimateSortOrderSelect = document.getElementById('debug-ultimate_sort_order');
     const softMaxSizeGbCheckbox = document.getElementById('debug-soft_max_size_gb');
+    const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
     
     if (ultimateSortOrderSelect && softMaxSizeGbCheckbox) {
         // Add change event listeners to sync with the original settings
@@ -1171,8 +1212,81 @@ function syncDebugSettings() {
             }
         });
     }
+
+    // Handle staleness threshold sync
+    if (stalenessThresholdInput) {
+        stalenessThresholdInput.addEventListener('change', function() {
+            // Update the settingsData object
+            if (!settingsData['Staleness Threshold']) {
+                settingsData['Staleness Threshold'] = {};
+            }
+            settingsData['Staleness Threshold']['staleness_threshold'] = parseInt(stalenessThresholdInput.value) || 7;
+        });
+    }
 }
 
 // Add event listener for the true_debug tab content loaded event
 document.addEventListener('trueDebugContentLoaded', syncDebugSettings);
 document.addEventListener('DOMContentLoaded', syncDebugSettings);
+
+// Function to save a single setting
+function saveSingleSetting(section, key, value) {
+    console.log(`Saving setting: ${section}.${key} = ${value}`);
+    const formData = new FormData();
+    formData.append('section', section);
+    formData.append('key', key);
+    formData.append('value', value);
+    
+    return fetch('/settings/save_single_setting', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            console.log(`Setting ${section}.${key} saved successfully`);
+            
+            // Show a small notification
+            const notification = document.createElement('div');
+            notification.className = 'setting-saved-notification';
+            notification.textContent = 'Setting saved!';
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.backgroundColor = '#4CAF50';
+            notification.style.color = 'white';
+            notification.style.padding = '10px 20px';
+            notification.style.borderRadius = '4px';
+            notification.style.zIndex = '1000';
+            notification.style.boxShadow = '0 2px 10px rgba(0, 0, 0, 0.3)';
+            notification.style.opacity = '1';
+            notification.style.transition = 'opacity 0.5s';
+            
+            document.body.appendChild(notification);
+            
+            // Remove notification after a delay
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => {
+                    notification.remove();
+                }, 500);
+            }, 2000);
+            
+            // Special handling for program_logo - reload the page to show the change
+            if (section === 'UI Settings' && key === 'program_logo') {
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }
+            
+            return true;
+        } else {
+            console.error(`Error saving setting: ${data.message || 'Unknown error'}`);
+            return false;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        return false;
+    });
+}

@@ -1,8 +1,11 @@
-from api_tracker import api, requests
+from routes.api_tracker import api, requests
 import logging
 from typing import List, Dict, Any, Tuple
-from settings import load_config
+from utilities.settings import load_config
 from urllib.parse import urlencode
+
+# Timeout for API requests in seconds
+TIMEOUT = 10
 
 def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     zilean_url = settings.get('url', '')
@@ -25,7 +28,7 @@ def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str
     full_url = f"{search_endpoint}?{encoded_params}"
     
     try:
-        response = api.get(full_url, headers={'accept': 'application/json'})
+        response = api.get(full_url, headers={'accept': 'application/json'}, timeout=TIMEOUT)
         
         if response.status_code == 200:
             try:

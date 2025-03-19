@@ -1,4 +1,4 @@
-from flask import jsonify, Blueprint
+from flask import jsonify, Blueprint, request
 from app.settings import Settings
 from app.metadata_manager import MetadataManager
 from app.logger_config import logger
@@ -123,3 +123,17 @@ def delete_all_items():
     except Exception as e:
         logger.error(f"Error deleting all items: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+@api_bp.route('/api/stats', methods=['GET'])
+def get_stats():
+    # Create a new settings instance to ensure fresh values
+    current_settings = Settings()
+    db_stats = MetadataManager.get_stats()
+    stats = {
+        'total_items': db_stats['total_items'],
+        'total_metadata': db_stats['total_metadata'],
+        'last_update': db_stats['last_update'].strftime('%Y-%m-%d %H:%M:%S') if db_stats['last_update'] else 'N/A',
+        'staleness_threshold': f"{current_settings.staleness_threshold} days"
+    }
+    logger.debug(f"Current staleness threshold: {current_settings.staleness_threshold}")
+    return jsonify(stats)

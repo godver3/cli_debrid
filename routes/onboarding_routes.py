@@ -1,9 +1,9 @@
 from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash, abort, session
 from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash
-from settings import load_config, get_setting, save_config
-from settings_schema import SETTINGS_SCHEMA
-from config_manager import add_scraper, add_content_source, load_config
+from utilities.settings import load_config, get_setting, save_config
+from utilities.settings_schema import SETTINGS_SCHEMA
+from queues.config_manager import add_scraper, add_content_source, load_config
 import logging
 import platform
 from routes.trakt_routes import check_trakt_auth_status
@@ -917,3 +917,18 @@ def check_plex_pin():
             'success': False,
             'error': str(e)
         }), 500
+
+@onboarding_bp.route('/skip', methods=['GET', 'POST'])
+@login_required
+def skip_onboarding():
+    from routes.auth_routes import db
+
+    if request.method == 'GET':
+        return render_template('skip_onboarding.html', is_onboarding=True)
+
+    try:
+        current_user.onboarding_complete = True
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Onboarding skipped successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

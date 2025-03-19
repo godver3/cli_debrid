@@ -296,14 +296,25 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/onboarding/content_sources/delete', {
+                fetch('/settings/content_sources/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ source_id: sourceId })
                 })
-                .then(response => response.json())
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.text().then(text => {
+                        try {
+                            return JSON.parse(text);
+                        } catch (e) {
+                            throw new Error(`Invalid JSON response: ${text}`);
+                        }
+                    });
+                })
                 .then(data => {
                     if (data.success) {
                         refreshContentSourcesList();
@@ -320,7 +331,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.error('Error deleting content source:', error);
                     showPopup({
                         type: POPUP_TYPES.ERROR,
-                        message: 'Error deleting content source: ' + error.message,
+                        message: `Error deleting content source: ${error.message}`,
                     });
                 });
             }

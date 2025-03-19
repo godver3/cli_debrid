@@ -24,8 +24,8 @@ from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
 from .video_routes import video_routes
-from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
-from extensions import app
+from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
+from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management

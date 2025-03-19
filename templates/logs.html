@@ -753,12 +753,10 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     const button = this;
     const progressBar = button.querySelector('.share-progress');
     const shareUrl = document.getElementById('share-url');
-    const copyBtn = document.getElementById('copy-url-btn');
     button.disabled = true;
     button.textContent = 'Preparing...';
     progressBar.style.width = '0%';
     shareUrl.style.display = 'none';
-    copyBtn.style.display = 'none';
 
     // Function to format file size
     function formatSize(bytes) {
@@ -772,92 +770,116 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     })
     .then(response => response.json())
     .then(data => {
-        if (data.success) {
-            // Update share URL link and show copy button
-            shareUrl.href = data.url;
-            shareUrl.textContent = `${data.service} link`;
-            shareUrl.style.display = 'inline-block';
-            copyBtn.style.display = 'inline-block';
+        if (data.success && data.task_id) {
+            // Start polling for updates
+            const statusCheckInterval = setInterval(() => {
+                checkUploadStatus(data.task_id, statusCheckInterval);
+            }, 1000);
+        } else {
+            throw new Error(data.error || 'Failed to start log sharing process');
+        }
+    })
+    .catch(error => {
+        console.error('Error initiating log sharing:', error);
+        shareUrl.style.display = 'none';
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: error.message || 'An error occurred while initiating log sharing',
+            autoClose: 5000
+        });
+        button.textContent = 'Share Logs';
+        button.disabled = false;
+        progressBar.style.width = '0%';
+    });
+
+    function checkUploadStatus(taskId, intervalId) {
+        fetch(`/logs/api/logs/share/status/${taskId}`)
+        .then(response => response.json())
+        .then(statusData => {
+            // Update progress bar
+            progressBar.style.width = statusData.progress + '%';
             
-            // Try to copy URL to clipboard with fallback
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(data.url)
-                    .then(() => {
-                        const sizeInfo = data.originalSize && data.compressedSize ? 
-                            `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
-                        const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
-                        
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            title: 'Success',
-                            message: `Logs shared successfully! URL copied to clipboard.${serviceInfo}${sizeInfo}`,
-                            autoClose: 10000
-                        });
-                        button.textContent = 'Share Logs';
-                        button.disabled = false;
-                    })
-                    .catch(err => {
-                        console.warn('Failed to copy to clipboard:', err);
-                        const sizeInfo = data.originalSize && data.compressedSize ? 
-                            `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
-                        const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
-                        
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            title: 'Success',
-                            message: `Logs shared successfully!\nURL: ${data.url}${serviceInfo}${sizeInfo}`,
-                            autoClose: 60000
-                        });
-                        button.textContent = 'Share Logs';
-                        button.disabled = false;
-                    });
-            } else {
-                // Fallback for browsers without clipboard API
-                const sizeInfo = data.originalSize && data.compressedSize ? 
-                    `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
-                const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
+            // Update button text based on status
+            if (statusData.status === 'collecting') {
+                button.textContent = 'Collecting logs...';
+            } else if (statusData.status === 'compressing') {
+                button.textContent = 'Compressing...';
+            } else if (statusData.status === 'reducing') {
+                button.textContent = 'Reducing size...';
+            } else if (statusData.status === 'uploading') {
+                button.textContent = 'Uploading...';
+            }
+            
+            // Check if completed or failed
+            if (statusData.status === 'completed' && statusData.url) {
+                clearInterval(intervalId);
                 
+                // Update share URL link
+                shareUrl.href = statusData.url;
+                shareUrl.textContent = `oshi.at link`;
+                shareUrl.style.display = 'inline-block';
+                
+                // Try to copy URL to clipboard with fallback
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(statusData.url)
+                        .then(() => {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Success',
+                                message: `Logs shared successfully! URL copied to clipboard.`,
+                                autoClose: 10000
+                            });
+                        })
+                        .catch(err => {
+                            console.warn('Failed to copy to clipboard:', err);
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Success',
+                                message: `Logs shared successfully!\nURL: ${statusData.url}`,
+                                autoClose: 60000
+                            });
+                        });
+                } else {
+                    // Fallback for browsers without clipboard API
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: `Logs shared successfully!\nURL: ${statusData.url}`,
+                        autoClose: 5000
+                    });
+                }
+                
+                button.textContent = 'Share Logs';
+                button.disabled = false;
+                
+            } else if (statusData.status === 'failed') {
+                clearInterval(intervalId);
+                shareUrl.style.display = 'none';
                 showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success',
-                    message: `Logs shared successfully!\nURL: ${data.url}${serviceInfo}${sizeInfo}`,
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: statusData.error || 'Failed to share logs',
                     autoClose: 5000
                 });
                 button.textContent = 'Share Logs';
                 button.disabled = false;
             }
-        } else {
-            throw new Error(data.error || 'Failed to share logs');
-        }
-    })
-    .catch(error => {
-        console.error('Error sharing logs:', error);
-        shareUrl.style.display = 'none';
-        copyBtn.style.display = 'none';
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: error.message || 'An error occurred while sharing logs',
-            autoClose: 5000
+        })
+        .catch(error => {
+            console.error('Error checking upload status:', error);
+            clearInterval(intervalId);
+            shareUrl.style.display = 'none';
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Lost connection to server while sharing logs',
+                autoClose: 5000
+            });
+            button.textContent = 'Share Logs';
+            button.disabled = false;
         });
-    })
-    .finally(() => {
-        progressBar.style.width = '100%';
-    });
-
-    // Simulate progress until we get a response
-    let progress = 0;
-    const progressInterval = setInterval(() => {
-        if (progress < 90) {
-            progress += Math.random() * 10;
-            progressBar.style.width = Math.min(progress, 90) + '%';
-        }
-    }, 500);
-
-    // Clear the interval when the request completes
-    setTimeout(() => {
-        clearInterval(progressInterval);
-    }, 10000);
+    }
 });
 
 // Add copy button functionality

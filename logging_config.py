@@ -1,6 +1,6 @@
 import logging
 import logging.handlers
-from settings import get_setting
+from utilities.settings import get_setting
 import psutil
 import os
 import time
@@ -8,7 +8,7 @@ import threading
 import cProfile
 import pstats
 import io
-from performance_monitor import monitor, start_performance_monitoring
+from queues.performance_monitor import monitor, start_performance_monitoring
 
 # Global profiler
 global_profiler = cProfile.Profile()

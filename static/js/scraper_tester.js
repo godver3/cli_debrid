@@ -21,6 +21,62 @@ document.addEventListener('DOMContentLoaded', function() {
     let originalVersionSettings = {};
     let modifiedVersionSettings = {};
 
+    // Check for URL parameters
+    function checkForUrlParameters() {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('id') && urlParams.has('title') && urlParams.has('media_type')) {
+            const id = urlParams.get('id');
+            const title = urlParams.get('title');
+            const year = urlParams.get('year');
+            const mediaType = urlParams.get('media_type');
+            
+            console.log(`Auto-selecting item from URL params: ${title} (${year}), type: ${mediaType}, id: ${id}`);
+            
+            // Create an item object from the URL parameters
+            const item = {
+                id: id,
+                title: title,
+                year: year ? parseInt(year) : null,
+                mediaType: mediaType
+            };
+            
+            // Auto-convert TMDB ID to IMDB ID if needed
+            fetch(`/scraper/convert_tmdb_to_imdb/${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    item.imdbId = data.imdb_id;
+                    
+                    // Select the item and show the scrape section
+                    selectItem(item);
+                    showScrapeSection();
+                    
+                    // Load the TV details if it's a TV show
+                    if (mediaType === 'tv') {
+                        fetch(`/scraper/get_tv_details/${id}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    populateSeasonEpisodeSelects(data);
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error fetching TV show details:', error);
+                            });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error converting TMDB ID to IMDB ID:', error);
+                    
+                    // Still select the item even if IMDB ID conversion fails
+                    selectItem(item);
+                    showScrapeSection();
+                });
+        }
+    }
+
+    // Call the function to check for URL parameters
+    checkForUrlParameters();
+
     searchButton.addEventListener('click', performSearch);
     searchInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {

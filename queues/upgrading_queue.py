@@ -1,13 +1,12 @@
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
-from database import get_all_media_items, update_media_item_state, get_media_item_by_id
 from database.database_writing import add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
-from settings import get_setting
+from utilities.settings import get_setting
 from utilities.plex_functions import remove_file_from_plex
-from not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
+from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 import os
 import pickle
 from pathlib import Path
@@ -237,6 +236,7 @@ class UpgradingQueue:
             logging.warning(f"No previous version found for item {self.generate_identifier(item)}")
 
     def update(self):
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Upgrading")]
         for item in self.items:
             if item['id'] not in self.upgrade_times:
@@ -334,7 +334,8 @@ class UpgradingQueue:
                                             
                         # Remove the item from the queue
                         self.remove_item(item)
-                        
+
+                        from database import update_media_item_state
                         update_media_item_state(item_id, state="Collected")
 
                         logging.info(f"Moved item {item_id} to Collected state after {queue_duration_hours} hours in Upgrading queue.")
@@ -543,6 +544,7 @@ class UpgradingQueue:
                 best_result = better_results[0]
 
                 logging.info(f"[{item_identifier}] Updating item state to Adding with best result title: {best_result['title']}")
+                from database import update_media_item_state, get_media_item_by_id
                 update_media_item_state(item['id'], 'Adding', 
                     filled_by_title=best_result['title'], 
                     scrape_results=better_results,
@@ -646,7 +648,7 @@ class UpgradingQueue:
                 else:
                     logging.info(f"Failed to upgrade item {item_identifier} - current state: {current_state}")
                     # Send failed upgrade notification
-                    from notifications import send_upgrade_failed_notification
+                    from routes.notifications import send_upgrade_failed_notification
                     notification_data = {
                         'title': item.get('title', 'Unknown Title'),
                         'year': item.get('year', ''),
@@ -712,9 +714,9 @@ class UpgradingQueue:
 
                 # Send notification for the upgrade
                 try:
-                    from notifications import send_notifications
+                    from routes.notifications import send_notifications
                     from routes.settings_routes import get_enabled_notifications_for_category
-                    from extensions import app
+                    from routes.extensions import app
 
                     with app.app_context():
                         response = get_enabled_notifications_for_category('upgrading')

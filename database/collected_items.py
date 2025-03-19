@@ -5,15 +5,15 @@ import os
 from datetime import datetime
 import json
 from .database_writing import add_to_collected_notifications, update_media_item_state
-from reverse_parser import parser_approximation
-from settings import get_setting
+from utilities.reverse_parser import parser_approximation
+from utilities.settings import get_setting
 from typing import Dict, Any, List
 from utilities.post_processing import handle_state_change
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
     from datetime import datetime, timedelta
-    from settings import get_setting
+    from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
 
     # Check if Plex library checks are disabled
@@ -344,8 +344,8 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
     if not media_items_batch:
         return True
 
-    from settings import load_config
-    from reverse_parser import parser_approximation
+    from utilities.settings import load_config
+    from utilities.reverse_parser import parser_approximation
     
     # Get versions from config
     config = load_config()

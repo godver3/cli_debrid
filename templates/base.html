@@ -5,10 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>cli_debrid - {% block title %}{% endblock %}</title>
     
+    <!-- Force browsers to refresh favicon -->
+    <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="pragma" content="no-cache" />
+    <meta http-equiv="expires" content="0" />
+    
     <!-- Favicons -->
+    {% if logo_path.startswith('plex') %}
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='plex-icon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='plex-icon-16x16.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='plex-favicon-192x192.png') }}">
+    {% else %}
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='icon-16x16.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    {% endif %}
     <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
     <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#007bff">
     
@@ -87,8 +98,7 @@
             padding: 20px;
             border: 1px solid #444;
             border-radius: 8px;
-            width: 80%;
-            max-width: 600px;
+            width: 70%;
             position: relative;
         }
 
@@ -120,6 +130,7 @@
         #notifications-container {
             max-height: 400px;
             overflow-y: auto;
+            padding: 10px;
         }
 
         /* Notification button styles */
@@ -232,10 +243,50 @@
             color: #888;
         }
 
-        #notifications-container {
-            max-height: 400px;
-            overflow-y: auto;
-            padding: 10px;
+        .support-link {
+            display: block;
+            text-decoration: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .support-link:hover {
+            opacity: 0.8;
+        }
+
+        .support-link i.fa-patreon {
+            margin-right: 8px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.6;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .support-text {
+            color: #aaa;
+            font-size: 0.9em;
+        }
+
+        .patreon-link {
+            color: #fff;
+            transition: color 0.3s ease;
+            text-decoration: none;
+        }
+
+        .patreon-link:hover {
+            color: #FF424D;  /* Patreon brand color */
+        }
+
+        .patreon-link i {
+            font-size: 1.1em;
         }
 
         /* Modal adjustments */
@@ -249,12 +300,179 @@
             flex: 1;
             overflow-y: auto;
         }
+
+        .version-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .version-info {
+            color: #aaa;
+            font-size: 0.8em;
+        }
+
+        /* Support Modal Styles */
+        .support-modal {
+            margin: 10vh auto;
+            width: 70%;
+        }
+
+        .support-modal-content {
+            padding: 20px;
+            color: #f1f1f1;
+        }
+
+        .support-modal-content h3 {
+            color: #fff;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+        }
+
+        .support-modal-content p {
+            margin: 15px 0;
+            line-height: 1.6;
+        }
+
+        .support-modal-content ul {
+            margin: 15px 0;
+            padding-left: 20px;
+        }
+
+        .support-modal-content li {
+            margin: 10px 0;
+            line-height: 1.4;
+            color: #ddd;
+        }
+
+        .support-cta {
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        .patreon-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background-color: #FF424D;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .patreon-button:hover {
+            background-color: #E23B45;
+            transform: translateY(-2px);
+        }
+
+        .patreon-button i {
+            font-size: 1.2em;
+        }
+
+        .support-note {
+            margin-top: 15px;
+            color: #aaa;
+            font-style: italic;
+        }
+
+        .modal-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .mark-all-read-btn {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .mark-all-read-btn:hover {
+            background-color: #0d8bf2;
+        }
+        
+        /* Notification toggle styles */
+        .notification-toggle-container {
+            display: flex;
+            align-items: center;
+        }
+
+        .notification-toggle-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.8rem;
+            color: #ccc;
+        }
+
+        .notification-toggle-label span {
+            margin-right: 8px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 20px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #555;
+            transition: .3s;
+            border-radius: 20px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: #2196F3;
+        }
+
+        input:checked + #disableNotificationsToggleSlider:before {
+            transform: translateX(14px) !important;
+        }
+        
+        /* Hide notifications for disabled mode */
+        body[data-notifications-disabled="true"] #notifications_button.has-notifications::after {
+            display: none !important;
+        }
     </style>
     
     {% block head %}{% endblock %}
     
     {% if current_user.is_authenticated %}
-    <script>
+    <script type="text/template">
         const userRole = "{{ current_user.role }}";
         window.isRateLimited = {{ 'true' if is_rate_limited else 'false' }};
     </script>
@@ -273,9 +491,10 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const modal = document.getElementById('notificationsModal');
-            const btn = document.getElementById('notifications_button');
-            const closeBtn = modal.querySelector('.close');
+            // Notifications Modal Logic
+            const notificationsModal = document.getElementById('notificationsModal');
+            const notificationsBtn = document.getElementById('notifications_button');
+            const notificationsCloseBtn = notificationsModal.querySelector('.close');
             const notificationsContainer = document.getElementById('notifications-container');
             let notifications = [];
 
@@ -328,7 +547,7 @@
             // Update the notification indicator (red dot)
             function updateNotificationIndicator() {
                 const hasUnread = notifications.some(n => !n.read);
-                btn.classList.toggle('has-notifications', hasUnread);
+                notificationsBtn.classList.toggle('has-notifications', hasUnread);
             }
 
             // Mark notification as read
@@ -366,18 +585,18 @@
             }
 
             // Modal controls
-            btn.addEventListener('click', function() {
-                modal.style.display = 'block';
+            notificationsBtn.addEventListener('click', function() {
+                notificationsModal.style.display = 'block';
                 fetchNotifications(); // Refresh notifications when opening modal
             });
 
-            closeBtn.addEventListener('click', function() {
-                modal.style.display = 'none';
+            notificationsCloseBtn.addEventListener('click', function() {
+                notificationsModal.style.display = 'none';
             });
 
             window.addEventListener('click', function(event) {
-                if (event.target == modal) {
-                    modal.style.display = 'none';
+                if (event.target == notificationsModal) {
+                    notificationsModal.style.display = 'none';
                 }
             });
 
@@ -386,6 +605,134 @@
             
             // Refresh notifications periodically
             setInterval(fetchNotifications, 30000); // Every 30 seconds
+
+            // Support Modal Logic
+            const supportModal = document.getElementById('supportModal');
+            const supportModalClose = document.getElementById('supportModalClose');
+            
+            // Check phalanx status from API
+            async function checkPhalanxStatus() {
+                try {
+                    const response = await fetch('/settings/api/phalanx-disclaimer-status');
+                    const data = await response.json();
+                    return data.hasSeenDisclaimer;
+                } catch (error) {
+                    console.error('Error checking phalanx status:', error);
+                    return false;
+                }
+            }
+            
+            // Check support modal status from API
+            async function checkSupportModalStatus() {
+                try {
+                    const response = await fetch('/settings/api/support-modal-status');
+                    const data = await response.json();
+                    return {
+                        hasSeenSupport: data.hasSeenSupport,
+                        pageViews: data.pageViews
+                    };
+                } catch (error) {
+                    console.error('Error checking support modal status:', error);
+                    return {
+                        hasSeenSupport: false,
+                        pageViews: 0
+                    };
+                }
+            }
+
+            // Increment page views via API
+            async function incrementPageViews() {
+                try {
+                    const response = await fetch('/settings/api/support-modal-pageview', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                    const data = await response.json();
+                    return {
+                        pageViews: data.pageViews,
+                        hasSeenSupport: data.hasSeenSupport
+                    };
+                } catch (error) {
+                    console.error('Error incrementing page views:', error);
+                    return null;
+                }
+            }
+
+            // Mark support modal as seen via API
+            async function markSupportModalSeen() {
+                try {
+                    await fetch('/settings/api/support-modal-seen', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                } catch (error) {
+                    console.error('Error marking support modal as seen:', error);
+                }
+            }
+
+            // Show support modal if conditions are met
+            async function handleSupportModal() {
+                let hasPhalanxAccepted = await checkPhalanxStatus();
+                let { hasSeenSupport, pageViews } = await checkSupportModalStatus();
+
+                // Increment page views if not already seen
+                if (hasPhalanxAccepted && !hasSeenSupport) {
+                    const result = await incrementPageViews();
+                    if (result) {
+                        pageViews = result.pageViews;
+                        hasSeenSupport = result.hasSeenSupport;
+                    }
+                }
+
+                console.log('Support modal conditions:', {
+                    hasPhalanxAccepted,
+                    hasSeenSupport,
+                    pageViews
+                });
+
+                if (hasPhalanxAccepted && !hasSeenSupport && pageViews >= 10) {
+                    console.log('Showing support modal in 2 seconds...');
+                    setTimeout(() => {
+                        console.log('Attempting to show support modal now');
+                        supportModal.style.display = 'block';
+                        markSupportModalSeen();
+                    }, 2000);
+                }
+            }
+
+            // Initialize support modal handling
+            handleSupportModal();
+
+            // Support Modal Close Handlers
+            if (supportModalClose) {
+                supportModalClose.addEventListener('click', function() {
+                    console.log('Closing support modal via close button');
+                    supportModal.style.display = 'none';
+                });
+            } else {
+                console.warn('Support modal close button not found');
+            }
+
+            window.addEventListener('click', function(event) {
+                if (event.target == supportModal) {
+                    console.log('Closing support modal via outside click');
+                    supportModal.style.display = 'none';
+                }
+            });
+
+            // Add ESC key support
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && supportModal.style.display === 'block') {
+                    console.log('Closing support modal via ESC key');
+                    supportModal.style.display = 'none';
+                }
+            });
         });
     </script>
 </head>
@@ -393,23 +740,32 @@
 <body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" 
       data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}" 
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
-      data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}">
+      data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"
+      data-notifications-disabled="false">
     
     <header>
         <div class="header-content">
             <a href="{{ url_for('root.root') }}" style="text-decoration: none; color: inherit; display: flex; align-items: center;">
-                <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
+                <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid icon" class="header-icon">
                 <div class="title-version">
                     <h1>cli_debrid</h1>
-                    <span class="version-info">v{{ get_version_with_branch() }}</span>
+                    <div class="version-container">
+                        <span class="version-info">v{{ get_version_with_branch() }}</span>
+                        <i class="fas fa-download update-indicator hidden" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
+                    </div>
                 </div>
             </a>
-            {% if current_user.is_authenticated and not is_onboarding %}
             <div class="user-info">
+                {% if current_user.is_authenticated and not is_onboarding %}
                 <span class="username">Welcome, {{ current_user.username }}</span>
-                <i class="fas fa-download update-indicator hidden" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
+                {% endif %}
+                {% if hide_support_message is not defined or not hide_support_message %}
+                <a href="https://patreon.com/godver3" target="_blank" class="support-link">
+                    <i class="fab fa-patreon" style="color: white;"></i>
+                    <span class="support-text"><i>Want to support the project?</i></span>
+                </a>
+                {% endif %}
             </div>
-            {% endif %}
         </div>
 
         {% if not is_onboarding %}
@@ -549,7 +905,19 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Notifications</h2>
-                <span class="close">&times;</span>
+                <div class="modal-controls">
+                    <button id="markAllAsReadBtn" class="mark-all-read-btn">Mark All as Read</button>
+                    <div class="notification-toggle-container">
+                        <label class="notification-toggle-label" for="disableNotificationsToggle">
+                            <span>Disable Notifications</span>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="disableNotificationsToggle">
+                                <span id="disableNotificationsToggleSlider" class="toggle-slider"></span>
+                            </div>
+                        </label>
+                    </div>
+                    <span class="close">&times;</span>
+                </div>
             </div>
             <div class="modal-body">
                 <div id="notifications-container">
@@ -629,27 +997,36 @@
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
     
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const modal = document.getElementById('notificationsModal');
-            const btn = document.getElementById('notifications_button');
-            const closeBtn = modal.querySelector('.close');
-
-            btn.addEventListener('click', function() {
-                modal.style.display = 'block';
-            });
-
-            closeBtn.addEventListener('click', function() {
-                modal.style.display = 'none';
-            });
-
-            window.addEventListener('click', function(event) {
-                if (event.target == modal) {
-                    modal.style.display = 'none';
-                }
-            });
-        });
-    </script>
+    <!-- Support Modal -->
+    <div id="supportModal" class="modal">
+        <div class="modal-content support-modal">
+            <div class="modal-header">
+                <h2>Support cli_debrid</h2>
+                <span class="close" id="supportModalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="support-modal-content">
+                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. To provide the best possible experience, we utilize:</p>
+                    <ul>
+                        <li>AI models for development</li>
+                        <li>Regular updates and optimizations</li>
+                    </ul>
+                    <p>Your support helps cover these costs and enables:</p>
+                    <ul>
+                        <li>Faster development of new features</li>
+                        <li>Continued growth of the project</li>
+                    </ul>
+                    <div class="support-cta">
+                        <a href="https://patreon.com/godver3" target="_blank" class="patreon-button">
+                            <i class="fab fa-patreon"></i>
+                            Support on Patreon
+                        </a>
+                        <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     
     {% block scripts %}{% endblock %}
 </body>

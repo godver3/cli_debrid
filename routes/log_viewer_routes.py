@@ -10,6 +10,8 @@ import logging
 import re
 import time
 import json
+import threading
+import uuid
 
 logs_bp = Blueprint('logs', __name__)
 
@@ -20,6 +22,9 @@ LOG_LEVELS = {
     'error': 40,
     'critical': 50
 }
+
+# Global dictionary to store upload status
+upload_tasks = {}
 
 @logs_bp.route('/logs')
 @admin_required
@@ -59,72 +64,223 @@ def api_logs():
 def share_logs():
     try:
         logging.info("Starting log collection for sharing")
+        
+        # Generate a unique task ID
+        task_id = str(uuid.uuid4())
+        
+        # Initialize the task status
+        upload_tasks[task_id] = {
+            'status': 'collecting',
+            'progress': 0,
+            'url': None,
+            'error': None,
+            'timestamp': time.time()
+        }
+        
+        # Start the background upload task
+        threading.Thread(
+            target=process_log_upload,
+            args=(task_id,),
+            daemon=True
+        ).start()
+        
+        # Return immediately with the task ID
+        return jsonify({
+            'success': True,
+            'task_id': task_id,
+            'message': 'Log upload started in background'
+        })
+        
+    except Exception as e:
+        logging.error(f"Error starting log sharing: {str(e)}")
+        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+
+@logs_bp.route('/api/logs/share/status/<task_id>', methods=['GET'])
+@admin_required
+def check_share_status(task_id):
+    # Check if the task ID exists
+    if task_id not in upload_tasks:
+        return jsonify({'error': 'Task ID not found'}), 404
+    
+    # Get the current status
+    task_info = upload_tasks[task_id]
+    
+    # Clean up completed tasks older than 1 hour
+    current_time = time.time()
+    for old_task_id in list(upload_tasks.keys()):
+        if (old_task_id != task_id and 
+            upload_tasks[old_task_id]['status'] in ['completed', 'failed'] and
+            current_time - upload_tasks[old_task_id]['timestamp'] > 3600):
+            del upload_tasks[old_task_id]
+    
+    # Return the status
+    return jsonify({
+        'status': task_info['status'],
+        'progress': task_info['progress'],
+        'url': task_info['url'],
+        'error': task_info['error'],
+        'timestamp': task_info['timestamp']
+    })
+
+def process_log_upload(task_id):
+    """Background task to process log upload"""
+    try:
+        # Update status
+        upload_tasks[task_id]['status'] = 'collecting'
+        upload_tasks[task_id]['progress'] = 10
+        
         # Get all logs without any filtering
         logs = get_all_logs_for_upload(level='all')
         if not logs:
-            return jsonify({'error': 'No logs found'}), 404
-
-        logging.info(f"Collected {len(logs)} log entries, preparing for compression")
+            upload_tasks[task_id]['status'] = 'failed'
+            upload_tasks[task_id]['error'] = 'No logs found'
+            return
+        
+        upload_tasks[task_id]['progress'] = 20
+        logging.info(f"Task {task_id}: Collected {len(logs)} log entries, preparing for compression")
         
         # Format logs for sharing
         log_content = '\n'.join([f"{log['timestamp']} - {log['level'].upper()} - {log['message']}" for log in logs])
         
         # Compress the logs with maximum compression
-        logging.info("Compressing logs")
+        upload_tasks[task_id]['status'] = 'compressing'
+        upload_tasks[task_id]['progress'] = 30
+        logging.info(f"Task {task_id}: Compressing logs")
+        
         compressed_buffer = io.BytesIO()
         with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
             gz.write(log_content.encode('utf-8'))
         
         compressed_data = compressed_buffer.getvalue()
-        logging.info(f"Compressed size: {len(compressed_data) / 1024:.2f}KB (Original: {len(log_content) / 1024:.2f}KB)")
+        compressed_size_kb = len(compressed_data) / 1024
+        original_size_kb = len(log_content) / 1024
+        logging.info(f"Task {task_id}: Compressed size: {compressed_size_kb:.2f}KB (Original: {original_size_kb:.2f}KB)")
         
-        # Try multiple file sharing services in case one fails
-        services = [
-            ('https://0x0.st', upload_to_0x0),  # Primary service
-        ]
+        upload_tasks[task_id]['progress'] = 40
         
-        last_error = None
-        for service_url, upload_func in services:
+        # Check if the compressed size exceeds typical limits
+        if compressed_size_kb > 10000:  # 10MB file size limit for oshi.at
+            logging.warning(f"Task {task_id}: Compressed log size ({compressed_size_kb:.2f}KB) may exceed oshi.at's limits")
+            
+            # Try with a reduced set of logs (only errors and warnings)
+            upload_tasks[task_id]['status'] = 'reducing'
             try:
-                logging.info(f"Attempting upload to {service_url}")
-                file_url = upload_func(compressed_data)
-                if file_url:
-                    logging.info("Upload completed successfully")
-                    return jsonify({
-                        'success': True,
-                        'url': file_url,
-                        'service': service_url.replace('https://', '').rstrip('/'),
-                        'originalSize': len(log_content),
-                        'compressedSize': len(compressed_data)
-                    })
+                logging.info(f"Task {task_id}: Attempting to create a reduced log set due to size constraints")
+                reduced_logs = get_all_logs_for_upload(level='warning', max_lines=100000)
+                if reduced_logs:
+                    reduced_content = '\n'.join([f"{log['timestamp']} - {log['level'].upper()} - {log['message']}" for log in reduced_logs])
+                    
+                    compressed_buffer = io.BytesIO()
+                    with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
+                        gz.write(reduced_content.encode('utf-8'))
+                    
+                    compressed_data = compressed_buffer.getvalue()
+                    compressed_size_kb = len(compressed_data) / 1024
+                    logging.info(f"Task {task_id}: Reduced log set: {len(reduced_logs)} entries, size: {compressed_size_kb:.2f}KB")
+                    
+                    # Still too large
+                    if compressed_size_kb > 10000:
+                        upload_tasks[task_id]['status'] = 'failed'
+                        upload_tasks[task_id]['error'] = 'Log file is too large even after reduction'
+                        return
             except Exception as e:
-                last_error = str(e)
-                logging.error(f"Failed to upload to {service_url}: {str(e)}")
-                continue
+                logging.error(f"Task {task_id}: Error creating reduced logs: {str(e)}")
+                upload_tasks[task_id]['status'] = 'failed'
+                upload_tasks[task_id]['error'] = f'Error creating reduced logs: {str(e)}'
+                return
         
-        # If we get here, all services failed
-        raise Exception(f"All upload services failed. Last error: {last_error}")
+        # Update status to uploading
+        upload_tasks[task_id]['status'] = 'uploading'
+        upload_tasks[task_id]['progress'] = 50
         
+        try:
+            logging.info(f"Task {task_id}: Attempting upload to oshi.at")
+            file_url = upload_to_oshi(compressed_data, task_id)
+            
+            if file_url:
+                logging.info(f"Task {task_id}: Upload completed successfully to oshi.at")
+                upload_tasks[task_id]['status'] = 'completed'
+                upload_tasks[task_id]['progress'] = 100
+                upload_tasks[task_id]['url'] = file_url
+            else:
+                upload_tasks[task_id]['status'] = 'failed'
+                upload_tasks[task_id]['error'] = 'Upload completed but no URL returned'
+        except Exception as e:
+            logging.error(f"Task {task_id}: Failed to upload to oshi.at: {str(e)}")
+            upload_tasks[task_id]['status'] = 'failed'
+            upload_tasks[task_id]['error'] = f'Upload failed: {str(e)}'
+            
     except Exception as e:
-        logging.error(f"Error during log sharing: {str(e)}")
-        return jsonify({'error': f'An error occurred: {str(e)}'}), 500
+        logging.error(f"Task {task_id}: Error during log sharing: {str(e)}")
+        upload_tasks[task_id]['status'] = 'failed'
+        upload_tasks[task_id]['error'] = f'An error occurred: {str(e)}'
+    
+    # Update timestamp regardless of outcome
+    upload_tasks[task_id]['timestamp'] = time.time()
 
-def upload_to_0x0(data):
-    """Upload to 0x0.st as fallback"""
+def upload_to_oshi(data, task_id=None):
+    """Upload to oshi.at with 24 hour expiration"""
+    url = 'https://oshi.at'
+    
     files = {
-        'file': ('debug.log.gz', data, 'application/gzip')
+        'f': ('debug.log.gz', data, 'application/gzip')
     }
     
-    response = requests.post(
-        'https://0x0.st',
-        files=files,
-        timeout=120  # 30 second timeout
-    )
+    # Set expiry to 24 hours in minutes (1440 minutes)
+    form_data = {
+        'expire': '1440'  # 24 hours in minutes
+    }
     
-    if response.status_code != 200:
-        raise Exception(f'0x0.st returned status code {response.status_code}')
+    logging.info(f"Uploading to oshi.at: file size {len(data)/1024:.2f}KB, mime: application/gzip")
     
-    return response.text.strip()
+    try:
+        # Update progress if task_id is provided
+        if task_id and task_id in upload_tasks:
+            upload_tasks[task_id]['progress'] = 60
+        
+        response = requests.post(
+            url,
+            files=files,
+            data=form_data,
+            timeout=240  # 4 minute timeout to handle larger uploads
+        )
+        
+        # Update progress if task_id is provided
+        if task_id and task_id in upload_tasks:
+            upload_tasks[task_id]['progress'] = 90
+        
+        logging.info(f"Response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            logging.error(f"Upload error response from oshi.at: {response.text[:500]}")
+            response.raise_for_status()
+        
+        # oshi.at returns a text response with multiple lines:
+        # Line 1: Management URL (https://oshi.at/filename/random.extension)
+        # Line 2: Direct download URL (https://oshi.at/DL/filename/random.extension)
+        # Line 3: Deletion URL
+        # Line 4: Expiration info
+        lines = response.text.strip().split('\n')
+        
+        logging.info(f"oshi.at response lines: {len(lines)}")
+        
+        # Check if the response has the expected format and extract direct download URL from line 2
+        if len(lines) >= 2 and 'DL:' in lines[1]:
+            direct_download_url = lines[1].strip().replace('DL: ', '')
+            logging.info(f"Extracted direct download URL: {direct_download_url}")
+            return direct_download_url
+        elif len(lines) >= 1 and 'http' in lines[0]:
+            # Fallback to the management URL if we can't find a direct download URL
+            management_url = lines[0].strip()
+            logging.info(f"Using management URL as fallback: {management_url}")
+            return management_url
+        else:
+            logging.error(f"Unexpected response format from oshi.at: {response.text[:500]}")
+            raise Exception("Failed to parse oshi.at response")
+        
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Request error during upload to oshi.at: {str(e)}")
+        raise Exception(f"Upload failed: {str(e)}")
 
 def get_all_logs_for_upload(level='all', max_lines=500000):
     """Get all logs from all rotated files in chronological order for upload"""

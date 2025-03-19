@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+
+{% block title %}GunJS Status{% endblock %}
+
+{% block content %}
+<style>
+/* List Group Styling */
+.list-group-item {
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    font-family: monospace;
+    margin-top: 10px;
+    padding-left: 15px;
+    list-style-type: none;
+    font-size: 1.2em;
+}
+
+.list-group.peer-list {
+    display: none;
+}
+
+.mb-0 {
+    font-size: 1.2em;
+    margin-left: 10px;
+}
+
+.col-md-6 {
+    margin-top: 10px;
+}
+
+/* Filter Button Group */
+.btn-group {
+    background-color: #1a1a1a;
+    border-radius: 4px;
+    overflow: hidden;
+    padding-left: 10px;
+}
+
+.btn-group .btn {
+    border: 1px solid #444;
+    padding: 4px 8px;
+    font-weight: 500;
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    margin: 3px;
+}
+
+.btn-group .btn-outline-primary {
+    border-color: #0d6efd;
+}
+
+.btn-group .btn-outline-success {
+    border-color: #198754;
+}
+
+.btn-group .btn-outline-danger {
+    border-color: #dc3545;
+}
+
+/* Peer List Items */
+.peer-list .list-group-item {
+    font-family: monospace;
+    font-size: 1.2em;
+    background-color: #2c2c2c;
+}
+
+/* Cache Status Badges */
+.badge {
+    padding: 0.5em 0.8em;
+    font-weight: 500;
+}
+
+/* Card Styling */
+.card {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 1em;
+}
+
+.card-header {
+    background-color: #2c2c2c;
+    border-bottom: 1px solid #444;
+    color: #f4f4f4;
+}
+
+.card-body {
+    background-color: #1a1a1a;
+}
+
+.row {
+    padding-left: 10px;
+}
+
+/* Table Styling */
+.table {
+    color: #f4f4f4;
+    background-color: #2c2c2c;
+}
+
+.table thead th {
+    background-color: #1a1a1a;
+    border-bottom: 2px solid #444;
+    color: #f4f4f4;
+}
+
+.table td {
+    border-top: 1px solid #444;
+}
+
+.alert {
+    margin: 10px;
+}
+
+/* Alert Styling */
+.alert-success {
+    background-color: #198754;
+    color: #f4f4f4;
+    border: none;
+}
+
+.alert-danger {
+    background-color: #dc3545;
+    color: #f4f4f4;
+    border: none;
+}
+
+.alert-warning {
+    background-color: #ffc107;
+    color: #000;
+    border: none;
+}
+
+.alert-info {
+    background-color: #0dcaf0;
+    color: #000;
+    border: none;
+}
+
+#connected-peers {
+    display: none;
+}
+
+/* Code style */
+code {
+    color: #f4f4f4;
+    padding: 2px 4px;
+    border-radius: 3px;
+}
+
+/* Network Health specific styling */
+.network-health .list-group-item {
+    margin-top: 0;
+    margin-bottom: 0;
+    border-radius: 0;
+}
+
+.network-health .list-group-item:first-child {
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+.network-health .list-group-item:last-child {
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.list-group.network-health {
+    margin-right: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+</style>
+
+<div class="container mt-4">
+    <h1>PhalanxDB Status</h1>
+
+    <!-- Connection Status -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Connection Status</h5>
+        </div>
+        <div class="card-body">
+            {% if connection_status %}
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> Connected to PhalanxDB service
+                </div>
+            {% else %}
+                <div class="alert alert-danger">
+                    <i class="fas fa-times-circle"></i> Not connected to PhalanxDB service
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Mesh Status -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h3 class="mb-0">Mesh Network Status</h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+
+                <div class="col-md-6">
+                    <h4>Network Health</h4>
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            Node ID: {{ mesh_status.node.id|default('Unknown') }}
+                        </li>
+                        <li class="list-group-item">
+                            Uptime: {{ mesh_status.node.uptime|default(0) }} seconds
+                        </li>
+                        <li class="list-group-item">
+                            Port: {{ mesh_status.node.port|default('Unknown') }}
+                        </li>
+                        <li class="list-group-item">
+                            Connected Peers: {{ mesh_status.peers.connected|default(0) }}
+                        </li>
+                        <li class="list-group-item">
+                            Storage Enabled: {{ mesh_status.storage.enabled|default(False)|string|title }}
+                        </li>
+                        <li class="list-group-item">
+                            Storage File: {{ mesh_status.storage.file|default('Unknown') }}
+                        </li>
+                        <li class="list-group-item">
+                            Total Data Items: {{ mesh_status.data.total|default(0) }}
+                        </li>
+                        <li class="list-group-item">
+                            Valid Data Items: {{ mesh_status.data.valid|default(0) }}
+                        </li>
+                        <li class="list-group-item">
+                            Encryption Enabled: {{ mesh_status.encryption.enabled|default(False)|string|title }}
+                        </li>
+                        <li class="list-group-item">
+                            SEA Encryption: {{ mesh_status.encryption.sea|default(False)|string|title }}
+                        </li>
+
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache Entries -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Cache Entries ({{ total_entries }})</h5>
+            <div class="btn-group">
+                <button class="btn btn-sm btn-outline-primary" onclick="filterEntries('all')">All</button>
+                <button class="btn btn-sm btn-outline-success" onclick="filterEntries('cached')">Cached</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="filterEntries('uncached')">Uncached</button>
+            </div>
+        </div>
+        <div class="card-body">
+            {% if cache_entries %}
+                <div class="table-responsive">
+                    <table class="table table" id="cacheTable">
+                        <thead>
+                            <tr>
+                                <th>Hash</th>
+                                <th>Service</th>
+                                <th>Status</th>
+                                <th>Last Modified (UTC)</th>
+                                <th>Expiry (UTC)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in cache_entries %}
+                                <tr class="cache-entry {{ 'cached' if entry.is_cached == True else 'uncached' if entry.is_cached == False else 'unchecked' }}">
+                                    <td><code>{{ entry.hash }}</code></td>
+                                    <td>{{ entry.service|default('unknown') }}</td>
+                                    <td>
+                                        {% if entry.is_cached == True %}
+                                            <span class="badge bg-success">Cached</span>
+                                        {% elif entry.is_cached == False %}
+                                            <span class="badge bg-danger">Not Cached</span>
+                                        {% else %}
+                                            <span class="badge bg-secondary">Unchecked</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if entry.timestamp %}
+                                            {% if entry.timestamp is string %}
+                                                {{ entry.timestamp }}
+                                            {% else %}
+                                                {{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+                                            {% endif %}
+                                        {% else %}
+                                            N/A
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if entry.expiry %}
+                                            {% if entry.expiry is string %}
+                                                {{ entry.expiry }}
+                                            {% else %}
+                                                {{ entry.expiry.strftime('%Y-%m-%d %H:%M:%S UTC') }}
+                                            {% endif %}
+                                        {% else %}
+                                            N/A
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> No cache entries found
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function filterEntries(type) {
+    const rows = document.querySelectorAll('.cache-entry');
+    rows.forEach(row => {
+        if (type === 'all') {
+            row.style.display = '';
+        } else if (type === 'cached') {
+            row.style.display = row.classList.contains('cached') ? '' : 'none';
+        } else if (type === 'uncached') {
+            row.style.display = row.classList.contains('uncached') ? '' : 'none';
+        }
+    });
+}
+</script>
+{% endblock %} 

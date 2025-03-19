@@ -9,8 +9,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 
 from debrid import get_debrid_provider
-from database import update_media_item, get_all_media_items, get_media_item_by_id
-from settings import get_setting
+from utilities.settings import get_setting
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
 from database.torrent_tracking import update_adding_error
@@ -35,6 +34,7 @@ class AddingQueue:
     def update(self):
         """Update the queue with current items in 'Adding' state"""
         old_items = {item['id']: item for item in self.items}
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Adding")]
         new_items = {item['id']: item for item in self.items}
         
@@ -96,7 +96,7 @@ class AddingQueue:
                 if info:
                     hash_value = info.get('hash', '').lower()
                     if hash_value:
-                        from not_wanted_magnets import add_to_not_wanted
+                        from database.not_wanted_magnets import add_to_not_wanted
                         try:
                             add_to_not_wanted(hash_value)
                             logging.info(f"Added hash {hash_value} to not wanted list")
@@ -133,7 +133,9 @@ class AddingQueue:
         """
         if not self.items:
             return False
-            
+        
+        from database import update_media_item, get_all_media_items, get_media_item_by_id
+
         success = False
         if self.items:
             item = self.items[0]  # Peek at first item
@@ -308,6 +310,8 @@ class AddingQueue:
             return torrent_info, magnet
         except Exception as e:
             logging.error(f"Error processing results for {item_identifier}: {str(e)}")
+            from queues.queue_manager import QueueManager
+            queue_manager = QueueManager()
             self._handle_failed_item(item, f"Error checking cache status: {str(e)}", queue_manager)
             return None, None
 
@@ -332,6 +336,7 @@ class AddingQueue:
             fall_back_to_single_scraper = get_media_item_by_id(item['id']).get('fall_back_to_single_scraper')
             if not fall_back_to_single_scraper:
                 logging.info(f"Falling back to single scraper for {item.get('title')}")
+                from database import update_media_item
                 update_media_item(item['id'], fall_back_to_single_scraper=True)
                 
                 if item.get('type') == 'episode':
@@ -341,6 +346,7 @@ class AddingQueue:
                     version = item.get('version')
                     
                     if series_title and season is not None and current_episode is not None:
+                        from database import get_all_media_items
                         scraping_items = [dict(row) for row in get_all_media_items(state="Scraping")]
                         matching_items = [
                             i for i in scraping_items
@@ -405,6 +411,7 @@ class AddingQueue:
             logging.error(f"Error handling failed item: {str(e)}", exc_info=True)
     
     def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        from database import get_media_item_by_id
         updated_item = get_media_item_by_id(item['id'])
 
         if updated_item:

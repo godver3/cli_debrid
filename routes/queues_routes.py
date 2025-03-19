@@ -1,12 +1,12 @@
 from flask import Blueprint, render_template, jsonify, request, Response
 from .models import user_required, onboarding_required
 from datetime import datetime
-from queue_manager import QueueManager
+from queues.queue_manager import QueueManager
 import logging
 from .program_operation_routes import program_is_running, program_is_initializing
-from initialization import get_initialization_status
+from queues.initialization import get_initialization_status
 from cli_battery.app.limiter import limiter
-from settings import get_setting
+from utilities.settings import get_setting
 import json
 import time
 

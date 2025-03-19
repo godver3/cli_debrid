@@ -1,4 +1,40 @@
 # settings_schema.py
+import os
+import re
+import glob
+from pathlib import Path
+
+def get_available_logos():
+    """
+    Scan the static directory to find available logo files and categorize them.
+    Returns a list of logo options with the format: ["Default", "Plex"].
+    """
+    # Define the static directory path relative to this file
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    
+    # Default logo options
+    logo_options = ["Default"]
+    
+    # Pattern matching for Plex logo
+    plex_pattern = re.compile(r"plex-icon-\d+x\d+\.(png|ico)$")
+    
+    # Check if the static directory exists
+    if os.path.exists(static_dir):
+        # Get all files in the static directory
+        files = glob.glob(os.path.join(static_dir, "*.*"))
+        
+        # Check if Plex logo is available
+        for file_path in files:
+            filename = os.path.basename(file_path)
+            if plex_pattern.search(filename):
+                if "Plex" not in logo_options:
+                    logo_options.append("Plex")
+                break
+    
+    return logo_options
+
+# Get available logo options dynamically
+AVAILABLE_LOGOS = get_available_logos()
 
 SETTINGS_SCHEMA = {
     "UI Settings": {
@@ -16,6 +52,27 @@ SETTINGS_SCHEMA = {
         "compact_view": {
             "type": "boolean",
             "description": "Use compact view for statistics page",
+            "default": False
+        },
+        "enable_phalanx_db": {
+            "type": "boolean",
+            "description": "Enable the phalanx_db service",
+            "default": True
+        },
+        "disable_auto_browser": {
+            "type": "boolean",
+            "description": "Disable automatic browser launch on Windows systems",
+            "default": False
+        },
+        "program_logo": {
+            "type": "string",
+            "description": "Select the program logo to display in the UI. Credits to:@mrcuriousny for Plex-style logo",
+            "default": "Default",
+            "choices": AVAILABLE_LOGOS
+        },
+        "hide_support_message": {
+            "type": "boolean",
+            "description": "Hide the Patreon support message in the header",
             "default": False
         }
     },
@@ -81,6 +138,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Organize symlinked files into Movies and TV Shows folders",
             "default": True
+        },
+        "symlink_organize_by_resolution": {
+            "type": "boolean",
+            "description": "Organize symlinked files by resolution (e.g., 1080p, 2160p) before media type folders",
+            "default": False
         },
         "plex_url_for_symlink": {
             "type": "string",
@@ -184,6 +246,11 @@ SETTINGS_SCHEMA = {
             ],
             "default": "None",
             "choices": ["None", "Full"]
+        },
+        "filter_trash_releases": {
+            "type": "boolean",
+            "description": "Filter out releases marked as trash by the parser. These are typically low-quality or badly formatted releases.",
+            "default": True
         },
         "upgrade_similarity_threshold": {
             "type": "float",
@@ -493,15 +560,15 @@ SETTINGS_SCHEMA = {
             "description": "Absolute path to your CineSync MediaHub main.py file (e.g. /path/to/CineSync/MediaHub/main.py)",
             "default": ""
         },
-        "emby_url": {
+        "emby_jellyfin_url": {
             "type": "string",
-            "description": "Emby server URL for library updates (e.g. http://localhost:8096)",
+            "description": "Emby or Jellyfin server URL for library updates (e.g. http://localhost:8096)",
             "default": "",
             "validate": "url"
         },
-        "emby_token": {
+        "emby_jellyfin_token": {
             "type": "string",
-            "description": "Emby API key/token for authentication",
+            "description": "Emby or Jellyfin API key/token for authentication",
             "default": "",
             "sensitive": True
         },

@@ -11,6 +11,7 @@ import sys
 import atexit
 import os
 from datetime import timezone
+import re
 
 def initialize_database(app):
     max_retries = 5
@@ -66,9 +67,27 @@ def main():
                 try:
                     background_jobs.start()
                 except Exception as e:
-                    if "Invalid TZif file" in str(e):
-                        logger.warning("Timezone initialization failed, reconfiguring scheduler with UTC")
+                    error_msg = str(e)
+                    # Handle various timezone-related errors
+                    if "Invalid TZif file" in error_msg:
+                        logger.warning("Timezone initialization failed (Invalid TZif file), reconfiguring scheduler with UTC")
                         # Force scheduler to use UTC
+                        background_jobs.scheduler = BackgroundScheduler(timezone=timezone.utc)
+                        background_jobs.start()
+                    elif "does not support non-zoneinfo timezones" in error_msg:
+                        logger.warning(f"Invalid timezone format detected: {error_msg}")
+                        
+                        # Try to extract the incorrect timezone format from the error message
+                        match = re.search(r'timezones like ([^.]+)', error_msg)
+                        if match:
+                            incorrect_tz = match.group(1).strip()
+                            logger.info(f"Detected incorrect timezone format: {incorrect_tz}")
+                            
+                            # Log troubleshooting info for the user
+                            logger.info("Please set a correct timezone in the format 'Continent/City' (e.g., 'America/New_York', 'Europe/London')")
+                        
+                        # Fall back to UTC
+                        logger.warning("Falling back to UTC timezone for scheduler")
                         background_jobs.scheduler = BackgroundScheduler(timezone=timezone.utc)
                         background_jobs.start()
                     else:

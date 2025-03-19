@@ -1,9 +1,9 @@
 import logging
 from plexapi.myplex import MyPlexAccount
 from typing import List, Dict, Any, Tuple
-from settings import get_setting
+from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence
-from config_manager import load_config
+from queues.config_manager import load_config
 from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.direct_api import DirectAPI
 import os

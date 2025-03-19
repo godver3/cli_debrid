@@ -90,10 +90,39 @@ def init_db():
         Session.remove()  # Clear any existing sessions
         Session.configure(bind=engine)
 
-        # Create tables
-        Base.metadata.create_all(engine)
+        # Check if tables exist and create them if they don't
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        required_tables = {'items', 'metadata', 'seasons', 'episodes', 'posters', 'tmdb_to_imdb_mapping', 'tvdb_to_imdb_mapping'}
+        
+        if not all(table in existing_tables for table in required_tables):
+            logger.info("Some required tables are missing. Creating all tables...")
+            try:
+                Base.metadata.create_all(engine)
+                logger.info("Successfully created all required tables.")
+            except Exception as table_error:
+                logger.error(f"Error creating tables: {str(table_error)}")
+                raise
+        else:
+            logger.debug("All required tables already exist.")
 
         return engine
+    except OperationalError as oe:
+        if "no such table" in str(oe).lower():
+            logger.warning("Database tables don't exist. Attempting to create them...")
+            try:
+                Base.metadata.create_all(engine)
+                logger.info("Successfully created database tables.")
+                return engine
+            except Exception as create_error:
+                logger.error(f"Failed to create database tables: {str(create_error)}")
+                engine = None
+                raise
+        else:
+            logger.error(f"Database operational error: {str(oe)}")
+            engine = None
+            raise
     except Exception as e:
         logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
         engine = None  # Reset engine on failure

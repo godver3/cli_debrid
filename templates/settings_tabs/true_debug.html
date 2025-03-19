@@ -32,6 +32,15 @@
                 <p class="settings-description">If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available</p>
             </div>
 
+            <!-- Staleness Threshold -->
+            <div class="settings-form-group">
+                <label for="debug-staleness_threshold" class="settings-title">Staleness Threshold (Days):</label>
+                <input type="number" id="debug-staleness_threshold" name="Staleness Threshold.staleness_threshold"
+                       value="{{ settings.get('Staleness Threshold', {}).get('staleness_threshold', 7) }}" class="settings-input"
+                       data-section="Staleness Threshold" data-key="staleness_threshold">
+                <p class="settings-description">Staleness threshold for metadata (in days)</p>
+            </div>
+
             <!-- Sort By Uncached Status -->
             <div class="settings-form-group">
                 <label for="debug-sort_by_uncached_status" class="settings-title">Sort By Uncached Status:</label>
@@ -106,20 +115,20 @@
 
             <!-- Emby URL -->
             <div class="settings-form-group">
-                <label for="debug-emby_url" class="settings-title">Emby URL:</label>
-                <input type="text" id="debug-emby_url" name="Debug.emby_url"
-                       value="{{ settings.get('Debug', {}).get('emby_url', '') }}" class="settings-input"
-                       data-section="Debug" data-key="emby_url">
-                <p class="settings-description">URL for Emby server</p>
+                <label for="debug-emby_jellyfin_url" class="settings-title">Emby/Jellyfin URL:</label>
+                <input type="text" id="debug-emby_jellyfin_url" name="Debug.emby_jellyfin_url"
+                       value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_jellyfin_url">
+                <p class="settings-description">URL for Emby or Jellyfin server</p>
             </div>
 
             <!-- Emby Token -->
             <div class="settings-form-group">
-                <label for="debug-emby_token" class="settings-title">Emby Token:</label>
-                <input type="password" id="debug-emby_token" name="Debug.emby_token"
-                       value="{{ settings.get('Debug', {}).get('emby_token', '') }}" class="settings-input"
-                       data-section="Debug" data-key="emby_token">
-                <p class="settings-description">Authentication token for Emby</p>
+                <label for="debug-emby_jellyfin_token" class="settings-title">Emby/Jellyfin Token:</label>
+                <input type="password" id="debug-emby_jellyfin_token" name="Debug.emby_jellyfin_token"
+                       value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_jellyfin_token">
+                <p class="settings-description">Authentication token for Emby or Jellyfin</p>
             </div>
         </div>
     </div>

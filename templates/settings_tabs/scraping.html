@@ -351,20 +351,40 @@
 
     function initializeFilterButtons() {
         document.querySelectorAll('.add-filter-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
+            // Create a wrapped handler function that can be stored and removed
+            const filterButtonHandler = function() {
                 const versionId = this.getAttribute('data-version-id');
                 const filterType = this.getAttribute('data-filter-type');
                 addFilterItem(versionId, filterType);
-            });
+            };
+            
+            // Remove old handler if it exists
+            if (btn._filterHandler) {
+                btn.removeEventListener('click', btn._filterHandler);
+            }
+            
+            // Store and add new handler
+            btn._filterHandler = filterButtonHandler;
+            btn.addEventListener('click', filterButtonHandler);
         });
 
         // Initialize remove filter buttons
         document.querySelectorAll('.filter-list').forEach(list => {
-            list.addEventListener('click', function(event) {
+            // Create a wrapped handler function
+            const removeFilterHandler = function(event) {
                 if (event.target.classList.contains('remove-filter')) {
                     event.target.closest('.filter-item').remove();
                 }
-            });
+            };
+            
+            // Remove old handler if it exists
+            if (list._removeFilterHandler) {
+                list.removeEventListener('click', list._removeFilterHandler);
+            }
+            
+            // Store and add new handler
+            list._removeFilterHandler = removeFilterHandler;
+            list.addEventListener('click', removeFilterHandler);
         });
     }
 

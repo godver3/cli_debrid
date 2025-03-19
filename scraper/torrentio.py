@@ -1,9 +1,9 @@
 import logging
-from api_tracker import api
+from routes.api_tracker import api
 import re
 from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
-from settings import load_config, get_setting
+from utilities.settings import load_config, get_setting
 from database.database_reading import get_imdb_aliases
 
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"

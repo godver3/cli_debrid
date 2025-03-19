@@ -12,7 +12,6 @@ flask_sqlalchemy==3.1.1
 Flask-Limiter==3.5.0
 fuzzywuzzy==0.18.0
 grpcio==1.66.1
-guessit==3.8.0
 MarkupSafe==2.1.5
 protobuf==5.28.1
 pykakasi==2.3.0
@@ -29,7 +28,7 @@ iso8601==2.1.0
 Pillow==10.4.0
 supervisor==4.2.5
 ntplib==0.4.0
-parsett==1.5.6
+parsett==1.5.10
 pytz==2024.1
 psutil==6.0.0
 urllib3==1.26.15

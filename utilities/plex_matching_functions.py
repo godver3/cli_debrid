@@ -1,7 +1,7 @@
 import logging
 import os
 from plexapi.server import PlexServer
-from settings import get_setting
+from utilities.settings import get_setting
 from typing import Dict, List, Any, Optional
 from database.core import get_db_connection
 import requests

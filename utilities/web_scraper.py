@@ -1,13 +1,13 @@
 import logging
 from typing import Dict, Any, List, Tuple, Optional
-from settings import get_setting
-from api_tracker import api
+from utilities.settings import get_setting
+from routes.api_tracker import api
 from scraper.scraper import scrape
 from debrid import extract_hash_from_magnet
 from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
-from poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
+from routes.poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
 from metadata.metadata import get_metadata, get_imdb_id_if_missing, get_all_season_episode_counts, get_show_airtime_by_imdb_id
 import asyncio
 import aiohttp
@@ -877,7 +877,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 
                 # Only check first 5 results
                 checked_count = 0
-                for result in processed_results:
+                for i, result in enumerate(processed_results):
                     hash_value = result.get('hash')
                     if not hash_value or checked_count >= 5:  # Limit to 5 checks
                         continue
@@ -890,7 +890,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         cache_result = debrid_provider.is_cached(
                             magnet_link, 
                             result_title=result.get('title', f"Hash {hash_value}"),
-                            result_index=checked_count-1
+                            result_index=i,
+                            remove_uncached=True  # Explicitly set to remove uncached torrents
                         )
                         
                         result['cached'] = 'Yes' if cache_result else 'No'
@@ -899,6 +900,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
                         if torrent_id:
                             torrent_ids_to_remove.append(torrent_id)
+                            logging.info(f"Added torrent ID {torrent_id} to removal list")
                     except Exception as e:
                         logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
                         result['cached'] = 'Error'
@@ -980,6 +982,7 @@ def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str
         if magnet_link:
             logging.info(f"Selected torrent: {selected_torrent}")
             logging.info(f"Magnet link: {magnet_link}")
+            debrid_provider = get_debrid_provider()
             result = debrid_provider.add_to_debrid(magnet_link)
             if result:
                 logging.info(f"Torrent result: {result}")

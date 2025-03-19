@@ -1,12 +1,12 @@
 import logging
-from api_tracker import api
+from routes.api_tracker import api
 import re
 from typing import Tuple
 from typing import Dict, Any, Optional, Tuple, List
 from scraper.scraper import scrape
 #from utilities.result_viewer import display_results
 from debrid import get_debrid_provider, extract_hash_from_magnet
-from settings import get_setting
+from utilities.settings import get_setting
 import os
 from collections import Counter
 from metadata.metadata import get_metadata

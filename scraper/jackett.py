@@ -1,7 +1,7 @@
-from api_tracker import api
+from routes.api_tracker import api
 import logging
 from typing import List, Dict, Any, Tuple
-from settings import get_setting, load_config as get_jackett_settings
+from utilities.settings import get_setting, load_config as get_jackett_settings
 from urllib.parse import quote, urlencode
 import json
 import re
@@ -174,7 +174,8 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
                 'size': item.get('Size', 0) / (1024 * 1024 * 1024),  # Convert to GB
                 'source': f"{ins_name} - {item.get('Tracker', 'N/A')}",
                 'magnet': magnet,
-                'seeders': seeders
+                'seeders': seeders,
+                'hash': item.get('InfoHash', '')
             }
             
             # Set the appropriate property for cache checking
@@ -196,6 +197,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
                     except Exception as e:
                         logging.error(f"Error extracting hash from magnet link: {e}")
                 
+
             results.append(result)
             #logging.debug(f"Added result: {title} ({result['size']:.2f}GB, {seeders} seeders)")
 

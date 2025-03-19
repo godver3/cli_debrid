@@ -2,15 +2,15 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
-from database import get_all_media_items, get_db_connection, remove_from_media_items
-from settings import get_setting
-from manual_blacklist import is_blacklisted
+from utilities.settings import get_setting
+from database.manual_blacklist import is_blacklisted
 
 class WantedQueue:
     def __init__(self):
         self.items = []
 
     def update(self):
+        from database import get_all_media_items, get_db_connection, remove_from_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Wanted")]
         # Move any blacklisted items to blacklisted state before calculating scrape times
         self.move_blacklisted_items()
@@ -88,6 +88,7 @@ class WantedQueue:
         Returns:
             bool: True if item was reconciled (found existing), False otherwise
         """
+        from database import get_db_connection
         conn = get_db_connection()
         try:
             # Query for existing items with same identifiers and version in Collected or Upgrading state
@@ -117,6 +118,7 @@ class WantedQueue:
             if existing_item:
                 logging.info(f"Found existing item in {existing_item['state']} state with same version. "
                            f"Removing duplicate from Wanted queue.")
+                from database import remove_from_media_items
                 remove_from_media_items(item['id'])
                 self.remove_item(item)
                 return True
@@ -282,6 +284,7 @@ class WantedQueue:
                 items_to_remove.append(item)
                 try:
                     # Update the item's state to Blacklisted and set the blacklisted date
+                    from database import get_db_connection
                     with get_db_connection() as conn:
                         conn.execute("""
                             UPDATE media_items 

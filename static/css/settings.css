@@ -148,3 +148,48 @@ button.delete-scraper-btn:disabled,
 }
 
 /* Rest of your existing styles... */ 
+
+/* Responsive styles for settings */
+@media screen and (max-width: 1245px) {
+    .settings-container {
+        width: 100%;
+        padding: 15px;
+    }
+
+    .settings-section-header {
+        padding: 12px 10px;
+    }
+
+    .settings-section-content {
+        padding: 12px 10px;
+    }
+
+    .settings-form-group {
+        margin-bottom: 12px;
+        padding: 8px;
+    }
+
+    .settings-input {
+        padding: 10px;
+        font-size: 16px; /* Larger font for better mobile usability */
+    }
+
+    .settings-title {
+        margin-bottom: 8px;
+        font-size: 16px;
+    }
+
+    /* Adjust button sizes for better touch targets */
+    .delete-scraper-btn,
+    .delete-source-btn,
+    .delete-version-btn,
+    .rename-version-btn,
+    .duplicate-source-btn,
+    .duplicate-scraper-btn,
+    .duplicate-version-btn {
+        min-height: 36px;
+        min-width: 36px;
+        padding: 8px 12px;
+        margin: 4px;
+    }
+} 

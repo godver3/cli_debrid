@@ -6,11 +6,14 @@ services:
     ports:
       - "5000:5000"
       - "5001:5001"
+      - "8888:8888"
     volumes:
       - /host/location/db_content:/user/db_content
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
-      - /media/mount:/media/mount # optional - used for symlinking - must match the mount point that Plex uses
+      - /mnt:/mnt
+      - /host/location/gun-relays:/app/phalanx_db/gun-relays
+      - /host/location/node-data.json:/app/phalanx_db/node-data.json
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

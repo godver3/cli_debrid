@@ -7,7 +7,7 @@ from functools import cached_property
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from settings import get_setting
+from utilities.settings import get_setting
 
 class Settings:
     def __init__(self):
@@ -19,11 +19,21 @@ class Settings:
             {'name': 'trakt', 'enabled': False},
             # Add more providers here as they become available
         ]
-        self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)  # in days
+        self._staleness_threshold = None  # Initialize as None
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
         self._trakt = None
         self.load()
+
+    @property
+    def staleness_threshold(self):
+        # Always get fresh value from settings
+        return get_setting('Staleness Threshold', 'staleness_threshold', 7)
+
+    @staleness_threshold.setter
+    def staleness_threshold(self, value):
+        self._staleness_threshold = value
+        self.save()
 
     @cached_property
     def Trakt(self):
@@ -63,7 +73,7 @@ class Settings:
                 config = json.load(f)
             self.active_provider = config.get('active_provider', 'none')
             self.providers = config.get('providers', self.providers)
-            self.staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)
+            self._staleness_threshold = get_setting('Staleness Threshold', 'staleness_threshold', 7)
             self.max_entries = config.get('max_entries', 1000)
             self.log_level = config.get('log_level', 'INFO')
         else:

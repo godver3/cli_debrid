@@ -1,14 +1,14 @@
 from flask import jsonify, request, current_app, Blueprint, logging, render_template
 from routes import admin_required, user_required
 from .database_routes import perform_database_migration 
-from extensions import initialize_app 
-from config_manager import load_config 
-from settings import get_setting
+from routes.extensions import initialize_app 
+from queues.config_manager import load_config 
+from utilities.settings import get_setting
 import threading
-from run_program import ProgramRunner
+from queues.run_program import ProgramRunner
 from flask_login import login_required
 from requests.exceptions import RequestException
-from api_tracker import api
+from routes.api_tracker import api
 import logging
 import time
 import socket
@@ -19,7 +19,7 @@ import psutil
 import sys
 import subprocess
 import xml.etree.ElementTree as ET
-from notifications import (
+from routes.notifications import (
     send_queue_start_notification,
     send_queue_stop_notification
 )
@@ -183,7 +183,7 @@ def signal_handler(signum, frame):
     sys.exit(0)
 
 def run_server():
-    from extensions import app
+    from routes.extensions import app
     
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
@@ -194,7 +194,7 @@ def run_server():
         cleanup_port(port)
 
 def start_server():
-    from extensions import app
+    from routes.extensions import app
     import socket
     
     # Get port from environment variable or use default
@@ -560,7 +560,7 @@ def get_task_timings():
         })
 
     # Ensure content sources are loaded
-    program_runner.get_content_sources()
+    content_sources = program_runner.get_content_sources()
 
     current_time = time.time()
     task_timings = {}
@@ -574,7 +574,36 @@ def get_task_timings():
         hours, remainder = divmod(int(time_until_next_run), 3600)
         minutes, seconds = divmod(remainder, 60)
         
+        # Create a human-readable display name
+        display_name = task
+        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+            # Queue tasks already have a nice display name
+            display_name = task
+        elif task.endswith('_wanted'):
+            # Get the source name from the task name
+            source_name = task.replace('task_', '').replace('_wanted', '')
+            
+            # Check if this is a content source and has a display_name
+            if source_name in content_sources:
+                source_config = content_sources[source_name]
+                # If a custom display name is set and not empty, use it
+                if isinstance(source_config, dict) and source_config.get('display_name'):
+                    display_name = source_config['display_name']
+                else:
+                    # Otherwise, format the source name nicely
+                    display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
+            else:
+                # Fallback: Format task name if source not found
+                display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
+        else:
+            # Regular tasks need task_ prefix removed and underscores replaced with spaces
+            display_name = task.replace('task_', '').replace('_', ' ')
+            # Capitalize first letter of each word
+            display_name = ' '.join(word.capitalize() for word in display_name.split())
+        
         task_timings[task] = {
+            "display_name": display_name,
             "next_run_in": {
                 "hours": hours,
                 "minutes": minutes,

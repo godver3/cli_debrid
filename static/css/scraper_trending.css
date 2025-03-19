@@ -35,29 +35,62 @@
 .trending-navigation {
     display: flex;
     gap: 10px;
+    align-items: center;
 }
 
 .trending-nav-button {
-    background-color: transparent;
-    color: white;
+    width: 36px;
+    height: 36px;
+    background-color: rgba(255, 255, 255, 0.05);
     border: none;
     border-radius: 50%;
-    width: 40px;
-    height: 40px;
+    color: rgba(255, 255, 255, 0.6);
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: center;
     cursor: pointer;
-    transition: color 0.3s ease;
+    transition: all 0.2s ease;
 }
 
 .trending-nav-button:hover {
-    opacity: 0.8;
+    background-color: rgba(255, 255, 255, 0.15);
+    color: rgba(255, 255, 255, 1);
+    transform: scale(1.05);
+}
+
+.trending-nav-button:active {
+    transform: scale(0.95);
 }
 
 .trending-nav-button:disabled {
-    color: #4a4a4a;    
+    background-color: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.3);
     cursor: not-allowed;
+    transform: none;
+}
+
+/* Apply a subtle glow effect on hover */
+.trending-nav-button:not(:disabled):hover {
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
+/* Ensure SVG icons are properly sized and centered */
+.trending-nav-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .trending-nav-button {
+        width: 32px;
+        height: 32px;
+    }
+    
+    .trending-nav-button svg {
+        width: 16px;
+        height: 16px;
+    }
 }
 
 #trending-rating {

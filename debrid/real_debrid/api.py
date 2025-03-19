@@ -7,8 +7,8 @@ from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import RealDebridAPIError, RealDebridAuthError
-from settings import get_setting
-from api_tracker import api
+from utilities.settings import get_setting
+from routes.api_tracker import api
 
 def get_api_key() -> str:
     """Get Real-Debrid API key from settings"""

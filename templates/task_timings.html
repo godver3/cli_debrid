@@ -463,23 +463,28 @@ function createTaskTile(taskName, taskData) {
     const enabled = taskData.enabled;
     const intervalMinutes = Math.floor(taskData.interval / 60);
     
-    // Format display name based on task type
+    // Use display_name from the server if available, otherwise fall back to client-side formatting
     let displayName;
-    if (taskName.endsWith('_wanted')) {
-        // Content source task
-        displayName = taskName
-            .replace('task_', '')
-            .replace('_wanted', '')
-            .replace(/_/g, ' ');
+    if (taskData.display_name) {
+        displayName = taskData.display_name;
     } else {
-        // Regular task
-        displayName = taskName
-            .replace('task_', '')
-            .replace(/_/g, ' ');
+        // Fallback to client-side formatting (for backward compatibility)
+        if (taskName.endsWith('_wanted')) {
+            // Content source task
+            displayName = taskName
+                .replace('task_', '')
+                .replace('_wanted', '')
+                .replace(/_/g, ' ');
+        } else {
+            // Regular task
+            displayName = taskName
+                .replace('task_', '')
+                .replace(/_/g, ' ');
+        }
+        
+        // Capitalize first letter of each word
+        displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
     }
-    
-    // Capitalize first letter of each word
-    displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
 
     const tile = document.createElement('div');
     tile.className = `task-tile ${enabled ? '' : 'disabled'}`;
@@ -626,10 +631,14 @@ function fetchAndUpdateTasks() {
 
 // Make triggerTask available globally
 window.triggerTask = function triggerTask(taskName) {
+    // Find the display name for this task
+    const taskElement = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
+    const displayName = taskElement ? taskElement.querySelector('.task-name').textContent.trim() : taskName;
+    
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Trigger Task',
-        message: `Do you want to trigger task: ${taskName}?`,
+        message: `Do you want to trigger task: ${displayName}?`,
         onConfirm: () => {
             // Show a small loading indicator on the task tile
             const taskTile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
@@ -661,7 +670,7 @@ window.triggerTask = function triggerTask(taskName) {
                     showPopup({
                         type: POPUP_TYPES.SUCCESS,
                         title: 'Success',
-                        message: `Successfully triggered task: ${taskName}`
+                        message: `Successfully triggered task: ${displayName}`
                     });
                     
                     // Refresh data after a short delay
@@ -690,6 +699,10 @@ window.triggerTask = function triggerTask(taskName) {
 window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
     const endpoint = enabled ? '/program_operation/enable_task' : '/program_operation/disable_task';
     const action = enabled ? 'enable' : 'disable';
+    
+    // Find the display name for this task
+    const taskElement = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
+    const displayName = taskElement ? taskElement.querySelector('.task-name').textContent.trim() : taskName;
     
     fetch(endpoint, {
         method: 'POST',
@@ -743,7 +756,7 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
-                message: data.error || `Failed to ${action} task`
+                message: data.error || `Failed to ${action} task: ${displayName}`
             });
         }
     })
@@ -759,7 +772,7 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
         showPopup({
             type: POPUP_TYPES.ERROR,
             title: 'Error',
-            message: `Failed to ${action} task`
+            message: `Failed to ${action} task: ${displayName}`
         });
     });
 }

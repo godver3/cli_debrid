@@ -221,7 +221,7 @@ def get_release_notes():
 @base_bp.route('/api/check-update', methods=['GET'])
 @cache_for_seconds(3600)  # Cache for 1 hour
 def check_for_update():
-    from settings import get_setting
+    from utilities.settings import get_setting
     #logging.debug(f"get_setting('Debug', 'check_for_updates', True): {get_setting('Debug', 'check_for_updates', True)}")
     if not get_setting('Debug', 'check_for_updates', True):
         #logging.debug("Update check disabled by user setting")
@@ -369,6 +369,38 @@ def mark_notification_read():
     except Exception as e:
         logging.error(f"Error marking notification as read: {str(e)}", exc_info=True)
         return jsonify({"error": "Failed to mark notification as read"}), 500
+
+@base_bp.route('/api/notifications/mark-all-read', methods=['POST'])
+def mark_all_notifications_read():
+    """Mark all notifications as read"""
+    try:
+        db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
+        notification_file = Path(db_content_dir) / 'notifications.json'
+        
+        if not notification_file.exists():
+            return jsonify({"error": "No notifications found"}), 404
+            
+        with open(notification_file) as f:
+            notifications = json.load(f)
+            
+        # Mark all notifications as read
+        notification_count = 0
+        for notification in notifications.get("notifications", []):
+            if not notification.get("read", False):
+                notification["read"] = True
+                notification_count += 1
+                
+        # Write back to file
+        with open(notification_file, 'w') as f:
+            json.dump(notifications, f, indent=2)
+            
+        return jsonify({
+            "success": True, 
+            "message": f"Marked {notification_count} notifications as read"
+        })
+    except Exception as e:
+        logging.error(f"Error marking all notifications as read: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to mark all notifications as read"}), 500
 
 @base_bp.route('/api/task-stream')
 def task_stream():

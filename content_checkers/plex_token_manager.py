@@ -2,7 +2,7 @@ import os
 import json
 import logging
 from datetime import datetime
-from config_manager import CONFIG_DIR
+from queues.config_manager import CONFIG_DIR
 
 TOKEN_STATUS_FILE = os.path.join(CONFIG_DIR, 'plex_token_status.json')
 

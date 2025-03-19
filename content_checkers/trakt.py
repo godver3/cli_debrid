@@ -1,10 +1,10 @@
 import re
 import logging
-from api_tracker import api
+from routes.api_tracker import api
 import json
 from typing import List, Dict, Any, Tuple
 from urllib.parse import urlparse
-from settings import get_all_settings
+from utilities.settings import get_all_settings
 import trakt.core
 import time
 import pickle
@@ -12,10 +12,9 @@ import os
 from database.database_reading import get_all_media_items, get_media_item_presence
 from database.database_writing import update_media_item
 from datetime import datetime, date, timedelta
-from settings import get_setting
+from utilities.settings import get_setting
 import random
 from time import sleep
-from content_checkers.plex_watchlist import get_show_status
 import requests
 
 REQUEST_TIMEOUT = 10  # seconds
@@ -492,6 +491,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
                             continue
                         else:
                             # Check if the show has ended before removing
+                            from content_checkers.plex_watchlist import get_show_status
                             show_status = get_show_status(imdb_id)
                             if show_status != 'ended':
                                 logging.debug(f"Keeping ongoing TV series: {imdb_id} - status: {show_status}")

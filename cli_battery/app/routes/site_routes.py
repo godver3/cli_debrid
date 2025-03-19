@@ -34,14 +34,36 @@ def home():
 
 @main_bp.route('/debug')
 def debug():
+    search_query = request.args.get('search', '').lower()
     items = MetadataManager.get_all_items()
-    for item in items:
-        # Find the year from metadata
-        year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
-        
-        # Use the metadata year if available, otherwise use the item's year
-        item.display_year = year_metadata or item.year
-        
+    
+    # Filter items server-side if search query is provided
+    if search_query:
+        filtered_items = []
+        for item in items:
+            # Find the year from metadata
+            year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
+            item.display_year = year_metadata or item.year
+            
+            # Search in basic info
+            basic_info = f"{item.title} {item.imdb_id} {item.display_year}".lower()
+            if search_query in basic_info:
+                filtered_items.append(item)
+                continue
+                
+            # Search in metadata
+            for metadata in item.item_metadata:
+                metadata_text = f"{metadata.key} {metadata.value}".lower()
+                if search_query in metadata_text:
+                    filtered_items.append(item)
+                    break
+        items = filtered_items
+    else:
+        # If no search query, just set display_year for all items
+        for item in items:
+            year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
+            item.display_year = year_metadata or item.year
+    
     return render_template('debug.html', items=items)
 
 @main_bp.route('/debug/delete_item/<imdb_id>', methods=['POST'])

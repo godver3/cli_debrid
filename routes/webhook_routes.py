@@ -1,15 +1,16 @@
 from flask import jsonify, request, Blueprint
 import logging
-from run_program import process_overseerr_webhook
-from extensions import app
-from queue_manager import QueueManager
+from queues.run_program import process_overseerr_webhook
+from routes.extensions import app
+from queues.queue_manager import QueueManager
 from utilities.local_library_scan import check_local_file_for_item
 from utilities.plex_functions import plex_update_item
-from settings import get_setting
+from utilities.emby_functions import emby_update_item
+from utilities.settings import get_setting
 from urllib.parse import unquote
 import os.path
 from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
-from api_tracker import api
+from routes.api_tracker import api
 
 webhook_bp = Blueprint('webhook', __name__)
 
@@ -88,9 +89,9 @@ def rclone_webhook():
             if check_local_file_for_item(item, is_webhook=True):
                 logging.info(f"Local file found and symlinked for item {item['id']}")
 
-                # Check for Plex or Emby configuration and update accordingly
-                if get_setting('Debug', 'emby_url', default=False):
-                    # Call Emby update for the item if we have an Emby URL
+                # Check for Plex or Emby/Jellyfin configuration and update accordingly
+                if get_setting('Debug', 'emby_jellyfin_url', default=False):
+                    # Call Emby/Jellyfin update for the item if we have an Emby/Jellyfin URL
                     emby_update_item(item)
                 elif get_setting('File Management', 'plex_url_for_symlink', default=False):
                     # Call Plex update for the item if we have a Plex URL

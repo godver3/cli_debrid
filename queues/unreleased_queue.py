@@ -1,9 +1,7 @@
 import logging
 from typing import Dict, Any
 from datetime import datetime, timedelta
-
-from database import get_all_media_items, get_db_connection
-from settings import get_setting
+from utilities.settings import get_setting
 
 class UnreleasedQueue:
     def __init__(self):
@@ -11,6 +9,7 @@ class UnreleasedQueue:
         self.last_report_time = datetime.min
 
     def update(self):
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Unreleased")]
 
     def get_contents(self):

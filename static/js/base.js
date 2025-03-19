@@ -7,6 +7,14 @@ import { showPopup, POPUP_TYPES } from './notifications.js';
 window.showPopup = showPopup;
 window.POPUP_TYPES = POPUP_TYPES;
 
+// Set initial notification disabled state from localStorage
+try {
+    const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+    document.body.setAttribute('data-notifications-disabled', notificationsDisabled);
+} catch (e) {
+    console.error('Error setting initial notification state:', e);
+}
+
 // Rate limiting check
 document.addEventListener('DOMContentLoaded', function() {
     if (window.isRateLimited && window.location.pathname !== '/over_usage/') {
@@ -248,8 +256,74 @@ window.toggleRateLimits = toggleRateLimits;
 window.fetchRateLimitInfo = fetchRateLimitInfo;
 window.updateBodyPadding = updateBodyPadding;
 
+// Add before the DOMContentLoaded event listener
+async function checkAndShowPhalanxDisclaimer() {
+    try {
+        const response = await fetch('/settings/api/phalanx-disclaimer-status');
+        const data = await response.json();
+        
+        if (!data.hasSeenDisclaimer) {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: 'Welcome to Phalanx DB',
+                message: `I am excited to introduce Phalanx_DB as the newest feature within cli_debrid. This disseminated database allows all users to keep track of cache status for items instead of needing to check cache statuses independently. This is a peer to peer database that is not stored in any one location, and instead propagates across users. Would you like to enable Phalanx_DB?<br><br><i>Note that data shared within phalanx_db is encrypted end to end and anonymous.</i>`,
+                confirmText: 'Yes, Enable',
+                cancelText: 'No, Disable',
+                onConfirm: async () => {
+                    await fetch('/settings/api/phalanx-disclaimer-accept', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ accepted: true })
+                    });
+                },
+                onCancel: async () => {
+                    await fetch('/settings/api/phalanx-disclaimer-accept', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ accepted: false })
+                    });
+                    
+                    showPopup({
+                        type: POPUP_TYPES.INFO,
+                        title: 'Phalanx DB Disabled',
+                        message: 'Phalanx_DB has been disabled. You can re-enable it from the Settings Menu/Additional Settings/UI Settings',
+                        autoClose: 5000
+                    });
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error checking Phalanx disclaimer status:', error);
+    }
+}
+
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
+    // Add this line near the beginning of the DOMContentLoaded handler
+    checkAndShowPhalanxDisclaimer();
+    
+    // Auto-mark notifications as read if they're disabled
+    if (localStorage.getItem('notificationsDisabled') === 'true') {
+        const markAllNotificationsAsReadSilently = async () => {
+            try {
+                await fetch('/base/api/notifications/mark-all-read', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                console.log('Auto-marked all notifications as read (notifications disabled)');
+            } catch (error) {
+                console.error('Error auto-marking notifications as read:', error);
+            }
+        };
+        markAllNotificationsAsReadSilently();
+    }
+    
     // Check initial visibility state before any other initialization
     const taskMonitorVisible = localStorage.getItem('taskMonitorVisible') === 'true';
     const rateLimitsVisible = localStorage.getItem('rateLimitsSectionVisible') !== 'false';
@@ -373,6 +447,237 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial padding update
     updateBodyPadding();
+
+    // Notifications Modal Logic
+    const notificationsModal = document.getElementById('notificationsModal');
+    const notificationsBtn = document.getElementById('notifications_button');
+    const notificationsCloseBtn = notificationsModal.querySelector('.close');
+    const notificationsContainer = document.getElementById('notifications-container');
+    const markAllAsReadBtn = document.getElementById('markAllAsReadBtn');
+    const disableNotificationsToggle = document.getElementById('disableNotificationsToggle');
+    let notifications = [];
+    
+    // Check if notifications are disabled in localStorage and update UI accordingly
+    function initializeNotificationPreferences() {
+        const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+        
+        // Update the toggle state
+        if (disableNotificationsToggle) {
+            disableNotificationsToggle.checked = notificationsDisabled;
+        }
+        
+        // Update the body attribute to control CSS
+        document.body.setAttribute('data-notifications-disabled', notificationsDisabled);
+        
+        // If notifications are disabled, automatically mark all as read
+        if (notificationsDisabled) {
+            markAllNotificationsAsRead(false); // Don't show popup when auto-marking
+        }
+    }
+
+    // Fetch notifications
+    async function fetchNotifications() {
+        try {
+            const response = await fetch('/base/api/notifications');
+            const data = await response.json();
+            notifications = data.notifications || [];
+            updateNotificationDisplay();
+            
+            // Only update indicator if notifications are not disabled
+            if (localStorage.getItem('notificationsDisabled') !== 'true') {
+                updateNotificationIndicator();
+            }
+        } catch (error) {
+            console.error('Error fetching notifications:', error);
+        }
+    }
+
+    // Update notification display in modal
+    function updateNotificationDisplay() {
+        if (notifications.length === 0) {
+            notificationsContainer.innerHTML = '<div class="no-notifications">No notifications</div>';
+            return;
+        }
+
+        notificationsContainer.innerHTML = notifications
+            .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+            .map(notification => `
+                <div class="notification ${notification.read ? 'read' : 'unread'}" data-id="${notification.id}">
+                    <div class="notification-header">
+                        <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
+                        <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
+                    </div>
+                    <div class="notification-title">${notification.title}</div>
+                    <div class="notification-message">${notification.message}</div>
+                    ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
+                </div>
+            `).join('');
+
+        // Add click handlers for marking as read
+        document.querySelectorAll('.notification.unread').forEach(notif => {
+            notif.addEventListener('click', async () => {
+                const id = notif.dataset.id;
+                await markNotificationRead(id);
+                notif.classList.remove('unread');
+                notif.classList.add('read');
+                
+                // Only update indicator if notifications are not disabled
+                if (localStorage.getItem('notificationsDisabled') !== 'true') {
+                    updateNotificationIndicator();
+                }
+            });
+        });
+    }
+
+    // Update the notification indicator (red dot)
+    function updateNotificationIndicator() {
+        // Don't show indicator if notifications are disabled
+        if (localStorage.getItem('notificationsDisabled') === 'true') {
+            notificationsBtn.classList.remove('has-notifications');
+            return;
+        }
+        
+        const hasUnread = notifications.some(n => !n.read);
+        notificationsBtn.classList.toggle('has-notifications', hasUnread);
+    }
+
+    // Mark notification as read
+    async function markNotificationRead(id) {
+        try {
+            await fetch('/base/api/notifications/mark-read', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ id }),
+            });
+            const notification = notifications.find(n => n.id === id);
+            if (notification) {
+                notification.read = true;
+            }
+        } catch (error) {
+            console.error('Error marking notification as read:', error);
+        }
+    }
+
+    // Mark all notifications as read
+    async function markAllNotificationsAsRead(showFeedback = true) {
+        try {
+            const response = await fetch('/base/api/notifications/mark-all-read', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                }
+            });
+            
+            if (response.ok) {
+                // Update all notifications as read in the local array
+                notifications.forEach(notification => {
+                    notification.read = true;
+                });
+                
+                // Update the display
+                updateNotificationDisplay();
+                updateNotificationIndicator();
+                
+                // Show feedback to the user if requested
+                if (showFeedback) {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: 'All notifications marked as read',
+                        autoClose: 2000
+                    });
+                }
+            } else {
+                throw new Error('Failed to mark all notifications as read');
+            }
+        } catch (error) {
+            console.error('Error marking all notifications as read:', error);
+            if (showFeedback) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to mark all notifications as read',
+                    autoClose: 3000
+                });
+            }
+        }
+    }
+
+    // Toggle notifications enabled/disabled
+    function toggleNotificationsEnabled() {
+        const isDisabled = disableNotificationsToggle.checked;
+        
+        // Save preference to localStorage
+        localStorage.setItem('notificationsDisabled', isDisabled);
+        
+        // Update body attribute for CSS
+        document.body.setAttribute('data-notifications-disabled', isDisabled);
+        
+        // If toggling to disabled, mark all as read
+        if (isDisabled) {
+            markAllNotificationsAsRead(false); // Don't show popup when auto-marking
+        }
+        
+        // Update notification indicator
+        updateNotificationIndicator();
+        
+        // Show feedback
+        showPopup({
+            type: POPUP_TYPES.INFO,
+            title: isDisabled ? 'Notifications Disabled' : 'Notifications Enabled',
+            message: isDisabled ? 'Notifications will be automatically marked as read.' : 'You will now receive notifications.',
+            autoClose: 2000
+        });
+    }
+
+    // Format timestamp
+    function formatTimestamp(timestamp) {
+        const date = new Date(timestamp);
+        const now = new Date();
+        const diffHours = Math.abs(now - date) / 36e5;
+
+        if (diffHours < 24) {
+            return date.toLocaleTimeString();
+        } else if (diffHours < 48) {
+            return 'Yesterday';
+        } else {
+            return date.toLocaleDateString();
+        }
+    }
+
+    // Modal controls
+    notificationsBtn.addEventListener('click', function() {
+        notificationsModal.style.display = 'block';
+        fetchNotifications(); // Refresh notifications when opening modal
+    });
+
+    notificationsCloseBtn.addEventListener('click', function() {
+        notificationsModal.style.display = 'none';
+    });
+
+    // Mark all as read button handler
+    if (markAllAsReadBtn) {
+        markAllAsReadBtn.addEventListener('click', () => markAllNotificationsAsRead(true));
+    }
+    
+    // Disable notifications toggle handler
+    if (disableNotificationsToggle) {
+        disableNotificationsToggle.addEventListener('change', toggleNotificationsEnabled);
+    }
+
+    window.addEventListener('click', function(event) {
+        if (event.target == notificationsModal) {
+            notificationsModal.style.display = 'none';
+        }
+    });
+
+    // Initial setup
+    initializeNotificationPreferences();
+    
+    // Initial fetch
+    fetchNotifications();
 });
 
 // Add resize listener to handle screen size changes

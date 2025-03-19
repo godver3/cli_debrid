@@ -1,40 +1,32 @@
 from flask import jsonify, Blueprint, render_template, request, redirect, url_for, flash, current_app, Response, stream_with_context
 from flask.json import jsonify
-from initialization import get_all_wanted_from_enabled_sources
-from run_program import (
+from queues.initialization import get_all_wanted_from_enabled_sources
+from queues.run_program import (
     get_and_add_recent_collected_from_plex, 
     get_and_add_all_collected_from_plex, 
     ProgramRunner, 
     run_local_library_scan, 
     run_recent_local_library_scan
 )
-from manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, save_manual_blacklist
-from settings import get_all_settings, get_setting, set_setting
-from config_manager import load_config
+from database.manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, save_manual_blacklist
+from utilities.settings import get_all_settings, get_setting, set_setting
+from queues.config_manager import load_config
 import logging
 from routes import admin_required
-from content_checkers.overseerr import get_wanted_from_overseerr
-from content_checkers.collected import get_wanted_from_collected
-from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
-from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
-from content_checkers.mdb_list import get_wanted_from_mdblists
-from content_checkers.content_source_detail import append_content_source_detail
 from metadata.metadata import process_metadata, get_metadata
 from cli_battery.app.direct_api import DirectAPI
-from database import add_wanted_items, get_db_connection, bulk_delete_by_id, create_tables, verify_database
 from database.torrent_tracking import get_recent_additions, get_torrent_history
 import os
 import glob
-from api_tracker import api 
+from routes.api_tracker import api 
 import time
 from metadata.metadata import get_tmdb_id_and_media_type, refresh_release_dates
 from datetime import datetime
-from notifications import send_notifications
+from routes.notifications import send_notifications
 import requests
 from datetime import datetime, timedelta
-from queue_manager import QueueManager
-from not_wanted_magnets import (
+from queues.queue_manager import QueueManager
+from database.not_wanted_magnets import (
     get_not_wanted_magnets, get_not_wanted_urls,
     purge_not_wanted_magnets_file, save_not_wanted_magnets,
     load_not_wanted_urls, save_not_wanted_urls
@@ -63,8 +55,20 @@ def async_get_wanted_content(source):
             get_all_wanted_from_enabled_sources()
             message = 'Successfully retrieved and added wanted items from all enabled sources'
         else:
+            # Get the display name for the content source
+            content_sources = get_all_settings().get('Content Sources', {})
+            source_config = content_sources.get(source, {})
+            
+            # Determine display name
+            if isinstance(source_config, dict) and source_config.get('display_name'):
+                display_name = source_config['display_name']
+            else:
+                # Format the source name if no display name is set
+                display_name = ' '.join(word.capitalize() for word in source.split('_'))
+            
             get_and_add_wanted_content(source)
-            message = f'Successfully retrieved and added wanted items from {source}'
+            message = f'Successfully retrieved and added wanted items from {display_name}'
+        
         return {'success': True, 'message': message}
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -106,6 +110,7 @@ def bulk_delete_by_imdb():
         return jsonify({'success': False, 'error': 'ID is required'})
 
     id_type = 'imdb_id' if id_value.startswith('tt') else 'tmdb_id'
+    from database import bulk_delete_by_id
     deleted_count = bulk_delete_by_id(id_value, id_type)
     
     if deleted_count > 0:
@@ -129,6 +134,7 @@ def delete_database():
         if confirm != 'DELETE':
             return jsonify({'success': False, 'error': 'Please type DELETE to confirm database deletion'})
         
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -218,6 +224,7 @@ def delete_database():
         return jsonify({'success': False, 'error': str(e)})
 
 def move_item_to_queue(item_id, target_queue):
+    from database import get_db_connection
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -231,6 +238,7 @@ def move_item_to_queue(item_id, target_queue):
 
 @debug_bp.route('/api/bulk_queue_contents', methods=['GET'])
 def get_queue_contents():
+    from database import get_db_connection
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -390,35 +398,9 @@ def manual_blacklist():
                 
     return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
 
-@debug_bp.route('/api/get_title_year', methods=['GET'])
-def get_title_year():
-    imdb_id = request.args.get('imdb_id')
-    
-    overseerr_url = get_setting('Overseerr', 'url')
-    overseerr_api_key = get_setting('Overseerr', 'api_key')
-    
-    if not overseerr_url or not overseerr_api_key:
-        return jsonify({'error': 'Overseerr URL or API key not set'}), 400
-
-    cookies = get_overseerr_cookies(overseerr_url)
-    tmdb_id, media_type = get_tmdb_id_and_media_type(imdb_id)
-    
-    if tmdb_id and media_type:
-        if media_type == 'movie':
-            details = get_overseerr_movie_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-        else:  # TV show
-            details = get_overseerr_show_details(overseerr_url, overseerr_api_key, tmdb_id, cookies)
-        
-        if details:
-            title = details.get('title') if media_type == 'movie' else details.get('name')
-            year = details.get('releaseDate', '')[:4] if media_type == 'movie' else details.get('firstAirDate', '')[:4]
-            return jsonify({'title': title, 'year': year, 'media_type': media_type})
-
-    return jsonify({'error': 'Could not fetch title and year'}), 404
-
 @debug_bp.route('/api/get_collected_from_plex', methods=['POST'])
 def get_collected_from_plex():
-    from extensions import task_queue
+    from routes.extensions import task_queue
 
     collection_type = request.form.get('collection_type')
     
@@ -607,7 +589,7 @@ def plex_scan_progress(scan_id):
 
 @debug_bp.route('/api/task_status/<task_id>')
 def task_status(task_id):
-    from extensions import task_queue
+    from routes.extensions import task_queue
 
     task_info = task_queue.get_task_status(task_id)
     return jsonify(task_info)
@@ -628,6 +610,14 @@ def update_trakt_settings(content_sources):
     #set_setting('Trakt', 'trakt_lists', trakt_lists)
 
 def get_and_add_wanted_content(source_id):
+    from content_checkers.overseerr import get_wanted_from_overseerr
+    from content_checkers.collected import get_wanted_from_collected
+    from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
+    from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
+    from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
+    from content_checkers.mdb_list import get_wanted_from_mdblists
+    from content_checkers.content_source_detail import append_content_source_detail
+
     content_sources = get_all_settings().get('Content Sources', {})
     source_data = content_sources[source_id]
     source_type = source_id.split('_')[0]
@@ -738,6 +728,7 @@ def get_and_add_wanted_content(source_id):
                         for item in items_to_process:
                             update_cache_for_item(item, source_id, source_cache)
                         
+                        from database import add_wanted_items
                         add_wanted_items(all_items, item_versions or versions)
                         total_items += len(all_items)
                         items_processed += len(items_to_process)
@@ -766,7 +757,7 @@ def get_content_sources():
 
 @debug_bp.route('/api/get_wanted_content', methods=['POST'])
 def get_wanted_content():
-    from extensions import task_queue
+    from routes.extensions import task_queue
 
     source = request.form.get('source')
     task_id = task_queue.add_task(async_get_wanted_content, source)
@@ -796,18 +787,76 @@ def get_rate_limit_info():
 
 @debug_bp.route('/rescrape_item', methods=['POST'])
 def rescrape_item():
+    from database import get_media_item_by_id
+    from utilities.plex_functions import remove_file_from_plex
     item_id = request.json.get('item_id')
     if not item_id:
         return jsonify({'success': False, 'error': 'Item ID is required'}), 400
 
     try:
+        # Get the item details first
+        item = get_media_item_by_id(item_id)
+        if not item:
+            return jsonify({'success': False, 'error': 'Item not found'}), 404
+
+        # Get file management settings
+        file_management = get_setting('File Management', 'file_collection_management', 'Plex')
+        mounted_location = get_setting('Plex', 'mounted_file_location', get_setting('File Management', 'original_files_path', ''))
+        original_files_path = get_setting('File Management', 'original_files_path', '')
+        symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
+
+        # Handle file deletion based on management type
+        if file_management == 'Plex' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
+            if mounted_location and item.get('location_on_disk'):
+                try:
+                    if os.path.exists(item['location_on_disk']):
+                        os.remove(item['location_on_disk'])
+                except Exception as e:
+                    logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
+
+            time.sleep(1)
+
+            if item['type'] == 'movie':
+                remove_file_from_plex(item['title'], item['filled_by_file'])
+            elif item['type'] == 'episode':
+                remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
+
+        elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
+            # Handle symlink removal
+            if item.get('location_on_disk'):
+                try:
+                    if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
+                        os.unlink(item['location_on_disk'])
+                except Exception as e:
+                    logging.error(f"Error removing symlink at {item['location_on_disk']}: {str(e)}")
+
+            # Handle original file removal
+            if item.get('original_path_for_symlink'):
+                try:
+                    if os.path.exists(item['original_path_for_symlink']):
+                        os.remove(item['original_path_for_symlink'])
+                except Exception as e:
+                    logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
+
+            time.sleep(1)
+
+            # Remove from Plex if configured
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
+            if plex_url:
+                if item['type'] == 'movie':
+                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']))
+                elif item['type'] == 'episode':
+                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']), item['episode_title'])
+
+        # Move the item to Wanted queue
         move_item_to_wanted(item_id)
-        return jsonify({'success': True, 'message': 'Item moved to Wanted queue for rescraping'}), 200
+        return jsonify({'success': True, 'message': 'Item deleted and moved to Wanted queue for rescraping'}), 200
     except Exception as e:
-        logging.error(f"Error moving item to Wanted queue: {str(e)}")
+        logging.error(f"Error rescraping item: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def move_item_to_wanted(item_id):
+    from database import get_db_connection
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -974,6 +1023,7 @@ def move_to_upgrading():
         return jsonify({'success': False, 'error': 'Item ID is required'}), 400
 
     try:
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
@@ -1037,27 +1087,95 @@ def run_task():
     if task_name not in tasks:
         return jsonify({'success': False, 'error': 'Invalid task name'}), 400
 
+    # Get the display name for the task
+    display_name = task_name  # Default to raw task name
+    
+    # Check if it's a content source task
+    if task_name.endswith('_wanted'):
+        source_name = task_name.replace('task_', '').replace('_wanted', '')
+        content_sources = program_runner.get_content_sources()
+        
+        if source_name in content_sources:
+            source_config = content_sources[source_name]
+            if isinstance(source_config, dict) and source_config.get('display_name'):
+                display_name = f"Content Source: {source_config['display_name']}"
+            else:
+                display_name = f"Content Source: {' '.join(word.capitalize() for word in source_name.split('_'))}"
+    else:
+        # For standard tasks, format the name nicely
+        if task_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading']:
+            display_name = task_name.capitalize()
+        else:
+            # Remove task_ prefix and format with spaces
+            display_name = task_name.replace('task_', '').replace('_', ' ')
+            display_name = ' '.join(word.capitalize() for word in display_name.split())
+
     try:
         result = tasks[task_name]()
-        return jsonify({'success': True, 'message': f'Task {task_name} executed successfully', 'result': result}), 200
+        return jsonify({'success': True, 'message': f'Task "{display_name}" executed successfully', 'result': result}), 200
     except Exception as e:
         logging.error(f"Error executing task {task_name}: {str(e)}")
-        return jsonify({'success': False, 'error': f'Error executing task {task_name}: {str(e)}'}), 500
+        return jsonify({'success': False, 'error': f'Error executing task "{display_name}": {str(e)}'}), 500
 
 @debug_bp.route('/get_available_tasks', methods=['GET'])
 @admin_required
 def get_available_tasks():
-    tasks = [
-        'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted',
-        'pending_uncached', 'upgrading', 'task_plex_full_scan', 'task_debug_log',
-        'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
-        'task_generate_airtime_report', 'task_check_service_connectivity', 'task_send_notifications',
-        'task_check_trakt_early_releases', 'task_reconcile_queues', 'task_check_plex_files',
-        'task_update_show_ids', 'task_update_show_titles', 'task_get_plex_watch_history',
-        'task_check_database_health', 'task_run_library_maintenance', 'task_update_movie_ids', 'task_update_movie_titles',
-        'task_verify_symlinked_files'
+    # Define the task list with display names
+    task_map = [
+        {'id': 'wanted', 'display_name': 'Wanted'},
+        {'id': 'scraping', 'display_name': 'Scraping'},
+        {'id': 'adding', 'display_name': 'Adding'},
+        {'id': 'checking', 'display_name': 'Checking'},
+        {'id': 'sleeping', 'display_name': 'Sleeping'},
+        {'id': 'unreleased', 'display_name': 'Unreleased'},
+        {'id': 'blacklisted', 'display_name': 'Blacklisted'},
+        {'id': 'pending_uncached', 'display_name': 'Pending Uncached'},
+        {'id': 'upgrading', 'display_name': 'Upgrading'},
+        {'id': 'task_plex_full_scan', 'display_name': 'Plex Full Scan'},
+        {'id': 'task_debug_log', 'display_name': 'Debug Log'},
+        {'id': 'task_refresh_release_dates', 'display_name': 'Refresh Release Dates'},
+        {'id': 'task_purge_not_wanted_magnets_file', 'display_name': 'Purge Not Wanted Magnets File'},
+        {'id': 'task_generate_airtime_report', 'display_name': 'Generate Airtime Report'},
+        {'id': 'task_check_service_connectivity', 'display_name': 'Check Service Connectivity'},
+        {'id': 'task_send_notifications', 'display_name': 'Send Notifications'},
+        {'id': 'task_check_trakt_early_releases', 'display_name': 'Check Trakt Early Releases'},
+        {'id': 'task_reconcile_queues', 'display_name': 'Reconcile Queues'},
+        {'id': 'task_check_plex_files', 'display_name': 'Check Plex Files'},
+        {'id': 'task_update_show_ids', 'display_name': 'Update Show IDs'},
+        {'id': 'task_update_show_titles', 'display_name': 'Update Show Titles'},
+        {'id': 'task_get_plex_watch_history', 'display_name': 'Get Plex Watch History'},
+        {'id': 'task_check_database_health', 'display_name': 'Check Database Health'},
+        {'id': 'task_run_library_maintenance', 'display_name': 'Run Library Maintenance'},
+        {'id': 'task_update_movie_ids', 'display_name': 'Update Movie IDs'},
+        {'id': 'task_update_movie_titles', 'display_name': 'Update Movie Titles'},
+        {'id': 'task_verify_symlinked_files', 'display_name': 'Verify Symlinked Files'}
     ]
-    return jsonify({'tasks': tasks}), 200
+    
+    # Get content sources from program runner for content source tasks
+    program_runner = ProgramRunner()
+    content_sources = program_runner.get_content_sources()
+    
+    # Add content source tasks with display names from config
+    for source_name, source_config in content_sources.items():
+        if isinstance(source_config, dict) and source_config.get('enabled', False):
+            task_id = f"task_{source_name}_wanted"
+            
+            # Use custom display name if available, otherwise format the source name
+            if source_config.get('display_name'):
+                display_name = f"Process Content Source: {source_config['display_name']}"
+            else:
+                formatted_name = ' '.join(word.capitalize() for word in source_name.split('_'))
+                display_name = f"Process Content Source: {formatted_name}"
+                
+            task_map.append({'id': task_id, 'display_name': display_name})
+    
+    # For backward compatibility, also include the flat list of task IDs
+    task_ids = [task['id'] for task in task_map]
+    
+    return jsonify({
+        'tasks': task_ids,  # For backward compatibility
+        'task_map': task_map  # New structured format with display names
+    }), 200
 
 @debug_bp.route('/not_wanted')
 def not_wanted():
@@ -1119,6 +1237,7 @@ def propagate_version():
         if not original_version or not propagated_version:
             return jsonify({'success': False, 'error': 'Both versions are required'})
         
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -1210,6 +1329,7 @@ def get_available_versions():
     
     # Get versions from the database as backup
     if not versions:
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT DISTINCT version FROM media_items WHERE version IS NOT NULL")
@@ -1242,6 +1362,7 @@ def convert_to_symlinks():
             try:
                 import os
                 # Get database connection
+                from database import get_db_connection
                 conn = get_db_connection()
                 cursor = conn.cursor()
 
@@ -1498,12 +1619,12 @@ def validate_plex_tokens_route():
 @debug_bp.route('/simulate_crash')
 def simulate_crash():
     """Route to simulate a program crash for testing notifications."""
-    from settings import get_setting
+    from utilities.settings import get_setting
     if not get_setting('Debug', 'enable_crash_test', False):
         return jsonify({'success': False, 'error': 'Crash simulation is not enabled'}), 400
         
     # First send the crash notification
-    from notifications import send_program_crash_notification
+    from routes.notifications import send_program_crash_notification
     send_program_crash_notification("Simulated crash for testing notifications")
     
     # Then force an immediate crash with os._exit
@@ -1729,7 +1850,7 @@ def get_verification_queue():
             'files': formatted_files
         })
     except Exception as e:
-        logger.error(f"Error getting verification queue: {str(e)}")
+        logging.error(f"Error getting verification queue: {str(e)}")
         return jsonify({
             'success': False,
             'error': str(e)

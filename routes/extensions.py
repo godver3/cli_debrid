@@ -122,16 +122,30 @@ class SameSiteMiddleware:
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
-app = Flask(__name__)
+app = Flask(__name__, 
+           template_folder='../templates',
+           static_folder='../static')
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
 # Configure session
+session_dir = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')
+try:
+    os.makedirs(session_dir, mode=0o777, exist_ok=True)
+    # Ensure the directory has the correct permissions even if it already existed
+    os.chmod(session_dir, 0o777)
+except Exception as e:
+    logging.warning(f"Could not create or set permissions on session directory {session_dir}: {str(e)}")
+    # Fallback to system temp directory
+    import tempfile
+    session_dir = os.path.join(tempfile.gettempdir(), 'flask_session')
+    os.makedirs(session_dir, mode=0o777, exist_ok=True)
+
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
-app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')
+app.config['SESSION_FILE_DIR'] = session_dir
 app.config['SESSION_FILE_THRESHOLD'] = 500
 app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True

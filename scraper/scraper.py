@@ -1,9 +1,9 @@
 import logging
 import re
-from api_tracker import api
+from routes.api_tracker import api
 from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
-from settings import get_setting
+from utilities.settings import get_setting
 import time
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from database.database_writing import update_anime_format, update_preferred_alias, get_preferred_alias
@@ -11,11 +11,10 @@ from fuzzywuzzy import fuzz
 from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
 import os
 from utilities.plex_functions import filter_genres
-from guessit import guessit
 import pykakasi
 from babelfish import Language
 from .scraper_manager import ScraperManager
-from config_manager import load_config
+from queues.config_manager import load_config
 import unicodedata
 import sys
 from PTT import parse_title

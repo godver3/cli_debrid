@@ -1,7 +1,7 @@
 from flask import Blueprint, render_template, jsonify
 from debrid.common.utils import format_torrent_status
 from debrid import get_debrid_provider
-from settings import get_setting
+from utilities.settings import get_setting
 
 # Create Blueprint
 torrent_status_bp = Blueprint('torrent_status', __name__, url_prefix='/torrent_status')

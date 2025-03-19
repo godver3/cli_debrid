@@ -2,10 +2,9 @@ import logging
 import json
 import os
 from typing import Dict, Any
-from database import get_all_media_items, update_media_item_state, update_media_item
 from debrid import get_debrid_provider
 from queues.adding_queue import AddingQueue
-from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from debrid.common import extract_hash_from_magnet, download_and_extract_hash
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
@@ -19,6 +18,7 @@ class PendingUncachedQueue:
         self.media_matcher = MediaMatcher()
 
     def update(self):
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Pending Uncached")]
         self._deserialize_scrape_results()
 
@@ -135,6 +135,7 @@ class PendingUncachedQueue:
             logging.debug(f"Best matching file for {item_identifier}: {filename}")
             
             # Update database and item with matched file
+            from database import update_media_item
             update_media_item(item['id'], filled_by_file=filename)
             item['filled_by_file'] = filename
             
@@ -184,6 +185,7 @@ class PendingUncachedQueue:
         logging.error(f"Failed to add pending uncached item: {item_identifier}")
         
         # Move back to Wanted state
+        from database import update_media_item_state
         update_media_item_state(item['id'], 'Wanted')
         self.remove_item(item)
 

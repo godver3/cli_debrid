@@ -437,7 +437,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
 }
 
 // Add event listeners when DOM content is loaded
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', async function() {
     // Set up search form behavior 
     const searchForm = document.getElementById('search-form');
     if (searchForm) {
@@ -483,25 +483,46 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize button states
     if (scrollLeftBtn_mv) {
-        scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
+        scrollLeftBtn_mv.disabled = false; // Don't disable initially
     }
     
     function updateButtonStates_mv() {
-        if (container_mv) {
-            scrollLeftBtn_mv.disabled = container_mv.scrollLeft === 0;
-            scrollRightBtn_mv.disabled = container_mv.scrollLeft >= container_mv.scrollWidth - container_mv.offsetWidth;
+        const container = document.querySelector('#movieContainer');
+        if (!container) return;
+        
+        const leftButton = document.querySelector('#scrollLeft_mv');
+        const rightButton = document.querySelector('#scrollRight_mv');
+        
+        if (leftButton) {
+            const isAtStart = container.scrollLeft <= 0;
+            leftButton.disabled = isAtStart;
+        }
+        
+        if (rightButton) {
+            // Add a margin to account for the right padding
+            const maxScroll = container.scrollWidth - container.clientWidth - 80;
+            const isAtEnd = container.scrollLeft >= maxScroll - 5;
+            rightButton.disabled = isAtEnd;
+            console.log(`Movie scroll: ${container.scrollLeft}/${maxScroll}, scrollWidth: ${container.scrollWidth}, clientWidth: ${container.clientWidth}`);
         }
     }
     
     function scroll_mv(direction) {
-        if (container_mv) {
-            const scrollAmount = container_mv.offsetWidth;
-            const newPosition = direction === 'left'
-                ? Math.max(container_mv.scrollLeft - scrollAmount, 0)
-                : Math.min(container_mv.scrollLeft + scrollAmount, container_mv.scrollWidth - container_mv.offsetWidth);
-            
-            container_mv.scrollTo({ left: newPosition, behavior: 'smooth' });
-        }
+        const container = document.querySelector('#movieContainer');
+        if (!container) return;
+        
+        const scrollAmount = container.clientWidth * 0.8;
+        const targetScroll = direction === 'left' 
+            ? Math.max(container.scrollLeft - scrollAmount, 0)
+            : Math.min(container.scrollLeft + scrollAmount, container.scrollWidth - container.clientWidth);
+        
+        container.scrollTo({
+            left: targetScroll,
+            behavior: 'smooth'
+        });
+        
+        // Update button states after scrolling
+        setTimeout(updateButtonStates_mv, 500);
     }
     
     if (container_mv) {
@@ -515,25 +536,46 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize button states
     if (scrollLeftBtn_tv) {
-        scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
+        scrollLeftBtn_tv.disabled = false; // Don't disable initially
     }
     
     function updateButtonStates_tv() {
-        if (container_tv) {
-            scrollLeftBtn_tv.disabled = container_tv.scrollLeft === 0;
-            scrollRightBtn_tv.disabled = container_tv.scrollLeft >= container_tv.scrollWidth - container_tv.offsetWidth;
+        const container = document.querySelector('#showContainer');
+        if (!container) return;
+        
+        const leftButton = document.querySelector('#scrollLeft_tv');
+        const rightButton = document.querySelector('#scrollRight_tv');
+        
+        if (leftButton) {
+            const isAtStart = container.scrollLeft <= 0;
+            leftButton.disabled = isAtStart;
+        }
+        
+        if (rightButton) {
+            // Add a margin to account for the right padding
+            const maxScroll = container.scrollWidth - container.clientWidth - 50;
+            const isAtEnd = container.scrollLeft >= maxScroll - 5;
+            rightButton.disabled = isAtEnd;
+            console.log(`TV scroll: ${container.scrollLeft}/${maxScroll}, scrollWidth: ${container.scrollWidth}, clientWidth: ${container.clientWidth}`);
         }
     }
     
     function scroll_tv(direction) {
-        if (container_tv) {
-            const scrollAmount = container_tv.offsetWidth;
-            const newPosition = direction === 'left'
-                ? Math.max(container_tv.scrollLeft - scrollAmount, 0)
-                : Math.min(container_tv.scrollLeft + scrollAmount, container_tv.scrollWidth - container_tv.offsetWidth);
-            
-            container_tv.scrollTo({ left: newPosition, behavior: 'smooth' });
-        }
+        const container = document.querySelector('#showContainer');
+        if (!container) return;
+        
+        const scrollAmount = container.clientWidth * 0.8;
+        const targetScroll = direction === 'left' 
+            ? Math.max(container.scrollLeft - scrollAmount, 0)
+            : Math.min(container.scrollLeft + scrollAmount, container.scrollWidth - container.clientWidth);
+        
+        container.scrollTo({
+            left: targetScroll,
+            behavior: 'smooth'
+        });
+        
+        // Update button states after scrolling
+        setTimeout(updateButtonStates_tv, 500);
     }
     
     if (container_tv) {
@@ -589,6 +631,65 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Fetch available versions
     fetchVersions();
+
+    // Update button states after images load
+    function setupImageLoadHandlers() {
+        document.querySelectorAll('#movieContainer img, #showContainer img').forEach(img => {
+            if (img.complete) {
+                updateButtonStates_mv();
+                updateButtonStates_tv();
+            } else {
+                img.addEventListener('load', function() {
+                    updateButtonStates_mv();
+                    updateButtonStates_tv();
+                });
+            }
+        });
+    }
+    
+    // Setup initial button states and recalculate after images load
+    function initializeTrendingScrolling() {
+        setTimeout(function() {
+            updateButtonStates_mv();
+            updateButtonStates_tv();
+            setupImageLoadHandlers();
+        }, 500);
+    }
+    
+    // Override get_trendingMovies and get_trendingShows to initialize after content loads
+    const originalGetTrendingMovies = get_trendingMovies;
+    window.get_trendingMovies = function() {
+        originalGetTrendingMovies();
+        setTimeout(initializeTrendingScrolling, 1000);
+    };
+    
+    const originalGetTrendingShows = get_trendingShows;
+    window.get_trendingShows = function() {
+        originalGetTrendingShows();
+        setTimeout(initializeTrendingScrolling, 1000);
+    };
+
+    // Also override the global functions
+    get_trendingMovies = window.get_trendingMovies;
+    get_trendingShows = window.get_trendingShows;
+    
+    // Recalculate on window resize
+    window.addEventListener('resize', function() {
+        updateButtonStates_mv();
+        updateButtonStates_tv();
+    });
+    
+    // Final initialization when everything is loaded
+    window.addEventListener('load', function() {
+        setTimeout(function() {
+            updateButtonStates_mv();
+            updateButtonStates_tv();
+            setupImageLoadHandlers();
+        }, 1000);
+    });
+
+    // Initialize mobile action modal
+    initializeMobileActionModal();
 });
 
 // Available versions and selected content
@@ -689,6 +790,11 @@ function showVersionModal(content) {
             <label for="${version}">${version}</label>
         `;
         versionCheckboxes.appendChild(div);
+        
+        // If there's only one version available, auto-select it
+        if (availableVersions.length === 1) {
+            div.querySelector('input[type="checkbox"]').checked = true;
+        }
     });
     
     modal.style.display = 'flex';
@@ -728,6 +834,11 @@ function showVersionModalForSeason(content) {
             <label for="${version}">${version}</label>
         `;
         versionCheckboxes.appendChild(div);
+        
+        // If there's only one version available, auto-select it
+        if (availableVersions.length === 1) {
+            div.querySelector('input[type="checkbox"]').checked = true;
+        }
     });
     
     modal.style.display = 'flex';
@@ -891,24 +1002,59 @@ function createMovieElement(data) {
         </div>
     `;
     
+    // Create tester icon HTML - mirrored on the left side
+    const testerIconHTML = `
+        <div class="tester-icon" title="Test this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6v4H9zM6 7h12l-3 10H9z"></path>
+                <path d="M10 17h4v4h-4z"></path>
+            </svg>
+        </div>
+    `;
+    
     movieElement.innerHTML = `
         <div class="media-poster">
             <span id="trending-rating">${(data.rating).toFixed(1)}</span>
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
-            <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                alt="${data.title}" 
-                class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+            <div class="poster-container">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                    alt="${data.title}" 
+                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+                <div class="poster-overlay">
+                    <h3>${data.title}</h3>
+                    <p>${data.year}</p>
+                </div>
+                ${requestIconHTML}
+                ${testerIconHTML}
+            </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
                 <h2>${data.title}</h2>
                 <p>${data.year}</p>
             </div>
-            ${requestIconHTML}
         </div>
     `;
     
     // Add click handlers for the poster
     movieElement.onclick = function() {
-        selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.genre_ids);
+        // Check if we're on mobile (screen width <= 768px)
+        if (window.innerWidth <= 768) {
+            // Prepare data for mobile modal
+            const item = {
+                id: data.tmdb_id,
+                title: data.title,
+                year: data.year,
+                media_type: 'movie',
+                genre_ids: data.genre_ids,
+                poster_path: data.poster_path,
+                tmdb_api_key_set: document.getElementById('tmdb_api_key_set').value === 'True'
+            };
+            
+            // Show mobile action modal
+            showMobileActionModal(item);
+        } else {
+            // Desktop behavior - direct scrape
+            selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.genre_ids);
+        }
     };
     
     // Add click handler for the request icon for all users
@@ -925,6 +1071,26 @@ function createMovieElement(data) {
                 mediaType: 'movie',
                 year: data.year
             });
+            
+            return false;
+        };
+    }
+    
+    // Add click handler for the tester icon
+    const testerIcon = movieElement.querySelector('.tester-icon');
+    if (testerIcon) {
+        testerIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Redirect to the scraper_tester.html page with the content data as URL parameters
+            const params = new URLSearchParams({
+                title: data.title,
+                id: data.tmdb_id,
+                year: data.year,
+                media_type: 'movie'
+            });
+            window.location.href = `/scraper/scraper_tester?${params.toString()}`;
             
             return false;
         };
@@ -952,24 +1118,62 @@ function createShowElement(data) {
         </div>
     `;
     
+    // Create tester icon HTML - mirrored on the left side
+    const testerIconHTML = `
+        <div class="tester-icon" title="Test this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6v4H9zM6 7h12l-3 10H9z"></path>
+                <path d="M10 17h4v4h-4z"></path>
+            </svg>
+        </div>
+    `;
+    
     showElement.innerHTML = `
         <div class="media-poster">
             <span id="trending-rating">${(data.rating).toFixed(1)}</span>
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
-            <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                alt="${data.title}" 
-                class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+            <div class="poster-container">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                    alt="${data.title}" 
+                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+                <div class="poster-overlay">
+                    <h3>${data.title}</h3>
+                    <p>${data.year}</p>
+                </div>
+                ${requestIconHTML}
+                ${testerIconHTML}
+            </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
                 <h2>${data.title}</h2>
                 <p>${data.year}</p>
             </div>
-            ${requestIconHTML}
         </div>
     `;
     
     // Add click handlers for the poster
     showElement.onclick = function() {
-        selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+        // Check if we're on mobile (screen width <= 768px)
+        if (window.innerWidth <= 768) {
+            // Prepare data for mobile modal
+            const item = {
+                id: data.tmdb_id,
+                title: data.title,
+                year: data.year,
+                media_type: 'tv',
+                genre_ids: data.genre_ids,
+                vote_average: data.vote_average,
+                backdrop_path: data.backdrop_path,
+                show_overview: data.show_overview,
+                poster_path: data.poster_path,
+                tmdb_api_key_set: document.getElementById('tmdb_api_key_set').value === 'True'
+            };
+            
+            // Show mobile action modal
+            showMobileActionModal(item);
+        } else {
+            // Desktop behavior - direct scrape
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+        }
     };
     
     // Add click handler for the request icon for all users
@@ -986,6 +1190,26 @@ function createShowElement(data) {
                 mediaType: 'tv',
                 year: data.year
             });
+            
+            return false;
+        };
+    }
+    
+    // Add click handler for the tester icon
+    const testerIcon = showElement.querySelector('.tester-icon');
+    if (testerIcon) {
+        testerIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Redirect to the scraper_tester.html page with the content data as URL parameters
+            const params = new URLSearchParams({
+                title: data.title,
+                id: data.tmdb_id,
+                year: data.year,
+                media_type: 'tv'
+            });
+            window.location.href = `/scraper/scraper_tester?${params.toString()}`;
             
             return false;
         };
@@ -1158,6 +1382,16 @@ function displaySearchResults(results, version) {
         </div>
     `;
 
+    // Tester icon HTML
+    const testerIconHTML = `
+        <div class="tester-icon" title="Test this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6v4H9zM6 7h12l-3 10H9z"></path>
+                <path d="M10 17h4v4h-4z"></path>
+            </svg>
+        </div>
+    `;
+
     results.forEach(item => {
         console.log('Creating element for item:', item);  // Debug log
         const searchResDiv = document.createElement('div');
@@ -1183,15 +1417,22 @@ function displaySearchResults(results, version) {
             <div class="media-poster">
                 <button>
                     ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
-                    <img src="${posterUrl}" 
-                        alt="${item.title}" 
-                        class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
+                    <div class="poster-container">
+                        <img src="${posterUrl}" 
+                            alt="${item.title}" 
+                            class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
+                        <div class="poster-overlay">
+                            <h3>${item.title}</h3>
+                            <p>${item.release_date ? new Date(item.release_date).getFullYear() : item.year || 'N/A'}</p>
+                        </div>
+                        ${requestIconHTML}
+                        ${testerIconHTML}
+                    </div>
                     <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
                         <h2 class="searchresult-item">${item.title}</h2>
                         <p class="searchresult-year">${item.year || 'N/A'}</p>
                     </div>
                 </button>
-                ${requestIconHTML}
             </div>
         `;
         
@@ -1206,10 +1447,21 @@ function displaySearchResults(results, version) {
                     return;
                 }
                 
-                if (item.media_type === 'movie') {
-                    selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
+                // Check if we're on mobile (screen width <= 768px)
+                if (window.innerWidth <= 768) {
+                    // Save tmdb_api_key_set in the item for later use in the modal
+                    item.tmdb_api_key_set = tmdb_api_key_set;
+                    item.version = version;
+                    
+                    // Show mobile action modal
+                    showMobileActionModal(item);
                 } else {
-                    selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
+                    // Desktop behavior - direct scrape
+                    if (item.media_type === 'movie') {
+                        selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
+                    } else {
+                        selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
+                    }
                 }
             };
         }
@@ -1228,6 +1480,26 @@ function displaySearchResults(results, version) {
                     mediaType: item.media_type === 'show' ? 'tv' : item.media_type,
                     year: item.year
                 });
+                
+                return false;
+            };
+        }
+        
+        // Add click handler for the tester icon
+        const testerIcon = searchResDiv.querySelector('.tester-icon');
+        if (testerIcon) {
+            testerIcon.onclick = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Redirect to the scraper_tester.html page with the content data as URL parameters
+                const params = new URLSearchParams({
+                    title: item.title,
+                    id: item.id,
+                    year: item.year || (item.release_date ? new Date(item.release_date).getFullYear() : ''),
+                    media_type: item.media_type === 'show' ? 'tv' : item.media_type
+                });
+                window.location.href = `/scraper/scraper_tester?${params.toString()}`;
                 
                 return false;
             };
@@ -1286,7 +1558,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
         // No need to do additional cache checking since displayTorrentResults already does it
     })
     .catch(error => {
-        hideLoadingState();
+        hideLoadingState(); 1
         console.error('Error:', error);
         displayError('An error occurred while processing your request.');
     });
@@ -1297,8 +1569,8 @@ function checkCacheStatusInBackground(hashes, results) {
     const cacheStatusElements = document.querySelectorAll('.cache-status');
     let processedCount = 0;
     let totalCount = Math.min(5, results.length);
-    let processingQueue = [];
-    let isProcessing = false;
+    let processingItems = new Set(); // Track items currently being processed
+    const MAX_PARALLEL_REQUESTS = 1; // Process up to 3 items at once
 
     // Update to handle both magnet links and torrent files
     function updateCacheStatusUI(index, status) {
@@ -1322,6 +1594,10 @@ function checkCacheStatusInBackground(hashes, results) {
         }
         
         processedCount++;
+        processingItems.delete(index);
+        
+        // Try to process more items if we have capacity
+        processNextItems();
     }
 
     function markRemainingAsNA() {
@@ -1355,21 +1631,26 @@ function checkCacheStatusInBackground(hashes, results) {
     }
 
     function finalizeCacheCheck() {
-        markRemainingAsNA();
-        showCompletionNotification();
+        if (processingItems.size === 0) {
+            markRemainingAsNA();
+            showCompletionNotification();
+        }
+    }
+
+    // Function to check if we've completed all items
+    function checkCompletion() {
+        if (processedCount >= totalCount) {
+            finalizeCacheCheck();
+            return true;
+        }
+        return false;
     }
 
     // Function to check cache status of an item by index
     function checkItemCacheStatus(index) {
         if (index >= totalCount || index >= results.length) {
-            isProcessing = false;
-            if (processingQueue.length > 0) {
-                const nextIndex = processingQueue.shift();
-                isProcessing = true;
-                checkItemCacheStatus(nextIndex);
-            } else {
-                finalizeCacheCheck();
-            }
+            processingItems.delete(index);
+            processNextItems();
             return;
         }
 
@@ -1378,14 +1659,8 @@ function checkCacheStatusInBackground(hashes, results) {
         // Skip if no magnet link or torrent URL
         if (!result.magnet_link && !result.torrent_url) {
             updateCacheStatusUI(index, 'check_unavailable');
-            isProcessing = false;
-            if (processingQueue.length > 0) {
-                const nextIndex = processingQueue.shift();
-                isProcessing = true;
-                checkItemCacheStatus(nextIndex);
-            } else if (processedCount >= totalCount) {
-                finalizeCacheCheck();
-            }
+            processingItems.delete(index);
+            processNextItems();
             return;
         }
 
@@ -1401,7 +1676,7 @@ function checkCacheStatusInBackground(hashes, results) {
             payload.torrent_url = result.torrent_url;
         }
 
-        console.log(`Checking cache status for item at index ${index}`, payload);
+        console.log(`Checking cache status for item at index ${index}`);
         fetch('/scraper/check_cache_status', {
             method: 'POST',
             headers: {
@@ -1410,35 +1685,55 @@ function checkCacheStatusInBackground(hashes, results) {
             body: JSON.stringify(payload)
         })
         .then(response => {
-            console.log(`Received response for index ${index} with status ${response.status}`);
             return response.json();
         })
         .then(data => {
             console.log(`Cache status for index ${index}:`, data);
             updateCacheStatusUI(index, data.status);
-            
-            isProcessing = false;
-            if (processingQueue.length > 0) {
-                const nextIndex = processingQueue.shift();
-                isProcessing = true;
-                checkItemCacheStatus(nextIndex);
-            } else if (processedCount >= totalCount) {
-                finalizeCacheCheck();
-            }
+            checkCompletion();
         })
         .catch(error => {
-            console.error('Error checking cache status:', error);
+            console.error(`Error checking cache status for index ${index}:`, error);
             updateCacheStatusUI(index, 'unknown');
-            
-            isProcessing = false;
-            if (processingQueue.length > 0) {
-                const nextIndex = processingQueue.shift();
-                isProcessing = true;
-                checkItemCacheStatus(nextIndex);
-            } else if (processedCount >= totalCount) {
-                finalizeCacheCheck();
-            }
+            checkCompletion();
         });
+    }
+
+    // Function to process next items in the queue
+    function processNextItems() {
+        // If we've already processed all items, finalize
+        if (processedCount >= totalCount) {
+            finalizeCacheCheck();
+            return;
+        }
+        
+        // Process new items up to our parallel limit
+        for (let i = 0; i < totalCount; i++) {
+            // Skip if we're at capacity or this item is already being processed
+            if (processingItems.size >= MAX_PARALLEL_REQUESTS || processingItems.has(i)) {
+                continue;
+            }
+            
+            // Skip if this item is already processed
+            const element = cacheStatusElements[i];
+            if (!element.classList.contains('not-checked')) {
+                continue;
+            }
+            
+            // Process this item
+            processingItems.add(i);
+            checkItemCacheStatus(i);
+            
+            // Exit if we're at capacity
+            if (processingItems.size >= MAX_PARALLEL_REQUESTS) {
+                break;
+            }
+        }
+        
+        // If there's nothing being processed but we haven't finished, check completion
+        if (processingItems.size === 0 && processedCount < totalCount) {
+            finalizeCacheCheck();
+        }
     }
 
     // Initialize all cache status elements to "Checking..."
@@ -1448,15 +1743,8 @@ function checkCacheStatusInBackground(hashes, results) {
         element.classList.add('not-checked');
     }
 
-    // Check the first 5 results (or fewer if there are less than 5 results)
-    for (let i = 0; i < totalCount; i++) {
-        if (i === 0) {
-            isProcessing = true;
-            checkItemCacheStatus(i);
-        } else {
-            processingQueue.push(i);
-        }
-    }
+    // Start processing items
+    processNextItems();
 }
 
 function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
@@ -1711,4 +1999,128 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
         console.error('Error:', error);
         displayError('An error occurred while fetching episodes.');
     });
+}
+
+// Add this function to create and handle the mobile action modal
+function initializeMobileActionModal() {
+    // Create modal element if it doesn't exist
+    if (!document.getElementById('mobileActionModal')) {
+        const modalHtml = `
+            <div id="mobileActionModal" class="mobile-action-modal">
+                <div class="mobile-action-content">
+                    <div class="mobile-action-title"></div>
+                    <div class="mobile-action-year"></div>
+                    <div class="mobile-action-buttons">
+                        <button class="mobile-action-button mobile-scrape-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="11" cy="11" r="8"></circle>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            </svg>
+                            Scrape Content
+                        </button>
+                        <button class="mobile-action-button mobile-request-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="16"></line>
+                                <line x1="8" y1="12" x2="16" y2="12"></line>
+                            </svg>
+                            Request Content
+                        </button>
+                        <button class="mobile-action-button mobile-cancel-button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Append modal to body
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        
+        // Set up event listeners for modal buttons
+        const modal = document.getElementById('mobileActionModal');
+        const scrapeButton = modal.querySelector('.mobile-scrape-button');
+        const requestButton = modal.querySelector('.mobile-request-button');
+        const cancelButton = modal.querySelector('.mobile-cancel-button');
+        
+        cancelButton.addEventListener('click', closeMobileActionModal);
+        
+        // Close modal when clicking outside content area
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeMobileActionModal();
+            }
+        });
+    }
+    
+    // Add window resize listener to handle responsive behavior
+    window.addEventListener('resize', function() {
+        // Close modal if screen size changes from mobile to desktop
+        if (window.innerWidth > 768) {
+            closeMobileActionModal();
+        }
+    });
+}
+
+// Function to show mobile action modal
+function showMobileActionModal(item) {
+    const modal = document.getElementById('mobileActionModal');
+    const titleEl = modal.querySelector('.mobile-action-title');
+    const yearEl = modal.querySelector('.mobile-action-year');
+    const scrapeButton = modal.querySelector('.mobile-scrape-button');
+    const requestButton = modal.querySelector('.mobile-request-button');
+    
+    // Set content title and year
+    titleEl.textContent = item.title;
+    yearEl.textContent = item.year || (item.release_date ? new Date(item.release_date).getFullYear() : 'N/A');
+    
+    // Change button text based on media type
+    if (item.media_type === 'tv' || item.media_type === 'show') {
+        // Update the button text and icon for TV shows
+        scrapeButton.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+                <polyline points="17 2 12 7 7 2"></polyline>
+            </svg>
+            Enter Show
+        `;
+    } else {
+        // Reset to default for movies
+        scrapeButton.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            Scrape Content
+        `;
+    }
+    
+    // Set up button actions
+    scrapeButton.onclick = function() {
+        closeMobileActionModal();
+        if (item.media_type === 'movie') {
+            selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, item.version);
+        } else {
+            selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, item.tmdb_api_key_set);
+        }
+    };
+    
+    requestButton.onclick = function() {
+        closeMobileActionModal();
+        showVersionModal({
+            id: item.id,
+            title: item.title,
+            mediaType: item.media_type === 'show' ? 'tv' : item.media_type,
+            year: item.year
+        });
+    };
+    
+    // Show modal
+    modal.style.display = 'flex';
+}
+
+// Function to close mobile action modal
+function closeMobileActionModal() {
+    const modal = document.getElementById('mobileActionModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
 }

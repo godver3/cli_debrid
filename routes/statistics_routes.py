@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template, session, make_response
 from datetime import datetime, timedelta
-from database import get_db_connection
 from operator import itemgetter
 from itertools import groupby
 import time
@@ -8,13 +7,11 @@ import logging
 import asyncio
 import aiohttp
 import os
-from settings import get_setting, set_setting
+from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
-from extensions import app_start_time
-from database import get_recently_added_items, get_poster_url, get_collected_counts, get_recently_upgraded_items
+from routes.extensions import app_start_time
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
-from database.statistics import get_cached_download_stats
 from .program_operation_routes import program_is_running, program_is_initializing
 import json
 import math
@@ -49,11 +46,13 @@ def cache_for_seconds(seconds):
 
 def get_cached_active_downloads():
     """Get active downloads with caching"""
+    from database import get_cached_download_stats
     active_downloads, _ = get_cached_download_stats()
     return active_downloads
 
 def get_cached_user_traffic():
     """Get user traffic with caching"""
+    from database import get_cached_download_stats
     _, usage_stats = get_cached_download_stats()
     return usage_stats
 
@@ -61,6 +60,7 @@ statistics_bp = Blueprint('statistics', __name__)
 root_bp = Blueprint('root', __name__)
 
 def get_airing_soon():
+    from database import get_db_connection
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -91,46 +91,47 @@ def get_airing_soon():
     
     return grouped_results
 
+#@cache_for_seconds(300)  # Cache for 5 minutes since releases don't change frequently
 def get_upcoming_releases():
+    from database import get_db_connection
     conn = get_db_connection()
     cursor = conn.cursor()
     
     today = datetime.now().date()
-    next_week = today + timedelta(days=28)
+    next_month = today + timedelta(days=28)
     
-    # First get all upcoming releases
+    # Simplified query - directly filter out existing movies in the main query
     query = """
-    SELECT DISTINCT m.title, m.release_date, m.tmdb_id, m.imdb_id
+    SELECT m.title, m.release_date, m.tmdb_id, m.imdb_id
     FROM media_items m
-    WHERE m.type = 'movie' AND m.release_date BETWEEN ? AND ?
+    WHERE m.type = 'movie' 
+      AND m.release_date BETWEEN ? AND ?
+      AND NOT EXISTS (
+          SELECT 1 
+          FROM media_items e 
+          WHERE e.tmdb_id = m.tmdb_id 
+            AND e.type = 'movie'
+            AND e.state IN ('Collected', 'Upgrading', 'Checking')
+      )
+    GROUP BY m.release_date, m.title  -- Group by date and title to remove duplicates
     ORDER BY m.release_date ASC
     """
     
-    cursor.execute(query, (today.isoformat(), next_week.isoformat()))
+    cursor.execute(query, (today.isoformat(), next_month.isoformat()))
     results = cursor.fetchall()
-    
-    # Get existing movies in our collection
-    existing_query = """
-    SELECT DISTINCT tmdb_id 
-    FROM media_items 
-    WHERE type = 'movie' AND state IN ('Collected', 'Upgrading', 'Checking')
-    """
-    cursor.execute(existing_query)
-    existing_tmdb_ids = {row[0] for row in cursor.fetchall()}
     
     conn.close()
     
-    # Group by release date, excluding existing movies
+    # Group by release date
     grouped_results = {}
     for title, release_date, tmdb_id, imdb_id in results:
-        if tmdb_id not in existing_tmdb_ids:  # Only include if not in our collection
-            if release_date not in grouped_results:
-                grouped_results[release_date] = []
-            grouped_results[release_date].append({
-                'title': title,
-                'tmdb_id': tmdb_id,
-                'imdb_id': imdb_id
-            })
+        if release_date not in grouped_results:
+            grouped_results[release_date] = []
+        grouped_results[release_date].append({
+            'title': title,
+            'tmdb_id': tmdb_id,
+            'imdb_id': imdb_id
+        })
     
     # Format the results
     formatted_results = [
@@ -145,156 +146,190 @@ def get_upcoming_releases():
     
     return formatted_results
 
+#@cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
 def get_recently_aired_and_airing_soon():
+    from database import get_db_connection
     conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Get timezone using our robust function
-    local_tz = _get_local_timezone()
-    now = datetime.now(local_tz)
-    two_days_ago = now - timedelta(days=2)
-    
-    query = """
-    WITH CollectedEpisodes AS (
-        -- First get all episodes that are collected/upgrading
-        SELECT DISTINCT 
+    try:
+        cursor = conn.cursor()
+        
+        # Get timezone using our robust function
+        local_tz = _get_local_timezone()
+        now = datetime.now(local_tz)
+        two_days_ago = now - timedelta(days=2)
+        tomorrow = now + timedelta(days=1)
+        
+        # Get date range for query
+        start_date = two_days_ago.date().isoformat()
+        end_date = tomorrow.date().isoformat()
+        
+        # New optimized approach:
+        # 1. First, get all unique episode combinations in one query
+        # 2. Process results in memory (which was already fast in the original code)
+        
+        prefilter_start = time.perf_counter()
+        
+        # Use a single optimized query with GROUP BY instead of temporary tables and joins
+        optimized_query = """
+        SELECT 
             title,
             season_number,
-            episode_number
+            episode_number,
+            release_date,
+            airtime,
+            imdb_id,
+            tmdb_id,
+            CASE WHEN MAX(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END as is_collected
         FROM media_items
-        WHERE type = 'episode'
-        AND state IN ('Collected', 'Upgrading')
-    ),
-    RankedEpisodes AS (
-        -- Then get our main episode data with collection status
-        SELECT 
-            m.title,
-            m.season_number,
-            m.episode_number,
-            m.release_date,
-            m.airtime,
-            m.imdb_id,
-            m.tmdb_id,
-            CASE WHEN c.title IS NOT NULL THEN 1 ELSE 0 END as is_collected,
-            ROW_NUMBER() OVER (PARTITION BY m.title, m.season_number, m.episode_number ORDER BY m.release_date DESC, m.airtime DESC) as rn
-        FROM media_items m
-        LEFT JOIN CollectedEpisodes c ON 
-            c.title = m.title 
-            AND c.season_number = m.season_number 
-            AND c.episode_number = m.episode_number
-        WHERE m.type = 'episode' 
-        AND m.release_date >= ? 
-        AND m.release_date <= ?
-    )
-    SELECT DISTINCT 
-        title,
-        season_number,
-        episode_number,
-        release_date,
-        airtime,
-        imdb_id,
-        tmdb_id,
-        is_collected
-    FROM RankedEpisodes
-    WHERE rn = 1
-    ORDER BY release_date, airtime, title, season_number, episode_number
-    """
-    
-    cursor.execute(query, (two_days_ago.date().isoformat(), (now + timedelta(days=1)).date().isoformat()))
-    results = cursor.fetchall()
-    
-    conn.close()
-    
-    recently_aired = []
-    airing_soon = []
-    
-    # Group episodes by show, season, and release date
-    shows = {}
-    
-    for result in results:
-        title, season, episode, release_date, airtime, imdb_id, tmdb_id, is_collected = result
+        WHERE type = 'episode' 
+          AND release_date BETWEEN ? AND ?
+        GROUP BY title, season_number, episode_number
+        ORDER BY release_date, airtime, title
+        LIMIT 100  -- Limit to reasonable number of results
+        """
+        
+        # Log the query plan to help optimize in the future
         try:
-            release_date = datetime.fromisoformat(release_date)
-            
-            if airtime is None or airtime == '':
-                airtime = get_show_airtime_by_imdb_id(imdb_id)
-            
+            cursor.execute("EXPLAIN QUERY PLAN " + optimized_query, (start_date, end_date))
+            query_plan = cursor.fetchall()
+        except Exception as e:
+            logging.warning(f"Could not get query plan: {e}")
+        
+        query_start = time.perf_counter()
+        cursor.execute(optimized_query, (start_date, end_date))
+        results = cursor.fetchall()
+        query_time = time.perf_counter() - query_start
+        
+        # Log how many shows we found
+        show_count = len(set(row[0] for row in results))
+        
+        # If we have no results, return early
+        if not results:
+            return [], []
+        
+        recently_aired = []
+        airing_soon = []
+        
+        # Group episodes by show, season, and release date - for better performance
+        processing_start = time.perf_counter()
+        shows = {}
+        
+        # Precompute current time once instead of checking repeatedly
+        now_timestamp = now.timestamp()
+        
+        for result in results:
+            title, season, episode, release_date, airtime, imdb_id, tmdb_id, is_collected = result
             try:
-                airtime = datetime.strptime(airtime, '%H:%M').time()
-            except ValueError:
-                logging.warning(f"Invalid airtime format for {title}: {airtime}. Using default.")
-                airtime = datetime.strptime("19:00", '%H:%M').time()
+                release_date = datetime.fromisoformat(release_date) if isinstance(release_date, str) else release_date
+                
+                # Get default airtime if none provided
+                if not airtime:
+                    airtime = "19:00"  # Default to 7 PM
+                
+                # Parse airtime more efficiently
+                try:
+                    if isinstance(airtime, str):
+                        hour, minute = map(int, airtime.split(':'))
+                        airtime = datetime.min.replace(hour=hour, minute=minute).time()
+                    elif not isinstance(airtime, time):
+                        airtime = datetime.min.replace(hour=19, minute=0).time()
+                except (ValueError, TypeError):
+                    airtime = datetime.min.replace(hour=19, minute=0).time()
+                
+                # Create datetime in local timezone more efficiently
+                air_datetime = datetime.combine(release_date.date(), airtime)
+                air_datetime = air_datetime.replace(tzinfo=local_tz) if hasattr(local_tz, 'localize') else air_datetime.replace(tzinfo=local_tz)
+                
+                # Create a key for grouping
+                show_key = f"{title}_{season}_{release_date.date()}"
+                
+                if show_key not in shows:
+                    shows[show_key] = {
+                        'title': title,
+                        'season': season,
+                        'episodes': set(),
+                        'air_datetime': air_datetime,
+                        'release_date': release_date.date(),
+                        'is_collected': bool(is_collected),
+                        'imdb_id': imdb_id,
+                        'tmdb_id': tmdb_id
+                    }
+                
+                shows[show_key]['episodes'].add(episode)
             
-            # Create datetime in local timezone
-            air_datetime = datetime.combine(release_date.date(), airtime)
-            air_datetime = air_datetime.replace(tzinfo=local_tz)
-            
-            # Create a key for grouping
-            show_key = f"{title}_{season}_{release_date.date()}"
-            
-            if show_key not in shows:
-                shows[show_key] = {
-                    'title': title,
-                    'season': season,
-                    'episodes': set(),
-                    'air_datetime': air_datetime,
-                    'release_date': release_date.date(),
-                    'is_collected': bool(is_collected),
-                    'imdb_id': imdb_id,
-                    'tmdb_id': tmdb_id
-                }
-            
-            shows[show_key]['episodes'].add(episode)
-        
-        except ValueError as e:
-            logging.error(f"Error parsing date/time for {title}: {e}")
-            continue
-    
-    # Process grouped shows
-    for show in shows.values():
-        episodes = sorted(list(show['episodes']))
-        
-        # Find consecutive ranges
-        ranges = []
-        range_start = episodes[0]
-        prev = episodes[0]
-        
-        for curr in episodes[1:]:
-            if curr != prev + 1:
-                ranges.append((range_start, prev))
-                range_start = curr
-            prev = curr
-        ranges.append((range_start, prev))
-        
-        # Format episode ranges
-        episode_parts = []
-        for start, end in ranges:
-            if start is None or end is None:
+            except (ValueError, AttributeError) as e:
+                logging.error(f"Error parsing date/time for {title}: {e}")
                 continue
-            if start == end:
-                episode_parts.append(f"E{start:02d}")
-            else:
-                episode_parts.append(f"E{start:02d}-{end:02d}")
-        episode_range = ", ".join(episode_parts)
         
-        formatted_item = {
-            'title': f"{show['title']} S{show['season']:02d}{episode_range}",
-            'air_datetime': show['air_datetime'],
-            'sort_key': show['air_datetime'].isoformat(),
-            'formatted_datetime': format_datetime_preference(show['air_datetime'], session.get('use_24hour_format', False)),
-            'is_collected': show['is_collected'],
-            'imdb_id': show['imdb_id'],
-            'tmdb_id': show['tmdb_id'],
-            'season_number': show['season'],
-            'episode_number': episodes[0]  # Use first episode number for single episodes or ranges
-        }
+        # Faster processing for episode ranges
+        for show in shows.values():
+            if not show['episodes']:
+                continue
+                
+            episodes = sorted(list(show['episodes']))
+            
+            # Fast consecutive range algorithm
+            ranges = []
+            if episodes:
+                range_start = episodes[0]
+                range_end = range_start
+                
+                for ep in episodes[1:]:
+                    if ep == range_end + 1:
+                        range_end = ep
+                    else:
+                        ranges.append((range_start, range_end))
+                        range_start = ep
+                        range_end = ep
+                
+                # Add the last range
+                ranges.append((range_start, range_end))
+                
+                # Format episode ranges
+                episode_parts = []
+                for start, end in ranges:
+                    if start == end:
+                        episode_parts.append(f"E{start:02d}")
+                    else:
+                        episode_parts.append(f"E{start:02d}-{end:02d}")
+                
+                episode_range = ", ".join(episode_parts)
+                
+                formatted_item = {
+                    'title': f"{show['title']} S{show['season']:02d}{episode_range}",
+                    'air_datetime': show['air_datetime'],
+                    'sort_key': show['air_datetime'].isoformat(),
+                    'is_collected': show['is_collected'],
+                    'imdb_id': show['imdb_id'],
+                    'tmdb_id': show['tmdb_id'],
+                    'season_number': show['season'],
+                    'episode_number': episodes[0]  # Use first episode number for single episodes or ranges
+                }
+                
+                # Use timestamp comparison which is faster than datetime comparison
+                if show['air_datetime'].timestamp() <= now_timestamp:
+                    recently_aired.append(formatted_item)
+                else:
+                    airing_soon.append(formatted_item)
         
-        if show['air_datetime'] <= now:
-            recently_aired.append(formatted_item)
-        else:
-            airing_soon.append(formatted_item)
-    
-    return recently_aired, airing_soon
+        processing_time = time.perf_counter() - processing_start
+        
+        # Sort both lists by air datetime
+        recently_aired.sort(key=lambda x: x['air_datetime'], reverse=True)  # Most recent first
+        airing_soon.sort(key=lambda x: x['air_datetime'])  # Soonest first
+        
+        # Limit to reasonable numbers
+        recently_aired = recently_aired[:50]
+        airing_soon = airing_soon[:50]
+        
+        return recently_aired, airing_soon
+    except Exception as e:
+        logging.error(f"Error in get_recently_aired_and_airing_soon: {str(e)}", exc_info=True)
+        return [], []
+    finally:
+        # Clean up any resources
+        if conn:
+            conn.close()
 
 @root_bp.route('/set_compact_preference', methods=['POST'])
 def set_compact_preference():
@@ -342,9 +377,10 @@ def root():
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
     
-    # Get collection counts
+    # Get collection counts from the optimized summary function
     collection_start = time.perf_counter()
-    counts = get_collected_counts()
+    from database.statistics import get_statistics_summary
+    counts = get_statistics_summary()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
@@ -353,6 +389,7 @@ def root():
     # Get active downloads and usage stats
     downloads_start = time.perf_counter()
     try:
+        from database import get_cached_download_stats
         active_downloads, usage_stats = get_cached_download_stats()
         stats['active_downloads_data'] = active_downloads
         stats['usage_stats_data'] = usage_stats
@@ -360,7 +397,7 @@ def root():
         logging.error(f"Error getting download stats: {str(e)}")
         stats['active_downloads_data'] = {
             'count': 0,
-            'limit': round(provider.MAX_DOWNLOADS * 0.75),
+            'limit': 15,  # Default fallback limit
             'percentage': 0,
             'status': 'error'
         }
@@ -377,21 +414,6 @@ def root():
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     logging.info(f"Recently aired and upcoming shows took {(time.perf_counter() - shows_start)*1000:.2f}ms")
     
-    # Format dates and times according to preferences
-    formatting_start = time.perf_counter()
-    for item in recently_aired:
-        item['formatted_datetime'] = format_datetime_preference(
-            item['air_datetime'], 
-            use_24hour_format
-        )
-    
-    for item in airing_soon:
-        item['formatted_datetime'] = format_datetime_preference(
-            item['air_datetime'], 
-            use_24hour_format
-        )
-    logging.info(f"Date/time formatting took {(time.perf_counter() - formatting_start)*1000:.2f}ms")
-    
     # Get upcoming releases
     releases_start = time.perf_counter()
     upcoming_releases = get_upcoming_releases()
@@ -406,6 +428,7 @@ def root():
     
     try:
         # Get recently added items
+        from database import get_recently_added_items
         recently_added_data = loop.run_until_complete(get_recently_added_items())
         recently_added = {
             'movies': [],
@@ -434,6 +457,7 @@ def root():
         # Get recently upgraded items
         upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
         if upgrade_enabled:
+            from database import get_recently_upgraded_items
             recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
@@ -464,55 +488,21 @@ def root():
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     stats['tmdb_api_key_set'] = bool(tmdb_api_key)
     
-    # Get usage stats data
-    usage_start = time.perf_counter()
-    try:
-        usage = get_cached_user_traffic()
-        
-        if not usage or usage.get('limit') is None:
-            stats['usage_stats_data'] = {
-                'used': '0 GB',
-                'limit': '2000 GB',
-                'percentage': 0,
-                'error': None
-            }
-        else:
-            try:
-                # Strip 'GB' from values and convert to float
-                used_gb = float(usage.get('used', '0 GB').replace(' GB', ''))
-                limit_gb = float(usage.get('limit', '2000 GB').replace(' GB', ''))
-                
-                # Convert GB to bytes for calculation
-                daily_used = used_gb * 1024 * 1024 * 1024  # GB to bytes
-                daily_limit = limit_gb * 1024 * 1024 * 1024  # GB to bytes
-                
-                percentage = round((daily_used / daily_limit) * 100) if daily_limit > 0 else 0
-                
-                stats['usage_stats_data'] = {
-                    'used': format_bytes(daily_used),
-                    'limit': format_bytes(daily_limit),
-                    'percentage': percentage,
-                    'error': None
-                }
-            except (TypeError, ValueError) as e:
-                logging.error(f"Error converting usage values: {e}")
-                logging.error(f"Raw usage data that caused error: {usage}")
-                stats['usage_stats_data'] = {
-                    'used': '0 GB',
-                    'limit': '2000 GB',
-                    'percentage': 0,
-                    'error': 'conversion_error'
-                }
-    except Exception as e:
-        logging.error(f"Error getting usage stats: {str(e)}")
-        stats['usage_stats_data'] = {
-            'used': '0 GB',
-            'limit': '2000 GB',
-            'percentage': 0,
-            'error': 'provider_error'
-        }
-    logging.info(f"Usage stats took {(time.perf_counter() - usage_start)*1000:.2f}ms")
-
+    # Format dates for recently aired and airing soon
+    formatting_start = time.perf_counter()
+    for item in recently_aired:
+        item['formatted_datetime'] = format_datetime_preference(
+            item['air_datetime'], 
+            use_24hour_format
+        )
+    
+    for item in airing_soon:
+        item['formatted_datetime'] = format_datetime_preference(
+            item['air_datetime'], 
+            use_24hour_format
+        )
+    logging.info(f"Date/time formatting took {(time.perf_counter() - formatting_start)*1000:.2f}ms")
+    
     # Log total time
     logging.info(f"Total route processing took {(time.perf_counter() - start_time)*1000:.2f}ms")
 
@@ -543,6 +533,7 @@ def set_time_preference():
         
         try:
             # Get recently added items
+            from database import get_recently_added_items
             recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
             
             # Format recently added items
@@ -579,11 +570,12 @@ def set_time_preference():
             # Get and format upcoming releases
             upcoming_releases = get_upcoming_releases()
             for release in upcoming_releases:
-                release['formatted_date'] = format_date(release.get('release_date'))
+                release['formatted_date'] = format_date(release['release_date'])
             
             # Get recently upgraded items
             upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
             if upgrade_enabled:
+                from database import get_recently_upgraded_items
                 recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
                 for item in recently_upgraded:
                     # Format the upgrade date using collected_at for better differentiation
@@ -630,6 +622,7 @@ def set_time_preference():
 def active_downloads():
     """Get active downloads and limits for the debrid provider"""
     try:
+        from database import get_cached_download_stats
         active_downloads, _ = get_cached_download_stats()
         if active_downloads['error'] == 'too_many':
             return jsonify(active_downloads), 429  # Too Many Requests
@@ -649,6 +642,7 @@ def active_downloads():
 @user_required
 def active_downloads_api():
     try:
+        from database import get_cached_download_stats
         active_downloads, _ = get_cached_download_stats()
         return jsonify({'active': active_downloads})
     except Exception as e:
@@ -672,6 +666,7 @@ def recently_added():
     recently_added_start = time.time()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    from database import get_recently_added_items
     recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
     recently_added_end = time.time()
     logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
@@ -731,6 +726,7 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
                             tmdb_id = next((guid['id'] for guid in full_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
                             if tmdb_id:
                                 tmdb_id = tmdb_id.split('://')[1]
+                                from metadata.metadata import get_poster_url
                                 poster_url = await get_poster_url(session, tmdb_id, 'movie')
                                 added_at = datetime.fromtimestamp(int(item['addedAt']))
                                 recent_movies.append({
@@ -752,6 +748,7 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
                                     tmdb_id = next((guid['id'] for guid in full_show_metadata.get('Guid', []) if guid['id'].startswith('tmdb://')), None)
                                     if tmdb_id:
                                         tmdb_id = tmdb_id.split('://')[1]
+                                        from metadata.metadata import get_poster_url
                                         poster_url = await get_poster_url(session, tmdb_id, 'tv')
                                         added_at = datetime.fromtimestamp(int(item['addedAt']))
                                         recent_shows[show_title] = {
@@ -872,6 +869,7 @@ def format_bytes(bytes_value, decimals=2):
 def usage_stats():
     """Get daily usage statistics from the debrid provider"""
     try:
+        from database import get_cached_download_stats
         _, usage_stats = get_cached_download_stats()
         return jsonify({'daily': usage_stats})
     except Exception as e:
@@ -903,7 +901,8 @@ def index_api():
     }
     
     # Get collection counts
-    counts = get_collected_counts()
+    from database.statistics import get_statistics_summary
+    counts = get_statistics_summary()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
@@ -914,7 +913,7 @@ def index_api():
     stats['active_downloads_data'] = active_downloads
     stats['usage_stats_data'] = usage_stats
     
-    # Get recently aired and upcoming shows
+    # Get recently aired and airing soon
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
     
     # Get upcoming releases
@@ -928,6 +927,8 @@ def index_api():
     
     try:
         # Get recently added items
+        from database import get_recently_added_items
+
         recently_added_data = loop.run_until_complete(get_recently_added_items())
         recently_added = {
             'movies': [],
@@ -957,6 +958,7 @@ def index_api():
         # Get recently upgraded items
         upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
         if upgrade_enabled:
+            from database import get_recently_upgraded_items
             recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
@@ -1022,6 +1024,7 @@ def move_to_wanted():
         if not (imdb_id or tmdb_id):
             return jsonify({'success': False, 'error': 'IMDb ID or TMDB ID is required'}), 400
             
+        from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
         

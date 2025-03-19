@@ -3,7 +3,7 @@ import os
 import sqlite3
 import logging
 from plexapi.server import PlexServer
-from settings import get_setting
+from utilities.settings import get_setting
 from cli_battery.app.trakt_metadata import TraktMetadata
 from datetime import datetime, timedelta
 import requests

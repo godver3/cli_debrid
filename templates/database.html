@@ -8,6 +8,7 @@
         <div class="select-all-container">
             <button id="select-all" class="select-all-btn">Select All</button>
             <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
+            <button id="bulk-rescrape" class="bulk-action-btn" disabled>Rescrape Selected</button>
             <select id="bulk-move-queue" class="bulk-action-select" disabled>
                 <option value="">Move Selected to Queue...</option>
                 <option value="Adding">Adding</option>
@@ -59,35 +60,39 @@
     <div id="filter-sort">
         <h3>Filter and Sort:</h3>
         <form id="filter-form" class="mb-3">
-            <div>
-                <label for="filter-column">Filter Column:</label>
-                <select id="filter-column" name="filter_column">
-                    <option value="">None</option>
-                    {% for column in selected_columns %}
-                    <option value="{{ column }}" {% if column == filter_column or (not filter_column and column == 'title') %}selected{% endif %}>{{ column }}</option>
-                    {% endfor %}
-                </select>
-                <label for="filter-value">Filter Value:</label>
-                <input type="text" id="filter-value" name="filter_value" value="{{ filter_value }}">
-                <label for="sort-column">Sort Column:</label>
-                <select id="sort-column" name="sort_column">
-                    <option value="">None</option>
-                    {% for column in selected_columns %}
-                    <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
-                    {% endfor %}
-                </select>
-                <label for="sort-order">Sort Order:</label>
-                <select id="sort-order" name="sort_order">
-                    <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
-                    <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
-                </select>
+
+            
+            <div class="filter-section">
+                <button type="button" id="add-filter" class="btn btn-secondary">Add Filter</button>
             </div>
-            <div class="filter-buttons">
-                <button type="submit">Apply</button>
-                <button id="clear-filter-sort">Clear Filter & Sort</button>
+            <div id="filters-container">
+                <!-- Filter rows will be added here dynamically -->
+            </div>
+
+            <div class="sort-section">
+                <div class="sort-container">
+                    <label for="sort-column">Sort Column:</label>
+                    <select id="sort-column" name="sort_column">
+                        <option value="">None</option>
+                        {% for column in selected_columns %}
+                        <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
+                        {% endfor %}
+                    </select>
+                    <label for="sort-order">Sort Order:</label>
+                    <select id="sort-order" name="sort_order">
+                        <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                        <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="button-section">
+                <div class="filter-buttons">
+                    <button type="submit">Apply</button>
+                    <button type="button" id="clear-filter-sort">Clear Filter & Sort</button>
+                </div>
             </div>
         </form>
-
     </div>
     <div class="content-type-filter">
         <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
@@ -142,11 +147,298 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script>
+    window.templateData = {
+        selectedColumns: {{ selected_columns|tojson|safe }},
+        all_columns: {{ all_columns|tojson|safe }},
+        columnValues: {{ column_values|tojson|safe }},
+        operators: {{ operators|tojson|safe }},
+        currentFilters: {{ filters|tojson|safe }},
+        sortColumn: "{{ sort_column }}",
+        sortOrder: "{{ sort_order }}",
+        contentType: "{{ content_type }}"
+    };
+</script>
+
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 import { initializeDatabaseTooltips } from '/static/js/tooltips.js';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Get data from window object
+    const templateData = window.templateData;
+
+    // Initialize state variables at the top
+    let currentContentType = templateData.contentType;
+    let currentLetter = '{{ current_letter }}';
+    let lastChecked = null;
+    let allSelected = false;
+
+    // Add localStorage keys
+    const STORAGE_KEYS = {
+        FILTERS: 'db_filters',
+        SORT_COLUMN: 'db_sort_column',
+        SORT_ORDER: 'db_sort_order',
+        SELECTED_COLUMNS: 'db_selected_columns',
+        CONTENT_TYPE: 'db_content_type'
+    };
+
+    function createFilterRow(filter = null) {
+        const row = document.createElement('div');
+        row.className = 'filter-row';
+
+        // Column select
+        const columnSelect = document.createElement('select');
+        columnSelect.className = 'filter-column';
+        columnSelect.innerHTML = `
+            <option value="">Select Column</option>
+            ${templateData.selectedColumns.map(column => `
+                <option value="${column}" ${filter && filter.column === column ? 'selected' : ''}>
+                    ${column}
+                </option>
+            `).join('')}
+        `;
+
+        // Operator select
+        const operatorSelect = document.createElement('select');
+        operatorSelect.className = 'filter-operator';
+        operatorSelect.innerHTML = templateData.operators.map(op => `
+            <option value="${op.value}" ${filter && filter.operator === op.value ? 'selected' : ''}>
+                ${op.label}
+            </option>
+        `).join('');
+
+        // Value input/select
+        const valueContainer = document.createElement('div');
+        valueContainer.className = 'filter-value-container';
+        updateValueInput(valueContainer, filter?.column, filter?.value);
+
+        // Remove button
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-filter';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = () => row.remove();
+
+        // Add elements to row
+        row.appendChild(columnSelect);
+        row.appendChild(operatorSelect);
+        row.appendChild(valueContainer);
+        row.appendChild(removeBtn);
+
+        // Add event listeners
+        columnSelect.addEventListener('change', () => {
+            updateValueInput(valueContainer, columnSelect.value);
+        });
+
+        return row;
+    }
+
+    function updateValueInput(container, column, value = '') {
+        if (templateData.columnValues[column]) {
+            // Create dropdown for columns with predefined values
+            const select = document.createElement('select');
+            select.className = 'filter-value';
+            select.innerHTML = `
+                <option value="">Select Value</option>
+                ${templateData.columnValues[column].map(val => `
+                    <option value="${val}" ${value === val ? 'selected' : ''}>
+                        ${val}
+                    </option>
+                `).join('')}
+            `;
+            container.innerHTML = '';
+            container.appendChild(select);
+        } else {
+            // Create text input for other columns
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'filter-value';
+            input.value = value || '';
+            container.innerHTML = '';
+            container.appendChild(input);
+        }
+    }
+
+    // Initialize filters from template data if they exist
+    if (templateData.currentFilters && templateData.currentFilters.length > 0) {
+        const filtersContainer = document.getElementById('filters-container');
+        templateData.currentFilters.forEach(filter => {
+            filtersContainer.appendChild(createFilterRow(filter));
+        });
+    }
+
+    // Function to save settings to localStorage
+    function saveSettings() {
+        const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+            column: row.querySelector('.filter-column').value,
+            operator: row.querySelector('.filter-operator').value,
+            value: row.querySelector('.filter-value').value
+        })).filter(f => f.column && f.value);
+
+        const sortColumn = document.getElementById('sort-column').value;
+        const sortOrder = document.getElementById('sort-order').value;
+        
+        localStorage.setItem(STORAGE_KEYS.FILTERS, JSON.stringify(filters));
+        localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
+        localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
+        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, currentContentType);
+    }
+
+    // Function to restore settings from localStorage
+    function restoreSettings() {
+        const savedFilters = localStorage.getItem(STORAGE_KEYS.FILTERS);
+        const sortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
+        const sortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
+        const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+        const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+
+        // Restore filters
+        if (savedFilters) {
+            const filters = JSON.parse(savedFilters);
+            const filtersContainer = document.getElementById('filters-container');
+            filtersContainer.innerHTML = '';
+            filters.forEach(filter => {
+                filtersContainer.appendChild(createFilterRow(filter));
+            });
+        }
+
+        // Restore sort settings
+        if (sortColumn) document.getElementById('sort-column').value = sortColumn;
+        if (sortOrder) document.getElementById('sort-order').value = sortOrder;
+        
+        // Restore content type
+        if (savedContentType) {
+            currentContentType = savedContentType;
+            document.querySelectorAll('.content-type-link').forEach(link => {
+                if (link.getAttribute('data-content-type') === savedContentType) {
+                    link.classList.add('active');
+                } else {
+                    link.classList.remove('active');
+                }
+            });
+        }
+
+        // Apply restored settings
+        if (savedFilters || sortColumn || sortOrder || savedContentType || savedColumns) {
+            const filters = savedFilters ? JSON.parse(savedFilters) : [];
+            const selectedColumnValues = savedColumns ? JSON.parse(savedColumns) : Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+            
+            updateContent('{{ url_for('database.index') }}', {
+                filters: JSON.stringify(filters),
+                sort_column: sortColumn,
+                sort_order: sortOrder,
+                content_type: savedContentType,
+                selected_columns: JSON.stringify(selectedColumnValues)
+            });
+        }
+    }
+
+    // Add filter button handler
+    document.getElementById('add-filter').addEventListener('click', () => {
+        document.getElementById('filters-container').appendChild(createFilterRow());
+    });
+
+    // Modify existing filter form event listener
+    const filterForm = document.getElementById('filter-form');
+    if (filterForm) {
+        filterForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                column: row.querySelector('.filter-column').value,
+                operator: row.querySelector('.filter-operator').value,
+                value: row.querySelector('.filter-value').value
+            })).filter(f => f.column && f.value);
+
+            const params = {
+                filters: JSON.stringify(filters),
+                sort_column: document.getElementById('sort-column').value,
+                sort_order: document.getElementById('sort-order').value
+            };
+
+            saveSettings();
+            updateContent('{{ url_for('database.index') }}', params);
+        });
+    }
+
+    // Modify clear filter function
+    function clearFilterAndSort() {
+        // Clear localStorage settings
+        localStorage.removeItem(STORAGE_KEYS.FILTERS);
+        localStorage.removeItem(STORAGE_KEYS.SORT_COLUMN);
+        localStorage.removeItem(STORAGE_KEYS.SORT_ORDER);
+        
+        // Clear all filters
+        document.getElementById('filters-container').innerHTML = '';
+        
+        // Reset sort inputs
+        const sortColumn = document.getElementById('sort-column');
+        const sortOrder = document.getElementById('sort-order');
+        if (sortColumn) sortColumn.value = '';
+        if (sortOrder) sortOrder.value = 'asc';
+
+        // Keep current content type and letter
+        const params = {
+            content_type: currentContentType,
+            letter: currentLetter
+        };
+
+        // Update the content with cleared filters and sort
+        updateContent("{{ url_for('database.index') }}", params);
+    }
+
+    // Add event listener for clear filter & sort button
+    document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
+        e.preventDefault();
+        clearFilterAndSort();
+    });
+
+    // Add CSS styles for the new filter UI
+    const style = document.createElement('style');
+    style.textContent = `
+        #filters-container {
+            margin-bottom: 1rem;
+        }
+        .filter-row {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+            align-items: center;
+        }
+        .filter-column, .filter-operator, .filter-value {
+            padding: 0.25rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .remove-filter {
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .remove-filter:hover {
+            background: #cc0000;
+        }
+        #add-filter {
+            margin-bottom: 1rem;
+        }
+        .sort-container {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // Call restoreSettings when the page loads
+    restoreSettings();
+
     // Add tap handlers for mobile devices
     function isMobileDevice() {
         const hasTouchScreen = (
@@ -202,9 +494,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    let currentContentType = '{{ content_type }}';
-    let currentLetter = '{{ current_letter }}';
-
     const availableColumns = document.getElementById('available-columns');
     const selectedColumns = document.getElementById('selected-columns');
 
@@ -212,9 +501,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (availableColumns && selectedColumns) {
         const addColumnBtn = document.getElementById('add-column');
         const removeColumnBtn = document.getElementById('remove-column');
-        const updateColumnsBtn = document.getElementById('update-columns');
         const toggleColumnSelectorBtn = document.getElementById('toggle-column-selector');
         const columnSelector = document.getElementById('column-selector');
+        const updateColumnsBtn = document.getElementById('update-columns');
 
         const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
 
@@ -239,38 +528,67 @@ document.addEventListener('DOMContentLoaded', function() {
                     return a.text.localeCompare(b.text);
                 }
             });
+            
+            // Clear and re-add options in sorted order
+            while (selectElement.firstChild) {
+                selectElement.removeChild(selectElement.firstChild);
+            }
             options.forEach(option => selectElement.appendChild(option));
         }
 
         function moveOptions(fromSelect, toSelect) {
             Array.from(fromSelect.selectedOptions).forEach(option => {
-                toSelect.appendChild(option);
+                const newOption = option.cloneNode(true);
+                toSelect.appendChild(newOption);
+                fromSelect.removeChild(option);
             });
             sortOptionsWithAbsoluteOrder(fromSelect);
             sortOptionsWithAbsoluteOrder(toSelect);
         }
 
+        function initializeColumnSelection() {
+            // Try to get columns from localStorage first
+            const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+            let columnsToUse;
+            
+            if (savedColumns) {
+                try {
+                    columnsToUse = JSON.parse(savedColumns);
+                } catch (e) {
+                    columnsToUse = defaultColumns;
+                }
+            } else {
+                columnsToUse = defaultColumns;
+            }
+
+            // Clear both select elements
+            availableColumns.innerHTML = '';
+            selectedColumns.innerHTML = '';
+
+            // Add all columns to available first
+            templateData.all_columns.forEach(column => {
+                const option = document.createElement('option');
+                option.value = column;
+                option.textContent = column;
+                availableColumns.appendChild(option);
+            });
+
+            // Move selected columns to selected
+            columnsToUse.forEach(column => {
+                const option = availableColumns.querySelector(`option[value="${column}"]`);
+                if (option) {
+                    selectedColumns.appendChild(option);
+                }
+            });
+
+            // Sort both lists
+            sortOptionsWithAbsoluteOrder(availableColumns);
+            sortOptionsWithAbsoluteOrder(selectedColumns);
+        }
+
+        // Add event listeners for column selection
         addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
         removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
-        
-        updateColumnsBtn.addEventListener('click', function() {
-            const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
-            
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = window.location.href;
-        
-            selectedColumnValues.forEach(value => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'columns';
-                input.value = value;
-                form.appendChild(input);
-            });
-        
-            document.body.appendChild(form);
-            form.submit();
-        });
         
         toggleColumnSelectorBtn.addEventListener('click', function() {
             columnSelector.classList.toggle('hidden');
@@ -279,70 +597,58 @@ document.addEventListener('DOMContentLoaded', function() {
                 ? 'Select Columns to Display' 
                 : 'Hide Column Selector';
         });
-        
-        function initializeColumnSelection() {
-            if (selectedColumns.options.length === 0) {
-                defaultColumns.forEach(column => {
-                    const option = availableColumns.querySelector(`option[value="${column}"]`);
-                    if (option) {
-                        selectedColumns.appendChild(option.cloneNode(true));
-                        option.remove();
-                    }
-                });
-            }
+
+        // Update columns functionality
+        updateColumnsBtn.addEventListener('click', function() {
+            const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
             
-            sortOptionsWithAbsoluteOrder(availableColumns);
-            sortOptionsWithAbsoluteOrder(selectedColumns);
-        }
+            if (selectedColumnValues.length === 0) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Please select at least one column to display.',
+                });
+                return;
+            }
+
+            // Save selected columns to localStorage
+            localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(selectedColumnValues));
+
+            // Update the content with new columns
+            const params = {
+                selected_columns: JSON.stringify(selectedColumnValues),
+                content_type: currentContentType,
+                letter: currentLetter
+            };
+
+            // Get current filter and sort settings
+            const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                column: row.querySelector('.filter-column').value,
+                operator: row.querySelector('.filter-operator').value,
+                value: row.querySelector('.filter-value').value
+            })).filter(f => f.column && f.value);
+
+            if (filters.length > 0) {
+                params.filters = JSON.stringify(filters);
+            }
+
+            const sortColumn = document.getElementById('sort-column').value;
+            const sortOrder = document.getElementById('sort-order').value;
+            if (sortColumn) {
+                params.sort_column = sortColumn;
+                params.sort_order = sortOrder;
+            }
+
+            updateContent('{{ url_for('database.index') }}', params);
+            
+            // Hide the column selector
+            columnSelector.classList.add('hidden');
+            toggleColumnSelectorBtn.classList.remove('active');
+            toggleColumnSelectorBtn.textContent = 'Select Columns to Display';
+        });
 
         // Initialize column selection
         initializeColumnSelection();
-    }
-
-    // Filter form logic
-    const filterForm = document.getElementById('filter-form');
-    if (filterForm) {
-        filterForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            const params = Object.fromEntries(formData.entries());
-            updateContent('{{ url_for('database.index') }}', params);
-
-
-        });
-    }
-
-    const clearFilterSortBtn = document.getElementById('clear-filter-sort');
-    
-    if (clearFilterSortBtn) {
-        clearFilterSortBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            clearFilterAndSort();
-        });
-    }
-
-    function clearFilterAndSort() {
-        // Reset filter inputs
-        const filterColumn = document.getElementById('filter-column');
-        const filterValue = document.getElementById('filter-value');
-        if (filterColumn) filterColumn.value = '';
-        if (filterValue) filterValue.value = '';
-
-        // Reset sort inputs (assuming you have sort controls in your HTML)
-        const sortColumn = document.getElementById('sort-column');
-        const sortOrder = document.getElementById('sort-order');
-        if (sortColumn) sortColumn.value = 'id'; // Default sort column
-        if (sortOrder) sortOrder.value = 'asc'; // Default sort order
-
-        // Reset content type to 'movie' and letter to 'A'
-        currentContentType = 'movie';
-        currentLetter = 'A';
-
-        // Update the content with default values
-        updateContent("{{ url_for('database.index') }}", {
-            content_type: currentContentType,
-            letter: currentLetter
-        });
     }
 
     function setUpdatingContent(isUpdating) {
@@ -382,9 +688,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateContent(url, params = {}) {
-        // Preserve current states if not explicitly changed
-        params.content_type = params.content_type || currentContentType;
-        params.letter = params.letter || currentLetter;
+        // Ensure content type is always set
+        params.content_type = params.content_type || currentContentType || 'movie';
+        
+        // Ensure letter is always set
+        params.letter = params.letter || currentLetter || 'A';
+
+        // Add selected columns if not present
+        if (!params.selected_columns) {
+            const selectedColumnValues = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+            params.selected_columns = JSON.stringify(selectedColumnValues);
+        }
 
         // Add default sort parameters if not present
         if (!params.sort_column) params.sort_column = '{{ sort_column }}';
@@ -481,18 +795,25 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.content-type-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                var contentType = this.getAttribute('data-content-type');
-                clearFilter();
-                updateContent('{{ url_for('database.index') }}', { content_type: contentType });
+                // Only proceed if clicking an inactive link
+                if (!this.classList.contains('active')) {
+                    currentContentType = this.getAttribute('data-content-type');
+                    saveSettings();
+                    clearFilter();
+                    updateContent('{{ url_for('database.index') }}', { content_type: currentContentType });
+                }
             });
         });
 
         document.querySelectorAll('.pagination-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                var letter = this.getAttribute('data-letter');
-                clearFilter();
-                updateContent('{{ url_for('database.index') }}', { letter: letter });
+                // Only proceed if clicking an inactive link
+                if (!this.classList.contains('active')) {
+                    currentLetter = this.getAttribute('data-letter');
+                    clearFilter();
+                    updateContent('{{ url_for('database.index') }}', { letter: currentLetter });
+                }
             });
         });
     }
@@ -543,8 +864,8 @@ document.addEventListener('DOMContentLoaded', function() {
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Rescrape',
-            message: 'Are you sure you want to move this item back to the Wanted queue for rescraping?',
-            confirmText: 'Rescrape',
+            message: 'Are you sure you want to delete this item and move it to the Wanted queue for rescraping? This will delete the file from disk and remove it from Plex.',
+            confirmText: 'Delete & Rescrape',
             cancelText: 'Cancel',
             onConfirm: () => rescrapeItem(itemId),
             onCancel: () => {} // Do nothing on cancel
@@ -600,6 +921,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function rescrapeItem(itemId) {
+        Loading.show();
         fetch('{{ url_for('debug.rescrape_item') }}', {
             method: 'POST',
             headers: {
@@ -622,7 +944,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
-                    message: 'Item moved to Wanted queue for rescraping',
+                    message: 'Item deleted and moved to Wanted queue for rescraping',
                     autoClose: 3000 // Close after 3 seconds
                 });
             } else {
@@ -635,8 +957,11 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
-                message: 'An error occurred while moving the item to the Wanted queue: ' + error.message,
+                message: 'An error occurred while processing the item: ' + error.message
             });
+        })
+        .finally(() => {
+            Loading.hide();
         });
     }
 
@@ -653,8 +978,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const bulkMoveQueue = document.getElementById('bulk-move-queue');
     const bulkChangeVersion = document.getElementById('bulk-change-version');
     const bulkEarlyReleaseBtn = document.getElementById('bulk-early-release');
-    let lastChecked = null;
-    let allSelected = false;
+    const bulkRescrapeBtn = document.getElementById('bulk-rescrape');
 
     // Fetch available versions and populate the version dropdown
     fetch('/settings/get_scraping_versions')
@@ -674,7 +998,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 message: 'Failed to load available versions',
-                title: 'Error'
+                title: 'Error',
             });
         });
 
@@ -778,6 +1102,7 @@ document.addEventListener('DOMContentLoaded', function() {
         bulkMoveQueue.disabled = selectedCount === 0;
         bulkChangeVersion.disabled = selectedCount === 0;
         bulkEarlyReleaseBtn.disabled = selectedCount === 0;
+        bulkRescrapeBtn.disabled = selectedCount === 0;
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
@@ -964,6 +1289,76 @@ document.addEventListener('DOMContentLoaded', function() {
                 } finally {
                     Loading.hide();
                 }
+            },
+        });
+    });
+
+    // Handle bulk rescrape
+    bulkRescrapeBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Bulk Rescrape',
+            message: `
+                <div>Are you sure you want to delete and rescrape ${selectedItems.length} item(s)?</div>
+                <div>This will delete all files from disk, remove them from Plex, and move the items to the Wanted queue for rescraping.</div>
+            `,
+            confirmText: 'Delete & Rescrape',
+            cancelText: 'Cancel',
+            onConfirm: async () => {
+                Loading.show();
+                let successCount = 0;
+                let errorCount = 0;
+                let errors = [];
+                
+                // Process each item individually
+                for (const itemId of selectedItems) {
+                    try {
+                        const response = await fetch('{{ url_for('debug.rescrape_item') }}', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ item_id: itemId })
+                        });
+                        
+                        const data = await response.json();
+                        if (data.success) {
+                            successCount++;
+                        } else {
+                            errorCount++;
+                            errors.push(`Item ${itemId}: ${data.error || 'Unknown error'}`);
+                        }
+                    } catch (error) {
+                        errorCount++;
+                        errors.push(`Item ${itemId}: ${error.message}`);
+                    }
+                }
+                
+                // Show results
+                if (errorCount > 0) {
+                    showPopup({
+                        type: POPUP_TYPES.WARNING,
+                        title: 'Partial Success',
+                        message: `Successfully processed ${successCount} items with ${errorCount} errors. First few errors: ${errors.slice(0, 3).join('; ')}`,
+                    });
+                } else {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: `Successfully deleted and moved ${successCount} items to Wanted queue for rescraping`,
+                    });
+                }
+                
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+                
+                Loading.hide();
             },
         });
     });

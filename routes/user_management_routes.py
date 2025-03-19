@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash
 from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash
-from extensions import db
+from routes.extensions import db
 from .auth_routes import User
 from .models import admin_required, onboarding_required
 from .settings_routes import is_user_system_enabled

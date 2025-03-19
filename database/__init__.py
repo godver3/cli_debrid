@@ -1,6 +1,10 @@
 import importlib
 import inspect
 
+# Explicitly import commonly used functions
+from .database_writing import update_media_item_state
+from .database_reading import get_media_item_by_id
+
 # List of all submodules
 submodules = [
     'core',
@@ -12,7 +16,8 @@ submodules = [
     'wanted_items',
     'database_reading',
     'database_writing',
-    'maintenance'
+    'maintenance',
+    'not_wanted_magnets'
 ]
 
 # Import all submodules
@@ -34,3 +39,6 @@ for submodule in submodules:
 # Import all contents from each submodule
 for submodule in submodules:
     exec(f'from .{submodule} import *')
+
+# Explicitly add commonly used functions to __all__
+__all__.extend(['update_media_item_state', 'get_media_item_by_id'])

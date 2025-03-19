@@ -1,7 +1,7 @@
-from api_tracker import api
+from routes.api_tracker import api
 import logging
 from typing import List, Dict, Any, Tuple
-from settings import load_config
+from utilities.settings import load_config
 from urllib.parse import quote
 
 def scrape_prowlarr_instances(instances: List[Tuple[str, Dict[str, Any]]], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:

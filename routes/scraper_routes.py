@@ -3,18 +3,17 @@ import logging
 from debrid import get_debrid_provider
 from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
-from settings import get_setting, get_all_settings, load_config, save_config
+from utilities.settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts
-from web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
-from web_scraper import get_media_details
+from utilities.web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
+from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
-from web_scraper import search_trakt
+from utilities.web_scraper import search_trakt
 from database.database_reading import get_all_season_episode_counts
 from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
 from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
-from guessit import guessit
 from typing import Dict, Any, Tuple
 import requests
 import tempfile
@@ -25,8 +24,14 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 from flask_login import current_user
+import asyncio
+from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
+import re
 
 scraper_bp = Blueprint('scraper', __name__)
+
+# Create a singleton cache manager for reuse
+_phalanx_cache_manager = PhalanxDBClassManager()
 
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
@@ -496,7 +501,7 @@ def add_torrent_to_debrid():
 @user_required
 @scraper_view_access_required
 def movies_trending():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
 
     versions = get_available_versions()
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
@@ -513,7 +518,7 @@ def movies_trending():
 @user_required
 @scraper_view_access_required
 def shows_trending():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
 
     versions = get_available_versions()
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
@@ -531,7 +536,7 @@ def shows_trending():
 @scraper_view_access_required
 @onboarding_required
 def index():
-    from web_scraper import get_available_versions, web_scrape
+    from utilities.web_scraper import get_available_versions, web_scrape
 
     versions = get_available_versions()
     # Check if the user is a requester
@@ -561,7 +566,7 @@ def index():
 @user_required
 @scraper_view_access_required
 def select_season():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
 
     versions = get_available_versions()
     # Check if the user is a requester
@@ -597,7 +602,7 @@ def select_season():
 @user_required
 @scraper_view_access_required
 def select_episode():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
     
     versions = get_available_versions()
     # Check if the user is a requester
@@ -741,7 +746,7 @@ def scraper_tester():
         
         if search_term:
             # Use the parse_search_term function from web_scraper
-            from web_scraper import parse_search_term
+            from utilities.web_scraper import parse_search_term
             base_title, season, episode, year, multi = parse_search_term(search_term)
             
             # Use the parsed title and year for search
@@ -1049,7 +1054,10 @@ def tmdb_image_proxy(image_path):
 def check_cache_status():
     try:
         data = request.json
-        logging.info(f"Cache check request data: {data}")
+        logging.debug(f"Cache check request data: {data}")
+        
+        # Use the singleton cache manager
+        cache_manager = _phalanx_cache_manager
         
         # Handle single item cache check (new approach)
         if 'index' in data:
@@ -1057,32 +1065,85 @@ def check_cache_status():
             magnet_link = data.get('magnet_link')
             torrent_url = data.get('torrent_url')
             
-            logging.info(f"Processing cache check for item at index {index}")
-            if magnet_link:
-                logging.info(f"Magnet link: {magnet_link[:60]}...")
-            if torrent_url:
-                logging.info(f"Torrent URL: {torrent_url[:60]}...")
-                
+            logging.debug(f"Processing cache check for item at index {index}")
+            
             if not magnet_link and not torrent_url:
                 logging.warning(f"No magnet link or torrent URL provided for index {index}")
                 return jsonify({'status': 'check_unavailable'}), 200
             
+            # Extract hash from magnet link if present - do this up front
+            torrent_hash = None
+            file_hash = None
+            
+            if magnet_link:
+                # Fast hash extraction
+                btih_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link, re.IGNORECASE)
+                if btih_match:
+                    torrent_hash = btih_match.group(1).lower()
+                    
+                    # Check PhalanxDB immediately using the hash
+                    cache_status = cache_manager.get_cache_status(torrent_hash)
+                    if cache_status is not None:
+                        logging.debug(f"Found cache status in PhalanxDB for hash {torrent_hash}: {cache_status}")
+                        return jsonify({'status': 'cached' if cache_status['is_cached'] else 'not_cached', 'index': index}), 200
+                
+                # Handle HTTP URLs - only extract file hash if we need to
+                if magnet_link.startswith('http'):
+                    file_param = magnet_link.split('&file=')[-1] if '&file=' in magnet_link else None
+                    if file_param:
+                        # Generate hash of the file name
+                        file_hash = f"FILE_HASH_{hashlib.sha1(file_param.encode()).hexdigest()}"
+                        
+                        # Check if this file hash is already cached
+                        cache_status = cache_manager.get_cache_status(file_hash)
+                        if cache_status is not None:
+                            logging.debug(f"File hash {file_hash} found in cache with status: {cache_status}")
+                            return jsonify({'status': 'cached' if cache_status['is_cached'] else 'not_cached', 'index': index}), 200
+            
+            elif torrent_url:
+                # Try to get hash from torrent URL
+                try:
+                    torrent_hash = _download_and_get_hash(torrent_url)
+                    
+                    # Check PhalanxDB immediately using the hash
+                    cache_status = cache_manager.get_cache_status(torrent_hash)
+                    if cache_status is not None:
+                        logging.debug(f"Found cache status in PhalanxDB for torrent hash {torrent_hash}: {cache_status}")
+                        return jsonify({'status': 'cached' if cache_status['is_cached'] else 'not_cached', 'index': index}), 200
+                except Exception as e:
+                    logging.warning(f"Could not extract hash from torrent URL: {e}")
+            
+            # If we reach here, we need to check with the debrid provider
             # Get the debrid provider
             debrid_provider = get_debrid_provider()
-            logging.info(f"Using debrid provider: {debrid_provider.__class__.__name__}")
             
             # Create a torrent processor with the debrid provider
             torrent_processor = TorrentProcessor(debrid_provider)
             
             # Check cache status based on what we have
+            is_cached = None
             if magnet_link:
                 logging.info(f"Checking cache status for magnet link at index {index}")
-                is_cached = torrent_processor.check_cache(magnet_link)
-                logging.info(f"Cache check result for magnet link: {is_cached}")
+                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True)
+                
+                # Update cache status in PhalanxDB
+                if torrent_hash:
+                    cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                    logging.debug(f"Updated PhalanxDB cache status for hash {torrent_hash}: {bool(is_cached)}")
+                
+                # Update cache status for file hash if it was a URL
+                if file_hash:
+                    cache_manager.update_cache_status(file_hash, bool(is_cached))
+                    logging.debug(f"Updated cache status for file hash {file_hash}: {bool(is_cached)}")
+                    
             elif torrent_url:
                 logging.info(f"Checking cache status for torrent URL at index {index}")
-                is_cached = torrent_processor.check_cache_for_url(torrent_url)
-                logging.info(f"Cache check result for torrent URL: {is_cached}")
+                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True)
+                
+                # Update PhalanxDB if we have a hash
+                if torrent_hash:
+                    cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                    logging.debug(f"Updated PhalanxDB cache status for torrent hash {torrent_hash}: {bool(is_cached)}")
             
             # Convert result to the expected format
             if is_cached is True:
@@ -1090,11 +1151,9 @@ def check_cache_status():
             elif is_cached is False:
                 status = 'not_cached'
             else:
-                # Handle None responses which can happen with download failures or empty torrents
-                logging.warning(f"Cache check returned None for index {index}")
                 status = 'check_unavailable'
                 
-            logging.info(f"Returning cache status for index {index}: {status}")
+            logging.debug(f"Returning cache status for index {index}: {status}")
             return jsonify({'status': status, 'index': index}), 200
             
         # Handle multiple hashes (legacy approach)
@@ -1104,109 +1163,97 @@ def check_cache_status():
             
         # Always limit to exactly 5 hashes, preserving the order
         if len(hashes) > 5:
-            logging.info(f"Limiting cache check from {len(hashes)} to exactly 5 hashes")
+            logging.debug(f"Limiting cache check from {len(hashes)} to exactly 5 hashes")
             hashes = hashes[:5]
-        elif len(hashes) < 5:
-            logging.info(f"Only {len(hashes)} hashes provided, less than the target of 5")
             
-        # Get the debrid provider and check its capabilities
-        debrid_provider = get_debrid_provider()
-        supports_cache_check = debrid_provider.supports_direct_cache_check
-        supports_bulk_check = debrid_provider.supports_bulk_cache_checking
-        
-        # Check if this is a RealDebridProvider
-        is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
-        
-        # Check cache status for all hashes
+        # First check PhalanxDB for all hashes at once with multi-status
         cache_status = {}
-        if hashes:
+        hashes_to_check = []
+        
+        # Get results for all hashes at once
+        phalanx_results = cache_manager.get_multi_cache_status(hashes)
+        for hash_value, status in phalanx_results.items():
+            if status is not None:
+                cache_status[hash_value] = 'Yes' if status['is_cached'] else 'No'
+            else:
+                hashes_to_check.append(hash_value)
+                
+        if hashes_to_check:
+            logging.info(f"Need to check {len(hashes_to_check)} hashes with debrid provider")
+            # Get the debrid provider and check its capabilities
+            debrid_provider = get_debrid_provider()
+            supports_cache_check = debrid_provider.supports_direct_cache_check
+            supports_bulk_check = debrid_provider.supports_bulk_cache_checking
+            is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+            
             if supports_cache_check:
                 try:
-                    # Optimize for single hash requests which are common with our new frontend
-                    if len(hashes) == 1:
-                        hash_value = hashes[0]
+                    # Optimize for single hash requests
+                    if len(hashes_to_check) == 1:
+                        hash_value = hashes_to_check[0]
                         is_cached = debrid_provider.is_cached(hash_value)
-                        cache_status[hash_value] = is_cached
-                        logging.info(f"Single hash cache status for {hash_value}: {is_cached}")
+                        cache_status[hash_value] = 'Yes' if is_cached else 'No'
+                        # Update PhalanxDB
+                        cache_manager.update_cache_status(hash_value, bool(is_cached))
                     elif supports_bulk_check:
-                        # If provider supports bulk checking, check all hashes at once
-                        # But we need to ensure we maintain the order in the response
-                        bulk_result = debrid_provider.is_cached(hashes)
+                        bulk_result = debrid_provider.is_cached(hashes_to_check)
                         if isinstance(bulk_result, bool):
-                            # If we got a single boolean back, convert to dict
-                            cache_status = {hash_value: bulk_result for hash_value in hashes}
+                            for hash_value in hashes_to_check:
+                                cache_status[hash_value] = 'Yes' if bulk_result else 'No'
+                                cache_manager.update_cache_status(hash_value, bulk_result)
                         else:
-                            # Make sure we preserve the order of hashes in the response
-                            cache_status = {}
-                            for hash_value in hashes:
-                                cache_status[hash_value] = bulk_result.get(hash_value, 'N/A')
-                        logging.info(f"Bulk cache status from provider: {cache_status}")
+                            for hash_value in hashes_to_check:
+                                result = bulk_result.get(hash_value, 'N/A')
+                                cache_status[hash_value] = 'Yes' if result is True else 'No' if result is False else 'N/A'
+                                if result is not None:
+                                    cache_manager.update_cache_status(hash_value, bool(result))
                     else:
-                        # Check hashes individually for providers that don't support bulk checking
-                        # Process them in the exact order they were received
-                        cache_status = {}
-                        for hash_value in hashes:
+                        for hash_value in hashes_to_check:
                             try:
                                 is_cached = debrid_provider.is_cached(hash_value)
-                                cache_status[hash_value] = is_cached
-                                logging.info(f"Individual cache status for {hash_value}: {is_cached}")
+                                cache_status[hash_value] = 'Yes' if is_cached else 'No'
+                                cache_manager.update_cache_status(hash_value, bool(is_cached))
                             except Exception as e:
                                 logging.error(f"Error checking individual cache status for {hash_value}: {e}")
                                 cache_status[hash_value] = 'N/A'
                 except Exception as e:
                     logging.error(f"Error checking cache status: {e}")
-                    # Fall back to N/A on error
-                    cache_status = {hash_value: 'N/A' for hash_value in hashes}
+                    for hash_value in hashes_to_check:
+                        cache_status[hash_value] = 'N/A'
+            elif is_real_debrid:
+                logging.info("Using RealDebridProvider's is_cached method")
+                torrent_ids_to_remove = []
+                
+                for i, hash_value in enumerate(hashes_to_check):
+                    try:
+                        magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
+                        cache_result = debrid_provider.is_cached(
+                            magnet_link, 
+                            result_title=f"Hash {hash_value}",
+                            result_index=i,
+                            remove_uncached=True
+                        )
+                        result_str = 'Yes' if cache_result is True else 'No' if cache_result is False else 'N/A'
+                        cache_status[hash_value] = result_str
+                        
+                        if cache_result is not None:
+                            cache_manager.update_cache_status(hash_value, bool(cache_result))
+                        
+                        torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
+                        if torrent_id:
+                            torrent_ids_to_remove.append(torrent_id)
+                    except Exception as e:
+                        logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
+                        cache_status[hash_value] = 'N/A'
+                
+                for torrent_id in torrent_ids_to_remove:
+                    try:
+                        debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
+                    except Exception as e:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
             else:
-                # If provider doesn't support direct checking but is RealDebrid, check first 5 results
-                if is_real_debrid:
-                    logging.info("Using RealDebridProvider's is_cached method")
-                    cache_status = {hash_value: 'N/A' for hash_value in hashes}  # Initialize all as N/A
-                    torrent_ids_to_remove = []  # Track torrent IDs for removal
-                    
-                    # Check each hash in the order provided
-                    for i, hash_value in enumerate(hashes):
-                        try:
-                            # Use the is_cached method which will add the torrent and return its cache status
-                            # But we need to capture the torrent ID for later removal
-                            magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
-                            cache_result = debrid_provider.is_cached(
-                                magnet_link, 
-                                result_title=f"Hash {hash_value}",
-                                result_index=i
-                            )
-                            # Convert None to 'No' for frontend display
-                            if cache_result is None:
-                                cache_result = 'No'
-                            cache_status[hash_value] = cache_result
-                            logging.info(f"Cache status for hash {hash_value}: {cache_result}")
-                            
-                            # Try to find the torrent ID using the hash
-                            torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
-                            if torrent_id:
-                                torrent_ids_to_remove.append(torrent_id)
-                                logging.info(f"Added torrent ID {torrent_id} to removal list")
-                        except Exception as e:
-                            logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
-                    
-                    # Remove all torrents after checking (even if they're cached)
-                    for torrent_id in torrent_ids_to_remove:
-                        try:
-                            debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
-                            logging.info(f"Removed torrent with ID {torrent_id} after cache check")
-                        except Exception as e:
-                            logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
-                else:
-                    # Mark all results as N/A if provider doesn't support direct checking
-                    cache_status = {hash_value: 'N/A' for hash_value in hashes}
-                    logging.info("Provider does not support direct cache checking, marking all as N/A")
-        
-        # Convert boolean values to strings for consistency with the frontend
-        for hash_value, status in cache_status.items():
-            if status is True:
-                cache_status[hash_value] = 'Yes'
-            elif status is False:
-                cache_status[hash_value] = 'No'
+                for hash_value in hashes_to_check:
+                    cache_status[hash_value] = 'N/A'
                 
         return jsonify({'cache_status': cache_status})
     except Exception as e:

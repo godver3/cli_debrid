@@ -26,7 +26,8 @@ directories = [
     'scraper',
     'static',
     'utilities',
-    'utilities/config'  # Ensure config directory is included
+    'utilities/config',  # Ensure config directory is included
+    'phalanx_db'  # Add phalanx_db directory
 ]
 
 for directory in directories:
@@ -49,7 +50,9 @@ individual_files = [
     ('cli_battery/main.py', 'cli_battery'),
     ('optional_default_versions.json', '.'),
     ('utilities/config/downsub_config.py', 'utilities/config'),
-    ('utilities/config/__init__.py', 'utilities/config')  # Explicitly include __init__.py
+    ('utilities/config/__init__.py', 'utilities/config'),  # Explicitly include __init__.py
+    ('phalanx_db/package.json', 'phalanx_db'),  # Include package.json for phalanx_db
+    ('phalanx_db/package-lock.json', 'phalanx_db')  # Include package-lock.json for phalanx_db
 ]
 
 for src, dst in individual_files:
@@ -183,7 +186,6 @@ a = Analysis(
         'aiohttp',
         'bs4',
         'grpc',
-        'guessit',
         'urwid',
         'plexapi',
         'PIL',
@@ -242,7 +244,8 @@ a = Analysis(
         'dogpile.cache.memory',
         'dogpile.cache.backends',
         'dogpile.cache.backends.memory',
-        'dogpile.core'
+        'dogpile.core',
+        'phalanx_db'  # Add phalanx_db module
     ] + additional_imports,
     hookspath=['hooks'],
     hooksconfig={},

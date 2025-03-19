@@ -1,8 +1,7 @@
 import logging
 import time
 from metadata.metadata import refresh_release_dates
-from database import update_media_item_state, get_all_media_items
-from settings import get_all_settings, get_setting
+from utilities.settings import get_all_settings, get_setting
 
 # Progress ranges for each phase
 PROGRESS_RANGES = {
@@ -108,11 +107,13 @@ def reset_queued_item_status():
     states_to_reset = ['Scraping', 'Adding', 'Checking', 'Sleeping']
     total_reset = 0
     
+    from database import update_media_item_state, get_all_media_items
     for state in states_to_reset:
         items = get_all_media_items(state=state)
         if items:
             update_initialization_step("Reset Items", f"Processing {len(items)} items in {state} state", is_substep=True)
             for item in items:
+                
                 update_media_item_state(item['id'], 'Wanted')
                 total_reset += 1
                 logging.info(f"Reset item {format_item_log(item)} (ID: {item['id']}) from {state} to Wanted")
@@ -120,10 +121,10 @@ def reset_queued_item_status():
     update_initialization_step("Reset Items", f"Reset {total_reset} items to Wanted state", is_substep=True)
 
 def plex_collection_update(skip_initial_plex_update):
-    from run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
+    from queues.run_program import get_and_add_all_collected_from_plex, get_and_add_recent_collected_from_plex
     from database import get_all_media_items
     from utilities.plex_watch_history_functions import sync_get_watch_history_from_plex
-    from settings import get_setting
+    from utilities.settings import get_setting
 
     update_initialization_step("Plex Update", "Starting Plex scan")
     logging.info("Updating Plex collection...")

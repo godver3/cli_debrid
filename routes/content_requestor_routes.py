@@ -1,8 +1,8 @@
 from flask import Blueprint, jsonify, request, render_template
 from .models import user_required, onboarding_required
-from web_scraper import search_trakt, parse_search_term, get_available_versions
+from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
-from config_manager import load_config
+from queues.config_manager import load_config
 from metadata.metadata import process_metadata
 from database.wanted_items import add_wanted_items
 import logging
