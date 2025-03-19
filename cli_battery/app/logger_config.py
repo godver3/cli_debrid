@@ -28,7 +28,7 @@ def setup_logger():
 
     # Create console handler with color formatting
     console_handler = colorlog.StreamHandler()
-    console_handler.setLevel(logging.DEBUG)  # Keep INFO for console
+    console_handler.setLevel(logging.INFO)  # Keep INFO for console
     
     formatter = colorlog.ColoredFormatter(
         '%(log_color)s%(asctime)s - %(filename)s:%(funcName)s - %(levelname)s - %(message)s',
