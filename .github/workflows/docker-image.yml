@@ -20,6 +20,18 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install phalanx_db dependencies
+        shell: cmd
+        run: |
+          cd phalanx_db
+          npm install
+          cd ..
           
       - name: Create and activate virtual environment
         shell: cmd
@@ -41,6 +53,15 @@ jobs:
         run: |
           call build_venv\Scripts\activate.bat
           pyinstaller windows_build.spec --clean
+
+      - name: Verify phalanx_db files in build
+        shell: cmd
+        run: |
+          dir dist\cli_debrid\phalanx_db
+          if not exist "dist\cli_debrid\phalanx_db\package.json" (
+            echo "Error: phalanx_db files are missing from the build"
+            exit 1
+          )
 
       - name: Package Windows executable
         shell: powershell
