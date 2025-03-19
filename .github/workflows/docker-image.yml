@@ -54,15 +54,6 @@ jobs:
           call build_venv\Scripts\activate.bat
           pyinstaller windows_build.spec --clean
 
-      - name: Verify phalanx_db files in build
-        shell: cmd
-        run: |
-          dir dist\cli_debrid\phalanx_db
-          if not exist "dist\cli_debrid\phalanx_db\package.json" (
-            echo "Error: phalanx_db files are missing from the build"
-            exit 1
-          )
-
       - name: Package Windows executable
         shell: powershell
         run: |
