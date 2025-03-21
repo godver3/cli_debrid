@@ -152,10 +152,13 @@ class SleepingQueue:
 
     def add_items_batch(self, items: List[Dict[str, Any]]):
         """Add multiple items to the queue at once."""
+        current_time = datetime.now()
         for item in items:
-            item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
             self.items.append(item)
-            self.sleeping_queue_times[item['id']] = datetime.now()
+            self.sleeping_queue_times[item['id']] = current_time
+            # Ensure wake count is preserved
+            if 'wake_count' in item:
+                wake_count_manager.set_wake_count(item['id'], item['wake_count'])
 
     def remove_items_batch(self, items: List[Dict[str, Any]]):
         """Remove multiple items from the queue at once."""

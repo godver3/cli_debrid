@@ -180,6 +180,10 @@ class BlacklistedQueue:
 
     def add_items_batch(self, items: List[Dict[str, Any]]):
         """Add multiple items to the queue at once."""
+        # Store blacklisted date for each item if not already set
+        for item in items:
+            if 'blacklisted_date' not in item:
+                item['blacklisted_date'] = datetime.now()
         self.items.extend(items)
 
     def remove_items_batch(self, items: List[Dict[str, Any]]):
