@@ -515,7 +515,7 @@ class ProgramRunner:
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected()
             elif source_type == 'My Plex Watchlist':
-                from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist, validate_plex_tokens
+                from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
                 wanted_content = get_wanted_from_plex_watchlist(versions)
             elif source_type == 'My Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
@@ -524,6 +524,9 @@ class ProgramRunner:
                 plex_rss_url = data.get('url', '')
                 wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
             elif source_type == 'Other Plex Watchlist':
+                # Import the function here
+                from content_checkers.plex_watchlist import get_wanted_from_other_plex_watchlist
+                
                 other_watchlists = []
                 for source_id, source_data in self.get_content_sources().items():
                     if source_id.startswith('Other Plex Watchlist_') and source_data.get('enabled', False):
