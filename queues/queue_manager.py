@@ -376,11 +376,28 @@ class QueueManager:
             # Get all item IDs
             item_ids = [item['id'] for item in items]
             
+            # Special handling for certain queues
+            if to_queue == "Sleeping":
+                # Update wake counts in batch
+                for item in items:
+                    wake_count = wake_count_manager.get_wake_count(item['id'])
+                    kwargs[f"wake_count_{item['id']}"] = wake_count
+            elif to_queue == "Blacklisted":
+                # Set blacklisted date for all items
+                blacklisted_date = datetime.now()
+                kwargs['blacklisted_date'] = blacklisted_date
+            
             # Update states in database
             update_media_items_state_batch(item_ids, to_queue, **kwargs)
             
             # Get updated items
             updated_items = get_media_items_by_ids_batch(item_ids)
+            
+            # Additional processing for special queues
+            if to_queue == "Sleeping":
+                # Restore wake counts in updated items
+                for updated_item in updated_items:
+                    updated_item['wake_count'] = kwargs.get(f"wake_count_{updated_item['id']}")
             
             # Update queue contents
             self.queues[to_queue].add_items_batch(updated_items)
@@ -388,18 +405,35 @@ class QueueManager:
             
             # Log the batch operation
             logging.info(f"Moved {len(items)} items from {from_queue} to {to_queue}")
+            
         except Exception as e:
             logging.error(f"Error in batch move operation: {str(e)}")
             # Fall back to individual moves on failure
             for item in items:
                 try:
-                    if from_queue == "Wanted":
+                    if to_queue == "Wanted":
                         self.move_to_wanted(item, from_queue)
                     elif to_queue == "Scraping":
                         self.move_to_scraping(item, from_queue)
                     elif to_queue == "Adding":
                         self.move_to_adding(item, from_queue, kwargs.get('filled_by_title'), kwargs.get('scrape_results', []))
-                    # Add other queue moves as needed
+                    elif to_queue == "Checking":
+                        self.move_to_checking(item, from_queue, 
+                            kwargs.get('filled_by_title', ''),
+                            kwargs.get('filled_by_magnet', ''),
+                            kwargs.get('filled_by_file', ''),
+                            kwargs.get('filled_by_torrent_id'))
+                    elif to_queue == "Sleeping":
+                        self.move_to_sleeping(item, from_queue)
+                    elif to_queue == "Unreleased":
+                        self.move_to_unreleased(item, from_queue)
+                    elif to_queue == "Blacklisted":
+                        self.move_to_blacklisted(item, from_queue)
+                    elif to_queue == "Pending Uncached":
+                        self.move_to_pending_uncached(item, from_queue,
+                            kwargs.get('filled_by_title', ''),
+                            kwargs.get('filled_by_magnet', ''),
+                            kwargs.get('scrape_results', []))
                 except Exception as inner_e:
                     logging.error(f"Error in fallback move for item {item.get('id')}: {str(inner_e)}")
 

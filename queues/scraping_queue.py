@@ -450,6 +450,7 @@ class ScrapingQueue:
         items_to_wanted = []
         items_to_sleeping = []
         items_to_adding = []
+        items_to_blacklist = []  # New list for items to be blacklisted
         
         for item in items:
             item_identifier = queue_manager.generate_identifier(item)
@@ -480,7 +481,19 @@ class ScrapingQueue:
                 
                 if not results:
                     logging.warning(f"No results found for {item_identifier} after fallback.")
-                    items_to_sleeping.append(item)
+                    if self.is_item_old(item):
+                        if item['type'] == 'episode':
+                            logging.info(f"No results found for old episode {item_identifier}. Will blacklist item and related season items.")
+                            items_to_blacklist.append(item)
+                        elif item['type'] == 'movie':
+                            logging.info(f"No results found for old movie {item_identifier}. Will blacklist item.")
+                            items_to_blacklist.append(item)
+                        else:
+                            logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Will blacklist item.")
+                            items_to_blacklist.append(item)
+                    else:
+                        logging.warning(f"No results found for {item_identifier}. Moving to Sleeping queue.")
+                        items_to_sleeping.append(item)
                     processed_count += 1
                     continue
 
@@ -530,6 +543,14 @@ class ScrapingQueue:
                 except Exception as e:
                     logging.error(f"Failed to move {queue_manager.generate_identifier(item)} to Adding queue: {str(e)}", exc_info=True)
                     had_error = True
+
+        # Process blacklisted items
+        for item in items_to_blacklist:
+            if item['type'] == 'episode':
+                queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+            else:
+                queue_manager.move_to_blacklisted(item, "Scraping")
+            self.reset_not_wanted_check(item['id'])
 
         # Return True if there are more items to process or if we processed something
         return len(self.items) > 0 or processed_count > 0
