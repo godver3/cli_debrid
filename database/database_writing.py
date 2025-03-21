@@ -6,6 +6,7 @@ import pickle
 from pathlib import Path
 import os
 from utilities.post_processing import handle_state_change
+from typing import List
 
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -409,5 +410,63 @@ def update_version_name(old_version: str, new_version: str) -> int:
         conn.rollback()
         logging.error(f"Error updating version name from '{old_version}' to '{new_version}': {str(e)}")
         return 0
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
+    """Update the state of multiple media items in a single transaction.
+    
+    Args:
+        item_ids: List of item IDs to update
+        state: New state for all items
+        **kwargs: Additional fields to update
+    """
+    conn = get_db_connection()
+    try:
+        conn.execute('BEGIN TRANSACTION')
+        
+        # Prepare the base query
+        query = '''
+            UPDATE media_items
+            SET state = ?, last_updated = ?
+        '''
+        base_params = [state, datetime.now()]
+
+        # Add optional fields to the query
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 
+                         'filled_by_torrent_id', 'scrape_results', 'version', 
+                         'resolution', 'upgrading_from']
+        
+        for field in kwargs:
+            if field in optional_fields:
+                query += f", {field} = ?"
+                value = kwargs[field]
+                if field == 'scrape_results':
+                    value = json.dumps(value) if value else None
+                base_params.append(value)
+
+        # Complete the query with ID list
+        placeholders = ','.join('?' * len(item_ids))
+        query += f" WHERE id IN ({placeholders})"
+        params = base_params + item_ids
+
+        # Execute the batch update
+        conn.execute(query, params)
+        conn.commit()
+
+        # Get updated items for post-processing
+        for item_id in item_ids:
+            updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+            if updated_item:
+                item_dict = dict(updated_item)
+                if state in ['Collected', 'Upgrading']:
+                    handle_state_change(item_dict)
+
+        logging.info(f"Batch updated {len(item_ids)} items to state {state}")
+    except Exception as e:
+        logging.error(f"Error in batch state update: {str(e)}")
+        conn.rollback()
+        raise
     finally:
         conn.close()

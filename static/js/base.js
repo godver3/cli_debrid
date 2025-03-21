@@ -46,7 +46,7 @@ function initializeNavigation() {
         const groupTitles = navMenu.querySelectorAll('.group-title');
         groupTitles.forEach(title => {
             const handleClick = function(e) {
-                if (window.innerWidth <= 776) {
+                if (window.innerWidth <= 1045) {
                     e.preventDefault();
                     e.stopPropagation();
                     
@@ -77,7 +77,7 @@ function initializeNavigation() {
 
         // Close menu when clicking outside
         document.addEventListener('click', function(e) {
-            if (window.innerWidth <= 776) {
+            if (window.innerWidth <= 1045) {
                 if (!navMenu.contains(e.target) && !hamburger.contains(e.target)) {
                     navMenu.classList.remove('show');
                     hamburger.classList.remove('active');

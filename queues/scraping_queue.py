@@ -423,3 +423,113 @@ class ScrapingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{'_'.join(item['version'].split())}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
+
+    def add_items_batch(self, items: List[Dict[str, Any]]):
+        """Add multiple items to the queue at once."""
+        self.items.extend(items)
+
+    def remove_items_batch(self, items: List[Dict[str, Any]]):
+        """Remove multiple items from the queue at once."""
+        item_ids = {item['id'] for item in items}
+        self.items = [i for i in self.items if i['id'] not in item_ids]
+
+    def process_batch(self, queue_manager, items: List[Dict[str, Any]]) -> bool:
+        """Process multiple items in a batch.
+        
+        Args:
+            queue_manager: The global queue manager instance
+            items: List of items to process
+            
+        Returns:
+            bool: True if any items were processed
+        """
+        processed_count = 0
+        had_error = False
+        today = date.today()
+        
+        items_to_wanted = []
+        items_to_sleeping = []
+        items_to_adding = []
+        
+        for item in items:
+            item_identifier = queue_manager.generate_identifier(item)
+            try:
+                logging.info(f"Starting to process scraping results for {item_identifier}")
+                
+                # Check release date logic - skip for early release items
+                if not item.get('early_release', False):
+                    if item['release_date'] == 'Unknown':
+                        logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
+                        items_to_wanted.append(item)
+                        processed_count += 1
+                        continue
+                else:
+                    logging.info(f"Processing early release item {item_identifier} regardless of release date")
+
+                # Multi-pack check logic
+                is_multi_pack = False
+                if item['type'] == 'episode':
+                    # Multi-pack logic here...
+                    pass
+
+                logging.info(f"Scraping for {item_identifier}")
+                results, filtered_out_results = self.scrape_with_fallback(item, is_multi_pack, queue_manager)
+                
+                results = results if results is not None else []
+                filtered_out_results = filtered_out_results if filtered_out_results is not None else []
+                
+                if not results:
+                    logging.warning(f"No results found for {item_identifier} after fallback.")
+                    items_to_sleeping.append(item)
+                    processed_count += 1
+                    continue
+
+                # Filter and process results
+                filtered_results = []
+                for result in results:
+                    if not item.get('disable_not_wanted_check'):
+                        if is_magnet_not_wanted(result['magnet']) or is_url_not_wanted(result['magnet']):
+                            continue
+                    filtered_results.append(result)
+                
+                if filtered_results:
+                    best_result = filtered_results[0]
+                    logging.info(f"Best result for {item_identifier}: {best_result['title']}")
+                    
+                    if get_setting("Debug", "enable_reverse_order_scraping", default=False):
+                        filtered_results.reverse()
+                    
+                    logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
+                    items_to_adding.append((item, best_result['title'], filtered_results))
+                else:
+                    logging.info(f"No valid results for {item_identifier}, moving to Sleeping")
+                    items_to_sleeping.append(item)
+                
+                processed_count += 1
+                
+            except Exception as e:
+                logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
+                items_to_sleeping.append(item)
+                had_error = True
+                processed_count += 1
+
+        # Process batched moves
+        if items_to_wanted:
+            queue_manager.move_items_batch(items_to_wanted, "Scraping", "Wanted")
+            
+        if items_to_sleeping:
+            queue_manager.move_items_batch(items_to_sleeping, "Scraping", "Sleeping")
+            for item in items_to_sleeping:
+                self.reset_not_wanted_check(item['id'])
+                
+        if items_to_adding:
+            for item, title, results in items_to_adding:
+                try:
+                    queue_manager.move_to_adding(item, "Scraping", title, results)
+                    self.reset_not_wanted_check(item['id'])
+                except Exception as e:
+                    logging.error(f"Failed to move {queue_manager.generate_identifier(item)} to Adding queue: {str(e)}", exc_info=True)
+                    had_error = True
+
+        # Return True if there are more items to process or if we processed something
+        return len(self.items) > 0 or processed_count > 0

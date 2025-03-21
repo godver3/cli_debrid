@@ -30,7 +30,7 @@
                                     <label for="logo-{{ choice|lower }}">
                                         {% if choice == 'Default' %}
                                         <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="{{ choice }} Logo" class="logo-preview">
-                                        {% elif choice == 'Plex' %}
+                                        {% elif choice == 'Plex-Inspired' %}
                                         <img src="{{ url_for('static', filename='plex-icon-32x32.png') }}" alt="{{ choice }} Logo" class="logo-preview">
                                         {% endif %}
                                         <span>{{ choice }}</span>

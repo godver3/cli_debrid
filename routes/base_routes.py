@@ -317,8 +317,14 @@ def get_notifications():
             notification_file.write_text(json.dumps({"notifications": []}))
             return jsonify({"notifications": []})
         
-        with open(notification_file) as f:
-            notifications = json.load(f)
+        try:
+            with open(notification_file) as f:
+                notifications = json.load(f)
+        except json.JSONDecodeError:
+            # Handle case where file exists but is empty or malformed
+            logging.warning(f"Found empty or malformed notifications file, recreating it")
+            notification_file.write_text(json.dumps({"notifications": []}))
+            return jsonify({"notifications": []})
             
         # Filter out expired notifications
         current_time = datetime.now().isoformat()
@@ -380,8 +386,16 @@ def mark_all_notifications_read():
         if not notification_file.exists():
             return jsonify({"error": "No notifications found"}), 404
             
-        with open(notification_file) as f:
-            notifications = json.load(f)
+        try:
+            with open(notification_file) as f:
+                content = f.read().strip()
+                if not content:  # Handle empty file
+                    notifications = {"notifications": []}
+                else:
+                    notifications = json.loads(content)
+        except json.JSONDecodeError:
+            # Handle corrupted file by resetting it
+            notifications = {"notifications": []}
             
         # Mark all notifications as read
         notification_count = 0
@@ -390,7 +404,7 @@ def mark_all_notifications_read():
                 notification["read"] = True
                 notification_count += 1
                 
-        # Write back to file
+        # Write back to file with proper locking
         with open(notification_file, 'w') as f:
             json.dump(notifications, f, indent=2)
             

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from utilities.settings import get_setting
 
@@ -20,6 +20,15 @@ class UnreleasedQueue:
 
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
+
+    def add_items_batch(self, items: List[Dict[str, Any]]):
+        """Add multiple items to the queue at once."""
+        self.items.extend(items)
+
+    def remove_items_batch(self, items: List[Dict[str, Any]]):
+        """Remove multiple items from the queue at once."""
+        item_ids = {item['id'] for item in items}
+        self.items = [i for i in self.items if i['id'] not in item_ids]
 
     def process(self, queue_manager):
         logging.debug(f"Processing unreleased queue. Items: {len(self.items)}")

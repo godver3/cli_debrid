@@ -53,9 +53,14 @@ class PhalanxDBClassManager:
         errors = []
         expected_responses = []  # Track expected responses like 404 "Data not found"
         
-        # Use shorter timeout for localhost connections
+        # Use longer timeouts for /debug and /data endpoints since they return larger datasets
         for url in self._urls:
-            timeout = 2.0 if 'localhost' in url else 5.0
+            # Determine timeout based on endpoint and connection type
+            if endpoint in ['/debug', '/data']:
+                timeout = 15.0 if 'localhost' in url else 15.0  # Longer timeouts for status endpoints
+            else:
+                timeout = 5.0 if 'localhost' in url else 5.0  # Default timeouts for other endpoints
+                
             try:
                 full_url = f"{url}{endpoint}"
                 logging.debug(f"Trying URL: {full_url}")
@@ -199,7 +204,7 @@ class PhalanxDBClassManager:
             for i in range(0, len(hash_values), batch_size):
                 batch_hashes = hash_values[i:i+batch_size]
                 hash_list = ','.join(batch_hashes)
-                result, url, errors = self._try_urls(f"/data/{hash_list}")
+                result, url, errors = self._try_urls(f"/data/{hash_list}", params={"service": "real_debrid"})
                 
                 if not result:
                     # Check if this was a 404 "Data not found" response

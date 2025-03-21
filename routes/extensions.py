@@ -13,10 +13,123 @@ from datetime import timedelta
 import os
 from tld import get_tld
 from tld.exceptions import TldDomainNotFound, TldBadUrl
+from flask_session import Session
+from flask.sessions import SessionInterface, SessionMixin
+from werkzeug.datastructures import CallbackDict
+from uuid import uuid4
+import pickle
 
 # Configure logging at INFO level only
 #logging.basicConfig(level=logging.INFO)
 #logger = logging.getLogger(__name__)
+
+class InMemorySession(CallbackDict, SessionMixin):
+    """In-memory session implementation"""
+    def __init__(self, initial=None, sid=None, created=None):
+        def on_update(self):
+            self.modified = True
+        CallbackDict.__init__(self, initial, on_update)
+        self.sid = sid
+        self.permanent = True
+        self.modified = False
+        self.created = created or time.time()
+
+class InMemorySessionInterface(SessionInterface):
+    """Simple in-memory session interface that avoids file system issues"""
+    
+    # Class-level storage for all sessions with creation timestamps
+    # Format: {sid: (pickled_data, created_timestamp)}
+    session_store = {}
+    last_cleanup = time.time()
+    
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+    
+    def open_session(self, app, request):
+        sid = request.cookies.get(app.config.get('SESSION_COOKIE_NAME', 'session'))
+        if not sid:
+            sid = str(uuid4())
+            return InMemorySession(sid=sid)
+        
+        # Return existing session or create new one if not found
+        if sid in self.session_store:
+            data, created = self.session_store[sid]
+            data = pickle.loads(data)
+            return InMemorySession(data, sid=sid, created=created)
+        return InMemorySession(sid=sid)
+    
+    def save_session(self, app, session, response):
+        domain = self.get_cookie_domain(app)
+        path = self.get_cookie_path(app)
+        
+        if not session:
+            if session.modified:
+                response.delete_cookie(
+                    app.config.get('SESSION_COOKIE_NAME', 'session'),
+                    domain=domain,
+                    path=path
+                )
+            return
+        
+        # Save the session data in the in-memory store with creation time
+        created = getattr(session, 'created', time.time())
+        self.session_store[session.sid] = (pickle.dumps(dict(session)), created)
+        
+        # Set the cookie with the session ID
+        httponly = self.get_cookie_httponly(app)
+        secure = self.get_cookie_secure(app)
+        samesite = self.get_cookie_samesite(app)
+        
+        if session.permanent:
+            expires = self.get_expiration_time(app, session)
+        else:
+            expires = None
+            
+        response.set_cookie(
+            app.config.get('SESSION_COOKIE_NAME', 'session'),
+            session.sid,
+            expires=expires,
+            httponly=httponly,
+            domain=domain,
+            path=path,
+            secure=secure,
+            samesite=samesite
+        )
+        
+        # Periodically clean up expired sessions (every 10 minutes)
+        current_time = time.time()
+        if current_time - self.last_cleanup > 600:  # 600 seconds = 10 minutes
+            self._cleanup_sessions(app)
+            self.last_cleanup = current_time
+    
+    def _cleanup_sessions(self, app):
+        """Remove expired sessions to prevent memory leaks"""
+        try:
+            # Get the session lifetime in seconds
+            lifetime = app.permanent_session_lifetime.total_seconds()
+            
+            # Get current time
+            now = time.time()
+            
+            # Create a list of sessions to remove
+            expired_sessions = []
+            
+            # Find expired sessions (created more than lifetime seconds ago)
+            for sid, (data, created) in list(self.session_store.items()):
+                if now - created > lifetime:
+                    expired_sessions.append(sid)
+            
+            # Remove expired sessions
+            for sid in expired_sessions:
+                del self.session_store[sid]
+                
+            if expired_sessions:
+                self.logger.info(f"Memory session cleanup: removed {len(expired_sessions)} expired sessions, {len(self.session_store)} remaining")
+        
+        except Exception as e:
+            self.logger.error(f"Error in session cleanup: {e}")
+            # Cleanup errors shouldn't affect session saving
+            pass
 
 def get_root_domain(host):
     """Get the root domain from a hostname."""
@@ -129,24 +242,10 @@ app = Flask(__name__,
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
-# Configure session
-session_dir = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session')
-try:
-    os.makedirs(session_dir, mode=0o777, exist_ok=True)
-    # Ensure the directory has the correct permissions even if it already existed
-    os.chmod(session_dir, 0o777)
-except Exception as e:
-    logging.warning(f"Could not create or set permissions on session directory {session_dir}: {str(e)}")
-    # Fallback to system temp directory
-    import tempfile
-    session_dir = os.path.join(tempfile.gettempdir(), 'flask_session')
-    os.makedirs(session_dir, mode=0o777, exist_ok=True)
-
-app.config['SESSION_TYPE'] = 'filesystem'
+# Configure Flask session settings
+app.config['SESSION_TYPE'] = 'filesystem'  # Using a valid type for Flask-Session
 app.config['SESSION_PERMANENT'] = True
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=31)
-app.config['SESSION_FILE_DIR'] = session_dir
-app.config['SESSION_FILE_THRESHOLD'] = 500
 app.config['SESSION_COOKIE_SECURE'] = False
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -158,6 +257,11 @@ app.config['SESSION_REFRESH_EACH_REQUEST'] = True
 app.config['SESSION_COOKIE_PATH'] = '/'
 app.config['SESSION_COOKIE_DOMAIN'] = None  # Let Flask determine the domain without leading period
 
+# Use a session directory that won't be used but needs to exist for Flask-Session to initialize
+app.config['SESSION_FILE_DIR'] = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'flask_session_unused')
+os.makedirs(app.config['SESSION_FILE_DIR'], exist_ok=True)
+app.config['SESSION_FILE_THRESHOLD'] = 500
+
 # Use a persistent secret key
 secret_key_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'secret_key')
 if os.path.exists(secret_key_file):
@@ -168,10 +272,13 @@ else:
     with open(secret_key_file, 'wb') as f:
         f.write(app.secret_key)
 
-# Initialize Flask-Session
+# Initialize Flask-Session first (required for compatibility)
 from flask_session import Session
 sess = Session()
 sess.init_app(app)
+
+# Now override with our custom in-memory session interface
+app.session_interface = InMemorySessionInterface()
 
 # Configure CORS
 CORS(app, resources={r"/*": {

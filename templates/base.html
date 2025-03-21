@@ -289,6 +289,36 @@
             font-size: 1.1em;
         }
 
+        /* Support icons styles */
+        .support-icons {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 0px;
+        }
+
+        .support-icon-link {
+            color: white;
+            font-size: 1.5em;
+            transition: transform 0.3s ease, color 0.3s ease;
+        }
+
+        .support-icon-link:hover {
+            transform: translateY(-2px);
+        }
+
+        .support-icon-link.patreon:hover {
+            color: #FF424D; /* Patreon brand color */
+        }
+
+        .support-icon-link.kofi:hover {
+            color: #29ABE0; /* Ko-fi brand color */
+        }
+
+        .support-icon-link.github:hover {
+            color: #fe8e86; /* GitHub Sponsors color */
+        }
+
         /* Modal adjustments */
         .modal-content {
             max-height: 80vh;
@@ -760,10 +790,17 @@
                 <span class="username">Welcome, {{ current_user.username }}</span>
                 {% endif %}
                 {% if hide_support_message is not defined or not hide_support_message %}
-                <a href="https://patreon.com/godver3" target="_blank" class="support-link">
-                    <i class="fab fa-patreon" style="color: white;"></i>
-                    <span class="support-text"><i>Want to support the project?</i></span>
-                </a>
+                <div class="support-icons">
+                    <a href="https://github.com/sponsors/godver3" target="_blank" class="support-icon-link github" title="Support on GitHub">
+                        <i class="fab fa-github"></i>
+                    </a>
+                    <a href="https://patreon.com/godver3" target="_blank" class="support-icon-link patreon" title="Support on Patreon">
+                        <i class="fab fa-patreon"></i>
+                    </a>
+                    <a href="https://ko-fi.com/godver3" target="_blank" class="support-icon-link kofi" title="Support on Ko-fi">
+                        <i class="fas fa-mug-hot"></i>
+                    </a>
+                </div>
                 {% endif %}
             </div>
         </div>
@@ -789,8 +826,12 @@
                         ('logs.logs', 'Logs'),
                         ('settings.index', 'Settings'),
                         ('database.index', 'Database'),
+                        ('database.phalanxdb_status', 'Phalanx DB'),
                         ('performance.performance_dashboard', 'Performance Dashboard'),
-                        ('torrent_status.torrent_status', 'Torrent Status')
+                        ('torrent_status.torrent_status', 'Torrent Status'),
+                        ('connections.index', 'Connections'),
+                        ('api_summary.index', 'API Summary'),
+                        ('real_time_api.index', 'Real Time API')
                     ],
                     'Tools': [
                         ('scraper.scraper_tester', 'Tester'),
@@ -1017,9 +1058,17 @@
                         <li>Continued growth of the project</li>
                     </ul>
                     <div class="support-cta">
+                        <a href="https://github.com/sponsors/godver3" target="_blank" class="patreon-button" style="background-color: #fe8e86;">
+                            <i class="fab fa-github"></i>
+                            Support on GitHub
+                        </a>
                         <a href="https://patreon.com/godver3" target="_blank" class="patreon-button">
                             <i class="fab fa-patreon"></i>
                             Support on Patreon
+                        </a>
+                        <a href="https://ko-fi.com/godver3" target="_blank" class="patreon-button" style="background-color: #29ABE0; margin-top: 10px;">
+                            <i class="fas fa-mug-hot"></i>
+                            Support on Ko-fi
                         </a>
                         <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
                     </div>

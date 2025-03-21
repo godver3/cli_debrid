@@ -183,6 +183,7 @@ def get_recently_aired_and_airing_soon():
         FROM media_items
         WHERE type = 'episode' 
           AND release_date BETWEEN ? AND ?
+          AND state != 'Blacklisted'  -- Exclude blacklisted items
         GROUP BY title, season_number, episode_number
         ORDER BY release_date, airtime, title
         LIMIT 100  -- Limit to reasonable number of results

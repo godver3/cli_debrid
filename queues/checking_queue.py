@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from queues.run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
 from utilities.local_library_scan import check_local_file_for_item, local_library_scan
 from utilities.plex_functions import plex_update_item
@@ -800,3 +800,28 @@ class CheckingQueue:
                     del self.uncached_torrents[hash_value]
             
             logging.debug(f"Cleaned up {len(invalid_tracking_item_ids)} invalid item IDs from uncached torrents tracking")
+
+    def add_items_batch(self, items: List[Dict[str, Any]]):
+        """Add multiple items to the queue at once."""
+        current_time = time.time()
+        for item in items:
+            self.items.append(item)
+            self.checking_queue_times[item['id']] = current_time
+            # Check for uncached torrents
+            torrent_id = item.get('filled_by_torrent_id')
+            if torrent_id:
+                try:
+                    initial_progress = self.get_torrent_progress(torrent_id)
+                    if initial_progress == 0:
+                        self.register_uncached_torrent(item)
+                except Exception as e:
+                    logging.error(f"Failed to check initial progress for item {item['id']}: {str(e)}")
+
+    def remove_items_batch(self, items: List[Dict[str, Any]]):
+        """Remove multiple items from the queue at once."""
+        item_ids = {item['id'] for item in items}
+        self.items = [i for i in self.items if i['id'] not in item_ids]
+        # Clean up checking times
+        for item_id in item_ids:
+            self.checking_queue_times.pop(item_id, None)
+            self.progress_checks.pop(item_id, None)

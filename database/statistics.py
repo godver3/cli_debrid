@@ -264,11 +264,15 @@ def get_collected_counts():
     Get counts of collected media items.
     This function is optimized to use indexes and minimize computation.
     """
+    import time
+    overall_start = time.perf_counter()
+    
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
         # First try to get data from the statistics summary table which should be faster
+        summary_start = time.perf_counter()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
         if cursor.fetchone():
             cursor.execute('''
@@ -278,31 +282,43 @@ def get_collected_counts():
             ''')
             result = cursor.fetchone()
             if result and all(count is not None for count in result):
+                summary_time = time.perf_counter() - summary_start
+                logging.info(f"Statistics summary retrieval took {summary_time*1000:.2f}ms")
                 return {
                     'total_movies': result[0],
                     'total_shows': result[1],
                     'total_episodes': result[2]
                 }
+        summary_time = time.perf_counter() - summary_start
+        logging.info(f"Statistics summary check took {summary_time*1000:.2f}ms (cache miss)")
         
         # If we don't have the summary table or data is incomplete, fall back to direct counts
         # Use optimized individual queries with indexed fields
+        
         # Get total movies count
+        movies_start = time.perf_counter()
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id)
             FROM media_items 
             WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
         ''')
         total_movies = cursor.fetchone()[0]
+        movies_time = time.perf_counter() - movies_start
+        logging.info(f"Movies count query took {movies_time*1000:.2f}ms")
         
         # Get total shows count
+        shows_start = time.perf_counter()
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id)
             FROM media_items 
             WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
         ''')
         total_shows = cursor.fetchone()[0]
+        shows_time = time.perf_counter() - shows_start
+        logging.info(f"Shows count query took {shows_time*1000:.2f}ms")
         
         # Get total episodes count
+        episodes_start = time.perf_counter()
         cursor.execute('''
             SELECT COUNT(*)
             FROM (
@@ -312,6 +328,11 @@ def get_collected_counts():
             )
         ''')
         total_episodes = cursor.fetchone()[0]
+        episodes_time = time.perf_counter() - episodes_start
+        logging.info(f"Episodes count query took {episodes_time*1000:.2f}ms")
+        
+        overall_time = time.perf_counter() - overall_start
+        logging.info(f"Total get_collected_counts execution took {overall_time*1000:.2f}ms")
         
         return {
             'total_movies': total_movies,
@@ -326,78 +347,85 @@ def get_collected_counts():
 
 @cache_for_seconds(30)
 async def get_recently_added_items(movie_limit=5, show_limit=5):
+    import time
+    overall_start = time.perf_counter()
+    
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
-        # Fixed query - using subqueries to properly apply ORDER BY and LIMIT before UNION
-        combined_query = """
-        SELECT * FROM (
-            -- First get the most recent movies
-            SELECT 
-                title,
-                year,
-                'movie' as type,
-                collected_at,
-                imdb_id,
-                tmdb_id,
-                version,
-                filled_by_title,
-                filled_by_file,
-                NULL as season_number,
-                NULL as episode_number
-            FROM media_items
-            WHERE type = 'movie' 
-              AND collected_at IS NOT NULL 
-              AND state IN ('Collected', 'Upgrading')
-            GROUP BY title, year -- Group to get one movie per title/year
-            ORDER BY collected_at DESC
-            LIMIT ?
-        )
+        # Simplified query - directly get most recent movies and episodes
+        query_start = time.perf_counter()
         
-        UNION ALL
-        
-        SELECT * FROM (
-            -- Then get the most recent show episodes
-            SELECT 
-                title,
-                year,
-                'episode' as type,
-                collected_at,
-                imdb_id,
-                tmdb_id,
-                version,
-                filled_by_title,
-                filled_by_file,
-                season_number,
-                episode_number
-            FROM media_items
-            WHERE type = 'episode' 
-              AND collected_at IS NOT NULL 
-              AND state IN ('Collected', 'Upgrading')
-            GROUP BY title
-            ORDER BY collected_at DESC
-            LIMIT ?
-        )
+        # Get most recent movies
+        movie_query = """
+        SELECT DISTINCT
+            title,
+            year,
+            'movie' as type,
+            collected_at,
+            imdb_id,
+            tmdb_id,
+            version,
+            filled_by_title,
+            filled_by_file
+        FROM media_items
+        WHERE type = 'movie'
+          AND collected_at IS NOT NULL 
+          AND state IN ('Collected', 'Upgrading')
+        ORDER BY collected_at DESC
+        LIMIT ?
         """
         
-        cursor.execute(combined_query, (movie_limit, show_limit))
-        results = cursor.fetchall()
+        cursor.execute(movie_query, (movie_limit,))
+        movie_results = cursor.fetchall()
+        
+        # Get most recent TV shows (using first episode as representative)
+        show_query = """
+        SELECT DISTINCT
+            title,
+            year,
+            'episode' as type,
+            collected_at,
+            imdb_id,
+            tmdb_id,
+            version,
+            filled_by_title,
+            filled_by_file,
+            season_number,
+            episode_number
+        FROM media_items
+        WHERE type = 'episode'
+          AND collected_at IS NOT NULL 
+          AND state IN ('Collected', 'Upgrading')
+        ORDER BY collected_at DESC
+        LIMIT ?
+        """
+        
+        cursor.execute(show_query, (show_limit,))
+        show_results = cursor.fetchall()
+        
+        query_time = time.perf_counter() - query_start
+        logging.info(f"Recently added items query took {query_time*1000:.2f}ms")
         
         movies_list = []
         shows_list = []
         
         # Process results and get poster urls
+        poster_start = time.perf_counter()
         async with aiohttp.ClientSession() as session:
             # Process all items and create poster tasks in parallel
             poster_tasks = []
             
-            for row in results:
+            process_start = time.perf_counter()
+            
+            # Process movies
+            for row in movie_results:
                 item = dict(row)
                 media_item = {
                     'title': item['title'],
                     'year': item['year'],
-                    'type': 'movie' if item['type'] == 'movie' else 'show',
+                    'type': 'movie',
                     'collected_at': item['collected_at'],
                     'imdb_id': item['imdb_id'],
                     'tmdb_id': item['tmdb_id'],
@@ -406,34 +434,57 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file']
                 }
                 
-                if item['type'] == 'episode':
-                    media_item.update({
-                        'season_number': item['season_number'],
-                        'episode_number': item['episode_number']
-                    })
-                
                 # Get cached poster URL or create task for batch fetch
-                media_type = 'movie' if item['type'] == 'movie' else 'tv'
-                cached_url = get_cached_poster_url(item['tmdb_id'], media_type)
-                
+                cached_url = get_cached_poster_url(item['tmdb_id'], 'movie')
                 if cached_url:
                     media_item['poster_url'] = cached_url
                 elif item['tmdb_id']:
-                    task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], media_type))
+                    task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], 'movie'))
                     poster_tasks.append((media_item, task))
                 else:
-                    # Use placeholder if no TMDB ID
                     if not get_setting('TMDB', 'api_key'):
                         placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
                         media_item['poster_url'] = placeholder_url
                 
-                if item['type'] == 'movie':
-                    movies_list.append(media_item)
+                movies_list.append(media_item)
+            
+            # Process shows
+            for row in show_results:
+                item = dict(row)
+                media_item = {
+                    'title': item['title'],
+                    'year': item['year'],
+                    'type': 'show',
+                    'collected_at': item['collected_at'],
+                    'imdb_id': item['imdb_id'],
+                    'tmdb_id': item['tmdb_id'],
+                    'version': item['version'],
+                    'filled_by_file': item['filled_by_file'],
+                    'filled_by_title': item['filled_by_title'] if item['filled_by_title'] is not None else item['filled_by_file'],
+                    'season_number': item['season_number'],
+                    'episode_number': item['episode_number']
+                }
+                
+                # Get cached poster URL or create task for batch fetch
+                cached_url = get_cached_poster_url(item['tmdb_id'], 'tv')
+                if cached_url:
+                    media_item['poster_url'] = cached_url
+                elif item['tmdb_id']:
+                    task = asyncio.create_task(get_poster_url(session, item['tmdb_id'], 'tv'))
+                    poster_tasks.append((media_item, task))
                 else:
-                    shows_list.append(media_item)
+                    if not get_setting('TMDB', 'api_key'):
+                        placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                        media_item['poster_url'] = placeholder_url
+                
+                shows_list.append(media_item)
+            
+            process_time = time.perf_counter() - process_start
+            logging.info(f"Processing items took {process_time*1000:.2f}ms")
             
             # Wait for all poster tasks to complete in parallel
             if poster_tasks:
+                poster_fetch_start = time.perf_counter()
                 results = await asyncio.gather(*[task for _, task in poster_tasks], return_exceptions=True)
                 for (item, _), result in zip(poster_tasks, results):
                     if isinstance(result, Exception):
@@ -447,14 +498,18 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                     elif not get_setting('TMDB', 'api_key'):
                         placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
                         item['poster_url'] = placeholder_url
+                poster_fetch_time = time.perf_counter() - poster_fetch_start
+                logging.info(f"Fetching {len(poster_tasks)} posters took {poster_fetch_time*1000:.2f}ms")
         
-        # Clean expired cache entries periodically instead of every request
-        if random.random() < 0.1:  # 10% chance to clean cache
-            clean_expired_cache()
-
+        poster_total_time = time.perf_counter() - poster_start
+        logging.info(f"Total poster processing took {poster_total_time*1000:.2f}ms")
+        
+        overall_time = time.perf_counter() - overall_start
+        logging.info(f"Total get_recently_added_items execution took {overall_time*1000:.2f}ms")
+        
         return {
-            'movies': movies_list[:movie_limit],
-            'shows': shows_list[:show_limit]
+            'movies': movies_list,
+            'shows': shows_list
         }
     except Exception as e:
         logging.error(f"Error in get_recently_added_items: {str(e)}")
@@ -464,11 +519,15 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
 
 @cache_for_seconds(30)
 async def get_recently_upgraded_items(upgraded_limit=5):
+    import time
+    overall_start = time.perf_counter()
+    
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
         # Simplified query for upgrades - directly get the most recent upgrades
+        query_start = time.perf_counter()
         upgraded_query = """
         SELECT 
             title,
@@ -499,11 +558,16 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         
         cursor.execute(upgraded_query, (upgraded_limit,))
         upgrade_results = cursor.fetchall()
+        query_time = time.perf_counter() - query_start
+        logging.info(f"Recently upgraded items query took {query_time*1000:.2f}ms")
         
         media_items = []
         poster_tasks = []
         
+        # Process results and get poster urls
+        poster_start = time.perf_counter()
         async with aiohttp.ClientSession() as session:
+            process_start = time.perf_counter()
             for row in upgrade_results:
                 item = dict(row)
                 media_type = 'movie' if item['type'] == 'movie' else 'tv'
@@ -546,9 +610,12 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                         media_item['poster_url'] = placeholder_url
                 
                 media_items.append(media_item)
+            process_time = time.perf_counter() - process_start
+            logging.info(f"Processing upgraded items took {process_time*1000:.2f}ms")
             
             # Wait for all poster tasks to complete in parallel
             if poster_tasks:
+                poster_fetch_start = time.perf_counter()
                 results = await asyncio.gather(*[task for _, task in poster_tasks], return_exceptions=True)
                 for (item, _), result in zip(poster_tasks, results):
                     if isinstance(result, Exception):
@@ -562,7 +629,14 @@ async def get_recently_upgraded_items(upgraded_limit=5):
                     elif not get_setting('TMDB', 'api_key'):
                         placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
                         item['poster_url'] = placeholder_url
+                poster_fetch_time = time.perf_counter() - poster_fetch_start
+                logging.info(f"Fetching {len(poster_tasks)} posters took {poster_fetch_time*1000:.2f}ms")
         
+        poster_total_time = time.perf_counter() - poster_start
+        logging.info(f"Total poster processing took {poster_total_time*1000:.2f}ms")
+        
+        overall_time = time.perf_counter() - overall_start
+        logging.info(f"Total get_recently_upgraded_items execution took {overall_time*1000:.2f}ms")
         return media_items
     except Exception as e:
         logging.error(f"Error in get_recently_upgraded_items: {str(e)}", exc_info=True)
@@ -578,6 +652,7 @@ def update_statistics_summary(force=False):
     """Update the statistics summary table with the latest data.
     This should be called periodically from the background task manager."""
     global last_update_time
+    import time
     
     # Add throttling to prevent excessive updates
     current_time = time.time()
@@ -592,11 +667,13 @@ def update_statistics_summary(force=False):
         return
     
     try:
+        update_start = time.perf_counter()
         conn = get_db_connection()
         try:
             cursor = conn.cursor()
             
             # First check if the table exists
+            table_check_start = time.perf_counter()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
             if not cursor.fetchone():
                 # Table doesn't exist, close connection and create it first
@@ -606,8 +683,11 @@ def update_statistics_summary(force=False):
                 # Re-open connection after table creation
                 conn = get_db_connection()
                 cursor = conn.cursor()
+            table_check_time = time.perf_counter() - table_check_start
+            logging.info(f"Table check and creation took {table_check_time*1000:.2f}ms")
             
             # Check if we need to update
+            update_check_start = time.perf_counter()
             if not force:
                 cursor.execute("""
                     SELECT last_updated, datetime('now', '-1 minute')
@@ -620,44 +700,48 @@ def update_statistics_summary(force=False):
                 if last_update_check and last_update_check[0] >= last_update_check[1]:
                     logging.debug("Statistics updated recently, skipping update")
                     return
-            
-            # Check if we need to initialize
-            cursor.execute("SELECT id FROM statistics_summary WHERE id=1")
-            if not cursor.fetchone():
-                # Initialize if not exists
-                cursor.execute('''
-                INSERT INTO statistics_summary 
-                (id, total_movies, total_shows, total_episodes, last_updated)
-                VALUES (1, 0, 0, 0, datetime('now', 'localtime'))
-                ''')
-                conn.commit()
+            update_check_time = time.perf_counter() - update_check_start
+            logging.info(f"Update check took {update_check_time*1000:.2f}ms")
             
             # Get the latest statistics
             # Count unique collected movies
+            movies_start = time.perf_counter()
             cursor.execute('''
                 SELECT COUNT(DISTINCT imdb_id) 
                 FROM media_items 
                 WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
             ''')
             total_movies = cursor.fetchone()[0]
+            movies_time = time.perf_counter() - movies_start
+            logging.info(f"Movies count took {movies_time*1000:.2f}ms")
 
             # Count unique collected TV shows
+            shows_start = time.perf_counter()
             cursor.execute('''
                 SELECT COUNT(DISTINCT imdb_id) 
                 FROM media_items 
                 WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
             ''')
             total_shows = cursor.fetchone()[0]
+            shows_time = time.perf_counter() - shows_start
+            logging.info(f"Shows count took {shows_time*1000:.2f}ms")
 
-            # Count unique collected episodes
+            # Count unique collected episodes - Optimized query
+            episodes_start = time.perf_counter()
             cursor.execute('''
-                SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number) 
-                FROM media_items 
-                WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+                SELECT COUNT(*) 
+                FROM (
+                    SELECT DISTINCT imdb_id, season_number, episode_number
+                    FROM media_items 
+                    WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+                )
             ''')
             total_episodes = cursor.fetchone()[0]
+            episodes_time = time.perf_counter() - episodes_start
+            logging.info(f"Episodes count took {episodes_time*1000:.2f}ms")
             
             # Get latest collected movie
+            latest_movie_start = time.perf_counter()
             cursor.execute('''
                 SELECT collected_at 
                 FROM media_items 
@@ -667,8 +751,11 @@ def update_statistics_summary(force=False):
             ''')
             latest_movie = cursor.fetchone()
             latest_movie_collected = latest_movie[0] if latest_movie else None
+            latest_movie_time = time.perf_counter() - latest_movie_start
+            logging.info(f"Latest movie query took {latest_movie_time*1000:.2f}ms")
             
             # Get latest collected episode
+            latest_episode_start = time.perf_counter()
             cursor.execute('''
                 SELECT collected_at
                 FROM media_items 
@@ -678,8 +765,11 @@ def update_statistics_summary(force=False):
             ''')
             latest_episode = cursor.fetchone()
             latest_episode_collected = latest_episode[0] if latest_episode else None
+            latest_episode_time = time.perf_counter() - latest_episode_start
+            logging.info(f"Latest episode query took {latest_episode_time*1000:.2f}ms")
             
             # Get latest upgraded item
+            latest_upgrade_start = time.perf_counter()
             cursor.execute('''
                 SELECT collected_at
                 FROM media_items 
@@ -689,8 +779,11 @@ def update_statistics_summary(force=False):
             ''')
             latest_upgraded = cursor.fetchone()
             latest_upgraded_date = latest_upgraded[0] if latest_upgraded else None
+            latest_upgrade_time = time.perf_counter() - latest_upgrade_start
+            logging.info(f"Latest upgrade query took {latest_upgrade_time*1000:.2f}ms")
             
             # Update the summary table
+            update_start = time.perf_counter()
             cursor.execute('''
                 UPDATE statistics_summary
                 SET total_movies = ?,
@@ -705,9 +798,14 @@ def update_statistics_summary(force=False):
                 latest_movie_collected, latest_episode_collected, latest_upgraded_date))
             
             conn.commit()
-            last_update_time = current_time
-
+            update_time = time.perf_counter() - update_start
+            logging.info(f"Final update and commit took {update_time*1000:.2f}ms")
             
+            last_update_time = current_time
+            
+            total_time = time.perf_counter() - update_start
+            logging.info(f"Total update_statistics_summary execution took {total_time*1000:.2f}ms")
+
         except Exception as e:
             logging.error(f"Error updating statistics summary: {str(e)}", exc_info=True)
         finally:
@@ -717,12 +815,19 @@ def update_statistics_summary(force=False):
 
 def get_statistics_summary():
     """Get the statistics summary from the dedicated table"""
+    import time
+    overall_start = time.perf_counter()
     conn = None
     try:
+        # Time database connection
+        db_connect_start = time.perf_counter()
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # First check if the table exists
+        db_connect_time = time.perf_counter() - db_connect_start
+        logging.info(f"Database connection took {db_connect_time*1000:.2f}ms")
+
+        # Time table existence check
+        table_check_start = time.perf_counter()
         try:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
             if not cursor.fetchone():
@@ -732,15 +837,23 @@ def get_statistics_summary():
                     conn = None
                 
                 try:
+                    create_start = time.perf_counter()
                     from database.schema_management import create_statistics_summary_table
                     create_statistics_summary_table()
+                    create_time = time.perf_counter() - create_start
+                    logging.info(f"Creating statistics table took {create_time*1000:.2f}ms")
                     
                     # Instead of recursively calling, continue with the logic inline
                     conn = get_db_connection()
                     cursor = conn.cursor()
                     
                     # Initialize with direct counts
+                    counts_start = time.perf_counter()
                     initial_counts = get_collected_counts()
+                    counts_time = time.perf_counter() - counts_start
+                    logging.info(f"Initial counts calculation took {counts_time*1000:.2f}ms")
+
+                    insert_start = time.perf_counter()
                     conn.execute('''
                         INSERT OR IGNORE INTO statistics_summary 
                         (id, total_movies, total_shows, total_episodes, last_updated)
@@ -751,20 +864,31 @@ def get_statistics_summary():
                         initial_counts['total_episodes']
                     ))
                     conn.commit()
+                    insert_time = time.perf_counter() - insert_start
+                    logging.info(f"Initial data insertion took {insert_time*1000:.2f}ms")
                     
                     # Return the counts we just calculated
                     return initial_counts
                 except Exception as e:
                     logging.error(f"Error creating statistics table: {str(e)}")
-                    return get_collected_counts()  # Fallback on error
+                    fallback_start = time.perf_counter()
+                    result = get_collected_counts()  # Fallback on error
+                    logging.info(f"Fallback counts took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                    return result
         except sqlite3.OperationalError as e:
             if "no such table: sqlite_master" in str(e):
                 logging.error("Database connection issue: sqlite_master not found")
             else:
                 logging.error(f"SQLite error checking for statistics_summary table: {str(e)}")
-            return get_collected_counts()
+            fallback_start = time.perf_counter()
+            result = get_collected_counts()
+            logging.info(f"Fallback counts after error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+            return result
+        table_check_time = time.perf_counter() - table_check_start
+        logging.info(f"Table existence check took {table_check_time*1000:.2f}ms")
         
-        # Check if summary data exists and needs updating
+        # Time data retrieval and update check
+        query_start = time.perf_counter()
         try:
             cursor.execute('''
                 SELECT total_movies, total_shows, total_episodes, 
@@ -777,29 +901,46 @@ def get_statistics_summary():
         except sqlite3.OperationalError as e:
             if "no such table: statistics_summary" in str(e):
                 logging.error("statistics_summary table doesn't exist despite earlier check")
-                return get_collected_counts()
+                fallback_start = time.perf_counter()
+                result = get_collected_counts()
+                logging.info(f"Fallback counts after table error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                return result
             else:
                 logging.error(f"SQLite error querying statistics_summary: {str(e)}")
-                return get_collected_counts()
+                fallback_start = time.perf_counter()
+                result = get_collected_counts()
+                logging.info(f"Fallback counts after query error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                return result
+        query_time = time.perf_counter() - query_start
+        logging.info(f"Data retrieval query took {query_time*1000:.2f}ms")
         
         if not result:
             # No data yet, initialize it
             try:
                 # Get fresh counts
+                counts_start = time.perf_counter()
                 counts = get_collected_counts()
+                counts_time = time.perf_counter() - counts_start
+                logging.info(f"Fresh counts calculation took {counts_time*1000:.2f}ms")
                 
                 # Insert the initial data
+                insert_start = time.perf_counter()
                 cursor.execute('''
                     INSERT OR IGNORE INTO statistics_summary 
                     (id, total_movies, total_shows, total_episodes, last_updated)
                     VALUES (1, ?, ?, ?, datetime('now', 'localtime'))
                 ''', (counts['total_movies'], counts['total_shows'], counts['total_episodes']))
                 conn.commit()
+                insert_time = time.perf_counter() - insert_start
+                logging.info(f"Data insertion took {insert_time*1000:.2f}ms")
                 
                 return counts
             except sqlite3.Error as e:
                 logging.error(f"SQLite error initializing statistics_summary: {str(e)}")
-                return get_collected_counts()
+                fallback_start = time.perf_counter()
+                result = get_collected_counts()
+                logging.info(f"Fallback counts after initialization error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                return result
                 
         elif result[3] < result[4]:
             # Data exists but is too old
@@ -809,9 +950,13 @@ def get_statistics_summary():
             
             try:
                 # Update data
+                update_start = time.perf_counter()
                 update_statistics_summary(force=True)
+                update_time = time.perf_counter() - update_start
+                logging.info(f"Statistics update took {update_time*1000:.2f}ms")
                 
                 # Open a new connection to get the fresh data
+                new_conn_start = time.perf_counter()
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 
@@ -821,6 +966,8 @@ def get_statistics_summary():
                     WHERE id = 1
                 ''')
                 updated_result = cursor.fetchone()
+                new_conn_time = time.perf_counter() - new_conn_start
+                logging.info(f"New connection and data fetch took {new_conn_time*1000:.2f}ms")
                 
                 if updated_result:
                     return {
@@ -831,12 +978,20 @@ def get_statistics_summary():
                     }
                 else:
                     logging.error("Failed to retrieve updated statistics")
-                    return get_collected_counts()
+                    fallback_start = time.perf_counter()
+                    result = get_collected_counts()
+                    logging.info(f"Fallback counts after update failure took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                    return result
             except Exception as e:
                 logging.error(f"Error updating statistics: {str(e)}")
-                return get_collected_counts()
+                fallback_start = time.perf_counter()
+                result = get_collected_counts()
+                logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                return result
             
         # Return the valid data we found
+        overall_time = time.perf_counter() - overall_start
+        logging.info(f"Total get_statistics_summary execution took {overall_time*1000:.2f}ms")
         return {
             'total_movies': result[0],
             'total_shows': result[1],
@@ -845,7 +1000,10 @@ def get_statistics_summary():
         }
     except Exception as e:
         logging.error(f"Unexpected error getting statistics summary: {str(e)}", exc_info=True)
-        return get_collected_counts()  # Fallback to direct count
+        fallback_start = time.perf_counter()
+        result = get_collected_counts()  # Fallback to direct count
+        logging.info(f"Final fallback counts took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+        return result
     finally:
         if conn:
             try:

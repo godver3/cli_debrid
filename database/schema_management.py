@@ -377,61 +377,40 @@ def create_statistics_indexes():
     conn.close()
 
 def create_statistics_summary_table():
-    """Create and maintain a summarized statistics table for faster queries"""
+    """Create the statistics summary table and its indexes"""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         
-        # Create the table if it doesn't exist
+        # Create the statistics summary table
         cursor.execute('''
-        CREATE TABLE IF NOT EXISTS statistics_summary (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            total_movies INTEGER,
-            total_shows INTEGER,
-            total_episodes INTEGER,
-            latest_movie_collected TEXT,
-            latest_episode_collected TEXT,
-            latest_upgraded TEXT,
-            last_updated TEXT
-        )
+            CREATE TABLE IF NOT EXISTS statistics_summary (
+                total_movies INTEGER NOT NULL DEFAULT 0,
+                total_shows INTEGER NOT NULL DEFAULT 0,
+                total_episodes INTEGER NOT NULL DEFAULT 0,
+                last_updated DATETIME NOT NULL,
+                latest_movie_collected_at DATETIME,
+                latest_episode_collected_at DATETIME,
+                latest_upgrade_at DATETIME
+            )
         ''')
         
-        # Create trigger to update the summary table when media_items changes
+        # Add optimized indexes for recently added items
         cursor.execute('''
-        CREATE TRIGGER IF NOT EXISTS update_statistics_summary_after_media_update
-        AFTER UPDATE ON media_items
-        WHEN new.state IN ('Collected', 'Upgrading') OR old.state IN ('Collected', 'Upgrading')
-        BEGIN
-            -- Mark that we need to update the stats
-            INSERT OR REPLACE INTO statistics_summary (id, last_updated)
-            VALUES (1, datetime('now', 'localtime'));
-        END;
+            CREATE INDEX IF NOT EXISTS idx_media_items_recent_movies
+            ON media_items(collected_at DESC, type, state)
+            WHERE collected_at IS NOT NULL
         ''')
         
-        # Create trigger for inserts
         cursor.execute('''
-        CREATE TRIGGER IF NOT EXISTS update_statistics_summary_after_media_insert
-        AFTER INSERT ON media_items
-        WHEN new.state IN ('Collected', 'Upgrading')
-        BEGIN
-            -- Mark that we need to update the stats
-            INSERT OR REPLACE INTO statistics_summary (id, last_updated)
-            VALUES (1, datetime('now', 'localtime'));
-        END;
+            CREATE INDEX IF NOT EXISTS idx_media_items_recent_episodes
+            ON media_items(collected_at DESC, type, state)
+            WHERE collected_at IS NOT NULL
         ''')
-        
-        # Initialize with a row if empty
-        cursor.execute('SELECT COUNT(*) FROM statistics_summary')
-        if cursor.fetchone()[0] == 0:
-            cursor.execute('''
-            INSERT INTO statistics_summary 
-            (id, total_movies, total_shows, total_episodes, last_updated)
-            VALUES (1, 0, 0, 0, datetime('now', 'localtime'))
-            ''')
         
         conn.commit()
-        logging.info("Created statistics summary table and triggers")
     except Exception as e:
         logging.error(f"Error creating statistics summary table: {str(e)}")
+        raise
     finally:
         conn.close()

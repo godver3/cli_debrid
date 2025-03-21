@@ -2,7 +2,7 @@ from .core import get_db_connection
 import logging
 import os
 import json
-from typing import List
+from typing import List, Dict
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -309,5 +309,27 @@ def get_imdb_aliases(imdb_id: str) -> List[str]:
     except Exception as e:
         logging.error(f"Error retrieving IMDB aliases for {imdb_id}: {str(e)}")
         return [imdb_id]
+    finally:
+        conn.close()
+
+def get_media_items_by_ids_batch(item_ids: List[int]) -> List[Dict]:
+    """Get multiple media items by their IDs in a single query.
+    
+    Args:
+        item_ids: List of item IDs to retrieve
+        
+    Returns:
+        List of media items as dictionaries
+    """
+    conn = get_db_connection()
+    try:
+        placeholders = ','.join('?' * len(item_ids))
+        query = f'SELECT * FROM media_items WHERE id IN ({placeholders})'
+        cursor = conn.execute(query, item_ids)
+        items = cursor.fetchall()
+        return [dict(item) for item in items]
+    except Exception as e:
+        logging.error(f"Error retrieving media items batch: {str(e)}")
+        return []
     finally:
         conn.close()

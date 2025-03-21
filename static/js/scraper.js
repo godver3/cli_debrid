@@ -302,12 +302,12 @@ function toggleResultsVisibility(section) {
 function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
     hideLoadingState();
     const overlay = document.getElementById('overlay');
+    const overlayContent = document.getElementById('overlayContent');
 
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     function handleScreenChange(e) {
         if (e.matches) {
-            const overlayContentRes = document.getElementById('overlayContent');
-            overlayContentRes.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
+            overlayContent.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
             const gridContainer = document.createElement('div');
             gridContainer.style.display = 'flex';
             gridContainer.style.flexWrap = 'wrap';
@@ -355,10 +355,16 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 gridContainer.appendChild(torResDiv);
             });
 
-            overlayContentRes.appendChild(gridContainer);
+            overlayContent.appendChild(gridContainer);
         } else {
-            const overlayContent = document.getElementById('overlayContent');
-            overlayContent.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
+            // Clear content first
+            overlayContent.innerHTML = '';
+            
+            // Add the header
+            const header = document.createElement('h3');
+            header.textContent = `Torrent Results for ${title} (${year})`;
+            overlayContent.appendChild(header);
+            
             // Create table element
             const table = document.createElement('table');
             table.style.width = '100%';
@@ -429,11 +435,44 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
     mediaQuery.addListener(handleScreenChange);
     handleScreenChange(mediaQuery);
 
-    overlay.style.display = 'block';
+    // Add modal-open class to body
+    document.body.classList.add('modal-open');
+    overlay.style.display = 'flex';
     
-    // Prepare data for cache check - now using the full results object
-    // Check cache status in the background for first 5 items
+    // Add click handler for close button if not already added
+    const closeButton = overlay.querySelector('.close-btn');
+    if (closeButton) {
+        closeButton.onclick = function() {
+            closeOverlay();
+        };
+    }
+
+    // Add click handler for overlay background if not already added
+    overlay.onclick = function(event) {
+        if (event.target === overlay) {
+            closeOverlay();
+        }
+    };
+
+    // Stop propagation on overlay content to prevent closing when clicking inside
+    const overlayContentWrapper = overlay.querySelector('.overlay-content');
+    if (overlayContentWrapper) {
+        overlayContentWrapper.onclick = function(event) {
+            event.stopPropagation();
+        };
+    }
+    
+    // Prepare data for cache check
     checkCacheStatusInBackground(null, data);
+}
+
+// Function to close the overlay
+function closeOverlay() {
+    const overlay = document.getElementById('overlay');
+    if (overlay) {
+        overlay.style.display = 'none';
+        document.body.classList.remove('modal-open');
+    }
 }
 
 // Add event listeners when DOM content is loaded
@@ -465,13 +504,37 @@ document.addEventListener('DOMContentLoaded', async function() {
         cancelVersionsButton.addEventListener('click', closeVersionModal);
     }
     
-    // Close the overlay when the close button is clicked
-    const closeButton = document.querySelector('.close-btn');
-    if (closeButton) {
-        closeButton.onclick = function() {
-            document.getElementById('overlay').style.display = 'none';
-        };
-    }
+    // Close modals when clicking outside
+    window.addEventListener('click', function(event) {
+        const versionModal = document.getElementById('versionModal');
+        const mobileActionModal = document.getElementById('mobileActionModal');
+        
+        // Close version modal if clicking outside modal content
+        if (event.target === versionModal) {
+            closeVersionModal();
+        }
+        
+        // Close mobile action modal if clicking outside modal content
+        if (event.target === mobileActionModal) {
+            closeMobileActionModal();
+        }
+    });
+    
+    // Close modals when pressing Escape key
+    window.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            const versionModal = document.getElementById('versionModal');
+            const mobileActionModal = document.getElementById('mobileActionModal');
+            
+            if (versionModal && versionModal.style.display === 'flex') {
+                closeVersionModal();
+            }
+            
+            if (mobileActionModal && mobileActionModal.style.display === 'flex') {
+                closeMobileActionModal();
+            }
+        }
+    });
     
     // Initialize the Loading object
     Loading.init();
@@ -690,6 +753,26 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Initialize mobile action modal
     initializeMobileActionModal();
+    
+    // Close overlay when clicking outside content
+    const overlay = document.getElementById('overlay');
+    if (overlay) {
+        overlay.addEventListener('click', function(event) {
+            if (event.target === overlay) {
+                closeOverlay();
+            }
+        });
+    }
+    
+    // Close overlay when pressing Escape key
+    window.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            const overlay = document.getElementById('overlay');
+            if (overlay && overlay.style.display === 'block') {
+                closeOverlay();
+            }
+        }
+    });
 });
 
 // Available versions and selected content
@@ -797,7 +880,16 @@ function showVersionModal(content) {
         }
     });
     
+    // Add modal-open class to body
+    document.body.classList.add('modal-open');
     modal.style.display = 'flex';
+}
+
+// Close version selection modal
+function closeVersionModal() {
+    document.getElementById('versionModal').style.display = 'none';
+    // Remove modal-open class from body
+    document.body.classList.remove('modal-open');
 }
 
 // Show version selection modal for a specific season
@@ -892,11 +984,6 @@ async function fetchShowSeasons(tmdbId) {
         document.getElementById('season-selection-container').innerHTML = 
             '<p>Error loading seasons. Please try again later.</p>';
     }
-}
-
-// Close version selection modal
-function closeVersionModal() {
-    document.getElementById('versionModal').style.display = 'none';
 }
 
 // Handle version confirmation
@@ -2063,35 +2150,9 @@ function initializeMobileActionModal() {
 // Function to show mobile action modal
 function showMobileActionModal(item) {
     const modal = document.getElementById('mobileActionModal');
-    const titleEl = modal.querySelector('.mobile-action-title');
-    const yearEl = modal.querySelector('.mobile-action-year');
-    const scrapeButton = modal.querySelector('.mobile-scrape-button');
-    const requestButton = modal.querySelector('.mobile-request-button');
     
-    // Set content title and year
-    titleEl.textContent = item.title;
-    yearEl.textContent = item.year || (item.release_date ? new Date(item.release_date).getFullYear() : 'N/A');
-    
-    // Change button text based on media type
-    if (item.media_type === 'tv' || item.media_type === 'show') {
-        // Update the button text and icon for TV shows
-        scrapeButton.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
-                <polyline points="17 2 12 7 7 2"></polyline>
-            </svg>
-            Enter Show
-        `;
-    } else {
-        // Reset to default for movies
-        scrapeButton.innerHTML = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            Scrape Content
-        `;
-    }
+    // Add modal-open class to body
+    document.body.classList.add('modal-open');
     
     // Set up button actions
     scrapeButton.onclick = function() {
@@ -2120,7 +2181,7 @@ function showMobileActionModal(item) {
 // Function to close mobile action modal
 function closeMobileActionModal() {
     const modal = document.getElementById('mobileActionModal');
-    if (modal) {
-        modal.style.display = 'none';
-    }
+    modal.style.display = 'none';
+    // Remove modal-open class from body
+    document.body.classList.remove('modal-open');
 }

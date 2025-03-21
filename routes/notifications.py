@@ -347,8 +347,15 @@ def store_notification(title, message, notification_type='info', link=None):
             try:
                 with open(NOTIFICATION_FILE) as f:
                     notifications = json.load(f)
+                # Validate the structure
+                if not isinstance(notifications, dict) or "notifications" not in notifications:
+                    logging.warning("Invalid notifications structure, resetting to default")
+                    notifications = {"notifications": []}
             except json.JSONDecodeError:
-                logging.error("Invalid JSON in notifications file, starting fresh")
+                logging.warning("Invalid JSON in notifications file, starting fresh")
+                # Create a new file with valid JSON
+                with open(NOTIFICATION_FILE, 'w') as f:
+                    json.dump({"notifications": []}, f, indent=2)
         
         # Create new notification
         new_notification = {

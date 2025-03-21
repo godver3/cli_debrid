@@ -209,6 +209,7 @@ nav ul li a:hover::after {
     flex-direction: column;
     align-items: flex-start;
     min-height: 35px;
+    scale: 0.9;
 }
 
 .action-controls {

@@ -7,15 +7,15 @@ from pathlib import Path
 def get_available_logos():
     """
     Scan the static directory to find available logo files and categorize them.
-    Returns a list of logo options with the format: ["Default", "Plex"].
+    Returns a list of logo options with the format: ["Default", "Plex-Inspired"].
     """
     # Define the static directory path relative to this file
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
     
     # Default logo options
-    logo_options = ["Default"]
+    logo_options = ["Default", "Plex-Inspired"]
     
-    # Pattern matching for Plex logo
+    # Pattern matching for Plex-Inspired logo
     plex_pattern = re.compile(r"plex-icon-\d+x\d+\.(png|ico)$")
     
     # Check if the static directory exists
@@ -27,8 +27,8 @@ def get_available_logos():
         for file_path in files:
             filename = os.path.basename(file_path)
             if plex_pattern.search(filename):
-                if "Plex" not in logo_options:
-                    logo_options.append("Plex")
+                if "Plex-Inspired" not in logo_options:
+                    logo_options.append("Plex-Inspired")
                 break
     
     return logo_options
@@ -57,7 +57,7 @@ SETTINGS_SCHEMA = {
         "enable_phalanx_db": {
             "type": "boolean",
             "description": "Enable the phalanx_db service",
-            "default": True
+            "default": False
         },
         "disable_auto_browser": {
             "type": "boolean",
@@ -66,7 +66,7 @@ SETTINGS_SCHEMA = {
         },
         "program_logo": {
             "type": "string",
-            "description": "Select the program logo to display in the UI. Credits to:@mrcuriousny for Plex-style logo",
+            "description": "Select the program logo to display in the UI. Credits to:@mrcuriousny for Plex-Inspired logo",
             "default": "Default",
             "choices": AVAILABLE_LOGOS
         },
