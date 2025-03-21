@@ -27,6 +27,7 @@ from flask_login import current_user
 import asyncio
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
+import time
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -35,8 +36,33 @@ _phalanx_cache_manager = PhalanxDBClassManager()
 
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
-    imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
-    return jsonify({'imdb_id': imdb_id or 'N/A'})
+    max_retries = 3
+    base_delay = 1  # Base delay in seconds
+    
+    for attempt in range(max_retries):
+        try:
+            imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
+            if imdb_id:
+                return jsonify({'imdb_id': imdb_id})
+            
+            # If we get None but no exception, try again with backoff
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logging.warning(f"TMDB to IMDB conversion attempt {attempt + 1} failed, retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logging.error(f"Error in TMDB to IMDB conversion attempt {attempt + 1}: {str(e)}, retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+            else:
+                logging.error(f"All TMDB to IMDB conversion attempts failed: {str(e)}")
+                break
+    
+    return jsonify({'imdb_id': 'N/A'})
 
 def obfuscate_magnet_link(magnet_link: str) -> str:
     """

@@ -1,4 +1,4 @@
-from flask import Flask, redirect, url_for, send_from_directory
+from flask import Flask, redirect, url_for, send_from_directory, jsonify, session
 from flask_session import Session
 import time
 from queues.queue_manager import QueueManager
@@ -60,7 +60,7 @@ def inject_logo_selection():
     # Define logo mappings based on selection
     logo_paths = {
         'Default': 'white-icon-32x32.png',  # Default is the white icon
-        'Plex': 'plex-icon-32x32.png'
+        'Plex-Inspired': 'plex-icon-32x32.png'
     }
     
     # Get the appropriate logo path or default to white icon if selection not found
@@ -151,7 +151,7 @@ def favicon():
     # Define favicon mappings based on selection
     favicon_paths = {
         'Default': 'favicon.ico',  # Default favicon
-        'Plex': 'plex-icon-32x32.ico'
+        'Plex-Inspired': 'plex-icon-32x32.ico'
     }
     
     # Get the appropriate favicon path or default to regular favicon if selection not found
@@ -175,7 +175,7 @@ def dynamic_favicon(size):
             '192x192': 'android-chrome-192x192.png',
             '512x512': 'android-chrome-512x512.png'
         },
-        'Plex': {
+        'Plex-Inspired': {
             '16x16': 'plex-icon-16x16.png',
             '32x32': 'plex-icon-32x32.png',
             '192x192': 'plex-favicon-192x192.png',
@@ -198,7 +198,7 @@ def manifest():
     logo_selection = get_setting('UI Settings', 'program_logo', 'Default')
     
     # Choose icons based on logo selection
-    if logo_selection == 'Plex':
+    if logo_selection == 'Plex-Inspired':
         icons = [
             {
                 "src": "/static/plex-favicon-192x192.png",

@@ -30,6 +30,12 @@ body {
     padding-top: 60px;
 }
 
+/* Add class to prevent scrolling when modal is open */
+body.modal-open {
+    overflow: hidden;
+    padding-right: 15px; /* Prevent layout shift when scrollbar disappears */
+}
+
 #scraper-container {
     display: flex;
     flex-direction: column;
@@ -862,41 +868,64 @@ h2.episode-title {
     backdrop-filter: blur(8px);
     background-color: rgba(0, 0, 0, 0.7);
     z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    margin-top: 30px;
 }
 
 .overlay-content {
     position: relative;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
     background-color: var(--surface-color);
-    padding: 20px;
+    padding: 0 20px 20px 20px;
     border-radius: var(--border-radius-lg);
-    max-width: 85%;
-    max-height: 80%;
+    width: 85%;
+    max-width: 1200px;
+    max-height: 85vh;
     overflow-y: auto;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
     border: 1px solid rgba(255, 255, 255, 0.1);
     scrollbar-width: none;
     -ms-overflow-style: none;
-    margin-top: 50px;
+    margin-top: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.overlay-content h3 {
+    position: sticky;
+    top: 0;
+    background-color: var(--surface-color);
+    margin-top: 0;
+    padding-top: 10px;
+    padding-bottom: 15px;
+    margin-bottom: 15px;
+    z-index: 3;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
 
 .close-btn {
-    position: absolute;
-    top: 10px;
+    position: sticky;
+    top: 15px;
     right: 15px;
     width: 30px;
-    height: 30px;
+    height: 32px;
     font-size: 24px;
-    line-height: 30px;
-    text-align: center;
-    cursor: pointer;
-    color: var(--text-secondary);
+    border: none;
     background-color: transparent;
+    color: var(--text-secondary);
     border-radius: 50%;
+    cursor: pointer;
     transition: all var(--transition-speed) ease;
-    z-index: 2;
+    z-index: 5;
+    margin-left: auto;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .close-btn:hover {
@@ -912,7 +941,22 @@ h2.episode-title {
     table-layout: fixed; /* Ensures fixed column widths */
 }
 
-.overlay-content th,
+.overlay-content thead {
+    position: sticky;
+    top: 55px; /* Position below the modal title */
+    background-color: var(--surface-color);
+    z-index: 2;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.overlay-content th {
+    padding: 12px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background-color: var(--surface-color);
+}
+
 .overlay-content td {
     padding: 12px;
     text-align: left;
@@ -1342,3 +1386,8 @@ p.torresult-title {
     line-height: 1;
     scale: 0.7;
 }
+
+.overlay-content {
+    padding-top: 0px !important;
+}
+

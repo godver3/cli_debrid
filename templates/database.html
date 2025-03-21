@@ -14,6 +14,7 @@
                 <option value="Adding">Adding</option>
                 <option value="Blacklisted">Blacklisted</option>
                 <option value="Checking">Checking</option>
+                <option value="Collected">Collected</option>
                 <option value="Scraping">Scraping</option>
                 <option value="Sleeping">Sleeping</option>
                 <option value="Unreleased">Unreleased</option>
@@ -170,6 +171,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize state variables at the top
     let currentContentType = templateData.contentType;
+    // Validate content type on initialization
+    if (currentContentType !== 'movie' && currentContentType !== 'episode') {
+        currentContentType = 'movie';
+        console.log('Corrected invalid initial content type:', templateData.contentType);
+    }
+    
     let currentLetter = '{{ current_letter }}';
     let lastChecked = null;
     let allSelected = false;
@@ -182,6 +189,40 @@ document.addEventListener('DOMContentLoaded', function() {
         SELECTED_COLUMNS: 'db_selected_columns',
         CONTENT_TYPE: 'db_content_type'
     };
+
+    // Function to validate and sanitize localStorage data
+    function cleanupLocalStorage() {
+        const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+        if (savedContentType !== 'movie' && savedContentType !== 'episode') {
+            console.log('Removing invalid content type from localStorage:', savedContentType);
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
+        }
+
+        try {
+            // Validate filters
+            const savedFilters = localStorage.getItem(STORAGE_KEYS.FILTERS);
+            if (savedFilters) {
+                JSON.parse(savedFilters); // Will throw if invalid JSON
+            }
+        } catch (e) {
+            console.log('Removing invalid filters from localStorage');
+            localStorage.removeItem(STORAGE_KEYS.FILTERS);
+        }
+
+        try {
+            // Validate columns
+            const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+            if (savedColumns) {
+                JSON.parse(savedColumns); // Will throw if invalid JSON
+            }
+        } catch (e) {
+            console.log('Removing invalid selected columns from localStorage');
+            localStorage.removeItem(STORAGE_KEYS.SELECTED_COLUMNS);
+        }
+    }
+
+    // Clean up localStorage on page load
+    cleanupLocalStorage();
 
     function createFilterRow(filter = null) {
         const row = document.createElement('div');
@@ -279,10 +320,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const sortColumn = document.getElementById('sort-column').value;
         const sortOrder = document.getElementById('sort-order').value;
         
+        // Validate content type before saving
+        const validContentType = (currentContentType === 'movie' || currentContentType === 'episode') 
+            ? currentContentType 
+            : 'movie';
+        
         localStorage.setItem(STORAGE_KEYS.FILTERS, JSON.stringify(filters));
         localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
         localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
-        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, currentContentType);
+        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
     }
 
     // Function to restore settings from localStorage
@@ -292,6 +338,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const sortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
         const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
         const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+
+        // Validate content type
+        const validContentType = (savedContentType === 'movie' || savedContentType === 'episode') 
+            ? savedContentType 
+            : 'movie';
 
         // Restore filters
         if (savedFilters) {
@@ -308,19 +359,24 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sortOrder) document.getElementById('sort-order').value = sortOrder;
         
         // Restore content type
-        if (savedContentType) {
-            currentContentType = savedContentType;
+        if (validContentType) {
+            currentContentType = validContentType;
             document.querySelectorAll('.content-type-link').forEach(link => {
-                if (link.getAttribute('data-content-type') === savedContentType) {
+                if (link.getAttribute('data-content-type') === validContentType) {
                     link.classList.add('active');
                 } else {
                     link.classList.remove('active');
                 }
             });
+
+            // If we've corrected an invalid content type, update localStorage
+            if (validContentType !== savedContentType) {
+                localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
+            }
         }
 
         // Apply restored settings
-        if (savedFilters || sortColumn || sortOrder || savedContentType || savedColumns) {
+        if (savedFilters || sortColumn || sortOrder || validContentType || savedColumns) {
             const filters = savedFilters ? JSON.parse(savedFilters) : [];
             const selectedColumnValues = savedColumns ? JSON.parse(savedColumns) : Array.from(document.getElementById('selected-columns').options).map(option => option.value);
             
@@ -328,7 +384,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 filters: JSON.stringify(filters),
                 sort_column: sortColumn,
                 sort_order: sortOrder,
-                content_type: savedContentType,
+                content_type: validContentType,
                 selected_columns: JSON.stringify(selectedColumnValues)
             });
         }
@@ -350,10 +406,49 @@ document.addEventListener('DOMContentLoaded', function() {
                 value: row.querySelector('.filter-value').value
             })).filter(f => f.column && f.value);
 
+            const sortColumn = document.getElementById('sort-column').value;
+            const sortOrder = document.getElementById('sort-order').value;
+
+            // If no filters and no sort settings, reset to default state
+            if (filters.length === 0 && !sortColumn) {
+                // Set default content type and letter
+                currentContentType = 'movie';
+                currentLetter = 'A';
+
+                // Update UI to reflect default selections
+                document.querySelectorAll('.content-type-link').forEach(link => {
+                    if (link.getAttribute('data-content-type') === 'movie') {
+                        link.classList.add('active');
+                    } else {
+                        link.classList.remove('active');
+                    }
+                });
+
+                document.querySelectorAll('.pagination-link').forEach(link => {
+                    if (link.getAttribute('data-letter') === 'A') {
+                        link.classList.add('active');
+                    } else {
+                        link.classList.remove('active');
+                    }
+                });
+
+                // Save the content type to localStorage
+                localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
+
+                // Update content with default settings
+                updateContent('{{ url_for('database.index') }}', {
+                    content_type: 'movie',
+                    letter: 'A'
+                });
+                return;
+            }
+
+            // Otherwise proceed with normal filter/sort application
             const params = {
                 filters: JSON.stringify(filters),
-                sort_column: document.getElementById('sort-column').value,
-                sort_order: document.getElementById('sort-order').value
+                sort_column: sortColumn,
+                sort_order: sortOrder,
+                content_type: currentContentType || 'movie'  // Always include content_type
             };
 
             saveSettings();
@@ -374,17 +469,44 @@ document.addEventListener('DOMContentLoaded', function() {
         // Reset sort inputs
         const sortColumn = document.getElementById('sort-column');
         const sortOrder = document.getElementById('sort-order');
-        if (sortColumn) sortColumn.value = '';
-        if (sortOrder) sortOrder.value = 'asc';
+        if (sortColumn) {
+            sortColumn.value = '';
+        }
+        if (sortOrder) {
+            sortOrder.value = 'asc';
+        }
 
-        // Keep current content type and letter
-        const params = {
-            content_type: currentContentType,
-            letter: currentLetter
-        };
+        // Set default content type to 'movie' and letter to 'A'
+        currentContentType = 'movie';
+        currentLetter = 'A';
+        
+        // Save the content type to localStorage
+        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
 
-        // Update the content with cleared filters and sort
-        updateContent("{{ url_for('database.index') }}", params);
+        // Update UI to reflect default selections
+        const contentTypeLinks = document.querySelectorAll('.content-type-link');
+        contentTypeLinks.forEach(function(link) {
+            if (link.getAttribute('data-content-type') === 'movie') {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        const paginationLinks = document.querySelectorAll('.pagination-link');
+        paginationLinks.forEach(function(link) {
+            if (link.getAttribute('data-letter') === 'A') {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        // Update the content with default settings
+        updateContent("{{ url_for('database.index') }}", {
+            content_type: 'movie',
+            letter: 'A'
+        });
     }
 
     // Add event listener for clear filter & sort button
@@ -688,8 +810,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateContent(url, params = {}) {
+        // Validate content type
+        if (params.content_type !== 'movie' && params.content_type !== 'episode') {
+            params.content_type = 'movie';
+        }
+        
         // Ensure content type is always set
         params.content_type = params.content_type || currentContentType || 'movie';
+        
+        // Validate again after potentially using currentContentType
+        if (params.content_type !== 'movie' && params.content_type !== 'episode') {
+            params.content_type = 'movie';
+        }
+        
+        // Update currentContentType with what we're using
+        currentContentType = params.content_type;
         
         // Ensure letter is always set
         params.letter = params.letter || currentLetter || 'A';
@@ -788,7 +923,33 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateUIForCurrentState(data) {
-        // ... (implement UI update logic)
+        // Update content type buttons
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            if (link.getAttribute('data-content-type') === data.content_type) {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        // Update letter pagination
+        document.querySelectorAll('.pagination-link').forEach(link => {
+            if (link.getAttribute('data-letter') === data.current_letter) {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        // Update the sort selects
+        const sortColumn = document.getElementById('sort-column');
+        const sortOrder = document.getElementById('sort-order');
+        if (sortColumn && data.sort_column) {
+            sortColumn.value = data.sort_column;
+        }
+        if (sortOrder && data.sort_order) {
+            sortOrder.value = data.sort_order;
+        }
     }
 
     function attachEventListeners() {
@@ -797,10 +958,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 // Only proceed if clicking an inactive link
                 if (!this.classList.contains('active')) {
-                    currentContentType = this.getAttribute('data-content-type');
-                    saveSettings();
-                    clearFilter();
-                    updateContent('{{ url_for('database.index') }}', { content_type: currentContentType });
+                    const newContentType = this.getAttribute('data-content-type');
+                    // Validate that it's a valid content type
+                    if (newContentType === 'movie' || newContentType === 'episode') {
+                        currentContentType = newContentType;
+                        saveSettings();
+                        clearFilter();
+                        updateContent('{{ url_for('database.index') }}', { content_type: currentContentType });
+                    } else {
+                        console.error('Invalid content type:', newContentType);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error',
+                            message: 'Invalid content type specified',
+                        });
+                    }
                 }
             });
         });
@@ -812,7 +984,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!this.classList.contains('active')) {
                     currentLetter = this.getAttribute('data-letter');
                     clearFilter();
-                    updateContent('{{ url_for('database.index') }}', { letter: currentLetter });
+                    updateContent('{{ url_for('database.index') }}', { 
+                        letter: currentLetter,
+                        content_type: (currentContentType === 'movie' || currentContentType === 'episode') 
+                            ? currentContentType 
+                            : 'movie'  
+                    });
                 }
             });
         });

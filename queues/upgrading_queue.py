@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 from database.database_writing import add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
@@ -768,6 +768,21 @@ class UpgradingQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{'_'.join(item['version'].split())}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
+
+    def add_items_batch(self, items: List[Dict[str, Any]]):
+        """Add multiple items to the queue at once."""
+        self.items.extend(items)
+        current_time = datetime.now()
+        for item in items:
+            self.upgrade_times[item['id']] = current_time
+
+    def remove_items_batch(self, items: List[Dict[str, Any]]):
+        """Remove multiple items from the queue at once."""
+        item_ids = {item['id'] for item in items}
+        self.items = [i for i in self.items if i['id'] not in item_ids]
+        # Clean up upgrade times
+        for item_id in item_ids:
+            self.upgrade_times.pop(item_id, None)
 
 def log_successful_upgrade(item: Dict[str, Any]):
     # Get db_content directory from environment variable with fallback

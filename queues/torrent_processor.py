@@ -175,12 +175,14 @@ class TorrentProcessor:
                 - Returns (None, None) on error
         """
         try:
+            # Handle magnet links first and return early
             if magnet_or_url.startswith('magnet:'):
                 return magnet_or_url, None
                 
+            # Only try URL processing for non-magnet links
             parsed = urlparse(magnet_or_url)
             if not parsed.scheme or not parsed.netloc:
-                logging.error(f"Invalid URL or magnet link: {magnet_or_url}")
+                logging.error(f"Invalid URL: {magnet_or_url}")
                 return None, None
                 
             with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
@@ -469,7 +471,6 @@ class TorrentProcessor:
                             torrent_title = self.debrid_provider.get_cached_torrent_title(hash_value)
                 
                 if not info:
-                    magnet, temp_file = self.process_torrent(original_link)
                     try:
                         # Extract hash to check if it already exists
                         hash_value = None

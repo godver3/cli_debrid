@@ -3,10 +3,11 @@ from collections import OrderedDict
 from datetime import datetime
 from typing import Dict, Any, List
 
-from database.database_writing import update_media_item_state
-from database.database_reading import get_media_item_by_id
+from database.database_writing import update_media_item_state, update_media_items_state_batch
+from database.database_reading import get_media_item_by_id, get_media_items_by_ids_batch
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
+from utilities.settings import get_setting
 
 from queues.wanted_queue import WantedQueue
 from queues.scraping_queue import ScrapingQueue
@@ -85,33 +86,11 @@ class QueueManager:
 
     def process_wanted(self):
         if not self.paused:
-            # logging.debug("Processing Wanted queue")
-            queue_contents = self.queues["Wanted"].get_contents()
-            # logging.debug(f"Wanted queue contains {len(queue_contents)} items")
-            # if queue_contents:
-                # for item in queue_contents:
-                    # logging.debug(f"Processing Wanted item: {self.generate_identifier(item)}")
-            self.queues["Wanted"].process(self)
-        # else:
-            # logging.debug("Skipping Wanted queue processing: Queue is paused")
+            return self.process_wanted_batch()
 
     def process_scraping(self):
         if not self.paused:
-            # logging.debug("Processing Scraping queue")
-            # Update queue before processing
-            self.queues["Scraping"].update()
-            queue_contents = self.queues["Scraping"].get_contents()
-            # logging.info(f"Scraping queue contains {len(queue_contents)} items after update")
-            
-            if queue_contents:
-                for item in queue_contents:
-                    logging.debug(f"Scraping queue item: {self.generate_identifier(item)}")
-                result = self.queues["Scraping"].process(self)
-                logging.info(f"Scraping queue process result: {result}")
-                return result
-        else:
-            logging.debug("Skipping Scraping queue processing: Queue is paused")
-        return False
+            return self.process_scraping_batch()
 
     def process_adding(self):
         if not self.paused:
@@ -217,8 +196,6 @@ class QueueManager:
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
         
-        from utilities.settings import get_setting
-
         '''
         # Check if Plex library checks are disabled
         if get_setting('Plex', 'disable_plex_library_checks') and not get_setting('Plex', 'mounted_file_location'):
@@ -382,5 +359,176 @@ class QueueManager:
                 add_to_collected_notifications(updated_item_dict)
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+
+    def move_items_batch(self, items: List[Dict[str, Any]], from_queue: str, to_queue: str, **kwargs):
+        """Move multiple items between queues in a single batch operation.
+        
+        Args:
+            items: List of items to move
+            from_queue: Source queue name
+            to_queue: Destination queue name
+            **kwargs: Additional fields to update in the database
+        """
+        if not items:
+            return
+        
+        try:
+            # Get all item IDs
+            item_ids = [item['id'] for item in items]
+            
+            # Update states in database
+            update_media_items_state_batch(item_ids, to_queue, **kwargs)
+            
+            # Get updated items
+            updated_items = get_media_items_by_ids_batch(item_ids)
+            
+            # Update queue contents
+            self.queues[to_queue].add_items_batch(updated_items)
+            self.queues[from_queue].remove_items_batch(items)
+            
+            # Log the batch operation
+            logging.info(f"Moved {len(items)} items from {from_queue} to {to_queue}")
+        except Exception as e:
+            logging.error(f"Error in batch move operation: {str(e)}")
+            # Fall back to individual moves on failure
+            for item in items:
+                try:
+                    if from_queue == "Wanted":
+                        self.move_to_wanted(item, from_queue)
+                    elif to_queue == "Scraping":
+                        self.move_to_scraping(item, from_queue)
+                    elif to_queue == "Adding":
+                        self.move_to_adding(item, from_queue, kwargs.get('filled_by_title'), kwargs.get('scrape_results', []))
+                    # Add other queue moves as needed
+                except Exception as inner_e:
+                    logging.error(f"Error in fallback move for item {item.get('id')}: {str(inner_e)}")
+
+    def _reconcile_with_existing_items(self, item: Dict[str, Any]) -> bool:
+        """
+        Check if an item already exists in Collected or Upgrading state with the same version.
+        If found, remove the current item from the wanted queue.
+        
+        Args:
+            item: The item to check for reconciliation
+            
+        Returns:
+            bool: True if item was reconciled (found existing), False otherwise
+        """
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            # Query for existing items with same identifiers and version in Collected or Upgrading state
+            cursor = conn.execute('''
+                SELECT * FROM media_items 
+                WHERE state IN ('Collected', 'Upgrading')
+                AND version = ?
+                AND (
+                    (imdb_id = ? AND imdb_id IS NOT NULL) OR
+                    (tmdb_id = ? AND tmdb_id IS NOT NULL)
+                )
+                AND type = ?
+                AND (
+                    (type != 'episode') OR
+                    (season_number = ? AND episode_number = ?)
+                )
+            ''', (
+                item.get('version'),
+                item.get('imdb_id'),
+                item.get('tmdb_id'),
+                item.get('type'),
+                item.get('season_number'),
+                item.get('episode_number')
+            ))
+            
+            existing_item = cursor.fetchone()
+            if existing_item:
+                logging.info(f"Found existing item in {existing_item['state']} state with same version. "
+                           f"Removing duplicate from Wanted queue.")
+                from database import remove_from_media_items
+                remove_from_media_items(item['id'])
+                self.queues["Wanted"].remove_item(item)
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error during item reconciliation: {str(e)}")
+            return False
+        finally:
+            conn.close()
+
+    def process_wanted_batch(self):
+        """Process the Wanted queue using batch operations."""
+        if not self.paused:
+            items_to_scrape = []
+            items_to_unreleased = []
+            
+            for item in self.queues["Wanted"].get_contents():
+                try:
+                    # First check if this item already exists in Collected/Upgrading state
+                    if self._reconcile_with_existing_items(item):
+                        continue
+                        
+                    release_date_str = item.get('release_date')
+                    version = item.get('version')
+                    
+                    # Check if version requires physical release
+                    scraping_versions = get_setting('Scraping', 'versions', {})
+                    version_settings = scraping_versions.get(version, {})
+                    require_physical = version_settings.get('require_physical_release', False)
+                    physical_release_date = item.get('physical_release_date')
+                    
+                    if require_physical and not physical_release_date:
+                        items_to_unreleased.append(item)
+                        continue
+                    
+                    # Handle early release items
+                    if item.get('early_release', False):
+                        items_to_scrape.append(item)
+                        continue
+                    
+                    # Process release dates
+                    if not release_date_str or release_date_str.lower() in ["unknown", "none"]:
+                        items_to_unreleased.append(item)
+                        continue
+                    
+                    try:
+                        release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                        current_date = datetime.now().date()
+                        
+                        if release_date <= current_date:
+                            items_to_scrape.append(item)
+                        else:
+                            items_to_unreleased.append(item)
+                    except ValueError:
+                        items_to_unreleased.append(item)
+                        
+                except Exception as e:
+                    logging.error(f"Error processing Wanted item {item.get('id')}: {str(e)}")
+                    continue
+            
+            # Perform batch moves
+            if items_to_scrape:
+                self.move_items_batch(items_to_scrape, "Wanted", "Scraping")
+            if items_to_unreleased:
+                self.move_items_batch(items_to_unreleased, "Wanted", "Unreleased")
+
+    def process_scraping_batch(self):
+        """Process the Scraping queue using batch operations."""
+        if not self.paused:
+            self.queues["Scraping"].update()
+            queue_contents = self.queues["Scraping"].get_contents()
+            
+            if queue_contents:
+                items_to_process = []
+                for item in queue_contents:
+                    if len(items_to_process) < 5:  # Process in small batches
+                        items_to_process.append(item)
+                    else:
+                        break
+                    
+                if items_to_process:
+                    return self.queues["Scraping"].process_batch(self, items_to_process)
+        return False
 
     # Add other methods as needed

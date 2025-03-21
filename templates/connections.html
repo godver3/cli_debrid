@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+
+{% block title %}Connections{% endblock %}
+
+{% block head %}
+<meta http-equiv="refresh" content="30">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/connections.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h2>System Connections</h2>
+    
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    
+    <div class="connections-container">
+        <!-- cli_battery Connection Card -->
+        <div class="connection-card" data-service="cli_battery">
+            <div class="connection-header">
+                <i class="fas fa-battery-three-quarters"></i>
+                <span class="connection-title">cli_battery</span>
+                <div class="status-indicator {{ 'connected' if cli_battery_status.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+
+        <!-- Plex Connection Card (only shown if configured) -->
+        {% if plex_status %}
+        <div class="connection-card" data-service="plex">
+            <div class="connection-header">
+                <i class="fas fa-play-circle"></i>
+                <span class="connection-title">Plex</span>
+                <div class="status-indicator {{ 'connected' if plex_status.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Mounted Files Connection Card (only shown if configured) -->
+        {% if mounted_files_status %}
+        <div class="connection-card" data-service="mounted-files">
+            <div class="connection-header">
+                <i class="fas fa-hdd"></i>
+                <span class="connection-title">Mounted Files</span>
+                <div class="status-indicator {{ 'connected' if mounted_files_status.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Phalanx DB Connection Card -->
+        <div class="connection-card" data-service="phalanx-db">
+            <div class="connection-header">
+                <i class="fas fa-database"></i>
+                <span class="connection-title">Phalanx DB</span>
+                <div class="status-indicator {{ 'connected' if phalanx_db_status.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scraper Connections Section -->
+    {% if scraper_statuses %}
+    <h2 class="mt-4">Scraper Connections</h2>
+    <div class="connections-container">
+        {% for scraper in scraper_statuses %}
+        <div class="connection-card" data-service="scraper-{{ scraper.name|lower|replace(' ', '-') }}">
+            <div class="connection-header">
+                {% if 'Jackett' in scraper.name %}
+                <i class="fas fa-search"></i>
+                {% elif 'Torrentio' in scraper.name %}
+                <i class="fas fa-magnet"></i>
+                {% elif 'Nyaa' in scraper.name %}
+                <i class="fas fa-cat"></i>
+                {% elif 'Zilean' in scraper.name %}
+                <i class="fas fa-clock"></i>
+                {% elif 'MediaFusion' in scraper.name %}
+                <i class="fas fa-layer-group"></i>
+                {% else %}
+                <i class="fas fa-plug"></i>
+                {% endif %}
+                <span class="connection-title">{{ scraper.name }}</span>
+                <div class="status-indicator {{ 'connected' if scraper.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Content Source Connections Section -->
+    {% if content_source_statuses %}
+    <h2 class="mt-4">Content Source Connections</h2>
+    <div class="connections-container">
+        {% for source in content_source_statuses %}
+        <div class="connection-card" data-service="source-{{ source.name|lower|replace(' ', '-') }}">
+            <div class="connection-header">
+                {% if 'MDBList' in source.name %}
+                <i class="fas fa-list"></i>
+                {% elif 'Trakt' in source.name %}
+                <i class="fas fa-tv"></i>
+                {% elif 'Overseerr' in source.name %}
+                <i class="fas fa-film"></i>
+                {% elif 'Plex' in source.name and 'RSS' in source.name %}
+                <i class="fas fa-rss"></i>
+                {% elif 'Plex' in source.name %}
+                <i class="fas fa-play-circle"></i>
+                {% else %}
+                <i class="fas fa-stream"></i>
+                {% endif %}
+                <span class="connection-title">{{ source.name }}</span>
+                <div class="status-indicator {{ 'connected' if source.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if failing_connections and failing_connections|length > 0 %}
+    <div class="failing-connections">
+        <h3>Connection Issues</h3>
+        {% for connection in failing_connections %}
+        <div class="failure-details">
+            <h4>{{ connection.name }}</h4>
+            <div class="error-message">
+                <strong>Status:</strong> {{ connection.error }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

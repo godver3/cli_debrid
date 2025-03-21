@@ -333,6 +333,7 @@ class AddingQueue:
                 queue_manager.move_to_wanted(item, "Adding")
                 return
 
+            from database import get_media_item_by_id
             fall_back_to_single_scraper = get_media_item_by_id(item['id']).get('fall_back_to_single_scraper')
             if not fall_back_to_single_scraper:
                 logging.info(f"Falling back to single scraper for {item.get('title')}")
@@ -426,3 +427,12 @@ class AddingQueue:
         else:
             logging.warning(f"Could not retrieve updated item for ID {item['id']}")
             return {}
+
+    def add_items_batch(self, items: List[Dict[str, Any]]):
+        """Add multiple items to the queue at once."""
+        self.items.extend(items)
+
+    def remove_items_batch(self, items: List[Dict[str, Any]]):
+        """Remove multiple items from the queue at once."""
+        item_ids = {item['id'] for item in items}
+        self.items = [i for i in self.items if i['id'] not in item_ids]

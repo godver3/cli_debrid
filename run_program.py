@@ -1194,19 +1194,20 @@ class ProgramRunner:
                         not_found_items += 1
                         logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
                         continue
-
-                # Use the path that exists (prefer original if both exist)
+                                        # Use the path that exists (prefer original if both exist)
                 actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
                 logging.info(f"Found file on disk: {actual_file_path}")
                 self.file_location_cache[cache_key] = 'exists'
                 
+                # Determine which parent folder to use for Plex update
+                parent_folder = filled_by_title if os.path.exists(file_path) else title_without_ext
+                
                 # Update relevant Plex sections
                 for section in sections:
-
                     try:
                         # Update each library location with the expected path structure
                         for location in section.locations:
-                            expected_path = os.path.join(location, filled_by_title)
+                            expected_path = os.path.join(location, parent_folder)
                             logging.debug(f"Updating Plex section '{section.title}' to scan:")
                             logging.debug(f"  Location: {location}")
                             logging.debug(f"  Expected path: {expected_path}")

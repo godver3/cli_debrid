@@ -66,6 +66,31 @@
         word-break: break-all;
         overflow-wrap: break-word;
         max-width: 100%;
+        cursor: pointer;
+        position: relative;
+        transition: background-color 0.2s;
+    }
+
+    .item.copied {
+        animation: flash-copied 0.5s;
+    }
+
+    @keyframes flash-copied {
+        0% { background-color: #4CAF50; }
+        100% { background-color: transparent; }
+    }
+
+    .copy-tooltip {
+        position: absolute;
+        background: #333;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+        z-index: 1000;
     }
 
     .item-content {
@@ -446,7 +471,7 @@
             }
 
             let itemContent = `
-                <div class="item">
+                <div class="item" onclick="copyItemToClipboard(this, event)">
                     ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}${releaseInfo}
             `;
 
@@ -492,7 +517,7 @@
         }
 
         let itemContent = `
-            <div class="item">
+            <div class="item" onclick="copyItemToClipboard(this, event)">
                 ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}
         `;
 
@@ -736,6 +761,51 @@
         localStorage.setItem('queue_page_size', newPageSize);
         // Restart the event stream with new page size
         setupQueueStream();
+    }
+
+    function copyItemToClipboard(element, event) {
+        // Don't trigger copy if clicking on a progress bar or other interactive elements
+        if (event.target.closest('.progress') || event.target.closest('.filename-toggle')) {
+            return;
+        }
+
+        // Get the text content
+        const text = element.textContent.trim();
+        
+        // Create a temporary textarea to copy the text
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        
+        try {
+            // Copy the text
+            document.execCommand('copy');
+            
+            // Visual feedback
+            element.classList.add('copied');
+            setTimeout(() => element.classList.remove('copied'), 500);
+            
+            // Show tooltip
+            const tooltip = document.createElement('div');
+            tooltip.className = 'copy-tooltip';
+            tooltip.textContent = 'Copied!';
+            tooltip.style.left = `${event.pageX + 10}px`;
+            tooltip.style.top = `${event.pageY - 25}px`;
+            document.body.appendChild(tooltip);
+            
+            // Show and remove tooltip
+            setTimeout(() => tooltip.style.opacity = '1', 0);
+            setTimeout(() => {
+                tooltip.style.opacity = '0';
+                setTimeout(() => tooltip.remove(), 200);
+            }, 1000);
+        } catch (err) {
+            console.error('Failed to copy text:', err);
+        } finally {
+            // Clean up
+            document.body.removeChild(textarea);
+        }
     }
 
     // Initial setup
