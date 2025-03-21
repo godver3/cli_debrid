@@ -2150,9 +2150,35 @@ function initializeMobileActionModal() {
 // Function to show mobile action modal
 function showMobileActionModal(item) {
     const modal = document.getElementById('mobileActionModal');
+    const titleEl = modal.querySelector('.mobile-action-title');
+    const yearEl = modal.querySelector('.mobile-action-year');
+    const scrapeButton = modal.querySelector('.mobile-scrape-button');
+    const requestButton = modal.querySelector('.mobile-request-button');
     
-    // Add modal-open class to body
-    document.body.classList.add('modal-open');
+    // Set content title and year
+    titleEl.textContent = item.title;
+    yearEl.textContent = item.year || (item.release_date ? new Date(item.release_date).getFullYear() : 'N/A');
+    
+    // Change button text based on media type
+    if (item.media_type === 'tv' || item.media_type === 'show') {
+        // Update the button text and icon for TV shows
+        scrapeButton.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect>
+                <polyline points="17 2 12 7 7 2"></polyline>
+            </svg>
+            Enter Show
+        `;
+    } else {
+        // Reset to default for movies
+        scrapeButton.innerHTML = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            Scrape Content
+        `;
+    }
     
     // Set up button actions
     scrapeButton.onclick = function() {
