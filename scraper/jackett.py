@@ -74,8 +74,8 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     search_queries = []
 
     if "UFC" in title.upper():
-        ufc_number = title.upper().split("UFC")[-1].strip()
-        params = f"UFC {ufc_number}"
+        ufc_number =  re.search(r'UFC[^"]*?(\d\d\d)', title.upper())
+        params = f"UFC {ufc_number.group(1)}"
         search_queries = [params]
         logging.info(f"UFC event detected. Using search term: {params}")
     elif content_type.lower() == 'movie':
