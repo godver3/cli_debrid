@@ -77,6 +77,60 @@ class WantedQueue:
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
 
+    def _reconcile_with_existing_items(self, item: Dict[str, Any]) -> bool:
+        """
+        Check if an item already exists in Collected or Upgrading state with the same version.
+        If found, remove the current item from the wanted queue.
+        
+        Args:
+            item: The item to check for reconciliation
+            
+        Returns:
+            bool: True if item was reconciled (found existing), False otherwise
+        """
+        from database import get_db_connection
+        conn = get_db_connection()
+        try:
+            # Query for existing items with same identifiers and version in Collected or Upgrading state
+            cursor = conn.execute('''
+                SELECT * FROM media_items 
+                WHERE state IN ('Collected', 'Upgrading')
+                AND version = ?
+                AND (
+                    (imdb_id = ? AND imdb_id IS NOT NULL) OR
+                    (tmdb_id = ? AND tmdb_id IS NOT NULL)
+                )
+                AND type = ?
+                AND (
+                    (type != 'episode') OR
+                    (season_number = ? AND episode_number = ?)
+                )
+            ''', (
+                item.get('version'),
+                item.get('imdb_id'),
+                item.get('tmdb_id'),
+                item.get('type'),
+                item.get('season_number'),
+                item.get('episode_number')
+            ))
+            
+            existing_item = cursor.fetchone()
+            if existing_item:
+                logging.info(f"Found existing item in {existing_item['state']} state with same version. "
+                           f"Removing duplicate from Wanted queue.")
+                from database import remove_from_media_items
+                remove_from_media_items(item['id'])
+                self.remove_item(item)
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error during item reconciliation: {str(e)}")
+            return False
+        finally:
+            conn.close()
+
     def process(self, queue_manager):
         try:
             # logging.debug("Processing wanted queue")
@@ -87,7 +141,7 @@ class WantedQueue:
             for item in self.items:
                 try:
                     # First check if this item already exists in Collected/Upgrading state
-                    if queue_manager._reconcile_with_existing_items(item):
+                    if self._reconcile_with_existing_items(item):
                         continue
                         
                     item_identifier = queue_manager.generate_identifier(item)
@@ -252,13 +306,3 @@ class WantedQueue:
             logging.info(f"Moved {blacklisted_count} items to blacklisted state")
 
         return blacklisted_count
-
-    def add_items_batch(self, items: List[Dict[str, Any]]):
-        """Add multiple items to the queue at once."""
-        self.items.extend(items)
-        self._calculate_scrape_times()
-
-    def remove_items_batch(self, items: List[Dict[str, Any]]):
-        """Remove multiple items from the queue at once."""
-        item_ids = {item['id'] for item in items}
-        self.items = [i for i in self.items if i['id'] not in item_ids]

@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime, timedelta
 from utilities.settings import get_setting
 
@@ -21,20 +21,15 @@ class UnreleasedQueue:
     def remove_item(self, item: Dict[str, Any]):
         self.items = [i for i in self.items if i['id'] != item['id']]
 
-    def add_items_batch(self, items: List[Dict[str, Any]]):
-        """Add multiple items to the queue at once."""
-        self.items.extend(items)
-
-    def remove_items_batch(self, items: List[Dict[str, Any]]):
-        """Remove multiple items from the queue at once."""
-        item_ids = {item['id'] for item in items}
-        self.items = [i for i in self.items if i['id'] not in item_ids]
-
     def process(self, queue_manager):
         logging.debug(f"Processing unreleased queue. Items: {len(self.items)}")
         current_datetime = datetime.now()
         items_to_move = []
         unreleased_report = []
+        
+        # Early exit if no items to process
+        if not self.items:
+            return
 
         for item in self.items:
             item_identifier = queue_manager.generate_identifier(item)
@@ -59,7 +54,6 @@ class UnreleasedQueue:
             try:
                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
                 release_datetime = datetime.combine(release_date, datetime.min.time())
-                logging.info(f"Item {item_identifier} release date: {release_datetime}")
                 
                 # Check if version requires physical release
                 scraping_versions = get_setting('Scraping', 'versions', {})
@@ -76,7 +70,6 @@ class UnreleasedQueue:
                     try:
                         physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
                         release_datetime = datetime.combine(physical_date, datetime.min.time())
-                        logging.info(f"Item {item_identifier} using physical release date: {release_datetime}")
                     except ValueError:
                         logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
                         continue
@@ -88,7 +81,6 @@ class UnreleasedQueue:
                         items_to_move.append(item)
                     else:
                         time_until_release = release_datetime - current_datetime
-                        logging.debug(f"Item {item_identifier} will be physically released in {time_until_release}. Keeping in Unreleased queue.")
                         unreleased_report.append((item_identifier, release_datetime, time_until_release))
                 # If no physical release required, check early release flag
                 elif item.get('early_release', False):
@@ -100,23 +92,28 @@ class UnreleasedQueue:
                     items_to_move.append(item)
                 else:
                     time_until_release = release_datetime - current_datetime
-                    logging.debug(f"Item {item_identifier} will be released in {time_until_release}. Keeping in Unreleased queue.")
                     unreleased_report.append((item_identifier, release_datetime, time_until_release))
             except ValueError:
                 logging.error(f"Invalid release date format for item {item_identifier}: {release_date_str}")
 
         # Move items to Wanted queue
-        for item in items_to_move:
-            queue_manager.move_to_wanted(item, "Unreleased")
-            self.remove_item(item)
+        if items_to_move:
+            logging.info(f"Moving {len(items_to_move)} items from Unreleased to Wanted queue")
+            for item in items_to_move:
+                queue_manager.move_to_wanted(item, "Unreleased")
+                self.remove_item(item)
 
         # Print debug report for unreleased items every hour
         if current_datetime - self.last_report_time >= timedelta(hours=1):
             if unreleased_report:
                 logging.debug("Hourly unreleased items report:")
-                for item_id, release_time, time_until in unreleased_report:
-                    logging.debug(f"  {item_id}: Move to Wanted at {release_time - timedelta(hours=24)}, time until: {time_until - timedelta(hours=24)}")
+                # Sort by scheduled move time
+                sorted_report = sorted(unreleased_report, key=lambda x: x[1] - timedelta(hours=24))
+                for item_id, release_time, time_until in sorted_report:
+                    move_time = release_time - timedelta(hours=24)
+                    logging.debug(f"  {item_id}: Move to Wanted at {move_time}, time until move: {time_until - timedelta(hours=24)}")
             self.last_report_time = current_datetime
 
-        logging.debug(f"Unreleased queue processing complete. Items moved to Wanted queue: {len(items_to_move)}")
+        if items_to_move:
+            logging.info(f"Unreleased queue processing complete. Items moved to Wanted queue: {len(items_to_move)}")
         logging.debug(f"Remaining items in Unreleased queue: {len(self.items)}")
