@@ -884,9 +884,9 @@ class ProgramRunner:
         slowdown_factor = 1
         
         if stale_tasks_detected:
-            # System is struggling, slow down significantly
-            slowdown_factor = 4
-            logging.warning("Stale tasks detected - slowing down task intervals")
+            # Log the warning but don't increase slowdown factor
+            logging.warning("Stale tasks detected - system may be busy with other operations")
+            # Note: We're intentionally not modifying slowdown_factor here
         elif high_load:
             # High CPU load, slow down a bit
             slowdown_factor = 2
@@ -944,8 +944,8 @@ class ProgramRunner:
             if len(stale_tasks) >= 3:
                 logging.error(f"Multiple stale tasks detected ({len(stale_tasks)}), system may be overloaded")
         
-        # Adjust task intervals based on system load
-        self.adjust_task_intervals_based_on_load(stale_tasks_detected=len(stale_tasks) >= 3)
+        # Adjust task intervals based on system load - but don't apply slowdown for stale tasks
+        self.adjust_task_intervals_based_on_load(stale_tasks_detected=False)
                 
         return len(stale_tasks) > 0  # Return whether stale tasks were found
 
