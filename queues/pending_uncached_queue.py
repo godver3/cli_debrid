@@ -1,7 +1,7 @@
 import logging
 import json
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any
 from debrid import get_debrid_provider
 from queues.adding_queue import AddingQueue
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
@@ -209,14 +209,5 @@ class PendingUncachedQueue:
         else:
             logging.error(f"Invalid scrape_results format for {item.get('id')}")
             return []
-
-    def add_items_batch(self, items: List[Dict[str, Any]]):
-        """Add multiple items to the queue at once."""
-        self.items.extend(items)
-
-    def remove_items_batch(self, items: List[Dict[str, Any]]):
-        """Remove multiple items from the queue at once."""
-        item_ids = {item['id'] for item in items}
-        self.items = [i for i in self.items if i['id'] not in item_ids]
 
     # Add other methods as needed

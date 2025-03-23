@@ -78,15 +78,15 @@ class ProgramRunner:
         
         self.tick_counter = 0
         self.task_intervals = {
-            'Wanted': 5,
-            'Scraping': 5,
-            'Adding': 5,
-            'Checking': 300,
-            'Sleeping': 900,
-            'Unreleased': 3600,
-            'Blacklisted': 3600,
-            'Pending Uncached': 3600,
-            'Upgrading': 3600,
+            'Wanted': 5,       # Keep these responsive
+            'Scraping': 5,     # Keep these responsive
+            'Adding': 5,       # Keep these responsive
+            'Checking': 300,   # 5 minutes (was already good)
+            'Sleeping': 1800,  # 30 minutes (increased from 15)
+            'Unreleased': 300,  # 5 minutes (reduced from 1 hour to ensure regular checking)
+            'Blacklisted': 7200,  # 2 hours (increased from 1)
+            'Pending Uncached': 3600,  # 1 hour (no change)
+            'Upgrading': 3600,  # 1 hour (no change)
             'task_plex_full_scan': 3600,
             #'task_debug_log': 60,
             'task_refresh_release_dates': 3600,
@@ -112,7 +112,11 @@ class ProgramRunner:
             'task_verify_symlinked_files': 900,  # Run every 15 minutes
             'task_update_statistics_summary': 300,  # Run every 5 minutes
             'task_precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
+            'task_generate_queue_timing_report': 1800,  # Generate queue timing report every 30 minutes
         }
+        # Store original intervals for reference
+        self.original_task_intervals = self.task_intervals.copy()
+        
         self.start_time = time.time()
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
         
@@ -142,7 +146,8 @@ class ProgramRunner:
             'task_refresh_plex_tokens',
             'task_check_database_health',
             'task_update_statistics_summary',
-            'task_precompute_airing_shows'
+            'task_precompute_airing_shows',
+            'task_generate_queue_timing_report'
         }
         
         # Load saved task toggle states from JSON file
@@ -361,33 +366,61 @@ class ProgramRunner:
             # Check connectivity status if we're in a failure state
             self.check_connectivity_status()
             
-            # Remove excessive debug logging at start of cycle
-            self.update_heartbeat()
-            self.check_heartbeat()
-            self.check_task_health()
+            # Get current time once for this cycle
             current_time = time.time()
             
-            # Update all queues from database
-            self.queue_manager.update_all_queues()
+            # Initialize timing tracking attributes if they don't exist
+            if not hasattr(self, '_last_heartbeat_check'):
+                self._last_heartbeat_check = 0
+                self._last_task_health_check = 0
+                self._last_full_update = 0
+                
+            # Only update heartbeat every second at most
+            if current_time - self._last_heartbeat_check >= 1.0:
+                self.update_heartbeat()
+                
+                # Only check heartbeat every 30 seconds
+                if current_time - self._last_heartbeat_check >= 30:
+                    self.check_heartbeat()
+                    
+                self._last_heartbeat_check = current_time
+            
+            # Only check task health every 60 seconds
+            if current_time - self._last_task_health_check >= 60:
+                self.check_task_health()
+                self._last_task_health_check = current_time
+            
+            # Update frequently polled queues first (to check for new items)
+            frequent_queues = ['Wanted', 'Scraping', 'Adding']
+            for queue_name in frequent_queues:
+                if queue_name in self.queue_manager.queues:
+                    self.queue_manager.queues[queue_name].update()
+            
+            # Only do a full update of all queues periodically to reduce database load
+            if not hasattr(self, '_last_full_update') or current_time - self._last_full_update >= 30:  # 30 seconds
+                logging.debug("Performing full queue update")
+                for queue_name, queue in self.queue_manager.queues.items():
+                    if queue_name not in frequent_queues:  # Skip queues we already updated
+                        queue.update()
+                self._last_full_update = current_time
+            # Always track the last Unreleased queue update separately
+            elif not hasattr(self, '_last_unreleased_update') or current_time - self._last_unreleased_update >= 300:  # 5 minutes
+                if 'Unreleased' in self.queue_manager.queues:
+                    logging.debug("Performing scheduled Unreleased queue update")
+                    self.queue_manager.queues['Unreleased'].update()  # Update queue contents
+                    self._last_unreleased_update = current_time
             
             # Process queue tasks
             for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
                 should_run = self.should_run_task(queue_name)
-                time_since_last = current_time - self.last_run_times[queue_name]
-                # Remove per-queue debug logging unless it's going to run
                 if should_run:
-                    # logging.debug(f"Queue {queue_name}: Time since last run: {time_since_last:.2f}s")
-                    # logging.info(f"Processing {queue_name} queue")
                     self.safe_process_queue(queue_name)
 
             # Process content source tasks
             for source, data in self.get_content_sources().items():
                 task_name = f'task_{source}_wanted'
                 should_run = self.should_run_task(task_name)
-                time_since_last = current_time - self.last_run_times[task_name]
-                # Remove content source debug logging unless it's going to run
                 if should_run:
-                    # logging.debug(f"Content source {source}: Time since last run: {time_since_last:.2f}s")
                     try:
                         self.process_content_source(source, data)
                     except Exception as e:
@@ -401,8 +434,6 @@ class ProgramRunner:
                 if (task_name not in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'] 
                     and not task_name.endswith('_wanted')):
                     if self.should_run_task(task_name):
-                        # Only log when task will actually run
-                        # logging.debug(f"Running task: {task_name}")
                         try:
                             task_method = getattr(self, task_name)
                             task_method()
@@ -710,20 +741,70 @@ class ProgramRunner:
             
             self.run_initialization()
             
+            # Track activity to adjust sleep times
+            last_cycle_time = 0
+            idle_count = 0
+            max_idle_count = 10
+            all_empty_count = 0
+            max_backoff_seconds = 5.0  # Maximum backoff of 5 seconds
+            last_unreleased_check = 0  # Track when we last checked the Unreleased queue
+            unreleased_check_interval = 300  # Check Unreleased queue every 5 minutes (300 seconds)
+            
             while self.running:
                 try:
                     cycle_start = time.time()
-                    #logging.debug("Starting main program cycle")
+                    current_time = cycle_start  # Store current time for later use
                     
-                    # Log program state
-                    #logging.debug(f"Program state - Running: {self.running}, Initializing: {self.initializing}")
+                    # Check if all relevant queues are empty before processing
+                    all_queues_empty = True
+                    if hasattr(self, 'queue_manager'):
+                        all_queues_empty = self.queue_manager.are_main_queues_empty()
                     
+                    # Process all queues and tasks
                     self.process_queues()
                     
-                    cycle_duration = time.time() - cycle_start
-                    #logging.debug(f"Completed main program cycle in {cycle_duration:.2f} seconds")
+                    # If all main queues are empty, we still need to periodically check the Unreleased queue
+                    # since it contains items that might be ready to move to Wanted based on release dates
+                    if all_queues_empty and hasattr(self, 'queue_manager') and 'Unreleased' in self.queue_manager.queues:
+                        if not hasattr(self, '_last_unreleased_check'):
+                            self._last_unreleased_check = 0
+                            
+                        # Check if it's time to process the Unreleased queue
+                        if current_time - self._last_unreleased_check >= unreleased_check_interval:
+                            logging.debug("Checking Unreleased queue despite empty main queues")
+                            self.queue_manager.queues['Unreleased'].update()  # Update queue contents
+                            self.safe_process_queue('Unreleased')  # Process the queue
+                            self._last_unreleased_check = current_time
                     
-                    # Check queue manager state
+                    # Calculate cycle duration
+                    cycle_duration = time.time() - cycle_start
+                    
+                    # Track empty queue state
+                    if all_queues_empty:
+                        all_empty_count = min(all_empty_count + 1, 100)  # Cap at 100 to prevent integer overflow
+                    else:
+                        all_empty_count = 0  # Reset when any queue has items
+                    
+                    # Adjust sleep time based on activity
+                    if cycle_duration < 0.05:  # Very quick cycle = low activity
+                        idle_count = min(idle_count + 1, max_idle_count)
+                    else:
+                        idle_count = max(idle_count - 2, 0)  # Reset faster when activity is detected
+                    
+                    # Dynamic sleep time based on activity level and empty queues
+                    if all_empty_count > 20:
+                        # Apply exponential backoff when queues remain empty (capped at max_backoff_seconds)
+                        sleep_time = min(max_backoff_seconds, 0.5 * (1.2 ** min(all_empty_count - 20, 10)))
+                        if all_empty_count % 10 == 0:  # Log only occasionally to avoid log spam
+                            logging.debug(f"All main queues empty for {all_empty_count} cycles, sleeping for {sleep_time:.2f}s (still checking Unreleased queue every {unreleased_check_interval/60:.1f} minutes)")
+                    elif idle_count >= max_idle_count:
+                        sleep_time = 0.5  # More idle = longer sleep (500ms)
+                    elif idle_count > 5:
+                        sleep_time = 0.25  # Somewhat idle = medium sleep (250ms)
+                    else:
+                        sleep_time = 0.1  # Active = shorter sleep (100ms)
+                        
+                    # Check queue manager state (log pause only occasionally)
                     if hasattr(self, 'queue_manager'):
                         paused = self.queue_manager.is_paused()
                         current_time = time.time()
@@ -740,8 +821,9 @@ class ProgramRunner:
                 except Exception as e:
                     logging.error(f"Unexpected error in main loop: {str(e)}")
                     logging.error(traceback.format_exc())
+                    sleep_time = 1.0  # Longer sleep after error
                 finally:
-                    time.sleep(1)  # Main loop runs every second
+                    time.sleep(sleep_time)  # Dynamic sleep time
 
             logging.warning("Program has stopped running")
         except Exception as e:
@@ -765,14 +847,107 @@ class ProgramRunner:
         except:
             logging.error("Failed to synchronize time with NTP server")
 
-    def check_task_health(self):
+    def adjust_task_intervals_based_on_load(self, stale_tasks_detected=False):
+        """
+        Dynamically adjust task intervals based on system load and queue status.
+        When queues are empty or system is under heavy load, increase intervals.
+        When queues have work to do, restore normal intervals.
+        
+        Args:
+            stale_tasks_detected: Whether stale tasks were detected in the health check
+        """
+        if not hasattr(self, '_interval_adjustment_time'):
+            self._interval_adjustment_time = 0
+        
         current_time = time.time()
+        # Only check every 30 seconds to avoid thrashing
+        if current_time - self._interval_adjustment_time < 30:
+            return
+            
+        self._interval_adjustment_time = current_time
+        
+        # Check system load and queue status
+        cpu_usage = None
+        try:
+            import psutil
+            cpu_usage = psutil.cpu_percent(interval=0.1)  # Quick CPU check
+        except (ImportError, Exception) as e:
+            logging.debug(f"Could not get CPU usage: {str(e)}")
+            
+        all_queues_empty = self.queue_manager.are_main_queues_empty() if hasattr(self, 'queue_manager') else True
+        
+        # Conditions for slowing down tasks
+        high_load = cpu_usage is not None and cpu_usage > 80
+        low_activity = all_queues_empty
+        
+        # Slowdown factor
+        slowdown_factor = 1
+        
+        if stale_tasks_detected:
+            # System is struggling, slow down significantly
+            slowdown_factor = 4
+            logging.warning("Stale tasks detected - slowing down task intervals")
+        elif high_load:
+            # High CPU load, slow down a bit
+            slowdown_factor = 2
+            logging.info(f"High CPU usage ({cpu_usage}%) - slowing down task intervals")
+        elif low_activity:
+            # Empty queues, can slow down slightly
+            slowdown_factor = 1.5
+            if hasattr(self, '_last_idle_log'):
+                if current_time - self._last_idle_log >= 300:  # Log every 5 minutes
+                    logging.info("All main queues empty - slightly slowing down task intervals")
+                    self._last_idle_log = current_time
+            else:
+                self._last_idle_log = current_time
+        
+        # Apply adjustments if needed
+        if slowdown_factor > 1:
+            # Apply slowdown to non-critical tasks
+            for task, original_interval in self.original_task_intervals.items():
+                # Don't slow down important tasks 
+                if task in ['Wanted', 'Scraping', 'Adding', 'task_heartbeat', 'task_send_notifications', 'Unreleased']:
+                    continue
+                    
+                # Apply slowdown
+                self.task_intervals[task] = original_interval * slowdown_factor
+        else:
+            # Reset to original intervals
+            for task, original_interval in self.original_task_intervals.items():
+                self.task_intervals[task] = original_interval
+                
+    def check_task_health(self):
+        """Check task health and reset any stale tasks, but only log actual issues"""
+        current_time = time.time()
+        stale_tasks = []
+        
+        # Track critical tasks that haven't run in too long
         for task, last_run_time in self.last_run_times.items():
+            # Skip tasks that aren't enabled
+            if task not in self.enabled_tasks:
+                continue
+                
+            # Calculate time since last run
             time_since_last_run = current_time - last_run_time
-            # Only log task health at debug level if there's an issue
+            # Check if the task is severely behind schedule (2x its interval)
             if time_since_last_run > self.task_intervals[task] * 2:
-                # logging.warning(f"Task {task} hasn't run in {time_since_last_run:.2f} seconds (should run every {self.task_intervals[task]} seconds)")
+                stale_tasks.append((task, time_since_last_run, self.task_intervals[task]))
+                # Reset the last run time to force it to run soon
                 self.last_run_times[task] = current_time
+        
+        # Only log if there are stale tasks
+        if stale_tasks:
+            for task, time_since_run, interval in stale_tasks:
+                logging.warning(f"Task {task} hasn't run in {time_since_run:.2f} seconds (should run every {interval} seconds)")
+            
+            # If there are multiple stale tasks, this might indicate a system issue
+            if len(stale_tasks) >= 3:
+                logging.error(f"Multiple stale tasks detected ({len(stale_tasks)}), system may be overloaded")
+        
+        # Adjust task intervals based on system load
+        self.adjust_task_intervals_based_on_load(stale_tasks_detected=len(stale_tasks) >= 3)
+                
+        return len(stale_tasks) > 0  # Return whether stale tasks were found
 
     def task_check_trakt_early_releases(self):
         check_trakt_early_releases()
@@ -781,25 +956,83 @@ class ProgramRunner:
         """Update the heartbeat file directly."""
         import os
 
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
+        # Save the current time as the last heartbeat
+        current_time = int(time.time())
         
-        try:
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(heartbeat_file), exist_ok=True)
+        # Store the heartbeat in memory to reduce I/O operations
+        if not hasattr(self, '_last_heartbeat_time'):
+            self._last_heartbeat_time = 0
+            self._last_heartbeat_file_write = 0
+            self._heartbeat_io_slow = False
+            self._heartbeat_io_check_time = 0
+        
+        self._last_heartbeat_time = current_time
+        
+        # If I/O was previously detected as slow, use a longer interval (5 minutes)
+        file_write_interval = 300 if self._heartbeat_io_slow else 30
+        
+        # Only write to disk periodically to reduce I/O
+        if current_time - self._last_heartbeat_file_write >= file_write_interval:
+            db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+            heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
             
-            # Write directly to the heartbeat file
-            with open(heartbeat_file, 'w') as f:
-                f.write(str(int(time.time())))
-                f.flush()
-                os.fsync(f.fileno())
-        except (IOError, OSError) as e:
-            logging.error(f"Failed to update heartbeat file: {e}")
+            try:
+                # Ensure the directory exists
+                os.makedirs(os.path.dirname(heartbeat_file), exist_ok=True)
+                
+                # Measure how long the I/O operation takes
+                io_start_time = time.time()
+                
+                # Write directly to the heartbeat file
+                with open(heartbeat_file, 'w') as f:
+                    f.write(str(current_time))
+                    f.flush()
+                    os.fsync(f.fileno())
+                
+                io_duration = time.time() - io_start_time
+                
+                # If I/O takes more than 100ms, it's slow
+                if io_duration > 0.1 and not self._heartbeat_io_slow:
+                    logging.warning(f"Heartbeat file I/O is slow ({io_duration:.2f}s) - reducing write frequency")
+                    self._heartbeat_io_slow = True
+                
+                # Periodically re-check if I/O speed has improved (every 30 minutes)
+                elif self._heartbeat_io_slow and current_time - self._heartbeat_io_check_time > 1800:
+                    if io_duration < 0.05:  # If improved to under 50ms
+                        logging.info("Heartbeat file I/O speed has improved - resuming normal write frequency")
+                        self._heartbeat_io_slow = False
+                    self._heartbeat_io_check_time = current_time
+                
+                self._last_heartbeat_file_write = current_time
+            except (IOError, OSError) as e:
+                logging.error(f"Failed to update heartbeat file: {e}")
+                # Mark I/O as slow if we get errors
+                self._heartbeat_io_slow = True
 
     def check_heartbeat(self):
-        """Check heartbeat file with proper error handling."""
+        """Check heartbeat using memory cache with fallback to file."""
         import os
-
+        
+        current_time = int(time.time())
+        
+        # Initialize in-memory heartbeat tracking
+        if not hasattr(self, '_last_heartbeat_time'):
+            self._last_heartbeat_time = 0
+            self._last_heartbeat_file_write = 0
+        
+        # If in-memory heartbeat is recent enough, use it
+        if self._last_heartbeat_time > 0:
+            time_diff = current_time - self._last_heartbeat_time
+            
+            # If memory indicates a stale heartbeat (over 5 minutes)
+            if time_diff > 300:
+                logging.warning(f"Stale heartbeat detected in memory - {time_diff} seconds since last update")
+                return False
+                
+            # If the memory heartbeat is recent, no need to check file
+            return True
+                
+        # If no memory heartbeat or it's stale, check file as fallback
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
         
@@ -817,19 +1050,19 @@ class ProgramRunner:
                     return True
                     
                 last_heartbeat = int(content)
-                current_time = int(time.time())
                 time_diff = current_time - last_heartbeat
-
-                #logging.debug(f"Time since last heartbeat: {time_diff} seconds")
+                
+                # Update in-memory cache from file
+                self._last_heartbeat_time = last_heartbeat
                 
                 # If more than 5 minutes have passed since last heartbeat
                 if time_diff > 300:
-                    logging.warning(f"Stale heartbeat detected - {time_diff} seconds since last update")
+                    logging.warning(f"Stale heartbeat detected in file - {time_diff} seconds since last update")
                     return False
                 
                 return True
         except (IOError, OSError, ValueError) as e:
-            logging.error(f"Error checking heartbeat: {e}")
+            logging.error(f"Error checking heartbeat file: {e}")
             return False
 
     def task_send_notifications(self):
@@ -1507,6 +1740,55 @@ class ProgramRunner:
             logging.info(f"Precomputed airing shows data in {duration:.2f}s. Found {len(recently_aired)} recently aired and {len(airing_soon)} airing soon shows.")
         except Exception as e:
             logging.error(f"Error precomputing airing shows: {e}")
+
+    def task_generate_queue_timing_report(self):
+        """Generate and log a report of queue timing statistics"""
+        try:
+            from queues.queue_manager import QueueManager
+            queue_manager = QueueManager()
+            
+            # Generate the timing report
+            report = queue_manager.generate_queue_timing_report()
+            
+            # Log the timing statistics
+            for line in report.split('\n'):
+                logging.info(line)
+                
+            # Also generate a report of items currently in queues for a long time
+            current_items = queue_manager.get_current_queue_timing()
+            
+            # Log items that have been in a queue for more than 1 hour
+            long_waiting_items = []
+            
+            for queue_name, items in current_items.items():
+                for item in items:
+                    # Check if item has 'hours' in the time_in_queue string
+                    if 'hours' in item['time_in_queue'] or 'hour' in item['time_in_queue']:
+                        hours = float(item['time_in_queue'].split(' ')[0])
+                        if hours >= 1.0:
+                            long_waiting_items.append({
+                                'queue': queue_name, 
+                                'item_id': item['item_id'],
+                                'time': item['time_in_queue'],
+                                'entry_time': item['entry_time']
+                            })
+            
+            if long_waiting_items:
+                logging.warning(f"Found {len(long_waiting_items)} items waiting in queues for more than 1 hour:")
+                for item in long_waiting_items:
+                    # Get additional item details if possible
+                    from database.database_reading import get_media_item_by_id
+                    media_item = get_media_item_by_id(item['item_id'])
+                    item_identifier = "Unknown"
+                    if media_item:
+                        item_identifier = queue_manager.generate_identifier(media_item)
+                    
+                    logging.warning(f"  {item['queue']}: {item_identifier} (ID: {item['item_id']}) - {item['time']} since {item['entry_time']}")
+                    
+        except Exception as e:
+            logging.error(f"Error generating queue timing report: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

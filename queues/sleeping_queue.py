@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime, timedelta
 
 from utilities.settings import get_setting
@@ -149,21 +149,3 @@ class SleepingQueue:
         except ValueError as e:
             logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
             return True  # Consider items with unparseable dates as old
-
-    def add_items_batch(self, items: List[Dict[str, Any]]):
-        """Add multiple items to the queue at once."""
-        current_time = datetime.now()
-        for item in items:
-            self.items.append(item)
-            self.sleeping_queue_times[item['id']] = current_time
-            # Ensure wake count is preserved
-            if 'wake_count' in item:
-                wake_count_manager.set_wake_count(item['id'], item['wake_count'])
-
-    def remove_items_batch(self, items: List[Dict[str, Any]]):
-        """Remove multiple items from the queue at once."""
-        item_ids = {item['id'] for item in items}
-        self.items = [i for i in self.items if i['id'] not in item_ids]
-        # Clean up sleeping times
-        for item_id in item_ids:
-            self.sleeping_queue_times.pop(item_id, None)

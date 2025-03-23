@@ -325,6 +325,7 @@ class AddingQueue:
             error: Error message describing why it failed
             queue_manager: Global queue manager instance
         """
+        from database import get_media_item_by_id, update_media_item
         try:
             if "No matching files found in torrent" in error:
                 logging.info(f"Media matching failed for {item.get('title')}, moving back to Wanted queue")
@@ -333,11 +334,9 @@ class AddingQueue:
                 queue_manager.move_to_wanted(item, "Adding")
                 return
 
-            from database import get_media_item_by_id
             fall_back_to_single_scraper = get_media_item_by_id(item['id']).get('fall_back_to_single_scraper')
             if not fall_back_to_single_scraper:
                 logging.info(f"Falling back to single scraper for {item.get('title')}")
-                from database import update_media_item
                 update_media_item(item['id'], fall_back_to_single_scraper=True)
                 
                 if item.get('type') == 'episode':
@@ -427,12 +426,3 @@ class AddingQueue:
         else:
             logging.warning(f"Could not retrieve updated item for ID {item['id']}")
             return {}
-
-    def add_items_batch(self, items: List[Dict[str, Any]]):
-        """Add multiple items to the queue at once."""
-        self.items.extend(items)
-
-    def remove_items_batch(self, items: List[Dict[str, Any]]):
-        """Remove multiple items from the queue at once."""
-        item_ids = {item['id'] for item in items}
-        self.items = [i for i in self.items if i['id'] not in item_ids]

@@ -1,13 +1,15 @@
 import logging
 from collections import OrderedDict
-from datetime import datetime
-from typing import Dict, Any, List
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
+import json
+import os
+import time
 
-from database.database_writing import update_media_item_state, update_media_items_state_batch
-from database.database_reading import get_media_item_by_id, get_media_items_by_ids_batch
+from database.database_writing import update_media_item_state
+from database.database_reading import get_media_item_by_id
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
-from utilities.settings import get_setting
 
 from queues.wanted_queue import WantedQueue
 from queues.scraping_queue import ScrapingQueue
@@ -19,6 +21,242 @@ from queues.blacklisted_queue import BlacklistedQueue
 from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
 from queues.wake_count_manager import wake_count_manager
+
+class QueueTimer:
+    """Tracks how long items spend in each queue"""
+    
+    def __init__(self):
+        self.queue_times = {}  # {item_id: {queue_name: [entry_time, exit_time]}}
+        self.db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        self.timing_file = os.path.join(self.db_content_dir, 'queue_timing_data.json')
+        self.load_timing_data()
+        
+        # Stats tracking 
+        self.queue_stats = {
+            queue_name: {'count': 0, 'total_time': 0, 'min_time': float('inf'), 'max_time': 0}
+            for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+                             'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']
+        }
+        
+    def load_timing_data(self):
+        """Load timing data from disk"""
+        try:
+            if os.path.exists(self.timing_file):
+                with open(self.timing_file, 'r') as f:
+                    data = json.load(f)
+                    self.queue_times = data.get('queue_times', {})
+                    self.queue_stats = data.get('queue_stats', self.queue_stats)
+                    logging.info(f"Loaded queue timing data for {len(self.queue_times)} items")
+        except Exception as e:
+            logging.error(f"Error loading queue timing data: {e}")
+            self.queue_times = {}
+            
+    def save_timing_data(self, force=False):
+        """Save timing data to disk, but not too frequently"""
+        if not hasattr(self, '_last_save_time'):
+            self._last_save_time = 0
+            
+        current_time = time.time()
+        # Only save every 5 minutes unless forced
+        if force or current_time - self._last_save_time >= 300:
+            try:
+                os.makedirs(os.path.dirname(self.timing_file), exist_ok=True)
+                
+                # Prune very old or completed items to prevent file growth
+                self._prune_old_timing_data()
+                
+                with open(self.timing_file, 'w') as f:
+                    json.dump({'queue_times': self.queue_times, 'queue_stats': self.queue_stats}, f)
+                    
+                self._last_save_time = current_time
+                logging.debug(f"Saved queue timing data for {len(self.queue_times)} items")
+            except Exception as e:
+                logging.error(f"Error saving queue timing data: {e}")
+                
+    def _prune_old_timing_data(self):
+        """Remove timing data for completed items or items older than 30 days"""
+        current_time = datetime.now().timestamp()
+        thirty_days_ago = current_time - (30 * 24 * 60 * 60)
+        
+        # Find items to remove
+        items_to_remove = []
+        for item_id, queue_data in self.queue_times.items():
+            all_completed = True
+            has_old_entry = False
+            
+            for queue_name, times in queue_data.items():
+                entry_time = times[0]
+                exit_time = times[1]
+                
+                # Check if entry is older than 30 days
+                if entry_time and entry_time < thirty_days_ago:
+                    has_old_entry = True
+                    
+                # If any queue doesn't have an exit time, item is not completed
+                if exit_time is None:
+                    all_completed = False
+                    
+            # Remove if completed or all entries are old
+            if all_completed or has_old_entry:
+                items_to_remove.append(item_id)
+                
+        # Remove the identified items
+        for item_id in items_to_remove:
+            del self.queue_times[item_id]
+            
+        if items_to_remove:
+            logging.debug(f"Pruned {len(items_to_remove)} old items from queue timing data")
+    
+    def item_entered_queue(self, item_id, queue_name, item_identifier=None):
+        """Record when an item enters a queue"""
+        if not item_id:
+            return
+            
+        # Initialize item's timing data if not present
+        if item_id not in self.queue_times:
+            self.queue_times[item_id] = {}
+            
+        # Record entry time
+        current_time = datetime.now().timestamp()
+        
+        # Store as [entry_time, exit_time] where exit_time is initially None
+        self.queue_times[item_id][queue_name] = [current_time, None]
+        
+        if item_identifier:
+            logging.debug(f"Item {item_identifier} (ID: {item_id}) entered {queue_name} queue")
+    
+    def item_exited_queue(self, item_id, queue_name, item_identifier=None):
+        """Record when an item exits a queue"""
+        if not item_id or item_id not in self.queue_times:
+            return
+            
+        # Get the item's queue timing data
+        item_timing = self.queue_times.get(item_id, {})
+        queue_timing = item_timing.get(queue_name)
+        
+        # If we have entry timing for this queue
+        if queue_timing and queue_timing[0] is not None:
+            current_time = datetime.now().timestamp()
+            entry_time = queue_timing[0]
+            duration = current_time - entry_time  # Time in seconds
+            
+            # Set the exit time
+            self.queue_times[item_id][queue_name][1] = current_time
+            
+            # Update stats for this queue
+            if queue_name in self.queue_stats:
+                self.queue_stats[queue_name]['count'] += 1
+                self.queue_stats[queue_name]['total_time'] += duration
+                self.queue_stats[queue_name]['min_time'] = min(self.queue_stats[queue_name]['min_time'], duration)
+                self.queue_stats[queue_name]['max_time'] = max(self.queue_stats[queue_name]['max_time'], duration)
+            
+            if item_identifier:
+                time_str = self._format_duration(duration)
+                logging.info(f"Item {item_identifier} (ID: {item_id}) exited {queue_name} queue after {time_str}")
+                
+            # Periodically save timing data
+            self.save_timing_data()
+            
+    def _format_duration(self, seconds):
+        """Format duration in seconds to a human-readable string"""
+        if seconds < 60:
+            return f"{seconds:.1f} seconds"
+        elif seconds < 3600:
+            minutes = seconds / 60
+            return f"{minutes:.1f} minutes"
+        else:
+            hours = seconds / 3600
+            return f"{hours:.1f} hours"
+            
+    def get_item_timing(self, item_id):
+        """Get timing data for a specific item"""
+        return self.queue_times.get(item_id, {})
+        
+    def generate_timing_report(self):
+        """Generate a report of queue timing statistics"""
+        report = ["Queue Timing Statistics:"]
+        
+        for queue_name, stats in self.queue_stats.items():
+            count = stats['count']
+            if count > 0:
+                avg_time = stats['total_time'] / count
+                min_time = stats['min_time'] if stats['min_time'] != float('inf') else 0
+                max_time = stats['max_time']
+                
+                report.append(f"{queue_name} Queue:")
+                report.append(f"  Items processed: {count}")
+                report.append(f"  Average time: {self._format_duration(avg_time)}")
+                report.append(f"  Min time: {self._format_duration(min_time)}")
+                report.append(f"  Max time: {self._format_duration(max_time)}")
+                
+        return "\n".join(report)
+    
+    def get_current_queue_items(self):
+        """Get all items currently in queues with their entry times"""
+        current_items = {}
+        current_time = datetime.now().timestamp()
+        
+        for item_id, queue_data in self.queue_times.items():
+            for queue_name, times in queue_data.items():
+                entry_time, exit_time = times
+                
+                # If item is still in this queue (no exit time)
+                if exit_time is None:
+                    duration = current_time - entry_time
+                    if queue_name not in current_items:
+                        current_items[queue_name] = []
+                    
+                    current_items[queue_name].append({
+                        'item_id': item_id,
+                        'time_in_queue': self._format_duration(duration),
+                        'entry_time': datetime.fromtimestamp(entry_time).strftime('%Y-%m-%d %H:%M:%S')
+                    })
+        
+        return current_items
+
+class BaseQueue:
+    """Base interface for all queue classes"""
+    
+    def update(self):
+        """Update the queue contents"""
+        raise NotImplementedError("Each queue must implement update method")
+        
+    def process(self, queue_manager):
+        """Process items in the queue"""
+        raise NotImplementedError("Each queue must implement process method")
+        
+    def get_contents(self):
+        """Get all items in the queue"""
+        raise NotImplementedError("Each queue must implement get_contents method")
+        
+    def add_item(self, item):
+        """Add an item to the queue"""
+        raise NotImplementedError("Each queue must implement add_item method")
+        
+    def remove_item(self, item):
+        """Remove an item from the queue"""
+        raise NotImplementedError("Each queue must implement remove_item method")
+        
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID (optimized)"""
+        # Default implementation, queues should override this with more efficient implementations
+        return any(i['id'] == item_id for i in self.get_contents())
+        
+    def _record_item_entered(self, queue_manager, item):
+        """Record that an item entered this queue"""
+        if hasattr(queue_manager, 'queue_timer') and item and 'id' in item:
+            queue_name = self.__class__.__name__.replace('Queue', '')
+            item_id = item['id']
+            item_identifier = queue_manager.generate_identifier(item)
+            queue_manager.queue_timer.item_entered_queue(item_id, queue_name, item_identifier)
+            
+    def _record_item_exited(self, queue_manager, item):
+        """Record that an item exited this queue"""
+        if hasattr(queue_manager, 'queue_timer') and item and 'id' in item:
+            queue_name = self.__class__.__name__.replace('Queue', '')
+            item_id = item['id']
+            item_identifier = queue_manager.generate_identifier(item)
+            queue_manager.queue_timer.item_exited_queue(item_id, queue_name, item_identifier)
 
 class QueueManager:
     _instance = None
@@ -42,17 +280,40 @@ class QueueManager:
             "Upgrading": UpgradingQueue()
         }
         self.paused = False
+        
+        # Initialize the queue timer
+        self.queue_timer = QueueTimer()
+        
+        # Import time module for QueueTimer
+        import time
 
-    def reinitialize_queues(self):
+    def reinitialize(self):
         """Force reinitialization of all queues to pick up new settings"""
         self.initialize()
+        
+    def reinitialize_queue(self, queue_name):
+        """Reinitialize a specific queue to pick up new settings"""
+        if queue_name not in self.queues:
+            logging.error(f"Cannot reinitialize unknown queue: {queue_name}")
+            return False
+            
+        queue_class = type(self.queues[queue_name])
+        self.queues[queue_name] = queue_class()
+        logging.info(f"Reinitialized {queue_name} queue")
+        return True
 
     def update_all_queues(self):
+        """
+        Update all queues efficiently, logging only significant changes
+        """
         for queue_name, queue in self.queues.items():
             before_count = len(queue.get_contents())
             queue.update()
             after_count = len(queue.get_contents())
-            # logging.debug(f"Queue {queue_name} update: {before_count} -> {after_count} items")
+            
+            # Only log if there was an actual change in the queue size
+            if before_count != after_count:
+                logging.debug(f"Queue {queue_name} updated: {before_count} -> {after_count} items")
 
     def get_queue_contents(self):
         contents = OrderedDict()
@@ -72,63 +333,106 @@ class QueueManager:
             raise ValueError(f"Unknown item type: {item['type']}")
 
     def get_item_queue(self, item: Dict[str, Any]) -> str:
+        """Find which queue contains the specified item"""
+        item_id = item['id']
+        
+        # First check if we can find by ID (faster)
         for queue_name, queue in self.queues.items():
-            if any(i['id'] == item['id'] for i in queue.get_contents()):
+            # We assume each queue implements a fast way to check for item existence
+            if queue.contains_item_id(item_id):
                 return queue_name
+            
+        # Fallback to traditional search if queue doesn't implement contains_item_id
+        for queue_name, queue in self.queues.items():
+            if any(i['id'] == item_id for i in queue.get_contents()):
+                return queue_name
+                
         return None  # or raise an exception if the item should always be in a queue
         
+    def _process_queue_safely(self, queue_name, with_result=False):
+        """
+        Process a queue safely with pause checking and error handling
+        
+        Args:
+            queue_name: Name of the queue to process
+            with_result: Whether the process method returns a result to be passed back
+            
+        Returns:
+            The result of processing if with_result=True, otherwise None
+        """
+        if self.paused:
+            logging.debug(f"Skipping {queue_name} queue processing: Queue is paused")
+            return False if with_result else None
+            
+        try:
+            if with_result:
+                return self.queues[queue_name].process(self)
+            else:
+                self.queues[queue_name].process(self)
+                return None
+        except Exception as e:
+            logging.error(f"Error processing {queue_name} queue: {str(e)}")
+            return False if with_result else None
+    
     def process_checking(self):
+        result = self._process_queue_safely("Checking")
         if not self.paused:
-            self.queues["Checking"].process(self)
             self.queues["Checking"].clean_up_checking_times()
-        # else:
-            # logging.debug("Skipping Checking queue processing: Queue is paused")
 
     def process_wanted(self):
-        if not self.paused:
-            return self.process_wanted_batch()
+        self._process_queue_safely("Wanted")
 
     def process_scraping(self):
-        if not self.paused:
-            return self.process_scraping_batch()
+        # Skip processing if paused
+        if self.paused:
+            logging.debug("Skipping Scraping queue processing: Queue is paused")
+            return False
+            
+        # First check if the queue is empty before updating
+        if not self.queues["Scraping"].get_contents():
+            # Perform lightweight update only
+            self.queues["Scraping"].update()
+            
+            # Check again if still empty after update
+            if not self.queues["Scraping"].get_contents():
+                return False
+        else:
+            # Only perform full update if queue has items
+            self.queues["Scraping"].update()
+            
+        # Now process items if any exist
+        queue_contents = self.queues["Scraping"].get_contents()
+        
+        if queue_contents:
+            for item in queue_contents:
+                logging.debug(f"Scraping queue item: {self.generate_identifier(item)}")
+            
+            result = self._process_queue_safely("Scraping", with_result=True)
+            logging.info(f"Scraping queue process result: {result}")
+            return result
+            
+        return False
 
     def process_adding(self):
-        if not self.paused:
-            self.queues["Adding"].process(self)
-        else:
-            logging.debug("Skipping Adding queue processing: Queue is paused")
+        self._process_queue_safely("Adding")
 
     def process_unreleased(self):
-        if not self.paused:
-            self.queues["Unreleased"].process(self)
-        else:
-            logging.debug("Skipping Unreleased queue processing: Queue is paused")
+        self._process_queue_safely("Unreleased")
 
     def process_sleeping(self):
-        if not self.paused:
-            self.queues["Sleeping"].process(self)
-        else:
-            logging.debug("Skipping Sleeping queue processing: Queue is paused")
+        self._process_queue_safely("Sleeping")
 
     def process_blacklisted(self):
-        if not self.paused:
-            self.queues["Blacklisted"].process(self)
-        else:
-            logging.debug("Skipping Blacklisted queue processing: Queue is paused")
+        self._process_queue_safely("Blacklisted")
 
     def process_pending_uncached(self):
-        if not self.paused:
-            self.queues["Pending Uncached"].process(self)
-        else:
-            logging.debug("Skipping Pending Uncached queue processing: Queue is paused")
+        self._process_queue_safely("Pending Uncached")
 
     def process_upgrading(self):
+        result = self._process_queue_safely("Upgrading")
         if not self.paused:
-            self.queues["Upgrading"].process(self)
             self.queues["Upgrading"].clean_up_upgrade_times()
-        else:
-            logging.debug("Skipping Upgrading queue processing: Queue is paused")
-            
+
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
         self.queues["Blacklisted"].blacklist_item(item, self)
         self.queues[from_queue].remove_item(item)
@@ -144,58 +448,41 @@ class QueueManager:
         wake_count = wake_count_manager.get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Wanted: {wake_count}")
         
-        update_media_item_state(item['id'], 'Wanted', filled_by_title=None, filled_by_magnet=None)
+        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", filled_by_title=None, filled_by_magnet=None)
         
-        wanted_item = get_media_item_by_id(item['id'])
-        if wanted_item:
-            wanted_item_identifier = self.generate_identifier(wanted_item)
-            
-            self.queues["Wanted"].add_item(wanted_item)
-            self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {item_identifier} to Wanted queue")
-        else:
-            logging.error(f"Failed to retrieve wanted item for ID: {item['id']}")
+        if updated_item:
+            # No additional processing needed for Wanted queue
+            pass
 
     def move_to_upgrading(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Upgrading: {item_identifier}")
-        update_media_item_state(item['id'], 'Upgrading')
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            self.queues["Upgrading"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
-            logging.info(f"Moved item {item_identifier} to Upgrading queue")
+        self._move_item_to_queue(item, from_queue, "Upgrading", "Upgrading")
 
     def move_to_scraping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Scraping: {item_identifier}")
-        update_media_item_state(item['id'], 'Scraping')
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            self.queues["Scraping"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
-            logging.info(f"Moved item {item_identifier} to Scraping queue")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+        self._move_item_to_queue(item, from_queue, "Scraping", "Scraping")
 
     def move_to_adding(self, item: Dict[str, Any], from_queue: str, filled_by_title: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Adding: {item_identifier}")
-        update_media_item_state(item['id'], 'Adding', filled_by_title=filled_by_title, scrape_results=scrape_results)
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            self.queues["Adding"].add_item(updated_item)
-            # Remove the item from the Scraping queue, but not from the Wanted queue
-            if from_queue == "Scraping":
-                self.queues[from_queue].remove_item(item)
-            logging.info(f"Moved item {item_identifier} to Adding queue")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+        
+        updated_item = self._move_item_to_queue(
+            item, 
+            from_queue if from_queue != "Wanted" else None,  # Don't remove from Wanted queue
+            "Adding", 
+            "Adding", 
+            filled_by_title=filled_by_title, 
+            scrape_results=scrape_results
+        )
 
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Checking: {item_identifier}")
         
+        from utilities.settings import get_setting
+
         '''
         # Check if Plex library checks are disabled
         if get_setting('Plex', 'disable_plex_library_checks') and not get_setting('Plex', 'mounted_file_location'):
@@ -234,19 +521,22 @@ class QueueManager:
             logging.info(f"Moved item {item_identifier} to Collected state")
             return
         '''
-        update_media_item_state(item['id'], 'Checking', filled_by_title=title, filled_by_magnet=link, filled_by_file=filled_by_file, filled_by_torrent_id=torrent_id)
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            # Copy downloading flag from original item
-            if 'downloading' in item:
-                updated_item['downloading'] = item['downloading']
-            self.queues["Checking"].add_item(updated_item)
-            # Remove the item from the Adding queue and the Wanted queue
-            if from_queue in ["Adding", "Wanted"]:
-                self.queues[from_queue].remove_item(item)
-            logging.info(f"Moved item {item_identifier} to Checking queue")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+        
+        updated_item = self._move_item_to_queue(
+            item,
+            from_queue if from_queue in ["Adding", "Wanted"] else None,
+            "Checking",
+            "Checking",
+            filled_by_title=title,
+            filled_by_magnet=link,
+            filled_by_file=filled_by_file,
+            filled_by_torrent_id=torrent_id
+        )
+        
+        # Copy downloading flag from original item
+        if updated_item and 'downloading' in item:
+            updated_item['downloading'] = item['downloading']
+            self.queues["Checking"].add_item(updated_item)  # Re-add with updated flag
 
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
@@ -255,54 +545,28 @@ class QueueManager:
         wake_count = wake_count_manager.get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
 
-        update_media_item_state(item['id'], 'Sleeping')
-        updated_item = get_media_item_by_id(item['id'])
+        updated_item = self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
+        
         if updated_item:
             updated_item['wake_count'] = wake_count
-            self.queues["Sleeping"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {item_identifier} to Sleeping queue (Wake count: {wake_count})")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+            self.queues["Sleeping"].add_item(updated_item)  # Re-add with wake count
 
     def move_to_unreleased(self, item: Dict[str, Any], from_queue: str):
-        item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to Unreleased queue")
-
-        update_media_item_state(item['id'], 'Unreleased')
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            self.queues["Unreleased"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {item_identifier} to Unreleased queue")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+        self._move_item_to_queue(item, from_queue, "Unreleased", "Unreleased")
 
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
-        item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to Blacklisted queue")
-
-        update_media_item_state(item['id'], 'Blacklisted')
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            self.queues["Blacklisted"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {item_identifier} to Blacklisted queue")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+        self._move_item_to_queue(item, from_queue, "Blacklisted", "Blacklisted")
 
     def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
-        item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to Pending Uncached Additions queue")
-
-        update_media_item_state(item['id'], 'Pending Uncached', filled_by_title=title, filled_by_magnet=link, scrape_results=scrape_results)
-        updated_item = get_media_item_by_id(item['id'])
-        if updated_item:
-            self.queues["Pending Uncached"].add_item(updated_item)
-            self.queues[from_queue].remove_item(item)
-            logging.debug(f"Successfully moved item {item_identifier} to Pending Uncached Additions queue")
-        else:
-            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+        self._move_item_to_queue(
+            item, 
+            from_queue, 
+            "Pending Uncached", 
+            "Pending Uncached", 
+            filled_by_title=title, 
+            filled_by_magnet=link, 
+            scrape_results=scrape_results
+        )
 
     def get_scraping_items(self) -> List[Dict]:
         """Get all items currently in the Scraping state"""
@@ -333,22 +597,87 @@ class QueueManager:
     def is_paused(self):
         return self.paused
 
+    def are_main_queues_empty(self):
+        """
+        Check if all main processing queues are empty.
+        This can be used to determine if the system can enter a more idle state.
+        Note: The Unreleased queue is intentionally NOT included here, as it needs
+        to be checked periodically regardless of other queue states.
+        
+        Returns:
+            bool: True if all main queues are empty, False otherwise
+        """
+        main_queues = ['Wanted', 'Scraping', 'Adding']
+        for queue_name in main_queues:
+            if queue_name in self.queues and self.queues[queue_name].get_contents():
+                return False
+        return True
+
+    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, **additional_params):
+        """
+        Common method to handle moving items between queues.
+        
+        Args:
+            item: The item to move
+            from_queue: The source queue name
+            to_queue_name: The target queue name 
+            new_state: The new state for the item
+            additional_params: Additional parameters to pass to update_media_item_state
+        
+        Returns:
+            The updated item if successful, None otherwise
+        """
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Moving item {item_identifier} to {to_queue_name}")
+        
+        # Record exit from source queue if applicable
+        if from_queue and from_queue in self.queues and item and 'id' in item:
+            self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
+        
+        # Update the item's state in the database
+        update_media_item_state(item['id'], new_state, **additional_params)
+        
+        # Get the updated item from the database
+        updated_item = get_media_item_by_id(item['id'])
+        
+        if updated_item:
+            # Add the item to the target queue
+            if to_queue_name in self.queues:
+                # Record entry into target queue 
+                self.queue_timer.item_entered_queue(updated_item['id'], to_queue_name, item_identifier)
+                self.queues[to_queue_name].add_item(updated_item)
+            
+            # Remove from source queue if needed
+            if from_queue and from_queue in self.queues:
+                self.queues[from_queue].remove_item(item)
+                
+            logging.debug(f"Successfully moved item {item_identifier} to {to_queue_name}")
+            return updated_item
+        else:
+            logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+            return None
+
     def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Collected state")
         
+        # Record exit from source queue
+        if from_queue in self.queues and item and 'id' in item:
+            self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
+        
         from datetime import datetime
         collected_at = datetime.now()
         
-        # Update the item state in the database
+        # Update the item state in the database - no need to add to a queue since Collected is a state, not a queue
         update_media_item_state(item['id'], 'Collected', collected_at=collected_at)
         
         # Get the updated item
         updated_item = get_media_item_by_id(item['id'])
         if updated_item:
             # Remove from the source queue
-            self.queues[from_queue].remove_item(item)
+            if from_queue in self.queues:
+                self.queues[from_queue].remove_item(item)
             logging.info(f"Successfully moved item {item_identifier} to Collected state")
             
             # Add to collected notifications if not skipped
@@ -359,210 +688,15 @@ class QueueManager:
                 add_to_collected_notifications(updated_item_dict)
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
-
-    def move_items_batch(self, items: List[Dict[str, Any]], from_queue: str, to_queue: str, **kwargs):
-        """Move multiple items between queues in a single batch operation.
+            
+    def generate_queue_timing_report(self):
+        """Generate a report of queue timing statistics"""
+        if hasattr(self, 'queue_timer'):
+            return self.queue_timer.generate_timing_report()
+        return "Queue timing not available"
         
-        Args:
-            items: List of items to move
-            from_queue: Source queue name
-            to_queue: Destination queue name
-            **kwargs: Additional fields to update in the database
-        """
-        if not items:
-            return
-        
-        try:
-            # Get all item IDs
-            item_ids = [item['id'] for item in items]
-            
-            # Special handling for certain queues
-            if to_queue == "Sleeping":
-                # Update wake counts in batch
-                for item in items:
-                    wake_count = wake_count_manager.get_wake_count(item['id'])
-                    kwargs[f"wake_count_{item['id']}"] = wake_count
-            elif to_queue == "Blacklisted":
-                # Set blacklisted date for all items
-                blacklisted_date = datetime.now()
-                kwargs['blacklisted_date'] = blacklisted_date
-            
-            # Update states in database
-            update_media_items_state_batch(item_ids, to_queue, **kwargs)
-            
-            # Get updated items
-            updated_items = get_media_items_by_ids_batch(item_ids)
-            
-            # Additional processing for special queues
-            if to_queue == "Sleeping":
-                # Restore wake counts in updated items
-                for updated_item in updated_items:
-                    updated_item['wake_count'] = kwargs.get(f"wake_count_{updated_item['id']}")
-            
-            # Update queue contents
-            self.queues[to_queue].add_items_batch(updated_items)
-            self.queues[from_queue].remove_items_batch(items)
-            
-            # Log the batch operation
-            logging.info(f"Moved {len(items)} items from {from_queue} to {to_queue}")
-            
-        except Exception as e:
-            logging.error(f"Error in batch move operation: {str(e)}")
-            # Fall back to individual moves on failure
-            for item in items:
-                try:
-                    if to_queue == "Wanted":
-                        self.move_to_wanted(item, from_queue)
-                    elif to_queue == "Scraping":
-                        self.move_to_scraping(item, from_queue)
-                    elif to_queue == "Adding":
-                        self.move_to_adding(item, from_queue, kwargs.get('filled_by_title'), kwargs.get('scrape_results', []))
-                    elif to_queue == "Checking":
-                        self.move_to_checking(item, from_queue, 
-                            kwargs.get('filled_by_title', ''),
-                            kwargs.get('filled_by_magnet', ''),
-                            kwargs.get('filled_by_file', ''),
-                            kwargs.get('filled_by_torrent_id'))
-                    elif to_queue == "Sleeping":
-                        self.move_to_sleeping(item, from_queue)
-                    elif to_queue == "Unreleased":
-                        self.move_to_unreleased(item, from_queue)
-                    elif to_queue == "Blacklisted":
-                        self.move_to_blacklisted(item, from_queue)
-                    elif to_queue == "Pending Uncached":
-                        self.move_to_pending_uncached(item, from_queue,
-                            kwargs.get('filled_by_title', ''),
-                            kwargs.get('filled_by_magnet', ''),
-                            kwargs.get('scrape_results', []))
-                except Exception as inner_e:
-                    logging.error(f"Error in fallback move for item {item.get('id')}: {str(inner_e)}")
-
-    def _reconcile_with_existing_items(self, item: Dict[str, Any]) -> bool:
-        """
-        Check if an item already exists in Collected or Upgrading state with the same version.
-        If found, remove the current item from the wanted queue.
-        
-        Args:
-            item: The item to check for reconciliation
-            
-        Returns:
-            bool: True if item was reconciled (found existing), False otherwise
-        """
-        from database import get_db_connection
-        conn = get_db_connection()
-        try:
-            # Query for existing items with same identifiers and version in Collected or Upgrading state
-            cursor = conn.execute('''
-                SELECT * FROM media_items 
-                WHERE state IN ('Collected', 'Upgrading')
-                AND version = ?
-                AND (
-                    (imdb_id = ? AND imdb_id IS NOT NULL) OR
-                    (tmdb_id = ? AND tmdb_id IS NOT NULL)
-                )
-                AND type = ?
-                AND (
-                    (type != 'episode') OR
-                    (season_number = ? AND episode_number = ?)
-                )
-            ''', (
-                item.get('version'),
-                item.get('imdb_id'),
-                item.get('tmdb_id'),
-                item.get('type'),
-                item.get('season_number'),
-                item.get('episode_number')
-            ))
-            
-            existing_item = cursor.fetchone()
-            if existing_item:
-                logging.info(f"Found existing item in {existing_item['state']} state with same version. "
-                           f"Removing duplicate from Wanted queue.")
-                from database import remove_from_media_items
-                remove_from_media_items(item['id'])
-                self.queues["Wanted"].remove_item(item)
-                return True
-                
-            return False
-            
-        except Exception as e:
-            logging.error(f"Error during item reconciliation: {str(e)}")
-            return False
-        finally:
-            conn.close()
-
-    def process_wanted_batch(self):
-        """Process the Wanted queue using batch operations."""
-        if not self.paused:
-            items_to_scrape = []
-            items_to_unreleased = []
-            
-            for item in self.queues["Wanted"].get_contents():
-                try:
-                    # First check if this item already exists in Collected/Upgrading state
-                    if self._reconcile_with_existing_items(item):
-                        continue
-                        
-                    release_date_str = item.get('release_date')
-                    version = item.get('version')
-                    
-                    # Check if version requires physical release
-                    scraping_versions = get_setting('Scraping', 'versions', {})
-                    version_settings = scraping_versions.get(version, {})
-                    require_physical = version_settings.get('require_physical_release', False)
-                    physical_release_date = item.get('physical_release_date')
-                    
-                    if require_physical and not physical_release_date:
-                        items_to_unreleased.append(item)
-                        continue
-                    
-                    # Handle early release items
-                    if item.get('early_release', False):
-                        items_to_scrape.append(item)
-                        continue
-                    
-                    # Process release dates
-                    if not release_date_str or release_date_str.lower() in ["unknown", "none"]:
-                        items_to_unreleased.append(item)
-                        continue
-                    
-                    try:
-                        release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                        current_date = datetime.now().date()
-                        
-                        if release_date <= current_date:
-                            items_to_scrape.append(item)
-                        else:
-                            items_to_unreleased.append(item)
-                    except ValueError:
-                        items_to_unreleased.append(item)
-                        
-                except Exception as e:
-                    logging.error(f"Error processing Wanted item {item.get('id')}: {str(e)}")
-                    continue
-            
-            # Perform batch moves
-            if items_to_scrape:
-                self.move_items_batch(items_to_scrape, "Wanted", "Scraping")
-            if items_to_unreleased:
-                self.move_items_batch(items_to_unreleased, "Wanted", "Unreleased")
-
-    def process_scraping_batch(self):
-        """Process the Scraping queue using batch operations."""
-        if not self.paused:
-            self.queues["Scraping"].update()
-            queue_contents = self.queues["Scraping"].get_contents()
-            
-            if queue_contents:
-                items_to_process = []
-                for item in queue_contents:
-                    if len(items_to_process) < 5:  # Process in small batches
-                        items_to_process.append(item)
-                    else:
-                        break
-                    
-                if items_to_process:
-                    return self.queues["Scraping"].process_batch(self, items_to_process)
-        return False
-
-    # Add other methods as needed
+    def get_current_queue_timing(self):
+        """Get timing information for all items currently in queues"""
+        if hasattr(self, 'queue_timer'):
+            return self.queue_timer.get_current_queue_items()
+        return {}
