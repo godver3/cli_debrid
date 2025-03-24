@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}GunJS Status{% endblock %}
+{% block title %}PhalanxDB Status{% endblock %}
 
 {% block content %}
 <style>
@@ -17,10 +17,6 @@
     font-size: 1.2em;
 }
 
-.list-group.peer-list {
-    display: none;
-}
-
 .mb-0 {
     font-size: 1.2em;
     margin-left: 10px;
@@ -30,54 +26,13 @@
     margin-top: 10px;
 }
 
-/* Filter Button Group */
-.btn-group {
-    background-color: #1a1a1a;
-    border-radius: 4px;
-    overflow: hidden;
-    padding-left: 10px;
-}
-
-.btn-group .btn {
-    border: 1px solid #444;
-    padding: 4px 8px;
-    font-weight: 500;
-    background-color: #2c2c2c;
-    color: #f4f4f4;
-    margin: 3px;
-}
-
-.btn-group .btn-outline-primary {
-    border-color: #0d6efd;
-}
-
-.btn-group .btn-outline-success {
-    border-color: #198754;
-}
-
-.btn-group .btn-outline-danger {
-    border-color: #dc3545;
-}
-
-/* Peer List Items */
-.peer-list .list-group-item {
-    font-family: monospace;
-    font-size: 1.2em;
-    background-color: #2c2c2c;
-}
-
-/* Cache Status Badges */
-.badge {
-    padding: 0.5em 0.8em;
-    font-weight: 500;
-}
-
 /* Card Styling */
 .card {
     background-color: #1a1a1a;
     border: 1px solid #444;
     border-radius: 4px;
     font-size: 1em;
+    margin-bottom: 20px;
 }
 
 .card-header {
@@ -94,27 +49,11 @@
     padding-left: 10px;
 }
 
-/* Table Styling */
-.table {
-    color: #f4f4f4;
-    background-color: #2c2c2c;
-}
-
-.table thead th {
-    background-color: #1a1a1a;
-    border-bottom: 2px solid #444;
-    color: #f4f4f4;
-}
-
-.table td {
-    border-top: 1px solid #444;
-}
-
+/* Alert Styling */
 .alert {
     margin: 10px;
 }
 
-/* Alert Styling */
 .alert-success {
     background-color: #198754;
     color: #f4f4f4;
@@ -137,17 +76,6 @@
     background-color: #0dcaf0;
     color: #000;
     border: none;
-}
-
-#connected-peers {
-    display: none;
-}
-
-/* Code style */
-code {
-    color: #f4f4f4;
-    padding: 2px 4px;
-    border-radius: 3px;
 }
 
 /* Network Health specific styling */
@@ -173,13 +101,22 @@ code {
     padding-top: 10px;
     padding-bottom: 10px;
 }
+
+#hashInput {
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    border: 1px solid #444;
+    min-width: 500px;
+    min-height: 36px;
+    margin: 10px;
+}
 </style>
 
 <div class="container mt-4">
     <h1>PhalanxDB Status</h1>
 
     <!-- Connection Status -->
-    <div class="card mb-4">
+    <div class="card">
         <div class="card-header">
             <h5 class="mb-0">Connection Status</h5>
         </div>
@@ -196,139 +133,165 @@ code {
         </div>
     </div>
 
-    <!-- Mesh Status -->
-    <div class="card mb-4">
+    <!-- Node Status -->
+    <div class="card">
         <div class="card-header">
-            <h3 class="mb-0">Mesh Network Status</h3>
+            <h3 class="mb-0">Node Status</h3>
         </div>
         <div class="card-body">
             <div class="row">
-
                 <div class="col-md-6">
-                    <h4>Network Health</h4>
+                    <h4>Node Information</h4>
                     <ul class="list-group network-health">
                         <li class="list-group-item">
-                            Node ID: {{ mesh_status.node.id|default('Unknown') }}
+                            Uptime: {{ mesh_status.node.uptime }}
                         </li>
                         <li class="list-group-item">
-                            Uptime: {{ mesh_status.node.uptime|default(0) }} seconds
+                            Started: {{ mesh_status.node.startupTime }}
+                        </li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h4>Memory Usage</h4>
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            RSS: {{ mesh_status.memory.rss }}
                         </li>
                         <li class="list-group-item">
-                            Port: {{ mesh_status.node.port|default('Unknown') }}
+                            Heap Total: {{ mesh_status.memory.heapTotal }}
                         </li>
                         <li class="list-group-item">
-                            Connected Peers: {{ mesh_status.peers.connected|default(0) }}
+                            Heap Used: {{ mesh_status.memory.heapUsed }}
                         </li>
                         <li class="list-group-item">
-                            Storage Enabled: {{ mesh_status.storage.enabled|default(False)|string|title }}
+                            External: {{ mesh_status.memory.external }}
                         </li>
                         <li class="list-group-item">
-                            Storage File: {{ mesh_status.storage.file|default('Unknown') }}
+                            Array Buffers: {{ mesh_status.memory.arrayBuffers }}
                         </li>
-                        <li class="list-group-item">
-                            Total Data Items: {{ mesh_status.data.total|default(0) }}
-                        </li>
-                        <li class="list-group-item">
-                            Valid Data Items: {{ mesh_status.data.valid|default(0) }}
-                        </li>
-                        <li class="list-group-item">
-                            Encryption Enabled: {{ mesh_status.encryption.enabled|default(False)|string|title }}
-                        </li>
-                        <li class="list-group-item">
-                            SEA Encryption: {{ mesh_status.encryption.sea|default(False)|string|title }}
-                        </li>
-
                     </ul>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Cache Entries -->
+    <!-- Network Status -->
     <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <h5 class="mb-0">Cache Entries ({{ total_entries }})</h5>
-            <div class="btn-group">
-                <button class="btn btn-sm btn-outline-primary" onclick="filterEntries('all')">All</button>
-                <button class="btn btn-sm btn-outline-success" onclick="filterEntries('cached')">Cached</button>
-                <button class="btn btn-sm btn-outline-danger" onclick="filterEntries('uncached')">Uncached</button>
-            </div>
+        <div class="card-header">
+            <h3 class="mb-0">Network Status</h3>
         </div>
         <div class="card-body">
-            {% if cache_entries %}
-                <div class="table-responsive">
-                    <table class="table table" id="cacheTable">
-                        <thead>
-                            <tr>
-                                <th>Hash</th>
-                                <th>Service</th>
-                                <th>Status</th>
-                                <th>Last Modified (UTC)</th>
-                                <th>Expiry (UTC)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for entry in cache_entries %}
-                                <tr class="cache-entry {{ 'cached' if entry.is_cached == True else 'uncached' if entry.is_cached == False else 'unchecked' }}">
-                                    <td><code>{{ entry.hash }}</code></td>
-                                    <td>{{ entry.service|default('unknown') }}</td>
-                                    <td>
-                                        {% if entry.is_cached == True %}
-                                            <span class="badge bg-success">Cached</span>
-                                        {% elif entry.is_cached == False %}
-                                            <span class="badge bg-danger">Not Cached</span>
-                                        {% else %}
-                                            <span class="badge bg-secondary">Unchecked</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if entry.timestamp %}
-                                            {% if entry.timestamp is string %}
-                                                {{ entry.timestamp }}
-                                            {% else %}
-                                                {{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') }}
-                                            {% endif %}
-                                        {% else %}
-                                            N/A
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if entry.expiry %}
-                                            {% if entry.expiry is string %}
-                                                {{ entry.expiry }}
-                                            {% else %}
-                                                {{ entry.expiry.strftime('%Y-%m-%d %H:%M:%S UTC') }}
-                                            {% endif %}
-                                        {% else %}
-                                            N/A
-                                        {% endif %}
-                                    </td>
-                                </tr>
+            <div class="row">
+                <div class="col-md-6">
+                    <h4>Connected Relays ({{ mesh_status.peers.connected }})</h4>
+                    {% if mesh_status.peers.relays %}
+                        <ul class="list-group network-health">
+                            {% for relay in mesh_status.peers.relays %}
+                                <li class="list-group-item">{{ relay }}</li>
                             {% endfor %}
-                        </tbody>
-                    </table>
+                        </ul>
+                    {% else %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle"></i> No connected relays
+                        </div>
+                    {% endif %}
                 </div>
-            {% else %}
-                <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i> No cache entries found
+                <div class="col-md-6">
+                    <h4>Data Statistics</h4>
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            Total Entries: {{ mesh_status.data.total }}
+                        </li>
+                        {% if mesh_status.services %}
+                            {% for service in mesh_status.services %}
+                                <li class="list-group-item">
+                                    {{ service[0] }}: {{ service[1] }} entries
+                                </li>
+                            {% endfor %}
+                        {% endif %}
+                    </ul>
                 </div>
-            {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Hash Tester -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="mb-0">Hash Tester</h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-12">
+                    <form id="hashTesterForm" class="mb-4">
+                        <div class="input-group">
+                            <input type="text" id="hashInput" class="form-control" placeholder="Enter hash to test" style="background-color: #2c2c2c; color: #f4f4f4; border: 1px solid #444;">
+                            <button type="submit" class="btn btn-primary">Test Hash</button>
+                        </div>
+                    </form>
+                    <div id="hashResult" style="display: none;">
+                        <ul class="list-group network-health">
+                            <li class="list-group-item" id="hashStatus"></li>
+                            <li class="list-group-item" id="hashTimestamp"></li>
+                            <li class="list-group-item" id="hashExpiry"></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </div>
 
 <script>
-function filterEntries(type) {
-    const rows = document.querySelectorAll('.cache-entry');
-    rows.forEach(row => {
-        if (type === 'all') {
-            row.style.display = '';
-        } else if (type === 'cached') {
-            row.style.display = row.classList.contains('cached') ? '' : 'none';
-        } else if (type === 'uncached') {
-            row.style.display = row.classList.contains('uncached') ? '' : 'none';
+document.getElementById('hashTesterForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const hashInput = document.getElementById('hashInput');
+    const resultDiv = document.getElementById('hashResult');
+    const statusEl = document.getElementById('hashStatus');
+    const timestampEl = document.getElementById('hashTimestamp');
+    const expiryEl = document.getElementById('hashExpiry');
+    
+    // Clear previous results
+    resultDiv.style.display = 'none';
+    
+    try {
+        const response = await fetch('/database/phalanxdb/test_hash', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                'hash': hashInput.value
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
         }
-    });
-}
+        
+        resultDiv.style.display = 'block';
+        
+        if (data.status === 'not_found') {
+            statusEl.innerHTML = `<span class="text-warning">Status: Not Found in Database</span>`;
+            timestampEl.style.display = 'none';
+            expiryEl.style.display = 'none';
+        } else {
+            const result = data.data;
+            statusEl.innerHTML = `Status: <span class="${result.is_cached ? 'text-success' : 'text-danger'}">${result.is_cached ? 'Cached' : 'Not Cached'}</span>`;
+            timestampEl.innerHTML = `Last Modified: ${result.timestamp || 'N/A'}`;
+            expiryEl.innerHTML = `Expires: ${result.expiry || 'N/A'}`;
+            timestampEl.style.display = 'block';
+            expiryEl.style.display = 'block';
+        }
+    } catch (error) {
+        resultDiv.style.display = 'block';
+        statusEl.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
+        timestampEl.style.display = 'none';
+        expiryEl.style.display = 'none';
+    }
+});
 </script>
 {% endblock %} 

@@ -160,13 +160,11 @@ def parse_size(size_info: str) -> float:
             # Clean the size string
             size_str = size_str.strip()
             if not size_str or size_str == '.':
-                logging.debug(f"Invalid size string '{size_str}' in '{size_info}'")
                 return 0.0
                 
             try:
                 size = float(size_str)
             except ValueError:
-                logging.debug(f"Could not convert '{size_str}' to float in '{size_info}'")
                 return 0.0
                 
             unit = unit.lower()
@@ -179,7 +177,6 @@ def parse_size(size_info: str) -> float:
             elif unit.startswith(('k', 'к')):  # KB, KiB
                 return size / (1024 * 1024)
             else:
-                logging.debug(f"Unknown size unit '{unit}' in '{size_info}'")
                 return size
     except Exception as e:
         logging.error(f"Error parsing size from '{size_info}': {str(e)}")

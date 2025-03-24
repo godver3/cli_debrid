@@ -393,7 +393,7 @@ def setup_tray_icon():
                     # Check for both direct node processes and npm start processes
                     is_target = (
                         (any('node' in cmd.lower() for cmd in cmdline) and any('phalanx_db' in cmd.lower() for cmd in cmdline)) or
-                        (any('npm' in cmd.lower() for cmd in cmdline) and any('start' in cmd.lower() for cmd in cmdline))
+                        (any('node' in cmd.lower() for cmd in cmdline) and any('--expose-gc' in cmd.lower() for cmd in cmdline))
                     )
                     if is_target:
                         print(f"Stopping process: {proc.pid} - {' '.join(cmdline)}")

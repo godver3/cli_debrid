@@ -3,10 +3,11 @@ from .models import user_required, onboarding_required
 from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
 from queues.config_manager import load_config
-from metadata.metadata import process_metadata
+from metadata.metadata import process_metadata, get_metadata
 from database.wanted_items import add_wanted_items
 import logging
 import re
+from utilities.settings import load_config
 
 content_requestor_bp = Blueprint('content', __name__)
 
@@ -80,13 +81,37 @@ def request_content():
             media_type = 'tv'
 
         if not imdb_id:
-            return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}'}), 400
+            # Check if any Jackett scrapers are enabled
+            config = load_config()
+            has_enabled_jackett = False
+            
+            for instance, settings in config.get('Scrapers', {}).items():
+                if isinstance(settings, dict):
+                    if settings.get('type') == 'Jackett' and settings.get('enabled', False):
+                        has_enabled_jackett = True
+                        break
+            
+            # Get the title directly from the request data
+            title = data.get('title', '')
+            
+            # Only proceed if Jackett is enabled AND title contains UFC
+            if not has_enabled_jackett or 'UFC' not in title.upper():
+                return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}. This is only supported for UFC content with Jackett enabled.'}), 400
+            else:
+                logging.info(f"No IMDB ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
             
         # Create wanted item in the format expected by process_metadata
         wanted_item = {
             'imdb_id': imdb_id,
             'tmdb_id': tmdb_id,
-            'media_type': media_type
+            'media_type': media_type,
+            'title': data.get('title'),  # Title from frontend
+            'year': data.get('year'),  # Year from frontend
+            'release_date': data.get('releaseDate'),  # Release date from frontend
+            'genres': data.get('genres', []),  # Genres from frontend if available
+            'overview': data.get('overview'),  # Overview/description if available
+            'vote_average': data.get('voteAverage'),  # Rating if available
+            'backdrop_path': data.get('backdropPath')  # Backdrop image path if available
         }
         
         # If specific seasons were selected for a TV show, add them to the wanted item

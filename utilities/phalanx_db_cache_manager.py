@@ -156,16 +156,21 @@ class PhalanxDBClassManager:
                 expiry = None
                 
                 if 'last_modified' in service_data:
-                    last_modified = datetime.fromisoformat(service_data['last_modified'].replace('Z', '+00:00'))
+                    timestamp = service_data['last_modified']
+                    if timestamp is not None:
+                        last_modified = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                 
                 if 'expiry' in service_data:
-                    expiry = datetime.fromisoformat(service_data['expiry'].replace('Z', '+00:00'))
+                    timestamp = service_data['expiry']
+                    if timestamp is not None:
+                        expiry = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     
                     # Check if entry is expired - ensure both datetimes are timezone aware
-                    now = datetime.now(expiry.tzinfo)
-                    if expiry and expiry < now:
-                        logging.info(f"Cache entry for {hash_value} is expired (expiry: {expiry}), triggering new cache check")
-                        return None
+                    if expiry:
+                        now = datetime.now(expiry.tzinfo)
+                        if expiry < now:
+                            logging.info(f"Cache entry for {hash_value} is expired (expiry: {expiry}), triggering new cache check")
+                            return None
 
                 return {
                     'is_cached': service_data.get('cached', False),
@@ -234,18 +239,23 @@ class PhalanxDBClassManager:
                     
                     if 'last_modified' in service_data:
                         try:
-                            last_modified = datetime.fromisoformat(service_data['last_modified'].replace('Z', '+00:00'))
+                            timestamp = service_data['last_modified']
+                            if timestamp is not None:
+                                last_modified = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                         except (ValueError, AttributeError):
                             continue
                     
                     if 'expiry' in service_data:
                         try:
-                            expiry = datetime.fromisoformat(service_data['expiry'].replace('Z', '+00:00'))
-                            # Check if entry is expired - ensure both datetimes are timezone aware
-                            now = datetime.now(expiry.tzinfo)
-                            if expiry and expiry < now:
-                                logging.info(f"Cache entry for {hash_value} is expired (expiry: {expiry}), triggering new cache check")
-                                continue
+                            timestamp = service_data['expiry']
+                            if timestamp is not None:
+                                expiry = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                # Check if entry is expired - ensure both datetimes are timezone aware
+                                if expiry:
+                                    now = datetime.now(expiry.tzinfo)
+                                    if expiry < now:
+                                        logging.info(f"Cache entry for {hash_value} is expired (expiry: {expiry}), triggering new cache check")
+                                        continue
                         except (ValueError, AttributeError):
                             continue
 
@@ -324,62 +334,71 @@ class PhalanxDBClassManager:
         """Get the mesh network status
         
         Returns:
-            Dict containing:
-                - node: Dict with node info (id, uptime, mode, port)
-                - peers: Dict with relay_servers and webrtc_peers info
-                - storage: Dict with storage settings
-                - data: Dict with data stats
-                - encryption: Dict with encryption settings
-                - lastSync: datetime or None
+            Dict containing the new debug endpoint format:
+                - timestamp: str (ISO format)
+                - memoryUsage: Dict with memory metrics
+                - totalEntriesSeen: int
+                - totalEntryCount: int
+                - serviceCounts: List[Tuple[str, int]]
+                - uptime: str
+                - startupTime: str
+                - connectedRelays: List[str]
         """
         try:
             result, url, errors = self._try_urls("/debug")
             if not result:
                 return {
-                    'node': {'id': 'Unknown', 'uptime': 0, 'mode': 'Unknown', 'port': 0},
-                    'peers': {
-                        'relay_servers': [],
-                        'webrtc_peers': {'connected': 0, 'peers': []}
+                    'timestamp': datetime.now().isoformat(),
+                    'memoryUsage': {
+                        'rss': '0 MB',
+                        'heapTotal': '0 MB',
+                        'heapUsed': '0 MB',
+                        'external': '0 MB',
+                        'arrayBuffers': '0 MB'
                     },
-                    'storage': {'enabled': False, 'file': 'Unknown'},
-                    'data': {'total': 0, 'valid': 0},
-                    'encryption': {'enabled': False, 'sea': False},
-                    'lastSync': None
+                    'totalEntriesSeen': 0,
+                    'totalEntryCount': 0,
+                    'serviceCounts': [],
+                    'uptime': '0 seconds',
+                    'startupTime': datetime.now().isoformat(),
+                    'connectedRelays': []
                 }
             
-            # Parse last sync time if present
-            last_sync = None
-            if result.get('lastSync'):
-                try:
-                    last_sync = datetime.fromisoformat(result['lastSync'].replace('Z', '+00:00'))
-                except (ValueError, AttributeError):
-                    last_sync = None
-            
-            # Return the mesh status with the new structure
+            # Return the raw debug endpoint response, with defaults for missing fields
             return {
-                'node': result.get('node', {'id': 'Unknown', 'uptime': 0, 'mode': 'Unknown', 'port': 0}),
-                'peers': result.get('peers', {
-                    'relay_servers': [],
-                    'webrtc_peers': {'connected': 0, 'peers': []}
+                'timestamp': result.get('timestamp', datetime.now().isoformat()),
+                'memoryUsage': result.get('memoryUsage', {
+                    'rss': '0 MB',
+                    'heapTotal': '0 MB',
+                    'heapUsed': '0 MB',
+                    'external': '0 MB',
+                    'arrayBuffers': '0 MB'
                 }),
-                'storage': result.get('storage', {'enabled': False, 'file': 'Unknown'}),
-                'data': result.get('data', {'total': 0, 'valid': 0}),
-                'encryption': result.get('encryption', {'enabled': False, 'sea': False}),
-                'lastSync': last_sync
+                'totalEntriesSeen': result.get('totalEntriesSeen', 0),
+                'totalEntryCount': result.get('totalEntryCount', 0),
+                'serviceCounts': result.get('serviceCounts', []),
+                'uptime': result.get('uptime', '0 seconds'),
+                'startupTime': result.get('startupTime', datetime.now().isoformat()),
+                'connectedRelays': result.get('connectedRelays', [])
             }
                     
         except Exception as e:
             logging.error(f"Error getting mesh status: {str(e)}")
             return {
-                'node': {'id': 'Unknown', 'uptime': 0, 'mode': 'Unknown', 'port': 0},
-                'peers': {
-                    'relay_servers': [],
-                    'webrtc_peers': {'connected': 0, 'peers': []}
+                'timestamp': datetime.now().isoformat(),
+                'memoryUsage': {
+                    'rss': '0 MB',
+                    'heapTotal': '0 MB',
+                    'heapUsed': '0 MB',
+                    'external': '0 MB',
+                    'arrayBuffers': '0 MB'
                 },
-                'storage': {'enabled': False, 'file': 'Unknown'},
-                'data': {'total': 0, 'valid': 0},
-                'encryption': {'enabled': False, 'sea': False},
-                'lastSync': None
+                'totalEntriesSeen': 0,
+                'totalEntryCount': 0,
+                'serviceCounts': [],
+                'uptime': '0 seconds', 
+                'startupTime': datetime.now().isoformat(),
+                'connectedRelays': []
             }
 
     def get_all_entries(self) -> List[Dict[str, Any]]:
@@ -426,18 +445,23 @@ class PhalanxDBClassManager:
                             
                             if 'last_modified' in service_data:
                                 try:
-                                    last_modified = datetime.fromisoformat(service_data['last_modified'].replace('Z', '+00:00'))
+                                    timestamp = service_data['last_modified']
+                                    if timestamp is not None:
+                                        last_modified = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                                 except (ValueError, AttributeError) as e:
                                     logging.warning(f"Invalid timestamp format in entry {entry['infohash']}: {service_data.get('last_modified')}")
                                     continue
                             
                             if 'expiry' in service_data:
                                 try:
-                                    expiry = datetime.fromisoformat(service_data['expiry'].replace('Z', '+00:00'))
-                                    # Check if entry is expired
-                                    now = datetime.now(expiry.tzinfo)
-                                    if expiry < now:
-                                        continue
+                                    timestamp = service_data['expiry']
+                                    if timestamp is not None:
+                                        expiry = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                                        # Check if entry is expired
+                                        if expiry:
+                                            now = datetime.now(expiry.tzinfo)
+                                            if expiry < now:
+                                                continue
                                 except (ValueError, AttributeError) as e:
                                     logging.warning(f"Invalid expiry format in entry {entry['infohash']}: {service_data.get('expiry')}")
                                     continue

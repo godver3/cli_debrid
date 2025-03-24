@@ -21,6 +21,40 @@ def migrate_schema():
     try:
         # Check if the column exists
         cursor = conn.cursor()
+        
+        # Check if statistics_summary table exists and has id column
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(statistics_summary)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'id' not in columns:
+                # Create temporary table with new schema
+                cursor.execute('''
+                    CREATE TABLE statistics_summary_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        total_movies INTEGER NOT NULL DEFAULT 0,
+                        total_shows INTEGER NOT NULL DEFAULT 0,
+                        total_episodes INTEGER NOT NULL DEFAULT 0,
+                        last_updated DATETIME NOT NULL,
+                        latest_movie_collected_at DATETIME,
+                        latest_episode_collected_at DATETIME,
+                        latest_upgrade_at DATETIME
+                    )
+                ''')
+                # Copy data from old table to new table
+                cursor.execute('''
+                    INSERT INTO statistics_summary_new 
+                    (total_movies, total_shows, total_episodes, last_updated, 
+                     latest_movie_collected_at, latest_episode_collected_at, latest_upgrade_at)
+                    SELECT total_movies, total_shows, total_episodes, last_updated,
+                           latest_movie_collected_at, latest_episode_collected_at, latest_upgrade_at 
+                    FROM statistics_summary
+                ''')
+                # Drop old table and rename new table
+                cursor.execute('DROP TABLE statistics_summary')
+                cursor.execute('ALTER TABLE statistics_summary_new RENAME TO statistics_summary')
+                logging.info("Successfully added id column to statistics_summary table.")
+        
         cursor.execute("PRAGMA table_info(media_items)")
         columns = [column[1] for column in cursor.fetchall()]
         
@@ -385,6 +419,7 @@ def create_statistics_summary_table():
         # Create the statistics summary table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS statistics_summary (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 total_movies INTEGER NOT NULL DEFAULT 0,
                 total_shows INTEGER NOT NULL DEFAULT 0,
                 total_episodes INTEGER NOT NULL DEFAULT 0,

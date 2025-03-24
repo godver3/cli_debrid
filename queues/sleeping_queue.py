@@ -149,3 +149,7 @@ class SleepingQueue:
         except ValueError as e:
             logging.error(f"Error parsing release date for item {self.generate_identifier(item)}: {str(e)}")
             return True  # Consider items with unparseable dates as old
+
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)

@@ -238,6 +238,8 @@ def bulk_queue_action():
     error_count = 0
     errors = []
     
+    from database import get_db_connection
+
     try:
         for i in range(0, len(selected_items), BATCH_SIZE):
             batch = selected_items[i:i + BATCH_SIZE]
@@ -276,7 +278,6 @@ def bulk_queue_action():
                         
             elif action == 'move' and target_queue:
                 # Keep existing move functionality
-                from database import get_db_connection
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
@@ -295,7 +296,6 @@ def bulk_queue_action():
                 finally:
                     conn.close()
             elif action == 'change_version' and target_queue:  # target_queue contains the version in this case
-                from database import get_db_connection
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
@@ -679,17 +679,39 @@ def phalanxdb_status():
         # Initialize cache manager
         phalanx_manager = PhalanxDBClassManager()
         
-        # No need for event loop with synchronous methods
+        # Get connection and mesh status
         connection_status = phalanx_manager.test_connection()
         mesh_status = phalanx_manager.get_mesh_status()
-        cache_entries = phalanx_manager.get_all_entries()
+        
+        # Format the mesh status data based on the new debug endpoint format
+        if mesh_status:
+            mesh_status = {
+                'node': {
+                    'uptime': mesh_status.get('uptime', '0 seconds'),
+                    'startupTime': mesh_status.get('startupTime', 'Unknown'),
+                },
+                'peers': {
+                    'connected': len(mesh_status.get('connectedRelays', [])),
+                    'relays': mesh_status.get('connectedRelays', [])
+                },
+                'data': {
+                    'total': mesh_status.get('totalEntriesSeen', 0),
+                    'valid': mesh_status.get('totalEntryCount', 0)
+                },
+                'memory': mesh_status.get('memoryUsage', {
+                    'rss': '0 MB',
+                    'heapTotal': '0 MB',
+                    'heapUsed': '0 MB',
+                    'external': '0 MB',
+                    'arrayBuffers': '0 MB'
+                }),
+                'services': mesh_status.get('serviceCounts', [])
+            }
         
         return render_template(
             'phalanxdb_status.html',
             connection_status=connection_status,
-            mesh_status=mesh_status,
-            cache_entries=cache_entries,
-            total_entries=len(cache_entries)
+            mesh_status=mesh_status
         )
         
     except Exception as e:
@@ -698,7 +720,47 @@ def phalanxdb_status():
         return render_template(
             'phalanxdb_status.html',
             connection_status=False,
-            mesh_status={'peers': [], 'mesh_status': {}, 'last_sync': None},
-            cache_entries=[],
-            total_entries=0
+            mesh_status={
+                'node': {},
+                'peers': {'connected': 0, 'relays': []},
+                'data': {'total': 0, 'valid': 0},
+                'memory': {},
+                'services': []
+            }
         )
+
+@database_bp.route('/phalanxdb/test_hash', methods=['POST'])
+@admin_required
+def test_phalanx_hash():
+    """Test a specific hash against PhalanxDB"""
+    try:
+        hash_value = request.form.get('hash', '').strip()
+        if not hash_value:
+            return jsonify({'error': 'No hash provided'}), 400
+            
+        # Initialize cache manager
+        phalanx_manager = PhalanxDBClassManager()
+        
+        # Get cache status
+        result = phalanx_manager.get_cache_status(hash_value)
+        
+        if result is None:
+            return jsonify({
+                'status': 'not_found',
+                'message': 'Hash not found in database'
+            })
+            
+        # Format the timestamps for display
+        if result.get('timestamp'):
+            result['timestamp'] = result['timestamp'].strftime('%Y-%m-%d %H:%M:%S UTC')
+        if result.get('expiry'):
+            result['expiry'] = result['expiry'].strftime('%Y-%m-%d %H:%M:%S UTC')
+            
+        return jsonify({
+            'status': 'success',
+            'data': result
+        })
+        
+    except Exception as e:
+        logging.error(f"Error testing hash: {str(e)}")
+        return jsonify({'error': str(e)}), 500

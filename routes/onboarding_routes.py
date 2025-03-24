@@ -28,8 +28,6 @@ def get_next_onboarding_step():
         ('Plex', 'token'),
         ('Plex', 'shows_libraries'),
         ('Plex', 'movie_libraries'),
-        ('Plex', 'update_plex_on_file_discovery'),
-        ('Plex', 'mounted_file_location'),
         ('Debrid Provider', 'provider'),
         ('Debrid Provider', 'api_key'),
         ('Trakt', 'client_id'),
@@ -178,7 +176,7 @@ def onboarding_step(step):
                     'token': plex_token,
                     'shows_libraries': request.form.get('shows_libraries', ''),
                     'movie_libraries': request.form.get('movie_libraries', ''),
-                    'update_plex_on_file_discovery': request.form.get('update_plex_on_file_discovery', 'false') == 'on',
+                    'update_plex_on_file_discovery': request.form.get('Plex.update_plex_on_file_discovery', 'false') == 'on',
                     'mounted_file_location': original_files_path
                 }
 
@@ -525,21 +523,16 @@ def validate_onboarding_settings():
             
             # Validate based on setup type
             if management_type == 'plex_direct':
-                # Check for direct mount requirements
+                # Check for direct mount requirements - only validate if path is provided
                 mount_path = config.get('File Management', {}).get('original_files_path')
-                if not mount_path:
-                    is_valid = False
-                    checks.append({
-                        'name': 'Mount Configuration',
-                        'valid': False,
-                        'message': 'Direct mount path is not configured.'
-                    })
-                else:
+                # Since original_files_path is optional, we don't need to validate it if it's empty
+                if mount_path:
                     checks.append({
                         'name': 'Mount Configuration',
                         'valid': True,
-                        'message': 'Mount path is properly configured.'
+                        'message': 'Mount path is configured. Note: Path existence cannot be verified within Docker.'
                     })
+                # Don't add any validation check if mount_path is empty since it's optional
                     
             elif management_type == 'plex_symlink':
                 # Check for symlink requirements
@@ -555,7 +548,16 @@ def validate_onboarding_settings():
                     checks.append({
                         'name': 'Symlink Configuration',
                         'valid': True,
-                        'message': 'Symlink path is properly configured.'
+                        'message': 'Symlink path is configured. Note: Path existence cannot be verified within Docker.'
+                    })
+                    
+                # Check original files path only if provided (optional)
+                original_path = config.get('File Management', {}).get('original_files_path')
+                if original_path:
+                    checks.append({
+                        'name': 'Original Files Path',
+                        'valid': True,
+                        'message': 'Original files path is configured. Note: Path existence cannot be verified within Docker.'
                     })
                     
             return jsonify({

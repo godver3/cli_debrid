@@ -23,9 +23,6 @@ class ScraperManager:
             'Nyaa': scrape_nyaa,
             'OldNyaa': scrape_old_nyaa_instance
         }
-        # Default timeouts in seconds
-        self.scraper_timeout = 5  # timeout for individual scrapers
-        self.batch_timeout = 5    # timeout for entire batch operation
 
     def get_scraper_settings(self, scraper_type):
         # Fetch all scraper settings
@@ -61,7 +58,7 @@ class ScraperManager:
         Scrape all configured sources for content.
         
         Args:
-            imdb_id: IMDb ID of the content
+            imdb_id: IMDb ID of the content (can be None)
             title: Title of the content
             year: Release year
             content_type: Type of content ('movie' or 'episode')
@@ -75,6 +72,14 @@ class ScraperManager:
         all_results = []
         is_anime = genres and 'anime' in [genre.lower() for genre in genres]
         is_episode = content_type.lower() == 'episode'
+
+        self.scraper_timeout = get_setting('Scraping', 'scraper_timeout', 5)
+        self.batch_timeout = get_setting('Scraping', 'scraper_timeout', 5)
+        
+        # Disable timeouts if scraper_timeout is 0
+        self.use_timeout = self.scraper_timeout > 0
+        self.scraper_timeout = None if self.scraper_timeout == 0 else self.scraper_timeout
+        self.batch_timeout = None if self.batch_timeout == 0 else self.batch_timeout
         
         # Helper function to run a scraper and handle exceptions
         def run_scraper(instance, scraper_type, settings):
@@ -116,6 +121,39 @@ class ScraperManager:
             except Exception as e:
                 logging.error(f"Error scraping {scraper_type} instance '{instance}': {str(e)}")
                 return instance, []
+
+        # If no IMDB ID is available, only use Nyaa (for anime) and Jackett scrapers
+        if not imdb_id:
+            logging.info("No IMDB ID available - limiting scrapers to Nyaa (if anime) and Jackett")
+            
+            # For anime episodes, try Nyaa first
+            if is_anime and is_episode:
+                nyaa_settings = self.get_scraper_settings('Nyaa')
+                nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
+                
+                if nyaa_enabled:
+                    logging.info(f"Trying Nyaa for anime episode without IMDB ID: {title}")
+                    instance, results = run_scraper('Nyaa', 'Nyaa', nyaa_settings)
+                    if results:
+                        all_results.extend(results)
+                        return all_results
+
+            # Try Jackett scrapers
+            for instance, settings in self.config.get('Scrapers', {}).items():
+                current_settings = self.get_scraper_settings(instance)
+                if not current_settings.get('enabled', False):
+                    continue
+                
+                scraper_type = current_settings.get('type')
+                if scraper_type != 'Jackett':
+                    continue
+
+                logging.info(f"Running Jackett scraper '{instance}' without IMDB ID")
+                instance, results = run_scraper(instance, scraper_type, current_settings)
+                if results:
+                    all_results.extend(results)
+
+            return all_results
         
         # For anime episodes, use ONLY Nyaa if enabled and it returns results
         if is_anime and is_episode:
@@ -228,7 +266,8 @@ class ScraperManager:
                         if results:
                             all_results.extend(results)
                     except TimeoutError:
-                        logging.error(f"Individual scraper timed out after {self.scraper_timeout} seconds")
+                        if self.use_timeout:
+                            logging.error(f"Individual scraper timed out after {self.scraper_timeout} seconds")
                     except Exception as e:
                         logging.error(f"Error in scraper: {str(e)}")
                 

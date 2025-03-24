@@ -703,13 +703,22 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     imdb_id = metadata.get('imdb_id')
 
     if not imdb_id:
-        # Try to get IMDb ID directly from our database mapping
-        from cli_battery.app.direct_api import DirectAPI
-        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show' if media_type == 'tv' else media_type)
-
-    if not imdb_id:
-        logging.error(f"Could not find IMDB ID for TMDB ID {tmdb_id}")
-        return {"error": "Could not find IMDB ID for the selected media"}
+        # Check if any Jackett scrapers are enabled
+        from utilities.settings import load_config
+        config = load_config()
+        has_enabled_jackett = False
+        
+        for instance, settings in config.get('Scrapers', {}).items():
+            if isinstance(settings, dict):
+                if settings.get('type') == 'Jackett' and settings.get('enabled', False):
+                    has_enabled_jackett = True
+                    break
+        
+        if not has_enabled_jackett:
+            logging.error(f"Could not find IMDB ID for TMDB ID {tmdb_id} and no Jackett scrapers are enabled")
+            return {"error": "Could not find IMDB ID for the selected media and no Jackett scrapers are enabled"}
+        else:
+            logging.info(f"No IMDB ID found for TMDB ID {tmdb_id}, but proceeding with Jackett scraper(s)")
 
     movie_or_episode = 'episode' if media_type == 'tv' or media_type == 'show' else 'movie'
 

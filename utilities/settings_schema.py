@@ -307,6 +307,12 @@ SETTINGS_SCHEMA = {
             "description": "Check Trakt for early releases",
             "default": False
         },
+        "scraper_timeout": {
+            "type": "integer",
+            "description": "Timeout in seconds for scraping process (0 to disable)",
+            "default": 5,
+            "min": 0
+        },
         "versions": {
             "type": "dict",
             "description": "Scraping versions configuration",

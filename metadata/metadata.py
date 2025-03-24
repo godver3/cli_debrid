@@ -9,6 +9,7 @@ import re
 import pytz
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+import requests
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -26,10 +27,55 @@ def parse_json_string(s):
     except json.JSONDecodeError:
         return s
 
+def get_tmdb_metadata(tmdb_id: str, media_type: str) -> Optional[Dict[str, Any]]:
+    """Fetch metadata directly from TMDB API."""
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    if not tmdb_api_key:
+        logging.debug("No TMDB API key configured, skipping TMDB metadata fetch")
+        return None
+
+    base_url = "https://api.themoviedb.org/3"
+    endpoint = f"/{'movie' if media_type.lower() == 'movie' else 'tv'}/{tmdb_id}"
+    
+    try:
+        response = requests.get(
+            f"{base_url}{endpoint}",
+            params={'api_key': tmdb_api_key},
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+        # Extract relevant fields
+        metadata = {
+            'title': data.get('title') or data.get('name'),
+            'year': int(data.get('release_date', '')[:4]) if data.get('release_date') else 
+                   int(data.get('first_air_date', '')[:4]) if data.get('first_air_date') else None,
+            'genres': [genre['name'] for genre in data.get('genres', [])],
+            'runtime': data.get('runtime') or data.get('episode_run_time', [None])[0],
+            'release_date': data.get('release_date') or data.get('first_air_date'),
+            'overview': data.get('overview'),
+            'original_language': data.get('original_language'),
+            'vote_average': data.get('vote_average'),
+            'tmdb_id': tmdb_id
+        }
+        
+        logging.debug(f"Successfully fetched TMDB metadata for ID {tmdb_id}: {metadata}")
+        return metadata
+        
+    except Exception as e:
+        logging.error(f"Error fetching TMDB metadata for ID {tmdb_id}: {str(e)}")
+        return None
+
 def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, item_media_type: Optional[str] = None, original_item: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
     if not imdb_id and not tmdb_id:
         raise ValueError("Either imdb_id or tmdb_id must be provided")
+
+    # Try to get TMDB metadata first if we have a TMDB ID
+    tmdb_metadata = None
+    if tmdb_id:
+        tmdb_metadata = get_tmdb_metadata(str(tmdb_id), item_media_type or 'movie')
 
     # Convert TMDB ID to IMDb ID if necessary
     if tmdb_id and not imdb_id:
@@ -42,10 +88,54 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             converted_item_media_type = "show"
         else:
             converted_item_media_type = item_media_type
+
+        # Check if any Jackett scrapers are enabled and if title contains UFC before attempting conversion
+        from utilities.settings import load_config
+        config = load_config()
+        has_enabled_jackett = False
+        
+        for instance, settings in config.get('Scrapers', {}).items():
+            if isinstance(settings, dict):
+                if settings.get('type') == 'Jackett' and settings.get('enabled', False):
+                    has_enabled_jackett = True
+                    break
+        
+        # Get the title from TMDB metadata or original item
+        title = ''
+        if tmdb_metadata:
+            title = tmdb_metadata.get('title', '')
+        if not title and original_item:
+            title = original_item.get('title', '')
+        
+        # Try to convert TMDB to IMDB
         imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=converted_item_media_type)
+        
+        # If conversion failed, check if we can proceed with Jackett
         if not imdb_id:
-            logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}")
-            return {}
+            if not has_enabled_jackett or 'UFC' not in title.upper():
+                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}. This is only supported for UFC content with Jackett enabled.")
+                return {}
+            else:
+                logging.info(f"No IMDb ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
+                # Return metadata from TMDB if available, otherwise return minimal metadata
+                if tmdb_metadata:
+                    tmdb_metadata.update({
+                        'tmdb_id': tmdb_id,
+                        'content_source': original_item.get('content_source') if original_item else None,
+                        'content_source_detail': original_item.get('content_source_detail') if original_item else None
+                    })
+                    return tmdb_metadata
+                return {
+                    'tmdb_id': tmdb_id,
+                    'title': title or 'Unknown Title',
+                    'year': original_item.get('year') if original_item else None,
+                    'genres': original_item.get('genres', []) if original_item else [],
+                    'runtime': None,
+                    'airs': {},
+                    'country': '',
+                    'content_source': original_item.get('content_source') if original_item else None,
+                    'content_source_detail': original_item.get('content_source_detail') if original_item else None
+                }
         logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id}")
 
     media_type = item_media_type.lower() if item_media_type else 'movie'

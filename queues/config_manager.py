@@ -318,10 +318,10 @@ def update_content_source(source_id, source_config):
         log_config_state(f"[{process_id}] Config after updating content source", config)
         save_config(config)
         
-        # Explicitly reset provider and reinitialize components after content source update
+        # Explicitly reset provider and reinitialize components after updating content source
         reset_provider()
         from queues.queue_manager import QueueManager
-        QueueManager().reinitialize_queues()
+        QueueManager().reinitialize()
         from queues.run_program import ProgramRunner
         ProgramRunner().reinitialize()
         logging.debug(f"[{process_id}] Successfully updated content source: {source_id}")
@@ -342,7 +342,7 @@ def update_all_content_sources(content_sources):
     # Explicitly reset provider and reinitialize components after updating all content sources
     reset_provider()
     from queues.queue_manager import QueueManager
-    QueueManager().reinitialize_queues()
+    QueueManager().reinitialize()
     from queues.run_program import ProgramRunner
     ProgramRunner().reinitialize()
     logging.debug(f"[{process_id}] Successfully updated all content sources")

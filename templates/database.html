@@ -878,6 +878,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
 
+                // Update templateData with new selected columns and column values
+                templateData.selectedColumns = data.selected_columns;
+                templateData.columnValues = data.column_values;
+
+                // Update sort column dropdown with new selected columns
+                const sortColumnSelect = document.getElementById('sort-column');
+                if (sortColumnSelect) {
+                    sortColumnSelect.innerHTML = `
+                        <option value="">None</option>
+                        ${data.selected_columns.map(column => `
+                            <option value="${column}" ${data.sort_column === column ? 'selected' : ''}>
+                                ${column}
+                            </option>
+                        `).join('')}
+                    `;
+                }
+
+                // Update existing filter dropdowns with new columns
+                document.querySelectorAll('.filter-row').forEach(row => {
+                    const columnSelect = row.querySelector('.filter-column');
+                    const currentValue = columnSelect.value;
+                    columnSelect.innerHTML = `
+                        <option value="">Select Column</option>
+                        ${data.selected_columns.map(column => `
+                            <option value="${column}" ${currentValue === column ? 'selected' : ''}>
+                                ${column}
+                            </option>
+                        `).join('')}
+                    `;
+                });
+
                 // Update UI to reflect current state
                 updateUIForCurrentState(data);
 
@@ -1283,18 +1314,30 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
-        const FRONTEND_BATCH_SIZE = 100; // Process 100 items at a time
+        const BATCH_SIZE = 450; // Reduced to stay well under Flask's form data limit
         let totalProcessed = 0;
         let errors = [];
+        let batches = Math.ceil(items.length / BATCH_SIZE);
 
-        for (let i = 0; i < items.length; i += FRONTEND_BATCH_SIZE) {
-            const batch = items.slice(i, i + FRONTEND_BATCH_SIZE);
+        // Show initial loading message
+        Loading.show(`Processing items in ${batches} batches...`);
+
+        for (let i = 0; i < items.length; i += BATCH_SIZE) {
+            const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+            Loading.updateMessage(`Processing batch ${batchNumber}/${batches}...`);
+
+            const batch = items.slice(i, i + BATCH_SIZE);
             const formData = new FormData();
             formData.append('action', action);
-            if (targetQueue) {
+            
+            // Handle blacklist flag properly
+            if (action === 'delete') {
+                formData.append('blacklist', targetQueue === 'true');
+            } else if (targetQueue) {
                 formData.append('target_queue', targetQueue);
             }
             
+            // Add all items in this batch to form data
             batch.forEach(id => {
                 formData.append('selected_items', id);
             });
@@ -1304,23 +1347,34 @@ document.addEventListener('DOMContentLoaded', function() {
                     method: 'POST',
                     body: formData,
                 });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
                 
                 if (data.success) {
                     totalProcessed += batch.length;
                 } else {
-                    errors.push(`Batch ${Math.floor(i/FRONTEND_BATCH_SIZE) + 1}: ${data.error}`);
+                    errors.push(`Batch ${batchNumber}: ${data.error}`);
                 }
             } catch (error) {
-                errors.push(`Batch ${Math.floor(i/FRONTEND_BATCH_SIZE) + 1}: ${error.message}`);
+                console.error(`Error in batch ${batchNumber}:`, error);
+                errors.push(`Batch ${batchNumber}: ${error.message}`);
             }
+
+            // Small delay between batches to prevent overwhelming the server
+            await new Promise(resolve => setTimeout(resolve, 100));
         }
+
+        Loading.hide();
 
         return {
             success: errors.length === 0,
             warning: errors.length > 0 && totalProcessed > 0,
             message: errors.length > 0 
-                ? `Processed ${totalProcessed} items with ${errors.length} batch errors. Errors: ${errors.join('; ')}`
+                ? `Processed ${totalProcessed}/${items.length} items with ${errors.length} batch errors. First few errors: ${errors.slice(0, 3).join('; ')}`
                 : `Successfully processed ${totalProcessed} items`,
         };
     }
@@ -1349,26 +1403,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 Loading.show();
                 const blacklistItems = document.getElementById('bulk-blacklist-checkbox').checked;
                 
-                const formData = new FormData();
-                formData.append('action', 'delete');
-                formData.append('blacklist', blacklistItems);
-                selectedItems.forEach(id => {
-                    formData.append('selected_items', id);
-                });
-
                 try {
-                    const response = await fetch('/database/bulk_queue_action', {
-                        method: 'POST',
-                        body: formData,
-                    });
-                    const data = await response.json();
-                    
+                    // Pass 'true' or 'false' string based on checkbox state
+                    const result = await processBatchedItems(selectedItems, 'delete', blacklistItems.toString());
                     showPopup({
-                        type: data.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: data.message,
-                        title: data.warning ? 'Partial Success' : 'Success',
+                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: result.message,
+                        title: result.warning ? 'Partial Success' : 'Success',
                     });
-                    
                     setTimeout(() => {
                         window.location.reload();
                     }, 2000);
@@ -1487,55 +1529,64 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete & Rescrape',
             cancelText: 'Cancel',
             onConfirm: async () => {
-                Loading.show();
-                let successCount = 0;
-                let errorCount = 0;
+                Loading.show(`Processing ${selectedItems.length} items for rescraping...`);
+                let totalProcessed = 0;
                 let errors = [];
-                
-                // Process each item individually
-                for (const itemId of selectedItems) {
-                    try {
-                        const response = await fetch('{{ url_for('debug.rescrape_item') }}', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({ item_id: itemId })
-                        });
-                        
-                        const data = await response.json();
-                        if (data.success) {
-                            successCount++;
+
+                // Process items in smaller batches to avoid overwhelming the server
+                const BATCH_SIZE = 10;
+                for (let i = 0; i < selectedItems.length; i += BATCH_SIZE) {
+                    const batch = selectedItems.slice(i, i + BATCH_SIZE);
+                    const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+                    const totalBatches = Math.ceil(selectedItems.length / BATCH_SIZE);
+                    
+                    Loading.updateMessage(`Processing batch ${batchNumber}/${totalBatches}...`);
+
+                    // Process each item in the batch concurrently
+                    const batchResults = await Promise.allSettled(
+                        batch.map(itemId =>
+                            fetch('{{ url_for('debug.rescrape_item') }}', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ item_id: itemId })
+                            }).then(response => response.json())
+                        )
+                    );
+
+                    // Process results
+                    batchResults.forEach((result, index) => {
+                        const itemId = batch[index];
+                        if (result.status === 'fulfilled' && result.value.success) {
+                            totalProcessed++;
                         } else {
-                            errorCount++;
-                            errors.push(`Item ${itemId}: ${data.error || 'Unknown error'}`);
+                            const error = result.status === 'fulfilled' 
+                                ? result.value.error || 'Unknown error'
+                                : result.reason.message;
+                            errors.push(`Item ${itemId}: ${error}`);
                         }
-                    } catch (error) {
-                        errorCount++;
-                        errors.push(`Item ${itemId}: ${error.message}`);
-                    }
+                    });
+
+                    // Small delay between batches
+                    await new Promise(resolve => setTimeout(resolve, 100));
                 }
-                
+
+                Loading.hide();
+
                 // Show results
-                if (errorCount > 0) {
-                    showPopup({
-                        type: POPUP_TYPES.WARNING,
-                        title: 'Partial Success',
-                        message: `Successfully processed ${successCount} items with ${errorCount} errors. First few errors: ${errors.slice(0, 3).join('; ')}`,
-                    });
-                } else {
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        title: 'Success',
-                        message: `Successfully deleted and moved ${successCount} items to Wanted queue for rescraping`,
-                    });
-                }
-                
+                showPopup({
+                    type: errors.length > 0 ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                    title: errors.length > 0 ? 'Partial Success' : 'Success',
+                    message: errors.length > 0
+                        ? `Processed ${totalProcessed}/${selectedItems.length} items with ${errors.length} errors. First few errors: ${errors.slice(0, 3).join('; ')}`
+                        : `Successfully processed ${totalProcessed} items`,
+                });
+
+                // Reload the page after a short delay
                 setTimeout(() => {
                     window.location.reload();
                 }, 2000);
-                
-                Loading.hide();
             },
         });
     });

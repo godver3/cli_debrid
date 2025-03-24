@@ -9,6 +9,10 @@ class WantedQueue:
     def __init__(self):
         self.items = []
 
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)
+
     def update(self):
         from database import get_all_media_items, get_db_connection, remove_from_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Wanted")]

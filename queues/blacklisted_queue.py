@@ -177,3 +177,7 @@ class BlacklistedQueue:
             return f"episode_{item['title']}_{item['imdb_id']}_S{item['season_number']:02d}E{item['episode_number']:02d}_{item['version']}"
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
+
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)

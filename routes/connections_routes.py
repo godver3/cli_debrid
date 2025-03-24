@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from utilities.settings import get_setting
 from typing import Dict, List, Any
+from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request
 
 connections_bp = Blueprint('connections', __name__)
 
@@ -524,7 +525,6 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             })
             
         elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist']:
-            from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request
             
             # First ensure we have valid authentication
             access_token = ensure_trakt_auth()
@@ -630,6 +630,34 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             base_response['details'].update({
                 'url': url,
                 'rss_status': response.status_code
+            })
+            
+        elif source_type == 'Trakt Collection':
+            # Handle Trakt Collection
+            access_token = ensure_trakt_auth()
+            if not access_token:
+                base_response['error'] = 'Not authenticated'
+                base_response['connected'] = False
+                return base_response
+
+            # Try to get both movies and shows collection
+            movies_response = make_trakt_request('get', "/sync/collection/movies")
+            shows_response = make_trakt_request('get', "/sync/collection/shows")
+            
+            if not movies_response or not shows_response:
+                base_response['error'] = 'Failed to fetch collection data'
+                base_response['connected'] = False
+                base_response['details'].update({
+                    'movies_status': 'Failed' if not movies_response else 'Success',
+                    'shows_status': 'Failed' if not shows_response else 'Success'
+                })
+                return base_response
+            
+            # Both requests succeeded
+            base_response['connected'] = True
+            base_response['details'].update({
+                'movies_count': len(movies_response.json()),
+                'shows_count': len(shows_response.json())
             })
             
     except requests.Timeout:

@@ -144,7 +144,22 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
 
             # Try to get anime metadata if enabled and item is anime
             genres = item.get('genres', '') or ''
-            if get_setting('Debug', 'anime_renaming_using_anidb', False) and 'anime' in genres.lower():
+            # Handle both string and list formats of genres
+            if isinstance(genres, str):
+                try:
+                    # Try to parse as JSON first (for database-stored genres)
+                    import json
+                    genres = json.loads(genres)
+                except json.JSONDecodeError:
+                    # If not JSON, split by comma (for comma-separated strings)
+                    genres = [g.strip() for g in genres.split(',') if g.strip()]
+            # Ensure genres is a list
+            if not isinstance(genres, list):
+                genres = [str(genres)]
+            # Check for anime in any genre
+            is_anime = any('anime' in genre.lower() for genre in genres)
+            
+            if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime:
                 logging.debug(f"Checking for anime metadata for {item.get('title')}")
                 from utilities.anidb_functions import get_anidb_metadata_for_item
                 anime_metadata = get_anidb_metadata_for_item(item)
@@ -294,7 +309,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
         extended_search: If True, will perform an extended search for the file
     """
     max_retries = 10 if is_webhook else 1
-    retry_delay = 1  # second
+    retry_delay = 3  # second
     
     for attempt in range(max_retries):
         try:
