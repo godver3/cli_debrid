@@ -121,6 +121,14 @@
         </div>
 
         <div class="settings-form-group">
+            <label for="additional-process_non_checking_items" class="settings-title">Process Non-Checking Items:</label>
+            <input type="checkbox" id="additional-process_non_checking_items" name="File Management.process_non_checking_items"
+                   data-section="File Management" data-key="process_non_checking_items"
+                   {% if settings.get('File Management', {}).get('process_non_checking_items') %}checked{% endif %}>
+            <p class="settings-description">Process files in rclone webhook even if they don't match any items in the checking state</p>
+        </div>
+
+        <div class="settings-form-group">
             <label for="additional-movies_folder_name" class="settings-title">Movies Folder Name:</label>
             <input type="text" id="additional-movies_folder_name" name="Debug.movies_folder_name"
                    value="{{ settings.get('Debug', {}).get('movies_folder_name', 'Movies') }}" 

@@ -108,11 +108,19 @@ def request_content():
             'title': data.get('title'),  # Title from frontend
             'year': data.get('year'),  # Year from frontend
             'release_date': data.get('releaseDate'),  # Release date from frontend
-            'genres': data.get('genres', []),  # Genres from frontend if available
             'overview': data.get('overview'),  # Overview/description if available
             'vote_average': data.get('voteAverage'),  # Rating if available
             'backdrop_path': data.get('backdropPath')  # Backdrop image path if available
         }
+        
+        # Handle genres formatting
+        genres = data.get('genres', [])
+        if isinstance(genres, str):
+            # If genres come as comma-separated string, convert to list
+            genres = [g.strip() for g in genres.split(',')]
+        elif not isinstance(genres, list):
+            genres = []
+        wanted_item['genres'] = genres
         
         # If specific seasons were selected for a TV show, add them to the wanted item
         if media_type == 'tv' and selected_seasons:

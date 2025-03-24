@@ -144,6 +144,11 @@ SETTINGS_SCHEMA = {
             "description": "Organize symlinked files by resolution (e.g., 1080p, 2160p) before media type folders",
             "default": False
         },
+        "process_non_checking_items": {
+            "type": "boolean",
+            "description": "Process files in rclone webhook even if they don't match any items in the checking state",
+            "default": False
+        },
         "plex_url_for_symlink": {
             "type": "string",
             "description": "Plex server URL for symlink updates (optional)",
