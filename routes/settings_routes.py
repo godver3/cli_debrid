@@ -620,7 +620,7 @@ def update_settings():
         from debrid import reset_provider
         reset_provider()
         from queues.queue_manager import QueueManager
-        QueueManager().reinitialize_queues()
+        QueueManager().reinitialize()
         from queues.run_program import ProgramRunner
         ProgramRunner().reinitialize()
 

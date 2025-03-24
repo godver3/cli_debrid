@@ -464,12 +464,42 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     logging.debug(f"\nFiltering complete: {len(filtered_results)}/{len(results)} results passed")
     return filtered_results, pre_size_filtered_results
 
-def resolution_filter(result_resolution, max_resolution, resolution_wanted):
-    comparison = compare_resolutions(result_resolution, max_resolution)
+def get_resolution_value(resolution: str) -> int:
+    """Convert a resolution string to a numeric value for comparison."""
+    resolution_order = {
+        '2160p': 2160, '4k': 2160, 'uhd': 2160,
+        '1440p': 1440, 'qhd': 1440,
+        '1080p': 1080, 'fhd': 1080,
+        '720p': 720, 'hd': 720,
+        '480p': 480, 'sd': 480,
+        '360p': 360
+    }
+    return resolution_order.get(resolution.lower(), 0)
+
+def resolution_filter(result_resolution: str, max_resolution: str, resolution_wanted: str) -> bool:
+    """
+    Filter resolutions based on comparison operators.
+    
+    Args:
+        result_resolution: The resolution of the result being checked
+        max_resolution: The resolution to compare against
+        resolution_wanted: The comparison operator ('<=', '==', or '>=')
+        
+    Returns:
+        bool: Whether the result matches the resolution criteria
+    """
+    result_val = get_resolution_value(result_resolution)
+    max_val = get_resolution_value(max_resolution)
+    
+    if result_val == 0 or max_val == 0:
+        logging.debug(f"Unknown resolution value: result={result_resolution}({result_val}), max={max_resolution}({max_val})")
+        return False
+        
     if resolution_wanted == '<=':
-        return comparison <= 0
+        return result_val <= max_val
     elif resolution_wanted == '==':
-        return comparison == 0
+        return result_val == max_val
     elif resolution_wanted == '>=':
-        return comparison >= 0
+        return result_val >= max_val
+        
     return False

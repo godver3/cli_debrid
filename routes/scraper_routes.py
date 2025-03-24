@@ -714,9 +714,12 @@ def select_media():
         genres = []
         if genre_ids:
             try:
+                # First try parsing as integers (for genre IDs)
                 genres = [int(g) for g in genre_ids.split(',') if g]
             except ValueError:
-                logging.warning(f"Invalid genre_ids format: {genre_ids}")
+                # If that fails, treat them as genre names
+                genres = [g.strip() for g in genre_ids.split(',') if g.strip()]
+                logging.info(f"Using genre names: {genres}")
                 
         # Process the media selection
         result = process_media_selection(

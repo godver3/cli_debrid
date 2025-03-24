@@ -405,7 +405,7 @@
 
             <div style="display: flex; align-items: center; gap: 10px;">
                 <label for="update_plex_on_file_discovery" class="onboarding-label" style="margin-bottom: 0;">Update Plex on file discovery (Optional):</label>
-                <input type="checkbox" id="update_plex_on_file_discovery" name="update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
+                <input type="checkbox" id="update_plex_on_file_discovery" name="Plex.update_plex_on_file_discovery" {% if settings.get('Plex', {}).get('update_plex_on_file_discovery', False) %}checked{% endif %}>
             </div>
             <div class="settings-description">Update Plex on file discovery using the Plex API</div>
         </div>
@@ -436,7 +436,7 @@
         </div>
 
         <!-- Common fields -->
-        <label for="original_files_path" class="onboarding-label">Original Files Path:</label>
+        <label for="original_files_path" class="onboarding-label">Original Files Path (Optional):</label>
         <div id="original-files-path-description" class="settings-description">
             Path to the original files (in Zurg use the /__all__ folder). cli_debrid must be able to access this location - review your Docker container settings
         </div>
@@ -570,14 +570,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Function to update required fields based on management type
     function updateRequiredFields(managementType) {
         // Plex fields
-        const plexInputs = plexFields.querySelectorAll('input');
+        const plexInputs = plexFields.querySelectorAll('input:not([type="checkbox"])');
         plexInputs.forEach(input => {
+            // Skip optional fields
+            if (input.id === 'update_plex_on_file_discovery' || input.id === 'original_files_path') {
+                return;
+            }
             input.required = managementType === 'Plex';
         });
 
         // Local fields
         const localInputs = localFields.querySelectorAll('input');
         localInputs.forEach(input => {
+            // Skip optional fields
+            if (input.id === 'plex_url_for_symlink' || input.id === 'plex_token_for_symlink' || input.id === 'original_files_path') {
+                return;
+            }
             input.required = managementType === 'Local';
         });
     }
@@ -959,7 +967,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const settings = Object.fromEntries(formData.entries());
         
         // Handle checkbox value properly
-        settings.update_plex_on_file_discovery = formData.get('update_plex_on_file_discovery') === 'on';
+        settings.update_plex_on_file_discovery = formData.get('Plex.update_plex_on_file_discovery') === 'on';
         
         try {
             const response = await fetch('/settings_validation/onboarding-settings', {

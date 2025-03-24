@@ -341,21 +341,29 @@ def store_notification(title, message, notification_type='info', link=None):
         # Ensure directory exists
         NOTIFICATION_FILE.parent.mkdir(parents=True, exist_ok=True)
         
-        # Read existing notifications
+        # Initialize default structure
         notifications = {"notifications": []}
+        
+        # Read existing notifications with proper error handling
         if NOTIFICATION_FILE.exists():
             try:
-                with open(NOTIFICATION_FILE) as f:
-                    notifications = json.load(f)
-                # Validate the structure
-                if not isinstance(notifications, dict) or "notifications" not in notifications:
-                    logging.warning("Invalid notifications structure, resetting to default")
-                    notifications = {"notifications": []}
-            except json.JSONDecodeError:
-                logging.warning("Invalid JSON in notifications file, starting fresh")
-                # Create a new file with valid JSON
-                with open(NOTIFICATION_FILE, 'w') as f:
-                    json.dump({"notifications": []}, f, indent=2)
+                # Read the entire content first
+                with open(NOTIFICATION_FILE, 'r') as f:
+                    content = f.read().strip()
+                    
+                if content:  # Only try to parse if there's content
+                    try:
+                        notifications = json.loads(content)
+                        # Validate structure
+                        if not isinstance(notifications, dict) or "notifications" not in notifications:
+                            logging.warning("Invalid notifications structure, resetting to default")
+                            notifications = {"notifications": []}
+                    except json.JSONDecodeError as je:
+                        logging.warning(f"Invalid JSON in notifications file, resetting: {str(je)}")
+                        notifications = {"notifications": []}
+            except Exception as e:
+                logging.error(f"Error reading notifications file: {str(e)}")
+                notifications = {"notifications": []}
         
         # Create new notification
         new_notification = {
@@ -373,9 +381,26 @@ def store_notification(title, message, notification_type='info', link=None):
         notifications["notifications"].insert(0, new_notification)
         notifications["notifications"] = notifications["notifications"][:MAX_NOTIFICATIONS]
         
-        # Write back to file
-        with open(NOTIFICATION_FILE, 'w') as f:
-            json.dump(notifications, f, indent=2)
+        # Write to a temporary file first
+        temp_file = NOTIFICATION_FILE.with_suffix('.tmp')
+        try:
+            with open(temp_file, 'w') as f:
+                json.dump(notifications, f, indent=2)
+            
+            # Atomic rename on Unix systems
+            if os.name == 'posix':
+                os.replace(temp_file, NOTIFICATION_FILE)
+            else:
+                # On Windows, try to remove the target file first if it exists
+                if NOTIFICATION_FILE.exists():
+                    NOTIFICATION_FILE.unlink()
+                os.rename(temp_file, NOTIFICATION_FILE)
+                
+        except Exception as e:
+            logging.error(f"Error writing notifications file: {str(e)}")
+            if temp_file.exists():
+                temp_file.unlink()
+            raise
             
     except Exception as e:
         logging.error(f"Error storing notification: {str(e)}", exc_info=True)

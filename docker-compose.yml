@@ -13,7 +13,7 @@ services:
       - /host/location/logs:/user/logs
       - /mnt:/mnt
       - /host/location/gun-relays:/app/phalanx_db/gun-relays
-      - /host/location/node-data.json:/app/phalanx_db/node-data.json
+      - /host/location/data:/app/phalanx_db/data
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

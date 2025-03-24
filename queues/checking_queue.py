@@ -13,6 +13,7 @@ from debrid.common import timed_lru_cache, extract_hash_from_magnet, download_an
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from pathlib import Path
 import os
+from datetime import datetime
 
 class CheckingQueue:
     _instance = None
@@ -30,7 +31,11 @@ class CheckingQueue:
 
     def __init__(self):
         # __init__ will be called every time, but instance is already created
-        pass
+        self.items = []
+        self.debrid_provider = get_debrid_provider()
+        self.checking_times = {}
+        self.last_check_time = datetime.now()
+        self.last_report_time = datetime.now()
 
     def update(self):
         from database import get_all_media_items
@@ -800,3 +805,7 @@ class CheckingQueue:
                     del self.uncached_torrents[hash_value]
             
             logging.debug(f"Cleaned up {len(invalid_tracking_item_ids)} invalid item IDs from uncached torrents tracking")
+
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)

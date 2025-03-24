@@ -210,4 +210,8 @@ class PendingUncachedQueue:
             logging.error(f"Invalid scrape_results format for {item.get('id')}")
             return []
 
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)
+
     # Add other methods as needed

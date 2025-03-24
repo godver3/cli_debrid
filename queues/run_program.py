@@ -938,11 +938,11 @@ class ProgramRunner:
         # Only log if there are stale tasks
         if stale_tasks:
             for task, time_since_run, interval in stale_tasks:
-                logging.warning(f"Task {task} hasn't run in {time_since_run:.2f} seconds (should run every {interval} seconds)")
+                logging.info(f"Task {task} hasn't run in {time_since_run:.2f} seconds (should run every {interval} seconds)")
             
             # If there are multiple stale tasks, this might indicate a system issue
             if len(stale_tasks) >= 3:
-                logging.error(f"Multiple stale tasks detected ({len(stale_tasks)}), system may be overloaded")
+                logging.info(f"Multiple stale tasks detected ({len(stale_tasks)}), could be slower task processing but likely normal")
         
         # Adjust task intervals based on system load - but don't apply slowdown for stale tasks
         self.adjust_task_intervals_based_on_load(stale_tasks_detected=False)

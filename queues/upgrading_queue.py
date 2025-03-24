@@ -769,6 +769,10 @@ class UpgradingQueue:
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
 
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)
+
 def log_successful_upgrade(item: Dict[str, Any]):
     # Get db_content directory from environment variable with fallback
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')

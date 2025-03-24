@@ -762,6 +762,12 @@
                                     <strong>Full:</strong> Take the best result, whether it's Cached or Uncached
                                 </p>
                             {% endif %}
+                        {% elif value.type == 'integer' and key in ['scraper_timeout'] %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1">
+                            <p class="settings-description">{{ value.description }}</p>
                         {% else %}
                             <input type="{{ value.type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
                                    value="{{ settings.get('Scraping', {}).get(key, '') }}" class="settings-input"
@@ -770,7 +776,7 @@
                         {% endif %}
                         {% if value.description %}
                             {% if value.description is string %}
-                                {% if key != 'uncached_content_handling' %}
+                                {% if key != 'uncached_content_handling' and key not in ['scraper_timeout'] %}
                                     <p class="settings-description">{{ value.description }}</p>
                                 {% endif %}
                             {% else %}

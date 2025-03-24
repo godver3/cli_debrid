@@ -6,7 +6,11 @@ from utilities.settings import get_setting
 class UnreleasedQueue:
     def __init__(self):
         self.items = []
-        self.last_report_time = datetime.min
+        self.last_report_time = datetime.now()
+
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)
 
     def update(self):
         from database import get_all_media_items

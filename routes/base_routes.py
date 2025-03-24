@@ -314,27 +314,72 @@ def get_notifications():
         
         if not notification_file.exists():
             # Create empty notification file if it doesn't exist
-            notification_file.write_text(json.dumps({"notifications": []}))
+            notification_file.write_text(json.dumps({"notifications": []}, indent=2))
+            logging.info(f"Created new notifications file at {notification_file}")
             return jsonify({"notifications": []})
         
         try:
-            with open(notification_file) as f:
-                notifications = json.load(f)
-        except json.JSONDecodeError:
-            # Handle case where file exists but is empty or malformed
-            logging.warning(f"Found empty or malformed notifications file, recreating it")
-            notification_file.write_text(json.dumps({"notifications": []}))
+            # Read the entire file content first for debugging
+            with open(notification_file, 'r') as f:
+                file_content = f.read().strip()
+                
+            if not file_content:
+                logging.warning(f"Notifications file exists but is empty")
+                notification_file.write_text(json.dumps({"notifications": []}, indent=2))
+                return jsonify({"notifications": []})
+            
+            # Try to extract the first valid JSON object from the content
+            try:
+                # Find the first { and the matching }
+                start = file_content.find('{')
+                if start == -1:
+                    raise json.JSONDecodeError("No JSON object found", file_content, 0)
+                
+                bracket_count = 0
+                for i, char in enumerate(file_content[start:], start):
+                    if char == '{':
+                        bracket_count += 1
+                    elif char == '}':
+                        bracket_count -= 1
+                        if bracket_count == 0:
+                            # We found the matching closing bracket
+                            valid_json = file_content[start:i+1]
+                            notifications = json.loads(valid_json)
+                            
+                            # If the file was corrupted, rewrite it with the valid portion
+                            if len(valid_json) != len(file_content):
+                                logging.warning(f"Found corrupted notifications file, cleaning up...")
+                                notification_file.write_text(json.dumps(notifications, indent=2))
+                            
+                            break
+                else:
+                    raise json.JSONDecodeError("No valid JSON object found", file_content, 0)
+                
+            except json.JSONDecodeError as je:
+                logging.warning(f"JSON decode error in notifications file. Content: {file_content[:200]}... Error: {str(je)}")
+                notification_file.write_text(json.dumps({"notifications": []}, indent=2))
+                return jsonify({"notifications": []})
+            
+            # Validate structure
+            if not isinstance(notifications, dict) or "notifications" not in notifications:
+                logging.warning(f"Invalid notifications structure: {json.dumps(notifications)[:200]}...")
+                notification_file.write_text(json.dumps({"notifications": []}, indent=2))
+                return jsonify({"notifications": []})
+                
+            # Filter out expired notifications
+            current_time = datetime.now().isoformat()
+            if "notifications" in notifications:
+                notifications["notifications"] = [
+                    n for n in notifications["notifications"]
+                    if "expires" not in n or n["expires"] > current_time
+                ]
+                
+            return jsonify(notifications)
+        except Exception as e:
+            logging.error(f"Unexpected error reading notifications file: {str(e)}", exc_info=True)
+            notification_file.write_text(json.dumps({"notifications": []}, indent=2))
             return jsonify({"notifications": []})
             
-        # Filter out expired notifications
-        current_time = datetime.now().isoformat()
-        if "notifications" in notifications:
-            notifications["notifications"] = [
-                n for n in notifications["notifications"]
-                if "expires" not in n or n["expires"] > current_time
-            ]
-            
-        return jsonify(notifications)
     except Exception as e:
         logging.error(f"Error reading notifications: {str(e)}", exc_info=True)
         return jsonify({"error": "Failed to read notifications", "notifications": []})
