@@ -83,25 +83,91 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
         folder_name = path_parts[-2] if len(path_parts) > 1 else ''  # The containing folder
         logging.debug(f"Processing rclone file: {filename} from folder: {folder_name}")
 
-        # First check the checking queue for matches
-        queue_manager = QueueManager()
-        checking_queue = queue_manager.queues["Checking"]
-        matched_items = [item for item in checking_queue.items if item.get('filled_by_file') == filename]
+        # Get original path from settings
+        original_path = get_setting('File Management', 'original_files_path')
+
+        # Check database for items in Checking state with matching filename
+        conn = get_db_connection()
+        cursor = conn.execute('''
+            SELECT * FROM media_items 
+            WHERE state = 'Checking' 
+            AND filled_by_file = ?
+        ''', (filename,))
+        matched_items = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        logging.info(f"Found {len(matched_items)} matching items in Checking state in database")
         
         if matched_items:
-            logging.info(f"Found {len(matched_items)} matching items in checking queue")
             processed_items = []
             
             for item in matched_items:
                 logging.info(f"Processing matching item {item['id']} for file {filename}")
-                # Update the item with the new file location
+                
+                # Get destination path before updating database
+                source_file = os.path.join(original_path, file_path)
+                dest_file = get_symlink_path(item, source_file)
+                if not dest_file:
+                    logging.error(f"Failed to generate symlink path for item {item['id']}")
+                    continue
+
+                # Get release date
+                release_date = None
+                if item.get('type') == 'movie':
+                    release_date = get_release_date(item, item.get('imdb_id'))
+                else:
+                    release_date = item.get('first_aired')
+                    if release_date and isinstance(release_date, str) and 'T' in release_date:
+                        release_date = release_date.split('T')[0]
+
+                # Ensure genres are in proper JSON format
+                genres = item.get('genres', [])
+                if isinstance(genres, str):
+                    # Convert comma-separated string to list
+                    genres = [g.strip() for g in genres.split(',')]
+                genres_json = json.dumps(genres)
+
+                # Update the item with all necessary information
                 update_media_item_state(
                     item['id'],
                     'Collected',
                     filled_by_file=filename,
-                    filled_by_title=folder_name  # Use folder name as title
+                    filled_by_title=os.path.basename(os.path.dirname(file_path)),
+                    genres=genres_json,
+                    location_on_disk=dest_file
                 )
-                processed_items.append(item['id'])
+
+                # Update release date separately
+                if release_date:
+                    update_release_date_and_state(
+                        item['id'],
+                        release_date,
+                        'Collected'
+                    )
+
+                if check_local_file_for_item(item, is_webhook=True):
+                    logging.info(f"Local file found and symlinked for item {item['id']}")
+                    
+                    # Check for Plex or Emby/Jellyfin configuration and update accordingly
+                    if get_setting('Debug', 'emby_jellyfin_url', default=False):
+                        emby_update_item(item)
+                    elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+                        plex_update_item(item)
+                    
+                    # Check if the item was marked for upgrading
+                    conn = get_db_connection()
+                    cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                    current_state = cursor.fetchone()['state']
+                    conn.close()
+                    
+                    if current_state == 'Upgrading':
+                        logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
+                    else:
+                        # Move to collected without creating another notification
+                        queue_manager = QueueManager()
+                        queue_manager.move_to_collected(item, "Checking", skip_notification=True)
+                    
+                    processed_items.append(item['id'])
             
             return {
                 'success': True,
@@ -109,7 +175,15 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
                 'processed_items': processed_items
             }
 
-        # If no matches in checking queue, proceed with metadata lookup
+        # Check if we should process non-checking items
+        if not get_setting('File Management', 'process_non_checking_items', default=False):
+            logging.info("Processing of non-checking items is disabled, skipping metadata lookup")
+            return {
+                'success': True,
+                'message': "Processing of non-checking items is disabled"
+            }
+
+        # If no matches in checking queue and processing non-checking items is enabled, proceed with metadata lookup
         logging.info(f"No matches found in checking queue, proceeding with metadata lookup")
 
         # Process the file using just the filename
@@ -316,17 +390,66 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
         # Get just the filename for matching
         filename = os.path.basename(file_path)
         
-        # First check the checking queue for matches
-        queue_manager = QueueManager()
-        checking_queue = queue_manager.queues["Checking"]
-        matched_items = [item for item in checking_queue.items if item.get('filled_by_title') == filename]
+        # Check database for items in Checking state with matching filename
+        conn = get_db_connection()
+        cursor = conn.execute('''
+            SELECT * FROM media_items 
+            WHERE state = 'Checking' 
+            AND filled_by_file = ?
+        ''', (filename,))
+        matched_items = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        logging.info(f"Found {len(matched_items)} matching items in Checking state in database")
         
         if matched_items:
-            logging.info(f"Found {len(matched_items)} matching items in checking queue")
             processed_items = []
             
             for item in matched_items:
                 logging.info(f"Processing matching item {item['id']} for file {filename}")
+                
+                # Get destination path before updating database
+                original_path = get_setting('File Management', 'original_files_path')
+                source_file = os.path.join(original_path, file_path)
+                dest_file = get_symlink_path(item, source_file)
+                if not dest_file:
+                    logging.error(f"Failed to generate symlink path for item {item['id']}")
+                    continue
+
+                # Get release date
+                release_date = None
+                if item.get('type') == 'movie':
+                    release_date = get_release_date(item, item.get('imdb_id'))
+                else:
+                    release_date = item.get('first_aired')
+                    if release_date and isinstance(release_date, str) and 'T' in release_date:
+                        release_date = release_date.split('T')[0]
+
+                # Ensure genres are in proper JSON format
+                genres = item.get('genres', [])
+                if isinstance(genres, str):
+                    # Convert comma-separated string to list
+                    genres = [g.strip() for g in genres.split(',')]
+                genres_json = json.dumps(genres)
+
+                # Update the item with all necessary information
+                update_media_item_state(
+                    item['id'],
+                    'Collected',
+                    filled_by_file=filename,
+                    filled_by_title=os.path.basename(os.path.dirname(file_path)),
+                    genres=genres_json,
+                    location_on_disk=dest_file
+                )
+
+                # Update release date separately
+                if release_date:
+                    update_release_date_and_state(
+                        item['id'],
+                        release_date,
+                        'Collected'
+                    )
+
                 if check_local_file_for_item(item, is_webhook=True):
                     logging.info(f"Local file found and symlinked for item {item['id']}")
                     
@@ -345,7 +468,8 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
                     if current_state == 'Upgrading':
                         logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
                     else:
-                        # Move to collected without creating another notification
+                        # Initialize queue manager and move to collected without notification
+                        queue_manager = QueueManager()
                         queue_manager.move_to_collected(item, "Checking", skip_notification=True)
                     
                     processed_items.append(item['id'])
@@ -513,7 +637,16 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
         if search_type == 'movie':
             release_date = get_release_date(metadata, imdb_id)
         else:
-            release_date = metadata.get('first_aired')
+            # For TV shows, get episode-specific release date
+            if parsed_info.get('season') and parsed_info.get('episodes'):
+                season_data = metadata.get('seasons', {}).get(str(parsed_info['season']), {})
+                episode_data = season_data.get('episodes', {}).get(str(parsed_info['episodes'][0]), {})
+                release_date = episode_data.get('first_aired')
+                logging.info(f"Found episode-specific release date: {release_date}")
+            else:
+                # Fallback to show first_aired if no episode info
+                release_date = metadata.get('first_aired')
+            
             if release_date and isinstance(release_date, str) and 'T' in release_date:
                 # Trim ISO format to just YYYY-MM-DD
                 release_date = release_date.split('T')[0]

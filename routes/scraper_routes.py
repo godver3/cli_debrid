@@ -28,6 +28,7 @@ import asyncio
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
 import time
+import json
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -175,8 +176,12 @@ def add_torrent_to_debrid():
         # Get metadata to determine genres
         metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type) if tmdb_id else {}
         genres = metadata.get('genres', [])
-        genres_str = ','.join(genres) if genres else ''
-        logging.info(f"Genres from metadata: {genres_str}")
+        if isinstance(genres, str):
+            # If genres come as comma-separated string, convert to list
+            genres = [g.strip() for g in genres.split(',')]
+        elif not isinstance(genres, list):
+            genres = []
+        logging.info(f"Genres from metadata: {genres}")
 
         # Convert season and episode to integers or None
         try:
@@ -420,7 +425,7 @@ def add_torrent_to_debrid():
                     'filled_by_title': filled_by_title,
                     'filled_by_file': filled_by_file,
                     'release_date': release_date,
-                    'genres': genres_str
+                    'genres': json.dumps(genres)  # JSON encode the genres list
                 }
 
                 # Add TV show specific fields if this is a TV show
