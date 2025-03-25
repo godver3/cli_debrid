@@ -683,30 +683,8 @@ def phalanxdb_status():
         connection_status = phalanx_manager.test_connection()
         mesh_status = phalanx_manager.get_mesh_status()
         
-        # Format the mesh status data based on the new debug endpoint format
-        if mesh_status:
-            mesh_status = {
-                'node': {
-                    'uptime': mesh_status.get('uptime', '0 seconds'),
-                    'startupTime': mesh_status.get('startupTime', 'Unknown'),
-                },
-                'peers': {
-                    'connected': len(mesh_status.get('connectedRelays', [])),
-                    'relays': mesh_status.get('connectedRelays', [])
-                },
-                'data': {
-                    'total': mesh_status.get('totalEntriesSeen', 0),
-                    'valid': mesh_status.get('totalEntryCount', 0)
-                },
-                'memory': mesh_status.get('memoryUsage', {
-                    'rss': '0 MB',
-                    'heapTotal': '0 MB',
-                    'heapUsed': '0 MB',
-                    'external': '0 MB',
-                    'arrayBuffers': '0 MB'
-                }),
-                'services': mesh_status.get('serviceCounts', [])
-            }
+        # The mesh_status is already in the correct format from get_mesh_status()
+        # No need to reformat it as it matches our template structure
         
         return render_template(
             'phalanxdb_status.html',
@@ -721,11 +699,18 @@ def phalanxdb_status():
             'phalanxdb_status.html',
             connection_status=False,
             mesh_status={
-                'node': {},
-                'peers': {'connected': 0, 'relays': []},
-                'data': {'total': 0, 'valid': 0},
-                'memory': {},
-                'services': []
+                'timestamp': datetime.now().isoformat(),
+                'lastUpdate': datetime.now().isoformat(),
+                'memoryUsage': {
+                    'rss': '0 MB',
+                    'heapTotal': '0 MB',
+                    'heapUsed': '0 MB',
+                    'external': '0 MB',
+                    'arrayBuffers': '0 MB'
+                },
+                'uptime': '0 seconds',
+                'startupTime': datetime.now().isoformat(),
+                'connectedRelays': []
             }
         )
 

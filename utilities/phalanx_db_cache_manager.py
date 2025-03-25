@@ -334,12 +334,10 @@ class PhalanxDBClassManager:
         """Get the mesh network status
         
         Returns:
-            Dict containing the new debug endpoint format:
+            Dict containing the debug endpoint format:
                 - timestamp: str (ISO format)
+                - lastUpdate: str (ISO format)
                 - memoryUsage: Dict with memory metrics
-                - totalEntriesSeen: int
-                - totalEntryCount: int
-                - serviceCounts: List[Tuple[str, int]]
                 - uptime: str
                 - startupTime: str
                 - connectedRelays: List[str]
@@ -349,6 +347,7 @@ class PhalanxDBClassManager:
             if not result:
                 return {
                     'timestamp': datetime.now().isoformat(),
+                    'lastUpdate': datetime.now().isoformat(),
                     'memoryUsage': {
                         'rss': '0 MB',
                         'heapTotal': '0 MB',
@@ -356,9 +355,6 @@ class PhalanxDBClassManager:
                         'external': '0 MB',
                         'arrayBuffers': '0 MB'
                     },
-                    'totalEntriesSeen': 0,
-                    'totalEntryCount': 0,
-                    'serviceCounts': [],
                     'uptime': '0 seconds',
                     'startupTime': datetime.now().isoformat(),
                     'connectedRelays': []
@@ -367,6 +363,7 @@ class PhalanxDBClassManager:
             # Return the raw debug endpoint response, with defaults for missing fields
             return {
                 'timestamp': result.get('timestamp', datetime.now().isoformat()),
+                'lastUpdate': result.get('lastUpdate', datetime.now().isoformat()),
                 'memoryUsage': result.get('memoryUsage', {
                     'rss': '0 MB',
                     'heapTotal': '0 MB',
@@ -374,9 +371,6 @@ class PhalanxDBClassManager:
                     'external': '0 MB',
                     'arrayBuffers': '0 MB'
                 }),
-                'totalEntriesSeen': result.get('totalEntriesSeen', 0),
-                'totalEntryCount': result.get('totalEntryCount', 0),
-                'serviceCounts': result.get('serviceCounts', []),
                 'uptime': result.get('uptime', '0 seconds'),
                 'startupTime': result.get('startupTime', datetime.now().isoformat()),
                 'connectedRelays': result.get('connectedRelays', [])
@@ -386,6 +380,7 @@ class PhalanxDBClassManager:
             logging.error(f"Error getting mesh status: {str(e)}")
             return {
                 'timestamp': datetime.now().isoformat(),
+                'lastUpdate': datetime.now().isoformat(),
                 'memoryUsage': {
                     'rss': '0 MB',
                     'heapTotal': '0 MB',
@@ -393,9 +388,6 @@ class PhalanxDBClassManager:
                     'external': '0 MB',
                     'arrayBuffers': '0 MB'
                 },
-                'totalEntriesSeen': 0,
-                'totalEntryCount': 0,
-                'serviceCounts': [],
                 'uptime': '0 seconds', 
                 'startupTime': datetime.now().isoformat(),
                 'connectedRelays': []
