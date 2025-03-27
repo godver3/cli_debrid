@@ -12,8 +12,8 @@ services:
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
       - /mnt:/mnt
-      - /host/location/gun-relays:/app/phalanx_db/gun-relays
-      - /host/location/data:/app/phalanx_db/data
+      - /host/location/p2p-db-storage:/app/p2p-db-storage
+      - /host/location/db_data:/app/db_data
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped
