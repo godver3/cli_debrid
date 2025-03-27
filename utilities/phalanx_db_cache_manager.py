@@ -19,7 +19,8 @@ class PhalanxDBClassManager:
         self.auth_token = "phalanx_db_v1_32byte_key_20240312_01"
         self.headers = {
             "Authorization": f"Bearer {self.auth_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "X-Encryption-Key": self.auth_token  # Adding encryption key header
         }
         
         # Create a persistent session for connection pooling
@@ -51,15 +52,15 @@ class PhalanxDBClassManager:
             Tuple of (response data, working URL, errors) where errors is a list of (url, error_message) tuples
         """
         errors = []
-        expected_responses = []  # Track expected responses like 404 "Data not found"
+        expected_responses = []  # Track expected responses like 404 "Entry not found"
         
-        # Use longer timeouts for /debug and /data endpoints since they return larger datasets
+        # Use longer timeouts for /api/debug and /api/entries endpoints since they return larger datasets
         for url in self._urls:
             # Determine timeout based on endpoint and connection type
-            if endpoint in ['/debug', '/data']:
-                timeout = 15.0 if 'localhost' in url else 15.0  # Longer timeouts for status endpoints
+            if endpoint in ['/api/debug', '/api/entries']:
+                timeout = 0.5 if 'localhost' in url else 0.5  # Longer timeouts for status endpoints
             else:
-                timeout = 5.0 if 'localhost' in url else 5.0  # Default timeouts for other endpoints
+                timeout = 0.5 if 'localhost' in url else 0.5  # Default timeouts for other endpoints
                 
             try:
                 full_url = f"{url}{endpoint}"
@@ -79,7 +80,7 @@ class PhalanxDBClassManager:
                         except json.JSONDecodeError as je:
                             logging.debug(f"Failed to parse JSON from URL {url}: {str(je)}")
                             errors.append((url, f"JSON parse error: {str(je)}"))
-                    elif response.status_code == 404 and response_text == '{"error":"Data not found"}':
+                    elif response.status_code == 404 and response_text == '{"error":"Entry not found"}':
                         expected_responses.append((url, f"HTTP {response.status_code}: {response_text}"))
                         # Still set this as primary URL since the service is responding correctly
                         self._primary_url = url
@@ -90,14 +91,18 @@ class PhalanxDBClassManager:
                     response = self._session.post(full_url, headers=self.headers, json=data, timeout=timeout)
                     response_text = response.text
                     logging.debug(f"URL {url} response status: {response.status_code}, content: {response_text[:200]}")
-                    if response.status_code == 200:
+                    if response.status_code in [200, 201]:  # Accept both 200 OK and 201 Created
                         try:
                             result = response.json()
-                            if result:  # Found a working URL
-                                self._primary_url = url  # Cache this working URL
-                                logging.debug(f"Found working URL: {url}")
-                                return result, url, errors
+                            self._primary_url = url  # Cache this working URL
+                            logging.debug(f"Found working URL: {url}")
+                            return result, url, errors
                         except json.JSONDecodeError as je:
+                            # Still consider it successful even if we cannot parse JSON
+                            if response_text:
+                                logging.debug(f"Request succeeded but returned non-JSON: {response_text[:200]}")
+                                self._primary_url = url
+                                return {"success": True}, url, errors
                             logging.debug(f"Failed to parse JSON from URL {url}: {str(je)}")
                             errors.append((url, f"JSON parse error: {str(je)}"))
                     else:
@@ -112,7 +117,7 @@ class PhalanxDBClassManager:
             error_details = '; '.join([f"{url}: {err}" for url, err in errors])
             logging.error(f"All PhalanxDB URLs failed - {error_details}")
         elif expected_responses:
-            # If we got expected responses (like 404 Data not found), include them in the return
+            # If we got expected responses (like 404 Entry not found), include them in the return
             return None, None, expected_responses
         return None, None, errors
 
@@ -131,11 +136,11 @@ class PhalanxDBClassManager:
                 - service: str
         """
         try:
-            # Use the service parameter to make the request more targeted and efficient
-            result, url, errors = self._try_urls(f"/data/{hash_value}", params={"service": "real_debrid"})
+            # Format the URL with infohash+service as required by the API
+            result, url, errors = self._try_urls(f"/api/entries/{hash_value}+real_debrid")
             if not result:
-                # Check if this was a 404 "Data not found" response
-                if any(err[1].startswith('HTTP 404: {"error":"Data not found"}') for err in errors):
+                # Check if this was a 404 "Entry not found" response
+                if any(err[1].startswith('HTTP 404: {"error":"Entry not found"}') for err in errors):
                     # This is a valid case - the data just doesn't exist yet
                     return None
                 return None
@@ -202,18 +207,20 @@ class PhalanxDBClassManager:
             If a hash is not found, expired, or unchecked, its value will be None.
         """
         try:
-            # Join hashes with commas for the API call - limit batch size to prevent URL length issues
+            # Process hashes in batches, using the correct URL format with +real_debrid
             batch_size = 20  # Reasonable batch size to prevent URL length issues
             results = {hash_value: None for hash_value in hash_values}
             
             for i in range(0, len(hash_values), batch_size):
                 batch_hashes = hash_values[i:i+batch_size]
-                hash_list = ','.join(batch_hashes)
-                result, url, errors = self._try_urls(f"/data/{hash_list}", params={"service": "real_debrid"})
+                # Format each hash with the service suffix
+                formatted_hashes = [f"{hash_val}+real_debrid" for hash_val in batch_hashes]
+                hash_list = ','.join(formatted_hashes)
+                result, url, errors = self._try_urls(f"/api/entries/{hash_list}")
                 
                 if not result:
-                    # Check if this was a 404 "Data not found" response
-                    if any(err[1].startswith('HTTP 404: {"error":"Data not found"}') for err in errors):
+                    # Check if this was a 404 "Entry not found" response
+                    if any(err[1].startswith('HTTP 404: {"error":"Entry not found"}') for err in errors):
                         # This is a valid case - the data just doesn't exist yet
                         continue
                     continue
@@ -285,27 +292,34 @@ class PhalanxDBClassManager:
             bool: True if update successful, False otherwise
         """
         try:
-            # Format the data as expected by the API
+            # Format the data in the expected structure with data array and nested services
             entry_data = {
-                'infohash': hash_value,
-                'service': service,
-                'cached': cached
+                "data": [
+                    {
+                        "infohash": hash_value,
+                        "services": {
+                            service: {
+                                "cached": cached
+                            }
+                        }
+                    }
+                ]
             }
             
-            # First try to get existing entry
-            existing, url, errors = self._try_urls(f"/data/{hash_value}")
-            # Don't consider 404 "Data not found" as an error
-            if not existing and any(err[1].startswith('HTTP 404: {"error":"Data not found"}') for err in errors):
+            # First try to get existing entry using the correct URL format with +service
+            existing, url, errors = self._try_urls(f"/api/entries/{hash_value}+{service}")
+            # Don't consider 404 "Entry not found" as an error
+            if not existing and any(err[1].startswith('HTTP 404: {"error":"Entry not found"}') for err in errors):
                 logging.debug(f"No existing entry found for {hash_value}, will create new one")
             
             # Then update with new data
             logging.debug(f"Sending update data: {entry_data}")
-            result, url, errors = self._try_urls("/data", method='POST', data=entry_data)
+            result, url, errors = self._try_urls("/api/entries", method='POST', data=entry_data)
             
             if not result:
-                # Don't consider empty response as error if we got a 200 status
-                if any(err[1].startswith('HTTP 200:') for err in errors):
-                    logging.debug("Got empty 200 response, considering update successful")
+                # Don't consider empty response as error if we got a 200 or 201 status
+                if any(err[1].startswith('HTTP 200:') for err in errors) or any(err[1].startswith('HTTP 201:') for err in errors):
+                    logging.debug("Got empty 200/201 response, considering update successful")
                     return True
                 logging.error(f"No response received when updating cache status for {hash_value}")
                 return False
@@ -315,6 +329,13 @@ class PhalanxDBClassManager:
             # More flexible response checking - consider it successful if we get a response
             # and it doesn't contain an explicit error
             if isinstance(result, dict):
+                # Check for a results array with success status
+                if 'results' in result and isinstance(result['results'], list):
+                    for item in result['results']:
+                        if item.get('key') == f"{hash_value}+{service}" and item.get('success') is True:
+                            logging.debug(f"Found success status for {hash_value} in results array")
+                            return True
+                
                 if result.get('error'):
                     logging.error(f"Update failed with error: {result['error']}")
                     return False
@@ -335,62 +356,63 @@ class PhalanxDBClassManager:
         
         Returns:
             Dict containing the debug endpoint format:
-                - timestamp: str (ISO format)
-                - lastUpdate: str (ISO format)
-                - memoryUsage: Dict with memory metrics
-                - uptime: str
-                - startupTime: str
-                - connectedRelays: List[str]
+                - syncsSent: int
+                - syncsReceived: int
+                - lastSyncAt: str (ISO format)
+                - connectionsActive: int
+                - databaseEntries: int
+                - nodeId: str
+                - memory: Dict with memory metrics
         """
         try:
-            result, url, errors = self._try_urls("/debug")
+            result, url, errors = self._try_urls("/api/debug")
             if not result:
                 return {
-                    'timestamp': datetime.now().isoformat(),
-                    'lastUpdate': datetime.now().isoformat(),
-                    'memoryUsage': {
-                        'rss': '0 MB',
+                    'syncsSent': 0,
+                    'syncsReceived': 0,
+                    'lastSyncAt': datetime.now().isoformat(),
+                    'connectionsActive': 0,
+                    'databaseEntries': 0,
+                    'nodeId': 'unavailable',
+                    'memory': {
                         'heapTotal': '0 MB',
                         'heapUsed': '0 MB',
-                        'external': '0 MB',
-                        'arrayBuffers': '0 MB'
-                    },
-                    'uptime': '0 seconds',
-                    'startupTime': datetime.now().isoformat(),
-                    'connectedRelays': []
+                        'rss': '0 MB',
+                        'external': '0 MB'
+                    }
                 }
             
-            # Return the raw debug endpoint response, with defaults for missing fields
+            # Return the specified fields from the debug endpoint response, with defaults for missing fields
             return {
-                'timestamp': result.get('timestamp', datetime.now().isoformat()),
-                'lastUpdate': result.get('lastUpdate', datetime.now().isoformat()),
-                'memoryUsage': result.get('memoryUsage', {
-                    'rss': '0 MB',
+                'syncsSent': result.get('syncsSent', 0),
+                'syncsReceived': result.get('syncsReceived', 0),
+                'lastSyncAt': result.get('lastSyncAt', datetime.now().isoformat()),
+                'connectionsActive': result.get('connectionsActive', 0),
+                'databaseEntries': result.get('databaseEntries', 0),
+                'nodeId': result.get('nodeId', 'unavailable'),
+                'memory': result.get('memory', {
                     'heapTotal': '0 MB',
                     'heapUsed': '0 MB',
-                    'external': '0 MB',
-                    'arrayBuffers': '0 MB'
-                }),
-                'uptime': result.get('uptime', '0 seconds'),
-                'startupTime': result.get('startupTime', datetime.now().isoformat()),
-                'connectedRelays': result.get('connectedRelays', [])
+                    'rss': '0 MB',
+                    'external': '0 MB'
+                })
             }
                     
         except Exception as e:
             logging.error(f"Error getting mesh status: {str(e)}")
             return {
-                'timestamp': datetime.now().isoformat(),
-                'lastUpdate': datetime.now().isoformat(),
-                'memoryUsage': {
-                    'rss': '0 MB',
+                'syncsSent': 0,
+                'syncsReceived': 0,
+                'lastSyncAt': datetime.now().isoformat(),
+                'connectionsActive': 0,
+                'databaseEntries': 0,
+                'nodeId': 'unavailable',
+                'memory': {
                     'heapTotal': '0 MB',
                     'heapUsed': '0 MB',
-                    'external': '0 MB',
-                    'arrayBuffers': '0 MB'
-                },
-                'uptime': '0 seconds', 
-                'startupTime': datetime.now().isoformat(),
-                'connectedRelays': []
+                    'rss': '0 MB',
+                    'external': '0 MB'
+                }
             }
 
     def get_all_entries(self) -> List[Dict[str, Any]]:
@@ -406,7 +428,7 @@ class PhalanxDBClassManager:
             Entries are sorted by timestamp in descending order (newest first)
         """
         try:
-            result, url, errors = self._try_urls("/data")
+            result, url, errors = self._try_urls("/api/entries")
             if not result or not isinstance(result, dict):
                 logging.error(f"Invalid response format: {result}")
                 return []
@@ -489,7 +511,7 @@ class PhalanxDBClassManager:
             bool: True if connection successful, False otherwise
         """
         try:
-            result, url, errors = self._try_urls("/debug")
+            result, url, errors = self._try_urls("/api/debug")
             return result is not None
         except Exception as e:
             logging.error(f"Error connecting to Gun.js service: {str(e)}")

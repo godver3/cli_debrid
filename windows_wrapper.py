@@ -551,7 +551,7 @@ def run_phalanx_db():
 
         # Start the service
         try:
-            subprocess.run(['node', '--expose-gc', 'client.js'], 
+            subprocess.run(['node', 'phalanx_db_rest.js'], 
                          cwd=phalanx_dir, 
                          shell=True,
                          check=True,
