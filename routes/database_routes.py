@@ -699,18 +699,18 @@ def phalanxdb_status():
             'phalanxdb_status.html',
             connection_status=False,
             mesh_status={
-                'timestamp': datetime.now().isoformat(),
-                'lastUpdate': datetime.now().isoformat(),
-                'memoryUsage': {
-                    'rss': '0 MB',
+                'syncsSent': 0,
+                'syncsReceived': 0,
+                'lastSyncAt': datetime.now().isoformat(),
+                'connectionsActive': 0,
+                'databaseEntries': 0,
+                'nodeId': 'unavailable',
+                'memory': {
                     'heapTotal': '0 MB',
                     'heapUsed': '0 MB',
-                    'external': '0 MB',
-                    'arrayBuffers': '0 MB'
-                },
-                'uptime': '0 seconds',
-                'startupTime': datetime.now().isoformat(),
-                'connectedRelays': []
+                    'rss': '0 MB',
+                    'external': '0 MB'
+                }
             }
         )
 

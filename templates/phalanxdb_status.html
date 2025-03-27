@@ -144,13 +144,13 @@
                     <h4>Node Information</h4>
                     <ul class="list-group network-health">
                         <li class="list-group-item">
-                            Uptime: {{ mesh_status.uptime }}
+                            Node ID: {{ mesh_status.nodeId }}
                         </li>
                         <li class="list-group-item">
-                            Started: {{ mesh_status.startupTime }}
+                            Database Entries: {{ mesh_status.databaseEntries }}
                         </li>
                         <li class="list-group-item">
-                            Last Update: {{ mesh_status.lastUpdate }}
+                            Last Sync: {{ mesh_status.lastSyncAt }}
                         </li>
                     </ul>
                 </div>
@@ -158,19 +158,16 @@
                     <h4>Memory Usage</h4>
                     <ul class="list-group network-health">
                         <li class="list-group-item">
-                            RSS: {{ mesh_status.memoryUsage.rss }}
+                            RSS: {{ mesh_status.memory.rss }}
                         </li>
                         <li class="list-group-item">
-                            Heap Total: {{ mesh_status.memoryUsage.heapTotal }}
+                            Heap Total: {{ mesh_status.memory.heapTotal }}
                         </li>
                         <li class="list-group-item">
-                            Heap Used: {{ mesh_status.memoryUsage.heapUsed }}
+                            Heap Used: {{ mesh_status.memory.heapUsed }}
                         </li>
                         <li class="list-group-item">
-                            External: {{ mesh_status.memoryUsage.external }}
-                        </li>
-                        <li class="list-group-item">
-                            Array Buffers: {{ mesh_status.memoryUsage.arrayBuffers }}
+                            External: {{ mesh_status.memory.external }}
                         </li>
                     </ul>
                 </div>
@@ -181,23 +178,22 @@
     <!-- Network Status -->
     <div class="card">
         <div class="card-header">
-            <h3 class="mb-0">Network Status</h3>
+            <h3 class="mb-0">Network Stats</h3>
         </div>
         <div class="card-body">
             <div class="row">
                 <div class="col-md-12">
-                    <h4>Connected Relays ({{ mesh_status.connectedRelays|length }})</h4>
-                    {% if mesh_status.connectedRelays %}
-                        <ul class="list-group network-health">
-                            {% for relay in mesh_status.connectedRelays %}
-                                <li class="list-group-item">{{ relay }}</li>
-                            {% endfor %}
-                        </ul>
-                    {% else %}
-                        <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i> No connected relays
-                        </div>
-                    {% endif %}
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            Active Connections: {{ mesh_status.connectionsActive }}
+                        </li>
+                        <li class="list-group-item">
+                            Syncs Sent: {{ mesh_status.syncsSent }}
+                        </li>
+                        <li class="list-group-item">
+                            Syncs Received: {{ mesh_status.syncsReceived }}
+                        </li>
+                    </ul>
                 </div>
             </div>
         </div>
