@@ -7,8 +7,7 @@ WORKDIR /app
 # Install build dependencies, supervisor, and Node.js
 RUN apt-get update && \
     apt-get install -y gcc supervisor gosu nodejs npm \
-    python3-pip python3-setuptools build-essential && \
-    pip install gyp && \
+    python3-pip python3-setuptools build-essential gyp && \
     # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
