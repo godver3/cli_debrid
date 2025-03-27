@@ -27,7 +27,7 @@ directories = [
     'static',
     'utilities',
     'utilities/config',  # Ensure config directory is included
-    'phalanx_db'  # Add phalanx_db directory
+    'phalanx_db_hyperswarm'  # Add phalanx_db_hyperswarm directory
 ]
 
 for directory in directories:
@@ -51,8 +51,8 @@ individual_files = [
     ('optional_default_versions.json', '.'),
     ('utilities/config/downsub_config.py', 'utilities/config'),
     ('utilities/config/__init__.py', 'utilities/config'),  # Explicitly include __init__.py
-    ('phalanx_db/package.json', 'phalanx_db'),  # Include package.json for phalanx_db
-    ('phalanx_db/package-lock.json', 'phalanx_db')  # Include package-lock.json for phalanx_db
+    ('phalanx_db_hyperswarm/package.json', 'phalanx_db_hyperswarm'),  # Include package.json for phalanx_db_hyperswarm
+    ('phalanx_db_hyperswarm/package-lock.json', 'phalanx_db_hyperswarm')  # Include package-lock.json for phalanx_db_hyperswarm
 ]
 
 for src, dst in individual_files:
@@ -245,7 +245,7 @@ a = Analysis(
         'dogpile.cache.backends',
         'dogpile.cache.backends.memory',
         'dogpile.core',
-        'phalanx_db'  # Add phalanx_db module
+        'phalanx_db_hyperswarm'  # Add phalanx_db_hyperswarm module
     ] + additional_imports,
     hookspath=['hooks'],
     hooksconfig={},

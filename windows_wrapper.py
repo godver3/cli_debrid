@@ -523,18 +523,18 @@ def install_nodejs():
 
 def run_phalanx_db():
     try:
-        phalanx_dir = os.path.join(os.path.dirname(get_script_path('main.py')), 'phalanx_db')
+        phalanx_dir = os.path.join(os.path.dirname(get_script_path('main.py')), 'phalanx_db_hyperswarm')
         
-        # Check if phalanx_db directory exists and is valid
+        # Check if phalanx_db_hyperswarm directory exists and is valid
         if not os.path.exists(os.path.join(phalanx_dir, 'package.json')):
-            logging.error(f"phalanx_db directory not found or invalid at {phalanx_dir}")
+            logging.error(f"phalanx_db_hyperswarm directory not found or invalid at {phalanx_dir}")
             return
         
-        logging.info(f"Starting phalanx_db service in {phalanx_dir}")
+        logging.info(f"Starting phalanx_db_hyperswarm service in {phalanx_dir}")
         
         # First run npm install if node_modules doesn't exist
         if not os.path.exists(os.path.join(phalanx_dir, 'node_modules')):
-            logging.info("Installing phalanx_db dependencies...")
+            logging.info("Installing phalanx_db_hyperswarm dependencies...")
             try:
                 subprocess.run(['npm', 'install'], 
                              cwd=phalanx_dir,
@@ -542,12 +542,12 @@ def run_phalanx_db():
                              check=True,
                              capture_output=True)
             except subprocess.CalledProcessError as e:
-                logging.error(f"Failed to install phalanx_db dependencies: {e.stderr}")
+                logging.error(f"Failed to install phalanx_db_hyperswarm dependencies: {e.stderr}")
                 return
             except Exception as e:
                 logging.error(f"Error during npm install: {str(e)}")
                 return
-            logging.info("Successfully installed phalanx_db dependencies")
+            logging.info("Successfully installed phalanx_db_hyperswarm dependencies")
 
         # Start the service
         try:
@@ -557,12 +557,12 @@ def run_phalanx_db():
                          check=True,
                          env=dict(os.environ))
         except subprocess.CalledProcessError as e:
-            logging.error(f"phalanx_db service failed to start: {e.stderr if hasattr(e, 'stderr') else str(e)}")
+            logging.error(f"phalanx_db_hyperswarm service failed to start: {e.stderr if hasattr(e, 'stderr') else str(e)}")
         except Exception as e:
-            logging.error(f"Failed to start phalanx_db service: {str(e)}")
+            logging.error(f"Failed to start phalanx_db_hyperswarm service: {str(e)}")
             logging.debug(traceback.format_exc())
     except Exception as e:
-        logging.error(f"Unexpected error in phalanx_db service: {str(e)}")
+        logging.error(f"Unexpected error in phalanx_db_hyperswarm service: {str(e)}")
         logging.debug(traceback.format_exc())
 
 def run_main():
