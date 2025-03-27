@@ -26,10 +26,10 @@ jobs:
         with:
           node-version: '20'
           
-      - name: Install phalanx_db dependencies
+      - name: Install phalanx_db_hyperswarm dependencies
         shell: cmd
         run: |
-          cd phalanx_db
+          cd phalanx_db_hyperswarm
           npm install
           cd ..
           
