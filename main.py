@@ -384,9 +384,9 @@ def setup_tray_icon():
                     metadata_process.kill()
                 print("Metadata battery stopped.")
 
-        # Terminate any running phalanx_db processes
+        # Terminate any running phalanx_db_hyperswarm processes
         try:
-            # Find any node/npm processes running phalanx_db
+            # Find any node/npm processes running phalanx_db_hyperswarm
             for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
                     cmdline = proc.cmdline()
