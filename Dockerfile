@@ -24,8 +24,8 @@ RUN pip install --no-cache-dir -r requirements-linux.txt
 # Copy the current directory contents into the container at /app
 COPY . .
 
-# Install phalanx_db dependencies
-RUN cd /app/phalanx_db && npm install
+# Install phalanx_db_hyperswarm dependencies
+RUN cd /app/phalanx_db_hyperswarm && npm install
 
 # Create necessary directories and files with proper permissions
 RUN mkdir -p /user/db_content /user/config /user/logs && \
@@ -39,7 +39,7 @@ ENV TERM=xterm
 RUN sed -i 's/^export LC_ALL=C.UTF-8/# export LC_ALL=C.UTF-8/' /etc/profile && \
     sed -i 's/^clear/# clear/' /etc/profile
 
-# Expose ports for both Flask apps and phalanx_db
+# Expose ports for both Flask apps and phalanx_db_hyperswarm
 EXPOSE 5000 5001 8888
 
 # Copy supervisord configuration
