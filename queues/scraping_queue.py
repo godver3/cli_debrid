@@ -20,7 +20,24 @@ class ScrapingQueue:
         # Get the queue sort order setting
         sort_order = get_setting("Queue", "queue_sort_order", "None")
         
-        # Apply sorting based on the setting
+        # Get content source priority setting
+        content_source_priority = get_setting("Queue", "content_source_priority", "")
+        source_priority_list = [s.strip() for s in content_source_priority.split(',') if s.strip()]
+        
+        # First sort by content source priority
+        if source_priority_list:
+            def get_source_priority(item):
+                source = item.get('content_source', '')
+                try:
+                    # Sources in the priority list are ordered by their position
+                    # Sources not in the list go last (hence the len(source_priority_list))
+                    return source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
+                except ValueError:
+                    return len(source_priority_list)
+            
+            self.items.sort(key=get_source_priority)
+        
+        # Then apply type-based sorting if specified
         if sort_order == "Movies First":
             self.items.sort(key=lambda x: 0 if x['type'] == 'movie' else 1)
         elif sort_order == "Episodes First":

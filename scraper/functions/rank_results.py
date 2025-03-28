@@ -21,7 +21,18 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
+    
+    # Handle resolution scoring with unknown resolution support
     resolution_score = parsed_info.get('resolution_rank', 0)
+    if resolution_score == 0:
+        # If resolution rank is 0, check if it's an unknown resolution
+        resolution = parsed_info.get('resolution', '').lower()
+        if resolution == 'unknown':
+            # For unknown resolutions in older content/WEBRips, assign a low but non-zero score
+            # This matches our filter behavior of treating unknown as SD/480p
+            resolution_score = 1  # Equivalent to SD/480p ranking
+            logging.debug(f"Assigned resolution score of 1 (SD/480p) for unknown resolution in: {torrent_title}")
+    
     hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
 
     # Calculate country score

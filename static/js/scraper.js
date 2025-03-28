@@ -1445,8 +1445,15 @@ function displaySearchResults(results, version) {
     // Show the search results container
     searchResultsDiv.style.display = 'block';
     
+    // Validate that results is an array
+    if (!Array.isArray(results)) {
+        console.error('Expected results to be an array but got:', typeof results);
+        displayError('Invalid response format, likely Trakt connection issue');
+        return;
+    }
+    
     // Check if we have results
-    if (!results || results.length === 0) {
+    if (results.length === 0) {
         console.log('No results found');
         resultsList.innerHTML = '<p>No results found. Try a different search term.</p>';
         return;

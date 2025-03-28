@@ -36,6 +36,9 @@ def migrate_schema():
                         total_shows INTEGER NOT NULL DEFAULT 0,
                         total_episodes INTEGER NOT NULL DEFAULT 0,
                         last_updated DATETIME NOT NULL,
+                        latest_movie_collected DATETIME,
+                        latest_episode_collected DATETIME,
+                        latest_upgraded DATETIME,
                         latest_movie_collected_at DATETIME,
                         latest_episode_collected_at DATETIME,
                         latest_upgrade_at DATETIME
@@ -45,15 +48,43 @@ def migrate_schema():
                 cursor.execute('''
                     INSERT INTO statistics_summary_new 
                     (total_movies, total_shows, total_episodes, last_updated, 
+                     latest_movie_collected, latest_episode_collected, latest_upgraded,
                      latest_movie_collected_at, latest_episode_collected_at, latest_upgrade_at)
                     SELECT total_movies, total_shows, total_episodes, last_updated,
+                           latest_movie_collected_at, latest_episode_collected_at, latest_upgrade_at,
                            latest_movie_collected_at, latest_episode_collected_at, latest_upgrade_at 
                     FROM statistics_summary
                 ''')
                 # Drop old table and rename new table
                 cursor.execute('DROP TABLE statistics_summary')
                 cursor.execute('ALTER TABLE statistics_summary_new RENAME TO statistics_summary')
-                logging.info("Successfully added id column to statistics_summary table.")
+                logging.info("Successfully added id column and updated statistics_summary table.")
+            else:
+                # Add any missing columns
+                if 'latest_movie_collected' not in columns:
+                    conn.execute('ALTER TABLE statistics_summary ADD COLUMN latest_movie_collected DATETIME')
+                    conn.execute('UPDATE statistics_summary SET latest_movie_collected = latest_movie_collected_at')
+                    logging.info("Successfully added latest_movie_collected column to statistics_summary table.")
+                if 'latest_episode_collected' not in columns:
+                    conn.execute('ALTER TABLE statistics_summary ADD COLUMN latest_episode_collected DATETIME')
+                    conn.execute('UPDATE statistics_summary SET latest_episode_collected = latest_episode_collected_at')
+                    logging.info("Successfully added latest_episode_collected column to statistics_summary table.")
+                if 'latest_upgraded' not in columns:
+                    conn.execute('ALTER TABLE statistics_summary ADD COLUMN latest_upgraded DATETIME')
+                    conn.execute('UPDATE statistics_summary SET latest_upgraded = latest_upgrade_at')
+                    logging.info("Successfully added latest_upgraded column to statistics_summary table.")
+                if 'latest_movie_collected_at' not in columns:
+                    conn.execute('ALTER TABLE statistics_summary ADD COLUMN latest_movie_collected_at DATETIME')
+                    conn.execute('UPDATE statistics_summary SET latest_movie_collected_at = latest_movie_collected')
+                    logging.info("Successfully added latest_movie_collected_at column to statistics_summary table.")
+                if 'latest_episode_collected_at' not in columns:
+                    conn.execute('ALTER TABLE statistics_summary ADD COLUMN latest_episode_collected_at DATETIME')
+                    conn.execute('UPDATE statistics_summary SET latest_episode_collected_at = latest_episode_collected')
+                    logging.info("Successfully added latest_episode_collected_at column to statistics_summary table.")
+                if 'latest_upgrade_at' not in columns:
+                    conn.execute('ALTER TABLE statistics_summary ADD COLUMN latest_upgrade_at DATETIME')
+                    conn.execute('UPDATE statistics_summary SET latest_upgrade_at = latest_upgraded')
+                    logging.info("Successfully added latest_upgrade_at column to statistics_summary table.")
         
         cursor.execute("PRAGMA table_info(media_items)")
         columns = [column[1] for column in cursor.fetchall()]
@@ -424,6 +455,9 @@ def create_statistics_summary_table():
                 total_shows INTEGER NOT NULL DEFAULT 0,
                 total_episodes INTEGER NOT NULL DEFAULT 0,
                 last_updated DATETIME NOT NULL,
+                latest_movie_collected DATETIME,
+                latest_episode_collected DATETIME,
+                latest_upgraded DATETIME,
                 latest_movie_collected_at DATETIME,
                 latest_episode_collected_at DATETIME,
                 latest_upgrade_at DATETIME

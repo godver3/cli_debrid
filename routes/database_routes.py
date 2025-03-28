@@ -42,6 +42,15 @@ def index():
         ]
     }
 
+    # Get collection counts
+    from database.statistics import get_statistics_summary
+    counts = get_statistics_summary()
+    data['stats'] = {
+        'total_movies': counts['total_movies'],
+        'total_shows': counts['total_shows'],
+        'total_episodes': counts['total_episodes']
+    }
+
     conn = None
     try:
         from database import get_db_connection

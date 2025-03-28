@@ -2,6 +2,27 @@
 {% block title %}Database{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/database.css') }}">
+<div class="stats-panel">
+    <button class="stats-toggle" title="Toggle Statistics">
+        <i class="fas fa-chart-bar"></i>
+    </button>
+    <div class="stats-content">
+        <div class="stats-box collection-stats" id="collection_stats">
+            <h3>Collection Stats</h3>
+            <div class="stat-items">
+                <div class="stat-item">
+                    <p data-label="Total Movies">{{ stats.total_movies }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Total Shows">{{ stats.total_shows }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 <div class="container">
     <h2>Database Content</h2>
     <div id="bulk-actions" class="bulk-actions">
@@ -119,7 +140,7 @@
                     <th>Delete</th>
                     <th>Rescrape</th>
                     {% for column in selected_columns %}
-                        <th>{{ column }}</th>
+                        <th>{% if column == 'season_number' %}S#{% elif column == 'episode_number' %}E#{% else %}{{ column }}{% endif %}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -787,7 +808,10 @@ document.addEventListener('DOMContentLoaded', function() {
         tableHTML += '<th>Delete</th>';
         tableHTML += '<th>Rescrape</th>';
         selectedColumns.forEach(column => {
-            tableHTML += `<th>${column}</th>`;
+            let displayName = column;
+            if (column === 'season_number') displayName = 'S#';
+            else if (column === 'episode_number') displayName = 'E#';
+            tableHTML += `<th>${displayName}</th>`;
         });
         tableHTML += '</tr></thead><tbody>';
 
@@ -1598,5 +1622,31 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 Loading.init();
+
+// Stats panel functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const statsPanel = document.querySelector('.stats-panel');
+    const statsToggle = document.querySelector('.stats-toggle');
+    
+    // Check if panel was open in previous session
+    const isPanelOpen = localStorage.getItem('statsPanelOpen') === 'true';
+    if (isPanelOpen) {
+        statsPanel.classList.add('active');
+    }
+    
+    statsToggle.addEventListener('click', function() {
+        statsPanel.classList.toggle('active');
+        // Save state to localStorage
+        localStorage.setItem('statsPanelOpen', statsPanel.classList.contains('active'));
+    });
+    
+    // Close panel when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!statsPanel.contains(e.target) && !statsToggle.contains(e.target) && statsPanel.classList.contains('active')) {
+            statsPanel.classList.remove('active');
+            localStorage.setItem('statsPanelOpen', 'false');
+        }
+    });
+});
 </script>
 {% endblock %}
