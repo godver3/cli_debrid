@@ -25,6 +25,7 @@ from debrid.common import (
 )
 from debrid.status import TorrentStatus
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from utilities.settings import get_setting
 
 class TorrentProcessingError(Exception):
     """Base exception for torrent processing errors"""
@@ -105,8 +106,11 @@ class TorrentProcessor:
                 )
                 return direct_check, 'direct_check'
             
+            # Check if phalanx db is enabled using settings
+            phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
+            
             # Check if we have a cached status
-            if hasattr(self.debrid_provider, 'get_cached_status'):
+            if phalanx_enabled and hasattr(self.debrid_provider, 'get_cached_status'):
                 db_cache_status = self.debrid_provider.get_cached_status(hash_value)
                 
                 if db_cache_status:
@@ -127,7 +131,7 @@ class TorrentProcessor:
                             
                             if direct_check != db_cache_status.get('is_cached', False):
                                 logging.info(f"[REMOVAL_DEBUG] Cache status changed for {hash_value}: now cached")
-                                if hasattr(self.debrid_provider, 'update_cached_status'):
+                                if phalanx_enabled and hasattr(self.debrid_provider, 'update_cached_status'):
                                     self.debrid_provider.update_cached_status(hash_value, direct_check)
                             
                             return direct_check, 'db_uncached_verified'
@@ -135,7 +139,7 @@ class TorrentProcessor:
                             logging.info(f"[REMOVAL_DEBUG] Rate limited, using cached uncached status for {hash_value}")
                             return False, 'rate_limited'
             
-            # If no cached status or provider doesn't support caching
+            # If no cached status or provider doesn't support caching or phalanx is disabled
             logging.info(f"[REMOVAL_DEBUG] Performing direct cache check for {hash_value} with remove_uncached=True, remove_cached={remove_cached}")
             direct_check = self.debrid_provider.is_cached_sync(
                 magnet_or_url if not temp_file else "",
@@ -144,8 +148,8 @@ class TorrentProcessor:
                 remove_cached=remove_cached
             )
             
-            # Store the result if provider supports it
-            if hasattr(self.debrid_provider, 'update_cached_status'):
+            # Store the result if provider supports it and phalanx is enabled
+            if phalanx_enabled and hasattr(self.debrid_provider, 'update_cached_status'):
                 self.debrid_provider.update_cached_status(hash_value, direct_check)
             
             return direct_check, 'direct_check'

@@ -121,7 +121,11 @@
             <h5 class="mb-0">Connection Status</h5>
         </div>
         <div class="card-body">
-            {% if connection_status %}
+            {% if not enabled %}
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i> PhalanxDB service is disabled in your settings
+                </div>
+            {% elif connection_status %}
                 <div class="alert alert-success">
                     <i class="fas fa-check-circle"></i> Connected to PhalanxDB service
                 </div>
@@ -133,6 +137,7 @@
         </div>
     </div>
 
+    {% if enabled %}
     <!-- Node Status -->
     <div class="card">
         <div class="card-header">
@@ -224,6 +229,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 </div>
 
 <script>

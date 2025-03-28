@@ -332,6 +332,9 @@ class CheckingQueue:
         
         hashes_to_remove = []
         
+        # Check if phalanx db is enabled using settings
+        phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
+        
         for hash_value, data in list(self.uncached_torrents.items()):
             # Only check if enough time has passed since last check
             if current_time - data['last_check_time'] >= cache_check_interval:
@@ -339,44 +342,44 @@ class CheckingQueue:
                     # Create a magnet link from the hash for direct cache check
                     magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
                     
-                    # Use is_cached_sync method and pass skip_phalanx_db=True to force a direct check
-                    # This bypasses the PhalanxDB cache check at line 126 in the is_cached method
+                    # Always do a direct check with the debrid provider
+                    # Skip phalanx db check since we're verifying cache status
                     is_cached = self.debrid_provider.is_cached_sync(
                         magnet_link,
-                        skip_phalanx_db=True,  # Skip PhalanxDB cache check to get fresh status
+                        skip_phalanx_db=True,  # Always skip PhalanxDB for direct verification
                         remove_uncached=True,   # Remove uncached torrents after checking
                         remove_cached=False     # Keep cached torrents
                     )
                     
+                    # Update last check time
+                    data['last_check_time'] = current_time
+                    
                     if is_cached:
-                        logging.info(f"Hash {hash_value[:8]}... is now cached based on direct check with Real-Debrid.")
-                        
-                        # Update cache status in Phalanx DB
-                        try:
-                            update_result = phalanx_db_manager.update_cache_status(hash_value, True)
-                            if update_result:
-                                logging.debug(f"Successfully updated cache status for hash {hash_value[:8]}...")
-                            else:
-                                logging.warning(f"Failed to update cache status for hash {hash_value[:8]}...")
-                        except Exception as e:
-                            logging.error(f"Failed to update cache status for hash {hash_value[:8]}...: {str(e)}")
-                        
-                        # Remove this hash from tracking
+                        logging.info(f"Previously uncached torrent {hash_value} is now cached")
                         hashes_to_remove.append(hash_value)
+                        
+                        # Only update phalanx db if enabled
+                        if phalanx_enabled and phalanx_db_manager:
+                            try:
+                                update_result = phalanx_db_manager.update_cache_status(hash_value, True)
+                                if update_result:
+                                    logging.info(f"Updated PhalanxDB cache status for {hash_value}")
+                                else:
+                                    logging.warning(f"Failed to update PhalanxDB cache status for {hash_value}")
+                            except Exception as e:
+                                logging.error(f"Failed to update PhalanxDB cache status for {hash_value}: {str(e)}")
                     else:
-                        # Update last check time
-                        self.uncached_torrents[hash_value]['last_check_time'] = current_time
-                        logging.debug(f"Hash {hash_value[:8]}... still not cached according to direct check. Updated check time.")
+                        logging.debug(f"Hash {hash_value} still not cached according to direct check")
                         
                 except Exception as e:
-                    logging.error(f"Failed to check cache status for hash {hash_value[:8]}...: {str(e)}")
-                    # Still update last check time to prevent rapid retries
-                    self.uncached_torrents[hash_value]['last_check_time'] = current_time
+                    logging.error(f"Error checking uncached torrent {hash_value}: {str(e)}")
+                    continue
         
-        # Remove hashes that are now cached
+        # Remove cached hashes from tracking
         for hash_value in hashes_to_remove:
-            del self.uncached_torrents[hash_value]
-            logging.info(f"Removed hash {hash_value[:8]}... from uncached tracking as it's now cached")
+            if hash_value in self.uncached_torrents:
+                del self.uncached_torrents[hash_value]
+                logging.info(f"Removed hash {hash_value} from uncached tracking as it's now cached")
 
     def remove_item(self, item: Dict[str, Any]):
         torrent_id = item.get('filled_by_torrent_id')

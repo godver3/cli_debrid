@@ -5,12 +5,12 @@ import time
 
 def load_config():
     try:
-        with open('/config/config.json', 'r') as f:
+        with open('/user/config/config.json', 'r') as f:
             config = json.load(f)
-            return config.get('UI Settings', {}).get('enable_phalanx_db', True)
+            return config.get('UI Settings', {}).get('enable_phalanx_db', False)
     except Exception:
-        # Default to True if config can't be read
-        return True
+        # Default to False if config can't be read
+        return False
 
 def control_phalanx_db(enable):
     # Give supervisord time to start up

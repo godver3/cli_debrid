@@ -56,7 +56,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_phalanx_db": {
             "type": "boolean",
-            "description": "Enable the phalanx_db service",
+            "description": "Enable the phalanx_db service (requires restart)",
             "default": False
         },
         "disable_auto_browser": {

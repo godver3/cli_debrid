@@ -508,9 +508,11 @@ def resolution_filter(result_resolution: str, max_resolution: str, resolution_wa
     if resolution_wanted == '<=':
         return result_val <= max_val
     elif resolution_wanted == '==':
-        # Be more lenient with exact matches for unknown resolutions
-        if result_resolution.lower() == 'unknown':
-            return result_val <= max_val
+        # If the result resolution is unknown (value 0 or 480 after adjustment),
+        # it cannot be strictly equal to a specific target resolution like 1080 or 2160.
+        # The check `result_val == max_val` will handle this correctly.
+        # If result_val is 480 (from unknown) and max_val is 2160, 480 == 2160 is false.
+        # If result_val is 2160 and max_val is 2160, 2160 == 2160 is true.
         return result_val == max_val
     elif resolution_wanted == '>=':
         return result_val >= max_val
