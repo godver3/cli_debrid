@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, Response, curren
 from utilities.settings import load_config, validate_url
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
-from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config
+from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
 from routes.models import admin_required, onboarding_required
 from .utils import is_user_system_enabled
 import traceback
@@ -1524,4 +1524,35 @@ def increment_pageview():
         })
     except Exception as e:
         logging.error(f"Error incrementing page views: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/enabled_content_sources', methods=['GET'])
+def get_enabled_content_sources_route():
+    try:
+        enabled_sources = get_enabled_content_sources()
+        return jsonify({'success': True, 'sources': enabled_sources})
+    except Exception as e:
+        logging.error(f"Error getting enabled content sources: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/save_content_source_order', methods=['POST'])
+def save_content_source_order():
+    try:
+        source_order = request.json.get('order', [])
+        if not source_order:
+            return jsonify({'success': False, 'error': 'No order provided'}), 400
+
+        # Convert the order to a comma-separated string of display names
+        order_string = ','.join(source_order)
+        
+        # Save to config
+        config = load_config()
+        if 'Queue' not in config:
+            config['Queue'] = {}
+        config['Queue']['content_source_priority'] = order_string
+        save_config(config)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error saving content source order: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

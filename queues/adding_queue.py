@@ -74,7 +74,7 @@ class AddingQueue:
             if len(self.items) < old_len:
                 logging.info(f"Removed item {item_id} from queue")
             else:
-                logging.warning(f"Attempted to remove item {item_id} but it was not in queue")
+                logging.debug(f"Attempted to remove item {item_id} but it was not in queue")
         else:
             logging.error("Attempted to remove item without ID from queue")
         

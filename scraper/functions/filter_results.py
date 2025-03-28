@@ -491,13 +491,26 @@ def resolution_filter(result_resolution: str, max_resolution: str, resolution_wa
     result_val = get_resolution_value(result_resolution)
     max_val = get_resolution_value(max_resolution)
     
-    if result_val == 0 or max_val == 0:
-        logging.debug(f"Unknown resolution value: result={result_resolution}({result_val}), max={max_resolution}({max_val})")
+    # Special handling for unknown resolutions
+    if result_val == 0:
+        # If resolution is unknown, check if it's likely a WEBRip or older content
+        if result_resolution.lower() == 'unknown':
+            # For unknown resolutions, we'll be lenient and assume it's SD/480p quality
+            # This helps with older content where resolution isn't explicitly stated
+            result_val = get_resolution_value('480p')
+            logging.debug(f"Unknown resolution detected - assuming SD/480p quality for filtering")
+    
+    # If max_val is 0 (invalid resolution), default to blocking
+    if max_val == 0:
+        logging.debug(f"Invalid maximum resolution value: {max_resolution}")
         return False
         
     if resolution_wanted == '<=':
         return result_val <= max_val
     elif resolution_wanted == '==':
+        # Be more lenient with exact matches for unknown resolutions
+        if result_resolution.lower() == 'unknown':
+            return result_val <= max_val
         return result_val == max_val
     elif resolution_wanted == '>=':
         return result_val >= max_val

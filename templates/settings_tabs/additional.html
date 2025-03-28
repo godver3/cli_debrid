@@ -49,10 +49,188 @@
                         <input type="{{ value.type }}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
                                data-section="{{ section }}" data-key="{{ key }}"
-                               {% if value.sensitive %}type="password"{% endif %}>
+                               {% if value.sensitive %}type="password"{% endif %}
+                               {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
+                        {% if key == 'content_source_priority' %}
+                        <div id="content-source-priority-container" class="content-source-priority">
+                            <p class="settings-description" style="margin-top: 5px;">
+                                <strong>Drag and drop to reorder enabled content sources:</strong>
+                            </p>
+                            <ul id="content-source-list" class="content-source-list">
+                                <!-- Content sources will be loaded here dynamically -->
+                            </ul>
+                        </div>
+                        <style>
+                            .content-source-priority {
+                                margin-top: 10px;
+                            }
+                            .content-source-list {
+                                list-style: none;
+                                padding: 0;
+                                margin: 10px 0;
+                                max-width: 400px;
+                            }
+                            .content-source-item {
+                                background: #2a2a2a;
+                                padding: 10px 15px;
+                                margin: 5px 0;
+                                border-radius: 4px;
+                                cursor: move;
+                                display: flex;
+                                align-items: center;
+                                transition: background-color 0.2s;
+                                position: relative;
+                                user-select: none;
+                            }
+                            .content-source-item:hover {
+                                background: #3a3a3a;
+                            }
+                            .content-source-item.dragging {
+                                opacity: 0.5;
+                                background: #404040;
+                            }
+                            .content-source-item::before {
+                                content: "⋮⋮";
+                                margin-right: 10px;
+                                color: #666;
+                                cursor: grab;
+                            }
+                            .content-source-item:active::before {
+                                cursor: grabbing;
+                            }
+                            /* Add tooltip styles */
+                            .content-source-item:hover::after {
+                                content: attr(title);
+                                position: absolute;
+                                bottom: 100%;
+                                left: 50%;
+                                transform: translateX(-50%);
+                                padding: 4px 8px;
+                                background: rgba(0, 0, 0, 0.8);
+                                color: white;
+                                border-radius: 4px;
+                                font-size: 12px;
+                                white-space: nowrap;
+                                pointer-events: none;
+                                opacity: 0;
+                                transition: opacity 0.2s;
+                            }
+                            .content-source-item:hover:hover::after {
+                                opacity: 1;
+                            }
+                        </style>
+                        <script>
+                            document.addEventListener('DOMContentLoaded', function() {
+                                const sourceList = document.getElementById('content-source-list');
+                                let draggingElement = null;
+
+                                // Function to load enabled content sources
+                                function loadEnabledContentSources() {
+                                    fetch('/settings/api/enabled_content_sources')
+                                        .then(response => response.json())
+                                        .then(data => {
+                                            if (data.success) {
+                                                // Get current priority order
+                                                const priorityInput = document.querySelector('input[name="Queue.content_source_priority"]');
+                                                const currentOrder = priorityInput.value.split(',').map(s => s.trim());
+                                                
+                                                // Sort sources based on current order
+                                                const sources = data.sources.sort((a, b) => {
+                                                    const aIndex = currentOrder.indexOf(a.id);
+                                                    const bIndex = currentOrder.indexOf(b.id);
+                                                    // If neither is in the current order, maintain their original order
+                                                    if (aIndex === -1 && bIndex === -1) return 0;
+                                                    // If only one is in the current order, put the one that is first
+                                                    if (aIndex === -1) return 1;
+                                                    if (bIndex === -1) return -1;
+                                                    // Otherwise sort by their position in the current order
+                                                    return aIndex - bIndex;
+                                                });
+
+                                                // Clear existing list
+                                                sourceList.innerHTML = '';
+                                                
+                                                // Add sources to list
+                                                sources.forEach(source => {
+                                                    const li = document.createElement('li');
+                                                    li.className = 'content-source-item';
+                                                    // Store both ID and display name as data attributes
+                                                    li.setAttribute('data-source-id', source.id);
+                                                    li.setAttribute('data-display-name', source.display_name);
+                                                    
+                                                    // Show the display name in the UI
+                                                    li.textContent = source.display_name;
+                                                    
+                                                    // Create a tooltip with the source ID for reference
+                                                    li.title = `Source ID: ${source.id}`;
+                                                    sourceList.appendChild(li);
+                                                });
+
+                                                // Initialize drag and drop
+                                                initDragAndDrop();
+                                            }
+                                        })
+                                        .catch(error => console.error('Error loading content sources:', error));
+                                }
+
+                                function initDragAndDrop() {
+                                    const items = sourceList.querySelectorAll('.content-source-item');
+                                    
+                                    items.forEach(item => {
+                                        item.draggable = true;
+                                        
+                                        item.addEventListener('dragstart', function(e) {
+                                            draggingElement = item;
+                                            item.classList.add('dragging');
+                                        });
+                                        
+                                        item.addEventListener('dragend', function(e) {
+                                            draggingElement = null;
+                                            item.classList.remove('dragging');
+                                            
+                                            // Update the priority input using source IDs
+                                            const newOrder = Array.from(sourceList.children)
+                                                .map(item => item.getAttribute('data-source-id'));
+                                            
+                                            // Update the hidden input
+                                            const priorityInput = document.querySelector('input[name="Queue.content_source_priority"]');
+                                            priorityInput.value = newOrder.join(',');
+                                            
+                                            // Save the new order
+                                            fetch('/settings/api/save_content_source_order', {
+                                                method: 'POST',
+                                                headers: {
+                                                    'Content-Type': 'application/json',
+                                                },
+                                                body: JSON.stringify({ order: newOrder }),
+                                            })
+                                            .catch(error => console.error('Error saving order:', error));
+                                        });
+                                        
+                                        item.addEventListener('dragover', function(e) {
+                                            e.preventDefault();
+                                            if (!draggingElement || draggingElement === item) return;
+                                            
+                                            const rect = item.getBoundingClientRect();
+                                            const midpoint = rect.top + rect.height / 2;
+                                            
+                                            if (e.clientY < midpoint) {
+                                                sourceList.insertBefore(draggingElement, item);
+                                            } else {
+                                                sourceList.insertBefore(draggingElement, item.nextSibling);
+                                            }
+                                        });
+                                    });
+                                }
+
+                                // Load content sources when the page loads
+                                loadEnabledContentSources();
+                            });
+                        </script>
+                        {% endif %}
                     {% endif %}
                 </div>
                 {% endif %}

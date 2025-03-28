@@ -401,3 +401,113 @@
             margin: 5px 0;
         }
     }
+
+    /* Database page specific styles */
+    .database-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+    }
+
+    .database-header h2 {
+        margin: 0;
+    }
+
+    /* Stats Panel */
+    .stats-panel {
+        position: fixed;
+        left: -300px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 300px;
+        background-color: #2c2c2c;
+        border-radius: 0 8px 8px 0;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
+        transition: left 0.3s ease;
+        z-index: 1000;
+    }
+
+    .stats-panel.active {
+        left: 0;
+    }
+
+    .stats-toggle {
+        position: absolute;
+        right: -28px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 28px;
+        height: 28px;
+        background-color: #2c2c2c;
+        border: none;
+        border-radius: 0 4px 4px 0;
+        color: #888;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.2em;
+    }
+
+    .stats-toggle:hover {
+        background-color: #3c3c3c;
+    }
+
+    .stats-content {
+        padding: 20px;
+    }
+
+    /* Collection stats */
+    .stats-box.collection-stats {
+        background-color: transparent;
+        padding: 0;
+    }
+
+    .stats-box.collection-stats h3 {
+        color: #fff;
+        margin: 0 0 15px 0;
+        font-size: 1.2em;
+        text-align: center;
+    }
+
+    .stats-box.collection-stats .stat-items {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .stats-box.collection-stats .stat-item {
+        text-align: left;
+        padding: 10px;
+        background-color: #383838;
+        border-radius: 4px;
+    }
+
+    .stats-box.collection-stats .stat-item p {
+        margin: 0;
+        color: #888;
+        font-size: 1.2em;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .stats-box.collection-stats .stat-item p::before {
+        content: attr(data-label);
+        color: #fff;
+        font-size: 0.9em;
+        font-weight: normal;
+        margin: 0;
+    }
+
+    /* Mobile view adjustments */
+    @media screen and (max-width: 768px) {
+        .stats-panel {
+            display: none;
+        }
+
+        .stats-toggle {
+            display: none;
+        }
+    }

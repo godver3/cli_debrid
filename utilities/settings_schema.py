@@ -218,6 +218,11 @@ SETTINGS_SCHEMA = {
             "default": "None",
             "choices": ["None", "Movies First", "Episodes First"]
         },
+        "content_source_priority": {
+            "type": "string",
+            "description": "Priority order for content sources in the scraping queue (comma-separated list). Content sources not listed will be processed last.",
+            "default": ""
+        },
         "wake_limit": {
             "type": "string",
             "description": "Number of times to wake items before blacklisting",
