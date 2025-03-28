@@ -685,6 +685,30 @@ def clear_watch_history():
 def phalanxdb_status():
     """Display the PhalanxDB status and contents"""
     try:
+        # Check if service is enabled
+        enabled = get_setting('UI Settings', 'enable_phalanx_db', False)
+        
+        if not enabled:
+            return render_template(
+                'phalanxdb_status.html',
+                connection_status=False,
+                mesh_status={
+                    'syncsSent': 0,
+                    'syncsReceived': 0,
+                    'lastSyncAt': datetime.now().isoformat(),
+                    'connectionsActive': 0,
+                    'databaseEntries': 0,
+                    'nodeId': 'unavailable',
+                    'memory': {
+                        'heapTotal': '0 MB',
+                        'heapUsed': '0 MB',
+                        'rss': '0 MB',
+                        'external': '0 MB'
+                    }
+                },
+                enabled=False
+            )
+
         # Initialize cache manager
         phalanx_manager = PhalanxDBClassManager()
         
@@ -692,13 +716,11 @@ def phalanxdb_status():
         connection_status = phalanx_manager.test_connection()
         mesh_status = phalanx_manager.get_mesh_status()
         
-        # The mesh_status is already in the correct format from get_mesh_status()
-        # No need to reformat it as it matches our template structure
-        
         return render_template(
             'phalanxdb_status.html',
             connection_status=connection_status,
-            mesh_status=mesh_status
+            mesh_status=mesh_status,
+            enabled=True
         )
         
     except Exception as e:
@@ -720,7 +742,8 @@ def phalanxdb_status():
                     'rss': '0 MB',
                     'external': '0 MB'
                 }
-            }
+            },
+            enabled=False
         )
 
 @database_bp.route('/phalanxdb/test_hash', methods=['POST'])

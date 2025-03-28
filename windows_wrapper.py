@@ -584,7 +584,7 @@ def run_main():
     setup_environment()
     
     # Check both command line argument and settings for phalanx db
-    phalanx_enabled = args.enable_phalanx_db or get_setting('UI Settings', 'enable_phalanx_db', default=True)
+    phalanx_enabled = args.enable_phalanx_db or get_setting('UI Settings', 'enable_phalanx_db', default=False)
     os.environ['ENABLE_PHALANX_DB'] = str(phalanx_enabled).lower()
     
     if phalanx_enabled:

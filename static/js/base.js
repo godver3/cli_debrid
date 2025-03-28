@@ -266,7 +266,7 @@ async function checkAndShowPhalanxDisclaimer() {
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
                 title: 'Welcome to Phalanx DB',
-                message: `I am excited to introduce Phalanx_DB as the newest feature within cli_debrid. This disseminated database allows all users to keep track of cache status for items instead of needing to check cache statuses independently. This is a peer to peer database that is not stored in any one location, and instead propagates across users. Would you like to enable Phalanx_DB?<br><br><i>Note that data shared within phalanx_db is encrypted end to end and anonymous.</i>`,
+                message: `I am excited to introduce Phalanx_DB as the newest feature within cli_debrid. This disseminated database allows all users to keep track of cache status for items instead of needing to check cache statuses independently. This is a peer to peer database that is not stored in any one location, and instead propagates across users. Would you like to enable Phalanx_DB (setting applies on restart)?<br><br><i>Note that data shared within phalanx_db is anonymous.</i>`,
                 confirmText: 'Yes, Enable',
                 cancelText: 'No, Disable',
                 onConfirm: async () => {

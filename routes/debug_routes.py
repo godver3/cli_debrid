@@ -1855,3 +1855,40 @@ def get_verification_queue():
             'success': False,
             'error': str(e)
         })
+
+@debug_bp.route('/test_get_torrent_files', methods=['POST'])
+@admin_required
+def test_get_torrent_files():
+    """Test the get_torrent_file_list function from the RealDebridProvider."""
+    magnet_link = request.form.get('magnet_link')
+    if not magnet_link or not magnet_link.startswith('magnet:'):
+        return jsonify({'success': False, 'error': 'Valid magnet link is required'}), 400
+
+    try:
+        provider = get_debrid_provider()
+        if not provider:
+            return jsonify({'success': False, 'error': 'Debrid provider not configured or unavailable'}), 500
+
+        # Assuming RealDebridProvider for this specific test
+        if not hasattr(provider, 'get_torrent_file_list'):
+            return jsonify({'success': False, 'error': 'Provider does not support get_torrent_file_list'}), 501
+        
+        logging.info(f"Testing get_torrent_file_list with magnet: {magnet_link[:60]}...")
+        file_list = provider.get_torrent_file_list(magnet_link)
+
+        if file_list is not None:
+            logging.info(f"Successfully retrieved {len(file_list)} files.")
+            return jsonify({'success': True, 'file_list': file_list})
+        else:
+            logging.error("Failed to retrieve file list from provider.")
+            return jsonify({'success': False, 'error': 'Failed to retrieve file list. Check logs for details.'}), 500
+
+    except Exception as e:
+        # Catch specific errors if needed, otherwise generic error
+        error_msg = f"Error testing get_torrent_file_list: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        # Check for specific error types if needed, e.g., ProviderUnavailableError
+        # from debrid.base import ProviderUnavailableError
+        # if isinstance(e, ProviderUnavailableError):
+        #     return jsonify({'success': False, 'error': f'Provider Error: {str(e)}'}), 503
+        return jsonify({'success': False, 'error': error_msg}), 500

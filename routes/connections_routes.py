@@ -257,6 +257,17 @@ def check_mounted_files_connection():
 
 def check_phalanx_db_connection():
     """Check connection to phalanx_db service."""
+    # Check if phalanx db is enabled
+    if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
+        return {
+            'name': 'Phalanx DB',
+            'connected': False,
+            'error': 'Service is disabled in settings',
+            'details': {
+                'disabled': True
+            }
+        }
+
     # Try both localhost and phalanx_db hostname
     hosts = ['localhost', 'phalanx_db']
     port = 8888
@@ -279,11 +290,7 @@ def check_phalanx_db_connection():
                         'port': port
                     }
                 }
-        except requests.Timeout:
-            continue
-        except requests.ConnectionError:
-            continue
-        except Exception:
+        except (requests.Timeout, requests.ConnectionError, Exception) as e:
             continue
             
     # If we get here, none of the connection attempts worked

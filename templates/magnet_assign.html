@@ -229,110 +229,74 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => console.error('Error loading versions:', error));
 
-    // Handle magnet assignment forms
+    // Re-introduce async form submission for the preparation step
     document.querySelectorAll('.magnet-form').forEach(form => {
         form.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            // Validate form data before submission
-            const mediaType = form.querySelector('input[name="media_type"]').value;
-            if (mediaType === 'show') {
-                const selectionType = form.querySelector('.selection-type-input').value;
-                if (!selectionType) {
-                    showError('Please select a selection type');
-                    return;
-                }
+            e.preventDefault(); // Prevent default synchronous submission
 
-                if (selectionType === 'seasons') {
-                    const selectedSeasons = form.querySelector('.selected-seasons-input').value;
-                    if (!selectedSeasons) {
-                        showError('Please select at least one season');
-                        return;
-                    }
-                } else if (selectionType === 'episode') {
-                    const season = form.querySelector('.season-input').value;
-                    const episode = form.querySelector('.episode-input').value;
-                    if (!season || !episode) {
-                        showError('Please select both season and episode');
-                        return;
-                    }
-                }
-            }
+            const submitButton = form.querySelector('button[type="submit"]');
+            submitButton.disabled = true; // Disable button during processing
+            Loading.show(); // Show loading indicator
 
-            const magnetLink = form.querySelector('input[name="magnet_link"]').value;
-            if (!magnetLink) {
-                showError('Please enter a magnet link');
-                return;
-            }
-
-            const version = form.querySelector('select[name="version"]').value;
-            if (!version) {
-                showError('Please select a version');
-                return;
-            }
-
-            // Show loading indicator
-            Loading.show();
-            
             try {
+                // Client-side validation (optional but good practice)
+                const magnetLink = form.querySelector('input[name="magnet_link"]').value;
+                const version = form.querySelector('select[name="version"]').value;
+                if (!magnetLink || !magnetLink.startsWith('magnet:')) {
+                    throw new Error('Please enter a valid magnet link.');
+                }
+                if (!version) {
+                    throw new Error('Please select a version.');
+                }
+
                 const formData = new FormData(form);
-                const formAction = form.getAttribute('action');
-                const response = await fetch(formAction, {
+                
+                // DEBUG: Log the action URL before fetching
+                console.log('Fetching URL:', form.getAttribute('action')); 
+                
+                const response = await fetch(form.getAttribute('action'), {
                     method: 'POST',
-                    body: formData,
-                    headers: {
-                        'Accept': 'application/json'
-                    }
+                    body: formData
+                    // No 'Accept': 'application/json' needed here, we expect HTML on success
                 });
-                
-                const data = await response.json();
-                
-                // Hide loading indicator
-                Loading.hide();
-                
-                if (response.ok && data.success && data.added_items > 0) {
-                    const title = form.querySelector('input[name="title"]').value;
-                    const version = form.querySelector('select[name="version"]').value;
-                    
-                    if (showPopup) {
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            title: 'Magnet Assigned',
-                            message: `Successfully assigned magnet to ${title} (${version})`,
-                            autoClose: 3000,
-                            onConfirm: () => {
-                                window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                            }
-                        });
-                        
-                        setTimeout(() => {
-                            window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                        }, 3000);
+
+                if (response.ok) {
+                    // **MODIFICATION**: Check for redirect URL in JSON response
+                    const data = await response.json(); 
+                    if (data.success && data.redirect_url) {
+                         // Redirect to the manual assignment page
+                        window.location.href = data.redirect_url;
                     } else {
-                        window.location.href = "{{ url_for('magnet.assign_magnet') }}";
+                        // Should not happen if backend logic is correct, but handle anyway
+                         throw new Error(data.error || 'Backend indicated success but provided no redirect URL.');
                     }
                 } else {
-                    if (showPopup) {
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            title: 'Error',
-                            message: data.error || 'Failed to add any items to the database',
-                            autoClose: 5000
-                        });
-                    }
+                    // Error: Backend returned a JSON error
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `Server responded with status ${response.status}`);
                 }
             } catch (error) {
-                // Hide loading indicator on error
-                Loading.hide();
-                
-                console.error('Error submitting form:', error);
+                console.error('Error preparing assignment:', error);
                 if (showPopup) {
                     showPopup({
                         type: POPUP_TYPES.ERROR,
-                        title: 'Error',
-                        message: 'An error occurred while assigning the magnet',
-                        autoClose: 5000
+                        title: 'Preparation Error',
+                        message: error.message || 'An unexpected error occurred.',
+                        autoClose: 10000 // 10 seconds
                     });
+                }
+                // Refresh the page after 10 seconds
+                setTimeout(() => { 
+                    window.location.reload(); 
+                }, 10000);
+            } finally {
+                // Ensure loading indicator is hidden and button is re-enabled
+                // Note: Button might not exist if page content was replaced on success
+                Loading.hide();
+                if (submitButton && !document.contains(submitButton)) {
+                    // If button is gone (due to success), do nothing
+                } else if (submitButton) {
+                    submitButton.disabled = false;
                 }
             }
         });
@@ -416,7 +380,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     {% endif %}
 
-                    <form method="POST" action="{{ url_for('magnet.assign_magnet') }}" class="magnet-form direct-submit-form">
+                    <form method="POST" action="{{ url_for('magnet.prepare_manual_assignment') }}" class="magnet-form direct-submit-form">
                         <input type="hidden" name="action" value="assign">
                         <input type="hidden" name="tmdb_id" value="{{ result.id }}">
                         <input type="hidden" name="media_type" value="{{ result.mediaType }}">

@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 from utilities.post_processing import handle_state_change
 from typing import List
+import sqlite3
 
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
@@ -468,5 +469,27 @@ def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
         logging.error(f"Error in batch state update: {str(e)}")
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+def update_media_item_torrent_id(item_id: int, new_torrent_id: str):
+    """Updates the 'filled_by_torrent_id' for a specific media item."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            "UPDATE media_items SET filled_by_torrent_id = ? WHERE id = ?",
+            (new_torrent_id, item_id)
+        )
+        conn.commit()
+        if cursor.rowcount > 0:
+            logging.info(f"Updated filled_by_torrent_id for media item {item_id} to {new_torrent_id}")
+            return True
+        else:
+            logging.warning(f"No media item found with id {item_id} to update torrent ID.")
+            return False
+    except sqlite3.Error as e:
+        logging.error(f"Database error updating torrent ID for item {item_id}: {e}")
+        conn.rollback()
+        return False
     finally:
         conn.close()

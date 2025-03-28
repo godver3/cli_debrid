@@ -1,6 +1,6 @@
-from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify
+from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify, session
 from debrid import get_debrid_provider
-from database.database_writing import add_media_item
+from database.database_writing import add_media_item, update_media_item_torrent_id
 from metadata.metadata import get_metadata, _get_local_timezone, get_all_season_episode_counts
 from .models import admin_required
 from queues.config_manager import load_config
@@ -13,6 +13,7 @@ import os
 import re
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
 from content_checkers.content_source_detail import append_content_source_detail
+from scraper.functions.ptt_parser import parse_with_ptt
 
 magnet_bp = Blueprint('magnet', __name__)
 
@@ -83,288 +84,483 @@ def assign_magnet():
                                 search_term=search_term,
                                 content_type=content_type,
                                 step='results')
+        else:
+            # Handle POST requests with actions other than 'search' (e.g., invalid/unexpected)
+            flash('Invalid action performed.', 'warning') # Optional: inform user
+            return redirect(url_for('magnet.assign_magnet')) # Redirect back to the GET route
         
-        elif action == 'assign':
-            # Get form data
-            tmdb_id = request.form.get('tmdb_id')
-            media_type = request.form.get('media_type')
-            magnet_link = request.form.get('magnet_link')
-            title = request.form.get('title')
-            year = request.form.get('year')
-            version = request.form.get('version')
-            
-            # Get TV show specific data
-            selection_type = request.form.get('selection_type')
-            selected_seasons = request.form.get('selected_seasons', '').split(',') if request.form.get('selected_seasons') else []
-            season = request.form.get('season')
-            episode = request.form.get('episode')
-
-            # Check if all required fields are present
-            if not all([tmdb_id, media_type, magnet_link, title, year, version]):
-                flash('Missing required information', 'error')
-                return redirect(url_for('magnet.assign_magnet'))
-
-            try:
-                # Add torrent to debrid service
-                debrid_provider = get_debrid_provider()
-                torrent_id = debrid_provider.add_torrent(magnet_link)
-                
-                if not torrent_id:
-                    flash('Failed to add magnet to debrid service', 'error')
-                    return redirect(url_for('magnet.assign_magnet'))
-
-                # Extract torrent hash from magnet link
-                torrent_hash = None
-                if magnet_link.startswith('magnet:'):
-                    hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
-                    if hash_match:
-                        torrent_hash = hash_match.group(1).lower()
-
-                # Get torrent info for file matching
-                torrent_info = debrid_provider.get_torrent_info(torrent_id)
-                if not torrent_info:
-                    flash('Failed to get torrent info', 'error')
-                    return redirect(url_for('magnet.assign_magnet'))
-
-                # Record torrent addition if we have a hash
-                if torrent_hash:
-                    # Check recent history for this hash
-                    history = get_torrent_history(torrent_hash)
-                    
-                    # Prepare item data for tracking
-                    tracking_item_data = {
-                        'title': title,
-                        'year': year,
-                        'media_type': media_type,
-                        'version': version,
-                        'tmdb_id': tmdb_id,
-                        'filled_by_title': torrent_info.get('filename', ''),
-                        'torrent_id': torrent_id
-                    }
-                    
-                    # Add TV show specific data if applicable
-                    if media_type in ['tv', 'show']:
-                        tracking_item_data.update({
-                            'selection_type': selection_type,
-                            'season_number': season if season else None,
-                            'episode_number': episode if episode else None,
-                            'selected_seasons': selected_seasons if selected_seasons else None
-                        })
-
-                    # If there's a recent entry, update it instead of creating new one
-                    if history:
-                        update_torrent_tracking(
-                            torrent_hash=torrent_hash,
-                            item_data=tracking_item_data,
-                            trigger_details={
-                                'source': 'magnet_assign',
-                                'user_initiated': True,
-                                'torrent_info': torrent_info
-                            },
-                            trigger_source='manual_assign',
-                            rationale='User manually assigned via magnet assignment'
-                        )
-                        logging.info(f"Updated existing torrent tracking entry for {title} (hash: {torrent_hash})")
-                    else:
-                        # Record new addition if no history exists
-                        record_torrent_addition(
-                            torrent_hash=torrent_hash,
-                            trigger_source='manual_assign',
-                            rationale='User manually assigned via magnet assignment',
-                            item_data=tracking_item_data,
-                            trigger_details={
-                                'source': 'magnet_assign',
-                                'user_initiated': True,
-                                'torrent_info': torrent_info
-                            }
-                        )
-                        logging.info(f"Recorded new torrent addition for {title} with hash {torrent_hash}")
-
-                # Log raw torrent info for debugging
-                #logging.debug(f"Raw torrent info: {torrent_info}")
-                
-                # Get files and ensure they're in the correct format
-                files = torrent_info.get('files', [])
-                if isinstance(files, dict):
-                    # If files is a dictionary, convert to list
-                    files = list(files.values())
-                elif not isinstance(files, list):
-                    files = []
-                
-                # Extract video file paths
-                video_files = []
-                for f in files:
-                    # Handle both dictionary and string file formats
-                    if isinstance(f, dict):
-                        path = f.get('path', '')
-                    else:
-                        path = str(f)
-                    
-                    # Clean up path and check for video files
-                    path = path.lstrip('/')  # Remove leading slash
-                    if any(ext in path.lower() for ext in ['.mkv', '.mp4', '.avi']):
-                        # Use just the filename for matching, but keep the full path
-                        video_files.append({
-                            'path': os.path.basename(path),  # Just the filename for matching
-                            'full_path': path  # Keep the full path for later use
-                        })
-                
-                logging.info(f"Found {len(files)} total files, {len(video_files)} video files")
-                #logging.debug(f"Video files: {[f['path'] for f in video_files]}")
-
-                # Get metadata
-                metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
-                if not metadata:
-                    flash('Failed to get metadata', 'error')
-                    return redirect(url_for('magnet.assign_magnet'))
-
-                # For TV shows, fetch additional season data
-                if media_type in ['tv', 'show']:
-                    try:
-                        # Get seasons data which contains episodes
-                        seasons_data, _ = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
-                        if not seasons_data:
-                            flash('Failed to get season data', 'error')
-                            return redirect(url_for('magnet.assign_magnet'))
-                        
-                        # Add seasons data to metadata
-                        metadata['seasons'] = {}
-                        for season_num, season_info in seasons_data.items():
-                            if isinstance(season_num, str):
-                                season_num = int(season_num)
-                            metadata['seasons'][str(season_num)] = {
-                                'episodes': season_info.get('episodes', {}),
-                                'episode_count': len(season_info.get('episodes', {}))
-                            }
-                        logging.info(f"Added seasons data to metadata: {list(metadata['seasons'].keys())}")
-                    except Exception as e:
-                        logging.error(f"Error fetching season data: {str(e)}")
-                        flash('Failed to get season data', 'error')
-                        return redirect(url_for('magnet.assign_magnet'))
-
-                # Create MediaMatcher instance for file matching with relaxed matching enabled for manual assignments
-                media_matcher = MediaMatcher(relaxed_matching=True)
-
-                if media_type == 'movie':
-                    # Handle movie
-                    item_data = create_movie_item(metadata, title, year, version, torrent_id, magnet_link)
-                    matches = media_matcher.match_content(video_files, item_data)
-                    if matches:
-                        # Use the full path from our matched file
-                        matched_file = next(f['full_path'] for f in video_files if f['path'] == matches[0][0])
-                        item_data['filled_by_file'] = matched_file
-                        item_data['filled_by_title'] = torrent_info.get('filename', '')
-                        items_to_add = [item_data]
-                        logging.info(f"Created movie item: {item_data}")
-                    else:
-                        flash('No matching video file found in torrent', 'error')
-                        return redirect(url_for('magnet.assign_magnet'))
-                else:
-                    # Handle TV show based on selection type
-                    items_to_add = []
-                    logging.info(f"Processing TV show with selection type: {selection_type}")
-                    logging.info(f"Selected seasons: {selected_seasons}")
-                    
-                    if selection_type == 'all':
-                        # Full series - get all seasons and episodes
-                        items_to_add = create_full_series_items(metadata, title, year, version, torrent_id, magnet_link)
-                        logging.info(f"Created {len(items_to_add)} items for full series")
-                    elif selection_type == 'seasons':
-                        # Selected seasons
-                        items_to_add = create_season_items(metadata, title, year, version, torrent_id, magnet_link, selected_seasons)
-                        logging.info(f"Created {len(items_to_add)} items for selected seasons: {selected_seasons}")
-                    else:
-                        # Single episode
-                        try:
-                            season_number = int(season)
-                            episode_number = int(episode)
-                            item_data = create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_number, episode_number)
-                            items_to_add = [item_data]
-                            logging.info(f"Created single episode item: S{season_number}E{episode_number}")
-                        except (ValueError, TypeError):
-                            flash('Invalid season or episode number', 'error')
-                            return redirect(url_for('magnet.assign_magnet'))
-
-                    # Match files for each item
-                    added_items = []
-                    for item_data in items_to_add:
-                        matches = media_matcher.match_content(video_files, item_data)
-                        if matches:
-                            # Use just the filename without the path
-                            matched_file = next(os.path.basename(f['full_path']) for f in video_files if f['path'] == matches[0][0])
-                            item_data['filled_by_file'] = matched_file
-                            item_data['filled_by_title'] = torrent_info.get('filename', '')
-                            logging.info(f"Found matching file for {item_data.get('title')} S{item_data.get('season_number'):02d}E{item_data.get('episode_number'):02d}: {matched_file}")
-                            
-                            try:
-                                # Remove fields that aren't in the database schema
-                                db_item = {k: v for k, v in item_data.items() if k not in [
-                                    'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data'
-                                ]}
-                                
-                                # Prepare notification data
-                                notification_data = {
-                                    'id': None,
-                                    'title': db_item.get('title', 'Unknown Title'),
-                                    'type': db_item.get('type', 'unknown'),
-                                    'year': db_item.get('year', ''),
-                                    'version': db_item.get('version', ''),
-                                    'season_number': db_item.get('season_number'),
-                                    'episode_number': db_item.get('episode_number'),
-                                    'new_state': 'Checking',
-                                    'is_upgrade': False,
-                                    'upgrading_from': None
-                                }
-
-                                # Add to database
-                                item_id = add_media_item(db_item)
-                                if item_id:
-                                    notification_data['id'] = item_id
-                                    added_items.append(notification_data)
-                                else:
-                                    logging.error(f"Failed to add item to database: {db_item}")
-                            except Exception as e:
-                                logging.error(f"Error adding item to database: {str(e)}")
-                        else:
-                            logging.warning(f"No matching file found for {item_data.get('title')} S{item_data.get('season_number'):02d}E{item_data.get('episode_number'):02d}")
-
-                    # Send notifications for all added items
-                    if added_items:
-                        try:
-                            from routes.notifications import send_notifications
-                            from routes.settings_routes import get_enabled_notifications_for_category
-                            from routes.extensions import app
-
-                            with app.app_context():
-                                response = get_enabled_notifications_for_category('checking')
-                                if response.json['success']:
-                                    enabled_notifications = response.json['enabled_notifications']
-                                    if enabled_notifications:
-                                        send_notifications(added_items, enabled_notifications, notification_category='state_change')
-                        except Exception as e:
-                            logging.error(f"Failed to send notifications: {str(e)}")
-
-                    if added_items:
-                        return jsonify({
-                            'success': True,
-                            'added_items': len(added_items),
-                            'message': f'Successfully added {len(added_items)} matched items to database'
-                        })
-                    else:
-                        return jsonify({
-                            'success': False,
-                            'added_items': 0,
-                            'error': 'No matching files found in torrent'
-                        }), 500
-
-            except Exception as e:
-                logging.error(f"Error assigning magnet: {str(e)}")
-                return jsonify({
-                    'success': False,
-                    'error': str(e)
-                }), 500
-
+    # Handle GET request (this part is fine)
     return render_template('magnet_assign.html', step='search')
+
+@magnet_bp.route('/prepare_manual_assignment', methods=['POST'])
+@admin_required
+def prepare_manual_assignment():
+    """Prepare the data for the manual file assignment screen."""
+    # Get form data (same as original 'assign' action)
+    tmdb_id = request.form.get('tmdb_id')
+    media_type = request.form.get('media_type')
+    magnet_link = request.form.get('magnet_link')
+    title = request.form.get('title')
+    year = request.form.get('year')
+    version = request.form.get('version')
+    selection_type = request.form.get('selection_type')
+    selected_seasons = request.form.get('selected_seasons', '').split(',') if request.form.get('selected_seasons') else []
+    season = request.form.get('season')
+    episode = request.form.get('episode')
+
+    # Basic validation
+    if not all([tmdb_id, media_type, magnet_link, title, year, version]):
+        # Return JSON error for fetch request
+        return jsonify({'success': False, 'error': 'Missing required information'}), 400
+
+    try:
+        # Get file list, filename, and torrent_id from debrid provider
+        debrid_provider = get_debrid_provider()
+        result = debrid_provider.get_torrent_file_list(magnet_link)
+        
+        if result is None:
+            error_msg = 'Failed to retrieve file list from debrid service. Torrent might be invalid or provider error.'
+            logging.error(f"get_torrent_file_list returned None for magnet: {magnet_link[:60]}")
+            # Return JSON error
+            return jsonify({'success': False, 'error': error_msg}), 503 # Service Unavailable
+
+        files, torrent_filename, torrent_id = result
+        logging.info(f"Retrieved {len(files)} files for manual assignment. Torrent ID: {torrent_id}, Filename: {torrent_filename}")
+
+        # Filter for video files (.mkv, .mp4, .avi)
+        video_files = []
+        for f in files:
+            path = f.get('path', '')
+            if isinstance(path, str):
+                path = path.lstrip('/')
+                if any(path.lower().endswith(ext) for ext in ['.mkv', '.mp4', '.avi']):
+                    filename = os.path.basename(path)
+                    video_files.append({
+                        'id': f.get('id'),
+                        'path': path,
+                        'filename': filename,
+                        'bytes': f.get('bytes', 0)
+                    })
+            else:
+                 logging.warning(f"Skipping file due to non-string path: {f}")
+
+        if not video_files:
+            error_msg = 'No video files found in the magnet link.'
+            logging.warning(f"No video files found for magnet: {magnet_link[:60]}...")
+            # Return JSON error
+            return jsonify({'success': False, 'error': error_msg}), 400
+
+        logging.info(f"Filtered down to {len(video_files)} video files.")
+
+        # Get metadata
+        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
+        if not metadata:
+            error_msg = 'Failed to get metadata for the selected item.'
+            logging.error(f"Metadata fetch failed for tmdb_id: {tmdb_id}, type: {media_type}")
+            # Return JSON error
+            return jsonify({'success': False, 'error': error_msg}), 500
+        
+        # Fetch TV show season data if needed
+        if media_type in ['tv', 'show']:
+            try:
+                seasons_data, _ = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                if seasons_data:
+                    metadata['seasons'] = {}
+                    for season_num, season_info in seasons_data.items():
+                        if isinstance(season_num, str): season_num = int(season_num)
+                        metadata['seasons'][str(season_num)] = {
+                            'episodes': season_info.get('episodes', {}),
+                            'episode_count': len(season_info.get('episodes', {}))
+                        }
+            except Exception as e:
+                # Log but don't necessarily fail, maybe proceed without detailed episode titles
+                logging.error(f"Error fetching season data (non-critical): {str(e)}")
+
+        # Determine target media items based on selection
+        target_items = []
+        if media_type == 'movie':
+            item = create_movie_item(metadata, title, year, version, torrent_id, magnet_link)
+            item['item_key'] = f"movie_{item['tmdb_id']}"
+            target_items.append(item)
+        else: # TV Show
+            if selection_type == 'all':
+                target_items = create_full_series_items(metadata, title, year, version, torrent_id, magnet_link)
+            elif selection_type == 'seasons':
+                target_items = create_season_items(metadata, title, year, version, torrent_id, magnet_link, selected_seasons)
+            else: # Single episode
+                try:
+                    season_number = int(season)
+                    episode_number = int(episode)
+                    target_items = [create_episode_item(metadata, title, year, version, torrent_id, magnet_link, season_number, episode_number)]
+                except (ValueError, TypeError):
+                    # Return JSON error
+                    return jsonify({'success': False, 'error': 'Invalid season or episode number provided.'}), 400
+            
+            # Add unique keys
+            for item in target_items:
+                 item['item_key'] = f"ep_{item['tmdb_id']}_s{item['season_number']:02d}e{item['episode_number']:02d}"
+
+        if not target_items:
+            error_msg = 'Could not determine target media items based on selection.'
+            logging.error(f"Failed to determine target items. Selection: {selection_type}, Seasons: {selected_seasons}, S/E: {season}/{episode}")
+            # Return JSON error
+            return jsonify({'success': False, 'error': error_msg}), 400
+
+        # --- Start Auto-assignment Logic ---
+        logging.info("Attempting automatic file assignment using PTT parser...")
+        parsed_video_files = []
+        for f in video_files:
+            # Only parse if path is a non-empty string
+            file_path = f.get('path')
+            if isinstance(file_path, str) and file_path:
+                # --- MODIFICATION: Parse only the filename ---
+                filename = os.path.basename(file_path)
+                logging.debug(f"Parsing filename: '{filename}' (from path: '{file_path}')")
+                parsed = parse_with_ptt(filename)
+                # --- END MODIFICATION ---
+                if not parsed.get('parsing_error'):
+                    parsed_video_files.append({
+                        'original': f, # Store the original file dict
+                        'parsed': parsed,
+                        #'assigned': False # REMOVED: Allow file reuse for multi-episode
+                    })
+            else:
+                logging.warning(f"Skipping file parsing due to invalid path: {f.get('path')}")
+                
+        logging.info(f"Successfully parsed {len(parsed_video_files)} video file names.")
+
+        assignment_count = 0
+        # Iterate through target items and try to find a unique match
+        for item in target_items:
+            item['suggested_file_path'] = None # Initialize suggestion field
+            potential_matches = []
+
+            # Ensure required item fields exist before matching
+            item_title_lower = item.get('title', '').lower()
+            item_year = item.get('year')
+            item_type = item.get('type')
+            item_season = item.get('season_number')
+            item_episode = item.get('episode_number')
+
+            for file_info in parsed_video_files:
+                # REMOVED: Check for assigned flag
+                # if file_info['assigned']: # Skip already assigned files
+                #    continue
+
+                parsed = file_info['parsed']
+                match = False
+
+                # Ensure required parsed fields exist
+                parsed_seasons = parsed.get('seasons', [])
+                parsed_episodes = parsed.get('episodes', [])
+                parsed_type = parsed.get('type')
+                parsed_year = parsed.get('year')
+                parsed_title_lower = parsed.get('title', '').lower()
+
+                try:
+                    # --- Episode Matching Logic ---
+                    if item_type == 'episode' and item_season is not None and item_episode is not None:
+                        logging.debug(f"-- Comparing Item (Episode): S{item_season:02d}E{item_episode:02d} ('{item_title_lower}') with File: '{file_info['original']['path']}'")
+                        logging.debug(f"    Parsed Seasons: {parsed_seasons}, Parsed Episodes: {parsed_episodes}, Parsed Title: '{parsed_title_lower}'")
+                        
+                        # Perform individual checks
+                        season_match = (item_season in parsed_seasons)
+                        episode_match = (item_episode in parsed_episodes)
+                        # Looser title check: item title should be substring of parsed title
+                        title_match = (item_title_lower in parsed_title_lower)
+                        
+                        logging.debug(f"    Checks: Season Match? {season_match}, Episode Match? {episode_match}, Title Match? {title_match}")
+                        
+                        if season_match and episode_match and title_match:
+                            match = True
+                            # logging.debug(f"    >>> Episode S/E match SUCCESS") # Covered by the log below
+                        # else: Covered by the log below
+                            
+                    # --- Movie Matching Logic ---
+                    elif item_type == 'movie' and item_year is not None:
+                        logging.debug(f"-- Comparing Item (Movie): '{item_title_lower}' ({item_year}) with File: '{file_info['original']['path']}'")
+                        logging.debug(f"    Parsed Type: {parsed_type}, Parsed Year: {parsed_year}, Parsed Title: '{parsed_title_lower}'")
+                        type_match = (parsed_type == 'movie')
+                        # Ensure years are compared as integers
+                        year_match = False
+                        try:
+                            if parsed_year is not None and item_year is not None:
+                                year_match = (int(parsed_year) == int(item_year))
+                        except (ValueError, TypeError):
+                            logging.warning(f"Could not compare years due to type/value error. Parsed: {parsed_year} ({type(parsed_year)}), Item: {item_year} ({type(item_year)})", exc_info=True)
+                        
+                        title_match = (item_title_lower in parsed_title_lower)
+                        logging.debug(f"    Checks: Type Match? {type_match}, Year Match? {year_match}, Title Match? {title_match}")
+                        if type_match and year_match and title_match:
+                             match = True
+                             # logging.debug(f"    >>> Movie match SUCCESS") # Covered by the log below
+                        # else: Covered by the log below
+                             # logging.debug(f"    >>> Movie match FAILED")
+                except Exception as match_err:
+                     logging.error(f"Error during matching logic for item {item.get('item_key', 'N/A')} and file {file_info['original']['path']}: {match_err}", exc_info=True)
+
+                # Log the outcome of the check for this specific file
+                logging.debug(f"    >>> Overall Match Result for this file: {match}")
+
+                if match:
+                    potential_matches.append(file_info)
+
+            # Assign if exactly one unique match is found
+            if len(potential_matches) == 1:
+                match_info = potential_matches[0]
+                item['suggested_file_path'] = os.path.basename(match_info['original']['path'])
+                assignment_count += 1
+                logging.info(f"Auto-assigned file '{match_info['original']['path']}' (using filename: {item['suggested_file_path']}) to item '{item.get('item_key', item.get('title'))}' based on PTT results.")
+            elif len(potential_matches) > 1:
+                 logging.warning(f"Found {len(potential_matches)} potential file matches for item '{item.get('item_key', item.get('title'))}'. Leaving unassigned for manual selection. Files: {[p['original']['path'] for p in potential_matches]}")
+            # --- ADDED: Log when no matches are found ---
+            elif len(potential_matches) == 0:
+                 logging.debug(f"No suitable file matches found for item '{item.get('item_key', item.get('title'))}' after checking all files.")
+
+        logging.info(f"Completed automatic assignment attempt. Suggested assignments for {assignment_count} out of {len(target_items)} items.")
+        # --- End Auto-assignment Logic ---
+
+        # **MODIFICATION**: Store data in session instead of rendering template directly
+        session['manual_assignment_data'] = {
+            'target_items': target_items,
+            'video_files': video_files,
+            'magnet_link': magnet_link,
+            'torrent_filename': torrent_filename,
+            'torrent_id': torrent_id,
+            'version': version
+        }
+        
+        # **MODIFICATION**: Return success JSON pointing to the new GET route
+        return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment')})
+
+    except Exception as e:
+        # Catch-all for unexpected errors
+        error_msg = f"An unexpected error occurred while preparing assignment: {str(e)}"
+        logging.error(error_msg, exc_info=True)
+        # Return JSON error
+        return jsonify({'success': False, 'error': 'An internal server error occurred. Please check logs.'}), 500
+
+@magnet_bp.route('/show_manual_assignment', methods=['GET'])
+@admin_required
+def show_manual_assignment():
+    """Display the manual assignment page using data stored in the session."""
+    assignment_data = session.pop('manual_assignment_data', None) # Get and remove data from session
+
+    if not assignment_data:
+        flash('No assignment data found. Please start the process again.', 'warning')
+        return redirect(url_for('magnet.assign_magnet'))
+
+    # Render the template with the retrieved data
+    return render_template('manual_assignment.html', **assignment_data)
+
+@magnet_bp.route('/confirm_manual_assignment', methods=['POST'])
+@admin_required
+def confirm_manual_assignment():
+    """Confirm the manual file assignments and add items to the database."""
+    try:
+        # Get data submitted from the manual assignment form
+        assignments = request.form.to_dict(flat=False) # Get as dict of lists
+        
+        # Extract common data
+        magnet_link = assignments.pop('magnet_link', [None])[0]
+        torrent_filename = assignments.pop('torrent_filename', [None])[0]
+        initial_torrent_id = assignments.pop('torrent_id', [None])[0]
+        version = assignments.pop('version', [None])[0]
+
+        if not all([magnet_link, torrent_filename, initial_torrent_id, version]):
+             return jsonify({'success': False, 'error': 'Missing essential torrent information in submission.'}), 400
+
+        # Extract torrent hash
+        torrent_hash = None
+        if magnet_link.startswith('magnet:'):
+            hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
+            if hash_match:
+                torrent_hash = hash_match.group(1).lower()
+        
+        added_items_count = 0
+        failed_items_count = 0
+        processed_items_info = [] # To store info for notifications
+        successfully_added_items = [] # Store IDs of added items
+        representative_tracking_item_data = None # Store data for tracking update
+
+        # Each key in assignments (excluding common data) should be an item_key
+        # The value will be a list containing the selected file path
+        for item_key, selected_file_list in assignments.items():
+            selected_filename = selected_file_list[0] if selected_file_list else None
+            
+            # Skip if no file was selected for this item
+            if not selected_filename or selected_filename == '--ignore--':
+                logging.info(f"Skipping item {item_key} as no file was selected or set to ignore.")
+                continue
+
+            # Reconstruct the item data based on item_key (this is complex)
+            # We need to re-fetch metadata and rebuild the item based on the key parts
+            try:
+                parts = item_key.split('_')
+                item_type = parts[0]
+                tmdb_id = parts[1]
+                
+                # Re-fetch metadata (can be optimized by caching or passing more data)
+                media_type_lookup = 'movie' if item_type == 'movie' else 'show'
+                metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type_lookup)
+                if not metadata:
+                    logging.error(f"Could not re-fetch metadata for {item_key}")
+                    failed_items_count += 1
+                    continue
+                
+                # Base data
+                title = metadata.get('title')
+                year = metadata.get('year')
+
+                if item_type == 'movie':
+                    item_data = create_movie_item(metadata, title, year, version, initial_torrent_id, magnet_link)
+                elif item_type == 'ep':
+                    season_str = parts[2] # e.g., s01
+                    episode_str = parts[3] # e.g., e01
+                    season_number = int(season_str[1:])
+                    episode_number = int(episode_str[1:])
+                    
+                    # Re-fetch season data if necessary
+                    if 'seasons' not in metadata:
+                        try:
+                            seasons_data, _ = DirectAPI.get_show_seasons(metadata.get('imdb_id'))
+                            if seasons_data:
+                                metadata['seasons'] = {}
+                                for sn, si in seasons_data.items():
+                                    metadata['seasons'][str(sn)] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
+                        except Exception as e:
+                             logging.warning(f"Could not re-fetch season data for {item_key}: {e}")
+                             # Proceed cautiously without detailed episode info
+                    
+                    item_data = create_episode_item(metadata, title, year, version, initial_torrent_id, magnet_link, season_number, episode_number)
+                else:
+                    logging.warning(f"Unrecognized item key format: {item_key}")
+                    failed_items_count += 1
+                    continue
+                    
+                # Assign the manually selected FILENAME
+                item_data['filled_by_file'] = selected_filename # Store only the filename
+                item_data['filled_by_title'] = torrent_filename # Use the overall torrent filename
+                
+                # Add to database (remove internal/matcher keys first)
+                db_item = {k: v for k, v in item_data.items() if k not in [
+                    'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data', 'item_key'
+                ]}
+                
+                item_id = add_media_item(db_item)
+                if item_id:
+                    added_items_count += 1
+                    successfully_added_items.append(item_id)
+                    # Prepare data for notification
+                    processed_items_info.append({
+                        'id': item_id,
+                        'title': db_item.get('title', 'Unknown Title'),
+                        'type': db_item.get('type', 'unknown'),
+                        'year': db_item.get('year', ''),
+                        'version': db_item.get('version', ''),
+                        'season_number': db_item.get('season_number'),
+                        'episode_number': db_item.get('episode_number'),
+                        'new_state': 'Checking', # Assume it goes to Checking
+                        'is_upgrade': False,
+                        'upgrading_from': None,
+                        'content_source': db_item.get('content_source'),
+                        'content_source_detail': db_item.get('content_source_detail')
+                    })
+                    logging.info(f"Successfully added item {item_key} with file {selected_filename}, initial torrent ID: {initial_torrent_id}")
+                    
+                    # Prepare data for torrent tracking (only need one representative item)
+                    if representative_tracking_item_data is None:
+                        representative_tracking_item_data = {
+                            'title': db_item.get('title'), 'year': db_item.get('year'), 
+                            'media_type': db_item.get('type'), 'version': db_item.get('version'),
+                            'tmdb_id': db_item.get('tmdb_id'), 'imdb_id': db_item.get('imdb_id'),
+                            'filled_by_title': torrent_filename, 'filled_by_file': selected_filename, # Use filename here too
+                            'torrent_id': initial_torrent_id
+                        }
+                        if db_item.get('type') == 'episode':
+                            representative_tracking_item_data.update({'season_number': db_item.get('season_number'), 'episode_number': db_item.get('episode_number')})
+                    
+                else:
+                    logging.error(f"Failed to add item {item_key} to database.")
+                    failed_items_count += 1
+            
+            except Exception as item_error:
+                logging.error(f"Error processing assignment for {item_key}: {item_error}", exc_info=True)
+                failed_items_count += 1
+
+        # If items were successfully added, re-add the torrent and update tracking/DB
+        final_torrent_id = initial_torrent_id
+        if added_items_count > 0:
+            try:
+                logging.info(f"Re-adding torrent to debrid service after successful manual assignment: {magnet_link[:60]}...")
+                debrid_provider = get_debrid_provider() # Get provider instance
+                # Re-add the torrent. The add_torrent method should handle file selection.
+                readd_result_id = debrid_provider.add_torrent(magnet_link)
+                if readd_result_id:
+                    final_torrent_id = readd_result_id
+                    logging.info(f"Successfully re-added torrent with final ID: {final_torrent_id}")
+                    
+                    # Check if the final ID is different from the initial ID
+                    if final_torrent_id != initial_torrent_id:
+                        logging.info(f"Torrent ID changed from {initial_torrent_id} to {final_torrent_id}. Updating {len(successfully_added_items)} database items.")
+                        for item_id in successfully_added_items:
+                            update_media_item_torrent_id(item_id, final_torrent_id)
+                    else:
+                        logging.info(f"Torrent ID {final_torrent_id} remains the same, no DB update needed.")
+                else:
+                    logging.warning(f"Failed to re-add torrent {magnet_link[:60]}... It might already exist or an error occurred. Using initial ID: {initial_torrent_id}")
+            except Exception as readd_error:
+                # Log the error but don't fail the overall success response
+                logging.error(f"Error re-adding torrent {magnet_link[:60]} after confirmation: {readd_error}", exc_info=True)
+
+            # Now, update torrent tracking with the final ID
+            if torrent_hash and representative_tracking_item_data:
+                # Update the torrent_id in the tracking data
+                representative_tracking_item_data['torrent_id'] = final_torrent_id
+                try:
+                    update_torrent_tracking(
+                        torrent_hash=torrent_hash,
+                        item_data=representative_tracking_item_data,
+                        trigger_details={'source': 'manual_assignment_confirm', 'user_initiated': True},
+                        trigger_source='manual_assign_confirm',
+                        rationale=f'User confirmed manual file assignment (Final Torrent ID: {final_torrent_id})'
+                    )
+                    logging.info(f"Updated torrent tracking for hash {torrent_hash} with final torrent ID {final_torrent_id}")
+                except Exception as track_error:
+                    logging.error(f"Failed to update torrent tracking for hash {torrent_hash}: {track_error}", exc_info=True)
+            elif not torrent_hash:
+                logging.warning("Could not extract torrent hash, skipping torrent tracking update.")
+            elif not representative_tracking_item_data:
+                 logging.warning("No representative item data found, skipping torrent tracking update.")
+
+        # Send notifications for successfully added items
+        if processed_items_info:
+            try:
+                from routes.notifications import send_notifications
+                from routes.settings_routes import get_enabled_notifications_for_category
+                from routes.extensions import app
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('checking') # Or maybe a 'manual_add' category?
+                    if response.json.get('success'):
+                        enabled_notifications = response.json.get('enabled_notifications')
+                        if enabled_notifications:
+                            send_notifications(processed_items_info, enabled_notifications, notification_category='state_change')
+            except Exception as notify_error:
+                logging.error(f"Failed to send notifications after manual assignment: {notify_error}")
+
+        if added_items_count > 0:
+            message = f'Successfully assigned {added_items_count} item(s).' 
+            if failed_items_count > 0:
+                 message += f' Failed to assign {failed_items_count} item(s).' 
+            return jsonify({'success': True, 'message': message, 'added_count': added_items_count, 'failed_count': failed_items_count})
+        elif failed_items_count > 0:
+            return jsonify({'success': False, 'error': f'Failed to assign {failed_items_count} item(s). Check logs.', 'added_count': 0, 'failed_count': failed_items_count}), 500
+        else:
+             return jsonify({'success': False, 'error': 'No items were assigned. Did you select files?', 'added_count': 0, 'failed_count': 0}), 400
+
+    except Exception as e:
+        logging.error(f"Error confirming manual assignment: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}), 500
 
 @magnet_bp.route('/verify_media_type')
 def verify_media_type():
