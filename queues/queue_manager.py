@@ -26,17 +26,22 @@ class QueueTimer:
     """Tracks how long items spend in each queue"""
     
     def __init__(self):
-        self.queue_times = {}  # {item_id: {queue_name: [entry_time, exit_time]}}
-        self.db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        self.timing_file = os.path.join(self.db_content_dir, 'queue_timing_data.json')
-        self.load_timing_data()
-        
-        # Stats tracking 
+        # Initialize stats tracking first
         self.queue_stats = {
             queue_name: {'count': 0, 'total_time': 0, 'min_time': float('inf'), 'max_time': 0}
             for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
                              'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']
         }
+        
+        # Initialize queue times
+        self.queue_times = {}
+        
+        # Set up file paths
+        self.db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        self.timing_file = os.path.join(self.db_content_dir, 'queue_timing_data.json')
+        
+        # Load timing data after all attributes are initialized
+        self.load_timing_data()
         
     def load_timing_data(self):
         """Load timing data from disk"""
@@ -45,7 +50,11 @@ class QueueTimer:
                 with open(self.timing_file, 'r') as f:
                     data = json.load(f)
                     self.queue_times = data.get('queue_times', {})
-                    self.queue_stats = data.get('queue_stats', self.queue_stats)
+                    loaded_stats = data.get('queue_stats', {})
+                    # Update queue_stats with loaded data while preserving structure
+                    for queue_name, stats in loaded_stats.items():
+                        if queue_name in self.queue_stats:
+                            self.queue_stats[queue_name].update(stats)
                     logging.info(f"Loaded queue timing data for {len(self.queue_times)} items")
         except Exception as e:
             logging.error(f"Error loading queue timing data: {e}")
