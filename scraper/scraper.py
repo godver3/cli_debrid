@@ -65,10 +65,22 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
     try:
         start_time = time.time()
         
+        # Initialize language variables
+        preferred_language = None
+        translated_title = None
+        media_country_code = None # Initialize
+
         # Handle "No Version" case
         if version == "No Version":
             version = None
             
+        # Get media country code - needed regardless of alias usage
+        try:
+            media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
+            logging.info(f"Media country code: {media_country_code}")
+        except Exception as country_err:
+            logging.error(f"Error getting media country code for {imdb_id}: {country_err}", exc_info=True)
+
         # Check if alias usage is disabled
         aliases_disabled = os.path.exists(os.path.join(os.path.dirname(__file__), '.alias_disabled'))
         if aliases_disabled:
@@ -88,8 +100,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             else:
                 item_aliases, _ = direct_api.get_show_aliases(imdb_id)
 
-            media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
-            logging.info(f"Media country code (aliases): {media_country_code}")
+            # media_country_code already fetched above
             
             matching_aliases = []
             if item_aliases and media_country_code in item_aliases:
@@ -113,10 +124,46 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         all_filtered_results = []
         all_filtered_out_results = []
 
+        # Parse scraping settings based on version to get language preference early
+        scraping_versions = get_setting('Scraping', 'versions', {})
+        version_settings = scraping_versions.get(version, {})
+        if not version_settings: # Use default settings if version not found
+            logging.info(f"Version '{version}' not found, using default settings.")
+            # Define default version settings here if needed, or rely on _do_scrape defaults
+            # Example default:
+            version_settings = {
+                'enable_hdr': True,
+                'max_resolution': '2160p',
+                'resolution_wanted': '<=',
+                'language_code': None # Default language
+                # Add other default settings as necessary
+            }
+
+        preferred_language = version_settings.get('language_code', None)
+        logging.info(f"Language code from version '{version}' settings: {preferred_language}")
+
+        # Fetch translated title if preferred language is set
+        if preferred_language and preferred_language.lower() != 'en': # Assuming 'en' is default or no translation needed
+            try:
+                logging.info(f"Attempting to fetch translated title for language: {preferred_language}")
+                if content_type.lower() == 'movie':
+                    translated_title, _ = direct_api.get_movie_title_translation(imdb_id, preferred_language)
+                else: # episode or show
+                    translated_title, _ = direct_api.get_show_title_translation(imdb_id, preferred_language)
+
+                if translated_title:
+                    logging.info(f"Found translated title ({preferred_language}): {translated_title}")
+                else:
+                    logging.info(f"No translated title found for language: {preferred_language}")
+            except Exception as e:
+                logging.error(f"Error fetching translated title for {imdb_id} language {preferred_language}: {e}", exc_info=True)
+                translated_title = None
+
         def _do_scrape(
             search_title: str,
             content_type: str,
             version: str,
+            version_settings: Dict[str, Any],
             season: int,
             episode: int,
             multi: bool,
@@ -124,7 +171,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             episode_formats: Dict[str, str],
             is_anime: bool,
             is_alias: bool = False,
-            alias_country: str = None
+            alias_country: str = None,
+            preferred_language: str = None,
+            translated_title: str = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
@@ -166,29 +215,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             task_timings['episode_counts'] = time.time() - task_start
 
             # Parse scraping settings based on version
-            scraping_versions = get_setting('Scraping', 'versions', {})
-            version_settings = scraping_versions.get(version, None)
-            logging.info(f"Scraping settings for version {version}: {version_settings}")
-            if version_settings is None:
-                logging.info(f"Using default settings for version {version}")
-                version_settings = {
-                    'enable_hdr': True,
-                    'max_resolution': '2160p',
-                    'resolution_wanted': '<=',
-                    'resolution_weight': '3',
-                    'hdr_weight': '3',
-                    'similarity_weight': '3',
-                    'size_weight': '3',
-                    'bitrate_weight': '3',
-                    'min_size_gb': 0.01,
-                    'max_size_gb': None,
-                    'similarity_threshold_anime': 0.35,
-                    'similarity_threshold': 0.8,
-                    'filter_in': [],
-                    'filter_out': [],
-                    'preferred_filter_in': [],
-                    'preferred_filter_out': []
-                }
+            # version_settings already loaded above to get preferred_language
+            # The correctly merged version_settings are now passed as an argument
+            logging.info(f"Using scraping settings within _do_scrape for version '{version}': {version_settings}")
 
             # Use ScraperManager to handle scraping
             task_start = time.time()
@@ -243,16 +272,28 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # Filter results
             task_start = time.time()
-            filtered_results, pre_size_filtered_results = filter_results(normalized_results, tmdb_id, search_title, year, content_type, season, episode, multi, version_settings, runtime, episode_count, season_episode_counts, genres, matching_aliases)
+            filtered_results, pre_size_filtered_results = filter_results(
+                normalized_results, tmdb_id, search_title, year, content_type,
+                season, episode, multi, version_settings, runtime, episode_count,
+                season_episode_counts, genres, matching_aliases,
+                preferred_language=preferred_language,
+                translated_title=translated_title
+            )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
 
             return filtered_results, filtered_out_results, task_timings
 
-        # First pass: Try original title and preferred alias together
+        # First pass: Try original title, preferred alias, and translated title
         titles_to_try = [('original', title)]
         if not aliases_disabled and preferred_alias:
-            titles_to_try.append(('preferred_alias', preferred_alias))
+            # Ensure preferred alias is not the same as original title (case-insensitive)
+            if preferred_alias.lower() != title.lower():
+                titles_to_try.append(('preferred_alias', preferred_alias))
+        if translated_title:
+            # Ensure translated title is not the same as original or preferred alias (case-insensitive)
+            if translated_title.lower() != title.lower() and (not preferred_alias or translated_title.lower() != preferred_alias.lower()):
+                titles_to_try.append(('translated_title', translated_title))
 
         for source, search_title in titles_to_try:
             logging.info(f"First pass - Trying {source}: {search_title}")
@@ -260,6 +301,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 search_title=search_title,
                 content_type=content_type,
                 version=version,
+                version_settings=version_settings,
                 season=season,
                 episode=episode,
                 multi=multi,
@@ -267,7 +309,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 episode_formats=episode_formats,
                 is_anime=is_anime,
                 is_alias=(source != 'original'),
-                alias_country=media_country_code if source != 'original' else None
+                alias_country=media_country_code if source != 'original' else None,
+                preferred_language=preferred_language,
+                translated_title=translated_title
             )
             
             if filtered_results:
@@ -281,13 +325,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             best_alias = None
             best_alias_results = []
             
+            # Get the set of titles already tried to avoid retrying them as aliases
+            tried_titles_lower = {t.lower() for _, t in titles_to_try}
+
             for alias in matching_aliases:
-                if alias != preferred_alias:  # Skip if we already tried it
+                # Skip if this alias was already tried (original, preferred, or translated) or is same as original
+                if alias.lower() not in tried_titles_lower and alias.lower() != title.lower():
                     logging.info(f"Trying alias: {alias}")
                     filtered_results, filtered_out_results, task_timings = _do_scrape(
                         search_title=alias,
                         content_type=content_type,
                         version=version,
+                        version_settings=version_settings,
                         season=season,
                         episode=episode,
                         multi=multi,
@@ -295,7 +344,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         episode_formats=episode_formats,
                         is_anime=is_anime,
                         is_alias=True,
-                        alias_country=media_country_code
+                        alias_country=media_country_code,
+                        preferred_language=preferred_language,
+                        translated_title=translated_title
                     )
                     
                     if filtered_results and len(filtered_results) > len(best_alias_results):
@@ -308,7 +359,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # If we found a better alias, update it as preferred and add its results
             if best_alias and best_alias_results:
                 logging.info(f"Setting new preferred alias: {best_alias}")
-                update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, season)
+                # Ensure alias update function exists and handles None season
+                try:
+                    update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, season)
+                except Exception as alias_update_err:
+                    logging.error(f"Error updating preferred alias: {alias_update_err}")
                 all_filtered_results.extend(best_alias_results)
 
         # Deduplicate final results while preserving order
@@ -321,34 +376,20 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 deduplicated_results.append(result)
 
         # Parse scraping settings for final sorting
-        scraping_versions = get_setting('Scraping', 'versions', {})
-        version_settings = scraping_versions.get(version, None)
-        if version_settings is None:
-            version_settings = {
-                'enable_hdr': True,
-                'max_resolution': '2160p',
-                'resolution_wanted': '<=',
-                'resolution_weight': '3',
-                'hdr_weight': '3',
-                'similarity_weight': '3',
-                'size_weight': '3',
-                'bitrate_weight': '3',
-                'min_size_gb': 0.01,
-                'max_size_gb': None,
-                'similarity_threshold_anime': 0.35,
-                'similarity_threshold': 0.8,
-                'filter_in': [],
-                'filter_out': [],
-                'preferred_filter_in': [],
-                'preferred_filter_out': []
-            }
+        # version_settings already loaded and defaulted/merged above
 
         # Sort all results together
         def stable_rank_key(x):
             # Make sure is_anime flag is set in each result
             if is_anime and 'is_anime' not in x:
                 x['is_anime'] = is_anime
-            return rank_result_key(x, deduplicated_results, title, year, season, episode, multi, content_type, version_settings)
+            # Pass preferred_language and translated_title to rank_result_key (Modification needed in rank_results function signature)
+            return rank_result_key(
+                x, deduplicated_results, title, year, season, episode, multi,
+                content_type, version_settings,
+                preferred_language=preferred_language, # Pass new arg
+                translated_title=translated_title     # Pass new arg
+            )
 
         # Apply ultimate sort order if present
         if get_setting('Scraping', 'ultimate_sort_order')=='Size: large to small':

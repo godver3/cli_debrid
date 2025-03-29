@@ -1,10 +1,17 @@
 import logging
 import re
 from typing import List, Dict, Any, Tuple
-from scraper.functions.similarity_checks import similarity
+from scraper.functions.similarity_checks import similarity, normalize_title
 from scraper.functions.other_functions import smart_search
+from fuzzywuzzy import fuzz
 
-def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], query: str, query_year: int, query_season: int, query_episode: int, multi: bool, content_type: str, version_settings: Dict[str, Any]) -> Tuple:
+def rank_result_key(
+    result: Dict[str, Any], all_results: List[Dict[str, Any]],
+    query: str, query_year: int, query_season: int, query_episode: int,
+    multi: bool, content_type: str, version_settings: Dict[str, Any],
+    preferred_language: str = None,
+    translated_title: str = None
+) -> Tuple:
     torrent_title = result.get('title', '')
     parsed_info = result.get('parsed_info', {})
     extracted_title = parsed_info.get('title', torrent_title)
@@ -18,6 +25,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     size_weight = int(version_settings.get('size_weight', 3))
     bitrate_weight = int(version_settings.get('bitrate_weight', 3))
     country_weight = int(version_settings.get('country_weight', 3))
+    language_weight = int(version_settings.get('language_weight', 3))
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
@@ -127,6 +135,27 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     normalized_bitrate = bitrate_percentile * 10
     normalized_country = country_score  # Already in 0-10 range
 
+    # Calculate language score based on preferred language
+    # Simplified logic: Score based ONLY on similarity to translated title
+    language_score = 0
+    language_reason = "No language preference or no translated title available"
+    if translated_title:
+        parsed_title = parsed_info.get('title', '')
+        normalized_parsed_title = normalize_title(parsed_title).lower()
+        normalized_translated_q_title = normalize_title(translated_title).lower()
+        title_lang_sim = fuzz.ratio(normalized_parsed_title, normalized_translated_q_title) / 100.0
+
+        # Score based on similarity threshold
+        similarity_threshold = 0.90 # High threshold for strong match
+        if title_lang_sim >= similarity_threshold:
+            language_score = 100 # Bonus for strong match to translation
+            language_reason = f"High similarity to translated title ({title_lang_sim:.2f} >= {similarity_threshold})"
+        else:
+            language_score = -25 # Penalty for not matching translation
+            language_reason = f"Low similarity to translated title ({title_lang_sim:.2f} < {similarity_threshold})"
+
+    normalized_language = language_score # Use the raw score
+
     # Apply weights
     weighted_similarity = normalized_similarity * similarity_weight
     weighted_resolution = normalized_resolution * resolution_weight
@@ -134,6 +163,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     weighted_size = normalized_size * size_weight
     weighted_bitrate = normalized_bitrate * bitrate_weight
     weighted_country = normalized_country * country_weight
+    weighted_language = normalized_language * language_weight
 
     # Only apply season and episode matching for TV shows
     if content_type.lower() == 'episode':
@@ -208,6 +238,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         weighted_size +
         weighted_bitrate +
         weighted_country +
+        weighted_language +
         (year_match * 5) +
         (season_match * 5) +
         (episode_match * 5) +
@@ -295,6 +326,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
         'size_score': round(weighted_size, 2),
         'bitrate_score': round(weighted_bitrate, 2),
         'country_score': round(weighted_country, 2),
+        'language_score': round(weighted_language, 2),
         'year_match': year_match * 5,
         'season_match': season_match * 5,
         'episode_match': episode_match * 5,
@@ -322,7 +354,8 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
             'similarity': similarity_weight,
             'size': size_weight,
             'bitrate': bitrate_weight,
-            'country': country_weight
+            'country': country_weight,
+            'language': language_weight
         },
         'min_size_gb': version_settings.get('min_size_gb', 0.01)
     }
@@ -338,6 +371,7 @@ def rank_result_key(result: Dict[str, Any], all_results: List[Dict[str, Any]], q
     logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
     logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
     logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
+    logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
     logging.debug(f"├─ Year: {score_breakdown['year_match']:.2f} ({year_reason})")
     if content_type.lower() == 'episode':
         logging.debug(f"├─ Season Match: {score_breakdown['season_match']:.2f}")

@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from fuzzywuzzy import fuzz
 from PTT import parse_title
 from utilities.settings import get_setting
@@ -10,7 +10,14 @@ from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
 
-def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str, season: int, episode: int, multi: bool, version_settings: Dict[str, Any], runtime: int, episode_count: int, season_episode_counts: Dict[int, int], genres: List[str], matching_aliases: List[str] = None) -> List[Dict[str, Any]]:
+def filter_results(
+    results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
+    season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
+    runtime: int, episode_count: int, season_episode_counts: Dict[int, int],
+    genres: List[str], matching_aliases: List[str] = None,
+    preferred_language: str = None,
+    translated_title: str = None
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
     filtered_results = []
     pre_size_filtered_results = []  # Track results before size filtering
@@ -41,6 +48,7 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
     # Pre-normalize query title and aliases
     normalized_query_title = normalize_title(title).lower()
     normalized_aliases = [normalize_title(alias).lower() for alias in (matching_aliases or [])]
+    normalized_translated_title = normalize_title(translated_title).lower() if translated_title else None
     similarity_threshold = float(version_settings.get('similarity_threshold_anime', 0.35)) if is_anime else float(version_settings.get('similarity_threshold', 0.8))
     
     #logging.debug(f"Content type: {'movie' if is_movie else 'episode'}, Anime: {is_anime}, Title similarity threshold: {similarity_threshold}")
@@ -103,25 +111,39 @@ def filter_results(results: List[Dict[str, Any]], tmdb_id: str, title: str, year
             if parsed_info.get('documentary', False):
                 normalized_result_title = f"{normalized_result_title} documentary"
             
-            title_sim = fuzz.ratio(normalized_result_title, normalized_query) / 100.0
-            
-            
-            # Check against main title and aliases
-            if title_sim < similarity_threshold:
+            # Calculate similarities
+            main_title_sim = fuzz.ratio(normalized_result_title, normalized_query) / 100.0
+            alias_similarities = [fuzz.ratio(normalized_result_title, alias) / 100.0 for alias in normalized_aliases]
+            best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
+            translated_title_sim = fuzz.ratio(normalized_result_title, normalized_translated_title) / 100.0 if normalized_translated_title else 0.0
+
+            # Determine the best similarity score achieved
+            best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+
+            # Check if the best similarity meets the threshold
+            if best_sim < similarity_threshold:
                 # Try matching against aliases if available
                 alias_similarities = [fuzz.ratio(normalized_result_title, alias) / 100.0 for alias in normalized_aliases]
                 best_alias_sim = max(alias_similarities) if alias_similarities else 0
                 
-                if best_alias_sim >= similarity_threshold:
-                    title_sim = best_alias_sim  # Use the best alias similarity
-                    logging.debug(f"✓ Passed title similarity check via alias with score {title_sim:.2f}")
-                else:
-                    result['filter_reason'] = f"Title similarity too low (main={title_sim:.2f}, best_alias={best_alias_sim:.2f})"
-                    logging.debug(f"❌ Failed: Title similarity {title_sim:.2f} below threshold {similarity_threshold}")
-                    logging.debug(f"  - Main title comparison: '{normalized_result_title}' vs '{normalized_query_title}'")
-                    if normalized_aliases:
-                        logging.debug(f"  - Best alias comparison: '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
-                    continue
+                # Log the failure reason including all comparison scores
+                result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
+                logging.debug(f"❌ Failed: Best title similarity {best_sim:.2f} below threshold {similarity_threshold}")
+                logging.debug(f"  - Main title ({main_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_query_title}'")
+                if normalized_aliases:
+                    logging.debug(f"  - Best alias ({best_alias_sim:.2f}): '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
+                if normalized_translated_title:
+                    logging.debug(f"  - Translated title ({translated_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_translated_title}'")
+                continue
+            else:
+                # Log which title matched
+                if main_title_sim >= similarity_threshold:
+                    logging.debug(f"✓ Passed title similarity via main title ({main_title_sim:.2f})")
+                elif best_alias_sim >= similarity_threshold:
+                    logging.debug(f"✓ Passed title similarity via alias ({best_alias_sim:.2f})")
+                elif translated_title_sim >= similarity_threshold:
+                    logging.debug(f"✓ Passed title similarity via translated title ({translated_title_sim:.2f})")
+                    
             #logging.debug("✓ Passed title similarity check")
             
             # Resolution check

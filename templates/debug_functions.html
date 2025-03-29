@@ -46,7 +46,7 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Get Collected from Library</h3>
+            <h3>Get Collected from Library (Plex)</h3>
             <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
                 <div class="form-group">
                     <label for="collection_type">Collection Type:</label>
@@ -55,7 +55,7 @@
                         <option value="recent">Recent</option>
                     </select>
                 </div>
-                <button type="submit">Get Collected</button>
+                <button type="submit">Get Plex Collected</button>
             </form>
         </div>
         <div class="debug_item">
@@ -245,6 +245,13 @@
                 </div>
                 <button id="refresh-trakt-tokens" class="btn">Refresh Status</button>
             </div>
+        </div>
+        <div class="debug_item">
+            <h3>Direct Emby/Jellyfin Scan</h3>
+            <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
+            <form action="{{ url_for('debug.direct_emby_scan') }}" method="POST" id="direct-emby-scan-form">
+                <button type="submit">Run Emby/Jellyfin Scan</button>
+            </form>
         </div>
     </div>
 </div>
