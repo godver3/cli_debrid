@@ -22,6 +22,9 @@ from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
 from queues.wake_count_manager import wake_count_manager
 
+# Get the item tracker logger
+item_tracker_logger = logging.getLogger('item_tracker')
+
 class QueueTimer:
     """Tracks how long items spend in each queue"""
     
@@ -293,8 +296,8 @@ class QueueManager:
         # Initialize the queue timer
         self.queue_timer = QueueTimer()
         
-        # Import time module for QueueTimer
-        import time
+        # Get the item tracker logger instance
+        self.item_tracker = logging.getLogger('item_tracker')
 
     def reinitialize(self):
         """Force reinitialization of all queues to pick up new settings"""
@@ -639,9 +642,25 @@ class QueueManager:
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to {to_queue_name}")
         
+        # Log initiation of move
+        self.item_tracker.info({
+            'event': 'MOVE_INITIATED',
+            'item_id': item.get('id'),
+            'item_identifier': item_identifier,
+            'from_queue': from_queue,
+            'to_queue': to_queue_name
+        })
+        
         # Record exit from source queue if applicable
+        time_in_from_queue_seconds = None
         if from_queue and from_queue in self.queues and item and 'id' in item:
             self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
+            # Try to get timing immediately after exit
+            item_timing = self.queue_timer.get_item_timing(item['id'])
+            if from_queue in item_timing:
+                entry_time, exit_time = item_timing[from_queue]
+                if entry_time and exit_time:
+                    time_in_from_queue_seconds = exit_time - entry_time
         
         # Update the item's state in the database
         update_media_item_state(item['id'], new_state, **additional_params)
@@ -661,9 +680,31 @@ class QueueManager:
                 self.queues[from_queue].remove_item(item)
                 
             logging.debug(f"Successfully moved item {item_identifier} to {to_queue_name}")
+            
+            # Log completion of move
+            log_data = {
+                'event': 'MOVE_COMPLETED',
+                'item_id': updated_item.get('id'),
+                'item_identifier': item_identifier,
+                'from_queue': from_queue,
+                'to_queue': to_queue_name
+            }
+            if time_in_from_queue_seconds is not None:
+                log_data['time_in_from_queue_seconds'] = round(time_in_from_queue_seconds, 2)
+            self.item_tracker.info(log_data)
+                
             return updated_item
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+            # Log failed move attempt
+            self.item_tracker.error({
+                'event': 'MOVE_FAILED',
+                'item_id': item.get('id'),
+                'item_identifier': item_identifier,
+                'from_queue': from_queue,
+                'to_queue': to_queue_name,
+                'reason': 'Failed to retrieve updated item from database'
+            })
             return None
 
     def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
@@ -671,9 +712,25 @@ class QueueManager:
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Collected state")
         
+        # Log initiation of move to Collected
+        self.item_tracker.info({
+            'event': 'MOVE_INITIATED',
+            'item_id': item.get('id'),
+            'item_identifier': item_identifier,
+            'from_queue': from_queue,
+            'to_state': 'Collected'
+        })
+        
         # Record exit from source queue
+        time_in_from_queue_seconds = None
         if from_queue in self.queues and item and 'id' in item:
             self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
+            # Calculate time spent in the from_queue
+            item_timing = self.queue_timer.get_item_timing(item['id'])
+            if from_queue in item_timing:
+                entry_time, exit_time = item_timing[from_queue]
+                if entry_time and exit_time:
+                    time_in_from_queue_seconds = exit_time - entry_time
         
         from datetime import datetime
         collected_at = datetime.now()
@@ -689,6 +746,18 @@ class QueueManager:
                 self.queues[from_queue].remove_item(item)
             logging.info(f"Successfully moved item {item_identifier} to Collected state")
             
+            # Log completion of move to Collected
+            log_data = {
+                'event': 'MOVE_COMPLETED',
+                'item_id': updated_item.get('id'),
+                'item_identifier': item_identifier,
+                'from_queue': from_queue,
+                'to_state': 'Collected'
+            }
+            if time_in_from_queue_seconds is not None:
+                log_data['time_in_from_queue_seconds'] = round(time_in_from_queue_seconds, 2)
+            self.item_tracker.info(log_data)
+            
             # Add to collected notifications if not skipped
             if not skip_notification:
                 updated_item_dict = dict(updated_item)
@@ -697,6 +766,15 @@ class QueueManager:
                 add_to_collected_notifications(updated_item_dict)
         else:
             logging.error(f"Failed to retrieve updated item for ID: {item['id']}")
+            # Log failed move attempt
+            self.item_tracker.error({
+                'event': 'MOVE_FAILED',
+                'item_id': item.get('id'),
+                'item_identifier': item_identifier,
+                'from_queue': from_queue,
+                'to_state': 'Collected',
+                'reason': 'Failed to retrieve updated item from database after state update'
+            })
             
     def generate_queue_timing_report(self):
         """Generate a report of queue timing statistics"""

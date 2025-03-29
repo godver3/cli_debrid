@@ -8,6 +8,8 @@ import threading
 import cProfile
 import pstats
 import io
+import json
+from datetime import datetime
 from queues.performance_monitor import monitor, start_performance_monitoring
 
 # Global profiler
@@ -90,7 +92,32 @@ class ExcludeFilter(logging.Filter):
         if record.filename == 'settings_routes.py' and record.funcName == 'get_enabled_notifications' and 'Working outside of application context' in str(record.msg):
             return False
             
+        # Exclude logs from the item_tracker logger from other handlers
+        if record.name == 'item_tracker':
+            return False
+            
         return True
+
+# Create a new JSONFormatter
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            'timestamp': datetime.utcfromtimestamp(record.created).isoformat() + 'Z',
+            'level': record.levelname,
+            'name': record.name,
+        }
+        if isinstance(record.msg, dict):
+            log_record.update(record.msg) # Merge the dictionary message
+        else:
+            log_record['message'] = record.getMessage()
+
+        # Include exception info if available
+        if record.exc_info:
+            log_record['exception'] = self.formatException(record.exc_info)
+        if record.stack_info:
+            log_record['stack_info'] = self.formatStack(record.stack_info)
+            
+        return json.dumps(log_record)
 
 def setup_debug_logging(log_dir):
     # Debug file handler with immediate flush
@@ -159,6 +186,25 @@ def setup_performance_logging(log_dir):
     performance_logger.addHandler(performance_handler)
     performance_logger.propagate = False  # Prevent performance logs from propagating to root logger
 
+def setup_item_tracker_logging(log_dir):
+    """Sets up the logger for tracking item lifecycle events."""
+    tracker_file = os.path.join(log_dir, 'item_tracker.log')
+    tracker_handler = logging.handlers.RotatingFileHandler(
+        tracker_file,
+        maxBytes=50*1024*1024, # 50 MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    tracker_handler.setLevel(logging.INFO) # Log INFO level and above
+    
+    formatter = JSONFormatter()
+    tracker_handler.setFormatter(formatter)
+    
+    tracker_logger = logging.getLogger('item_tracker')
+    tracker_logger.setLevel(logging.INFO) # Set logger level
+    tracker_logger.addHandler(tracker_handler)
+    tracker_logger.propagate = False # Prevent logs from going to root logger/console
+
 def setup_logging():
     """Initialize logging configuration"""
     # Create log directory if it doesn't exist
@@ -179,6 +225,7 @@ def setup_logging():
     setup_error_logging(log_dir)
     setup_queue_logging(log_dir)
     setup_performance_logging(log_dir)
+    setup_item_tracker_logging(log_dir)
     
     # Start performance monitoring after logging is set up
     start_performance_monitoring()

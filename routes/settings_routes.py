@@ -728,17 +728,45 @@ def add_version():
 def delete_version():
     data = request.json
     version_id = data.get('version_id')
+    target_version_id = data.get('target_version_id') # New: Can be None
     
     if not version_id:
         return jsonify({'success': False, 'error': 'No version ID provided'}), 400
 
-    config = load_config()
-    if 'Scraping' in config and 'versions' in config['Scraping'] and version_id in config['Scraping']['versions']:
-        del config['Scraping']['versions'][version_id]
-        save_config(config)
-        return jsonify({'success': True})
-    else:
-        return jsonify({'success': False, 'error': 'Version not found'}), 404
+    try:
+        # Perform database update first
+        from database import get_db_connection
+        from database.database_writing import update_version_for_items
+        
+        conn = get_db_connection()
+        try:
+            updated_count = update_version_for_items(version_id, target_version_id)
+            logging.info(f"Updated {updated_count} media items in database from version '{version_id}' to '{target_version_id or 'None'}'")
+            conn.commit() # Commit the database change
+        except Exception as db_error:
+            conn.rollback()
+            logging.error(f"Database error during version deletion: {db_error}", exc_info=True)
+            return jsonify({'success': False, 'error': f'Database error: {db_error}'}), 500
+        finally:
+            conn.close()
+
+        # Now update the config file
+        config = load_config()
+        if 'Scraping' in config and 'versions' in config['Scraping'] and version_id in config['Scraping']['versions']:
+            del config['Scraping']['versions'][version_id]
+            save_config(config)
+            message = f"Version '{version_id}' deleted."
+            if updated_count > 0:
+                message += f" {updated_count} items reassigned to '{target_version_id or 'versionless'}'."
+            return jsonify({'success': True, 'message': message})
+        else:
+            # This case should ideally not happen if DB update succeeded, but handle defensively
+            logging.warning(f"Version '{version_id}' was updated in DB but not found in config for deletion.")
+            return jsonify({'success': False, 'error': 'Version not found in config after DB update'}), 404
+            
+    except Exception as e:
+        logging.error(f"Error deleting version '{version_id}': {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/versions/import_defaults', methods=['POST'])
 def import_default_versions():
@@ -1555,4 +1583,38 @@ def save_content_source_order():
         return jsonify({'success': True})
     except Exception as e:
         logging.error(f"Error saving content source order: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/versions/check_usage/<version_id>', methods=['GET'])
+def check_version_usage(version_id):
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check if any media items use this version
+        cursor.execute("SELECT COUNT(*) FROM media_items WHERE version = ?", (version_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+
+        in_use = count > 0
+        is_last = False
+        alternatives = []
+
+        if in_use:
+            # If in use, check if it's the last version and get alternatives
+            config = load_config()
+            all_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
+            alternatives = [v for v in all_versions if v != version_id]
+            is_last = len(all_versions) <= 1
+
+        return jsonify({
+            'success': True,
+            'in_use': in_use,
+            'is_last': is_last,
+            'alternatives': alternatives
+        })
+
+    except Exception as e:
+        logging.error(f"Error checking version usage for {version_id}: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500

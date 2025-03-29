@@ -249,7 +249,7 @@
                                 window.initializeExpandCollapse();
                                 window.showPopup({
                                     type: POPUP_TYPES.SUCCESS,
-                                    message: 'Version renamed successfully',
+                                    message: 'Version renamed successfully. Associated database items have also been updated.',
                                 });
                             });
                         } else {
@@ -310,42 +310,104 @@
     }
 
     function deleteVersion(versionId) {
-        window.showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            title: 'Delete Version',
-            message: 'Are you sure you want to delete this version?',
-            confirmText: 'Delete',
-            cancelText: 'Cancel',
-            onConfirm: () => {
-                fetch('/settings/versions/delete', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ version_id: versionId })
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        window.reloadTabContent('scraping', () => {
-                            window.initializeExpandCollapse();
-                            window.showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                message: 'Version deleted successfully',
-                            });
-                        });
+        // First, check usage
+        fetch(`/settings/versions/check_usage/${versionId}`)
+        .then(response => response.json())
+        .then(checkData => {
+            if (!checkData.success) {
+                throw new Error(checkData.error || 'Failed to check version usage.');
+            }
+
+            let popupConfig;
+            let onConfirmAction;
+
+            if (!checkData.in_use) {
+                // Not in use, simple confirm
+                popupConfig = {
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Delete Version',
+                    message: 'Are you sure you want to delete this version? It is not currently used by any database items.',
+                    confirmText: 'Delete',
+                    cancelText: 'Cancel'
+                };
+                onConfirmAction = () => {
+                    performDelete(versionId);
+                };
+            } else if (checkData.is_last) {
+                // In use and is the last version
+                popupConfig = {
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Delete Last Version?',
+                    message: 'This is the last version and it is currently in use. Deleting it will make associated database items versionless. Are you sure?',
+                    confirmText: 'Delete Anyway',
+                    cancelText: 'Cancel',
+                    warning: true
+                };
+                onConfirmAction = () => {
+                    performDelete(versionId); // No target version needed
+                };
+            } else {
+                // In use, but other versions exist
+                const options = checkData.alternatives.map(alt => ({ text: alt, value: alt }));
+                popupConfig = {
+                    type: POPUP_TYPES.PROMPT,
+                    title: 'Reassign and Delete Version',
+                    message: 'This version is currently in use. Choose a version to reassign the associated database items to before deleting:',
+                    dropdownOptions: options,
+                    confirmText: 'Reassign and Delete',
+                    cancelText: 'Cancel'
+                };
+                onConfirmAction = (selectedVersion) => {
+                    if (selectedVersion) {
+                        performDelete(versionId, selectedVersion);
                     } else {
-                        throw new Error(data.error || 'Unknown error');
+                        window.showPopup({ type: POPUP_TYPES.ERROR, message: 'You must select a version to reassign items to.' });
                     }
-                })
-                .catch(error => {
-                    console.error('Error deleting version:', error);
+                };
+            }
+
+            console.log('Popup Config:', popupConfig);
+            window.showPopup({ ...popupConfig, onConfirm: onConfirmAction });
+
+        })
+        .catch(error => {
+            console.error('Error checking version usage:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error checking version usage: ' + error.message
+            });
+        });
+    }
+
+    function performDelete(versionId, targetVersionId = null) {
+        fetch('/settings/versions/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ version_id: versionId, target_version_id: targetVersionId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.initializeExpandCollapse();
+                    initializeScrapingFunctionality(); // Re-initialize buttons after reload
                     window.showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: 'Error deleting version: ' + error.message
+                        type: POPUP_TYPES.SUCCESS,
+                        message: data.message || 'Version deleted successfully.',
                     });
                 });
+            } else {
+                throw new Error(data.error || 'Unknown error');
             }
+        })
+        .catch(error => {
+            console.error('Error deleting version:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error deleting version: ' + error.message
+            });
         });
     }
 
@@ -543,7 +605,8 @@
             'size_weight',
             'bitrate_weight',
             'wake_count',
-            'require_physical_release'
+            'require_physical_release',
+            'language_code'
         ] %}
         
         {# Sort config items based on settings_order #}
@@ -656,8 +719,12 @@
                                name="Scraping.versions.{{ version }}.{{ key }}" 
                                value="{{ value }}" 
                                class="settings-input"
+                               {% if key == 'language_code' %}placeholder="en"{% endif %}
                                data-section="Scraping" 
                                data-key="versions.{{ version }}.{{ key }}">
+                        {% if key == 'language_code' %}
+                            <p class="settings-description">Preferred language code (e.g., en, es, fr). See ISO 639-1.</p>
+                        {% endif %}
                     {% endif %}
                 </div>
                 

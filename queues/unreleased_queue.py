@@ -39,6 +39,7 @@ class UnreleasedQueue:
             item_identifier = queue_manager.generate_identifier(item)
             release_date_str = item.get('release_date')
             version = item.get('version')
+            airtime_str = item.get('airtime')
 
             # Handle early release items without release date
             if item.get('early_release', False):
@@ -56,49 +57,74 @@ class UnreleasedQueue:
                 continue
 
             try:
-                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                release_datetime = datetime.combine(release_date, datetime.min.time())
+                # Determine which date to use
+                base_date_str = release_date_str
+                is_physical = False
                 
                 # Check if version requires physical release
                 scraping_versions = get_setting('Scraping', 'versions', {})
                 version_settings = scraping_versions.get(version, {})
                 require_physical = version_settings.get('require_physical_release', False)
-                physical_release_date = item.get('physical_release_date')
+                physical_release_date_str = item.get('physical_release_date')
                 
-                if require_physical and not physical_release_date:
-                    logging.info(f"Item {item_identifier} requires physical release date but none available. Keeping in Unreleased queue.")
-                    continue
-                
-                # If physical release is required, use that date instead
-                if require_physical and physical_release_date:
-                    try:
-                        physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
-                        release_datetime = datetime.combine(physical_date, datetime.min.time())
-                    except ValueError:
-                        logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
-                        continue
-
-                # If physical release is required, ignore early release flag
                 if require_physical:
-                    if current_datetime >= release_datetime - timedelta(hours=24):
-                        logging.info(f"Item {item_identifier} is within 24 hours of physical release. Moving to Wanted queue.")
-                        items_to_move.append(item)
+                    if not physical_release_date_str:
+                        logging.info(f"Item {item_identifier} requires physical release date but none available. Keeping in Unreleased queue.")
+                        continue # Skip if physical required but date missing
                     else:
-                        time_until_release = release_datetime - current_datetime
-                        unreleased_report.append((item_identifier, release_datetime, time_until_release))
-                # If no physical release required, check early release flag
-                elif item.get('early_release', False):
-                    logging.info(f"Item {item_identifier} is an early release. Moving to Wanted queue immediately.")
-                    items_to_move.append(item)
-                # Otherwise check if it's within 24 hours of release
-                elif current_datetime >= release_datetime - timedelta(hours=24):
-                    logging.info(f"Item {item_identifier} is within 24 hours of release. Moving to Wanted queue.")
+                        base_date_str = physical_release_date_str
+                        is_physical = True
+                
+                # Parse the base date
+                try:
+                    base_date = datetime.strptime(base_date_str, '%Y-%m-%d').date()
+                except ValueError:
+                    logging.warning(f"Invalid date format for item {item_identifier}: {base_date_str}")
+                    continue # Skip if date is invalid
+
+                # --- Calculate precise target scrape time (logic adapted from WantedQueue) ---
+                # Handle airtime parsing with fallbacks
+                if airtime_str:
+                    try:
+                        airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                    except ValueError:
+                        try:
+                            airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                        except ValueError:
+                            airtime = datetime.strptime("00:00", '%H:%M').time() # Default if invalid
+                else:
+                    airtime = datetime.strptime("00:00", '%H:%M').time() # Default if None
+
+                # Combine date and time
+                target_datetime = datetime.combine(base_date, airtime)
+
+                # Apply airtime offset
+                if item['type'] == 'movie':
+                    movie_airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
+                    offset = float(movie_airtime_offset) if movie_airtime_offset else 19.0
+                else:  # episode
+                    episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", 0)
+                    offset = float(episode_airtime_offset) if episode_airtime_offset else 0.0
+                
+                target_scrape_time = target_datetime + timedelta(hours=offset)
+                # --- End precise calculation ---
+                
+                time_until_target = target_scrape_time - current_datetime
+
+                # Check if item should be moved (within 24 hours of precise target time)
+                # Note: Early release handled separately above
+                if time_until_target <= timedelta(hours=24):
+                    release_type = "physical release" if is_physical else "release"
+                    logging.info(f"Item {item_identifier} is within 24 hours of {release_type} + offset ({target_scrape_time}). Moving to Wanted queue.")
                     items_to_move.append(item)
                 else:
-                    time_until_release = release_datetime - current_datetime
-                    unreleased_report.append((item_identifier, release_datetime, time_until_release))
-            except ValueError:
-                logging.error(f"Invalid release date format for item {item_identifier}: {release_date_str}")
+                    # Only report if not moved
+                    unreleased_report.append((item_identifier, target_scrape_time, time_until_target))
+                    
+            except Exception as e:
+                logging.error(f"Error processing dates/times for item {item_identifier}: {e}")
+                # Potentially skip or keep item based on error handling preference
+                continue
 
         # Move items to Wanted queue
         if items_to_move:
@@ -115,7 +141,8 @@ class UnreleasedQueue:
                 sorted_report = sorted(unreleased_report, key=lambda x: x[1] - timedelta(hours=24))
                 for item_id, release_time, time_until in sorted_report:
                     move_time = release_time - timedelta(hours=24)
-                    logging.debug(f"  {item_id}: Move to Wanted at {move_time}, time until move: {time_until - timedelta(hours=24)}")
+                    # Corrected logging message to reflect target time used for report sorting
+                    logging.debug(f"  {item_id}: Target scrape at {release_time}, time until target: {time_until}")
             self.last_report_time = current_datetime
 
         if items_to_move:

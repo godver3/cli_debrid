@@ -1103,6 +1103,20 @@ def main():
             save_config(config)
             logging.info("Successfully migrated version settings to include bitrate filters")
 
+    # Add migration for language_code in versions
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'language_code' not in version_config:
+                version_config['language_code'] = 'en'
+                versions_updated = True
+                logging.info(f"Adding default language_code 'en' to version {version_name}")
+
+        # Save the updated config if changes were made
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include language_code")
+
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
     if not str(threshold_value).strip():

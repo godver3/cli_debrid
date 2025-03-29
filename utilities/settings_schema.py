@@ -328,7 +328,6 @@ SETTINGS_SCHEMA = {
             "description": "Scraping versions configuration",
             "default": {},
             "schema": {
-                "enable_hdr": {"type": "boolean", "default": False},
                 "max_resolution": {
                     "type": "string",
                     "choices": ["2160p", "1080p", "720p", "SD"],
@@ -337,34 +336,85 @@ SETTINGS_SCHEMA = {
                 "resolution_wanted": {
                     "type": "string",
                     "choices": ["<=", "==", ">="],
-                    "default": "<="
+                    "default": "=="
                 },
-                "resolution_weight": {"type": "integer", "default": 3, "min": 0},
-                "hdr_weight": {"type": "integer", "default": 3, "min": 0},
-                "similarity_weight": {"type": "integer", "default": 3, "min": 0},
-                "similarity_threshold": {"type": "float", "default": 0.8, "min": 0, "max": 1},
-                "similarity_threshold_anime": {"type": "float", "default": 0.35, "min": 0, "max": 1},
-                "size_weight": {"type": "integer", "default": 3, "min": 0},
-                "bitrate_weight": {"type": "integer", "default": 3, "min": 0},
-                "preferred_filter_in": {"type": "list", "default": []},
-                "preferred_filter_out": {"type": "list", "default": []},
-                "filter_in": {"type": "list", "default": []},
-                "filter_out": {"type": "list", "default": []},
-                "min_size_gb": {"type": "float", "default": 0.01, "min": 0},
-                "max_size_gb": {"type": "float", "default": float('inf'), "min": 0},
-                "min_bitrate_mbps": {"type": "float", "default": 0.01, "min": 0},
-                "max_bitrate_mbps": {"type": "float", "default": float('inf'), "min": 0},
+                "enable_hdr": {
+                    "type": "boolean",
+                    "default": False
+                },
+                "hdr_weight": {
+                    "type": "number",
+                    "default": 1.0
+                },
+                "min_size_gb": {
+                    "type": "number",
+                    "default": 0.0
+                },
+                "max_size_gb": {
+                    "type": "number",
+                    "default": float('inf')
+                },
+                "min_bitrate_mbps": {
+                    "type": "number",
+                    "default": 0.0
+                },
+                "max_bitrate_mbps": {
+                    "type": "number",
+                    "default": float('inf')
+                },
+                "resolution_weight": {
+                    "type": "number",
+                    "default": 1.0
+                },
+                "similarity_weight": {
+                    "type": "number",
+                    "default": 1.0
+                },
+                "similarity_threshold": {
+                    "type": "number",
+                    "default": 0.85
+                },
+                "similarity_threshold_anime": {
+                    "type": "number",
+                    "default": 0.80
+                },
+                "size_weight": {
+                    "type": "number",
+                    "default": 1.0
+                },
+                "bitrate_weight": {
+                    "type": "number",
+                    "default": 1.0
+                },
                 "wake_count": {
-                    "type": "integer", 
-                    "default": None, 
-                    "min": -1, 
-                    "nullable": True,
-                    "description": "Override global wake count limit. -1 disables sleeping queue (only search once), empty uses global setting."
+                    "type": "integer",
+                    "default": None,
+                    "description": "Override global wake count limit. Leave empty to use global setting. Set to -1 to disable sleeping queue."
+                },
+                "filter_in": {
+                    "type": "list",
+                    "default": []
+                },
+                "filter_out": {
+                    "type": "list",
+                    "default": []
+                },
+                "preferred_filter_in": {
+                    "type": "list",
+                    "default": []
+                },
+                "preferred_filter_out": {
+                    "type": "list",
+                    "default": []
                 },
                 "require_physical_release": {
                     "type": "boolean",
-                    "default": False,
-                    "description": "Only mark as Wanted after physical release date is available"
+                    "default": False
+                },
+                "language_code": {
+                    "type": "string",
+                    "default": "en",
+                    "description": "Preferred language code (ISO 639-1) for metadata like titles."
                 }
             }
         }
