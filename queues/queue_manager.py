@@ -453,17 +453,22 @@ class QueueManager:
         self.queues["Blacklisted"].blacklist_old_season_items(item, self)
         self.queues[from_queue].remove_item(item)
 
-    def move_to_wanted(self, item: Dict[str, Any], from_queue: str):
+    def move_to_wanted(self, item: Dict[str, Any], from_queue: str, new_version: str = None):
         item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to Wanted queue")
+        target_version_str = f" (Version: {new_version})" if new_version else ""
+        logging.info(f"Moving item {item_identifier}{target_version_str} to Wanted queue from {from_queue}")
         
+        # If moving from Sleeping, preserve wake count (though usually reset when entering Wanted)
         wake_count = wake_count_manager.get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Wanted: {wake_count}")
         
-        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", filled_by_title=None, filled_by_magnet=None)
+        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version, filled_by_title=None, filled_by_magnet=None)
         
         if updated_item:
-            # No additional processing needed for Wanted queue
+            # Reset wake count when item successfully enters Wanted queue
+            wake_count_manager.set_wake_count(updated_item['id'], 0)
+            logging.debug(f"Reset wake count for item {item_identifier} upon entering Wanted queue.")
+            # No additional processing needed for Wanted queue itself
             pass
 
     def move_to_upgrading(self, item: Dict[str, Any], from_queue: str):
@@ -567,7 +572,68 @@ class QueueManager:
         self._move_item_to_queue(item, from_queue, "Unreleased", "Unreleased")
 
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
-        self._move_item_to_queue(item, from_queue, "Blacklisted", "Blacklisted")
+        item_identifier = self.generate_identifier(item)
+        logging.info(f"Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
+        
+        # Log initiation of move
+        self.item_tracker.info({
+            'event': 'MOVE_INITIATED',
+            'item_id': item.get('id'),
+            'item_identifier': item_identifier,
+            'from_queue': from_queue,
+            'to_queue': 'Blacklisted'
+        })
+        
+        # Record exit from source queue *before* calling blacklist_item
+        time_in_from_queue_seconds = None
+        if from_queue and from_queue in self.queues and item and 'id' in item:
+            self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
+            # Calculate time spent in the from_queue
+            item_timing = self.queue_timer.get_item_timing(item['id'])
+            if from_queue in item_timing:
+                entry_time, exit_time = item_timing[from_queue]
+                if entry_time and exit_time:
+                    time_in_from_queue_seconds = exit_time - entry_time
+
+        # Call the specific blacklisting method which contains the fallback logic
+        # blacklist_item now handles DB update, adding to its list, and recording its own entry time.
+        blacklisted_queue = self.queues["Blacklisted"]
+        blacklisted_queue.blacklist_item(item, self) # Pass self (QueueManager)
+
+        # Now, remove the item from the source queue's in-memory list AFTER blacklist_item has run
+        # This prevents issues if fallback logic moves it back to Wanted before this step
+        item_id = item.get('id')
+        item_removed_from_source = False
+        if from_queue and from_queue in self.queues and item_id:
+             # Check if the item still exists in the source queue *by ID*
+             # This handles the case where fallback might have already moved/removed it.
+             source_queue_items = self.queues[from_queue].get_contents()
+             item_in_source = next((i for i in source_queue_items if i['id'] == item_id), None)
+             
+             if item_in_source:
+                 try:
+                     self.queues[from_queue].remove_item(item_in_source) # Pass the actual item object found
+                     item_removed_from_source = True
+                     logging.debug(f"Removed item {item_identifier} from source queue {from_queue} after processing blacklist/fallback.")
+                 except Exception as e:
+                     logging.error(f"Error removing item {item_identifier} from source queue {from_queue}: {e}")
+             else:
+                 logging.debug(f"Item {item_identifier} was not found in source queue {from_queue} for removal (likely handled by fallback).")
+
+        # Log completion of the move operation initiated here
+        log_data = {
+            'event': 'MOVE_COMPLETED', # Or 'FALLBACK_APPLIED' if we could detect it? blacklist_item doesn't return status.
+            'item_id': item.get('id'), 
+            'item_identifier': item_identifier,
+            'from_queue': from_queue,
+            'final_state': 'Blacklisted or Wanted (via Fallback)', # Reflect uncertainty
+            'removed_from_source_queue': item_removed_from_source
+        }
+        if time_in_from_queue_seconds is not None:
+            log_data['time_in_from_queue_seconds'] = round(time_in_from_queue_seconds, 2)
+        self.item_tracker.info(log_data)
+
+        logging.debug(f"Finished processing move for item {item_identifier} (to Blacklisted or Fallback)")
 
     def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
         self._move_item_to_queue(
@@ -625,7 +691,7 @@ class QueueManager:
                 return False
         return True
 
-    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, **additional_params):
+    def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, **additional_params):
         """
         Common method to handle moving items between queues.
         
@@ -634,6 +700,7 @@ class QueueManager:
             from_queue: The source queue name
             to_queue_name: The target queue name 
             new_state: The new state for the item
+            new_version: [Optional] The new version for the item
             additional_params: Additional parameters to pass to update_media_item_state
         
         Returns:
@@ -662,13 +729,16 @@ class QueueManager:
                 if entry_time and exit_time:
                     time_in_from_queue_seconds = exit_time - entry_time
         
-        # Update the item's state in the database
-        update_media_item_state(item['id'], new_state, **additional_params)
-        
-        # Get the updated item from the database
-        updated_item = get_media_item_by_id(item['id'])
+        # If a new version is provided, add it to the params for the DB update
+        if new_version:
+            additional_params['version'] = new_version
+            
+        # Update the item's state (and potentially version) in the database - returns updated dict
+        updated_item = update_media_item_state(item['id'], new_state, **additional_params)
         
         if updated_item:
+            # 'updated_item' is now the dictionary returned by the update function
+            
             # Add the item to the target queue
             if to_queue_name in self.queues:
                 # Record entry into target queue 

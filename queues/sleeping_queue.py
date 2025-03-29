@@ -121,11 +121,17 @@ class SleepingQueue:
         for item in items:
             item_id = item['id']
             item_identifier = queue_manager.generate_identifier(item)
+            
+            # Call move_to_blacklisted, which handles the actual blacklisting or fallback
             queue_manager.move_to_blacklisted(item, "Sleeping")
-            self.remove_item(item)
-            logging.info(f"Moved item {item_identifier} to Blacklisted state")
+            
+            # REMOVE ITEM IS NO LONGER NEEDED HERE - move_to_blacklisted handles removal from source queue
+            # self.remove_item(item)
+            
+            # Adjust log message to reflect the action initiated, not necessarily the final state
+            logging.info(f"Initiated blacklist/fallback process for item {item_identifier} from Sleeping queue")
         
-        logging.debug(f"Blacklisted {len(items)} items")
+        logging.debug(f"Finished processing blacklist/fallback attempts for {len(items)} items from Sleeping queue")
 
     def clean_up_sleeping_data(self):
         # Remove sleeping times for items no longer in the queue

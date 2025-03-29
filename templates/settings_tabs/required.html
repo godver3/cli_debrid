@@ -874,7 +874,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 } else {
                                     throw new Error(verifyData.error || 'Invalid Plex token');
                                 }
-                            } else if (pollData.error) {
+                            } else if (pollData.error && pollData.error !== "waiting_for_auth") {
                                 clearInterval(pollInterval);
                                 throw new Error(pollData.error);
                             }

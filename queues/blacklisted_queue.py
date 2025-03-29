@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta
 
 from utilities.settings import get_setting
+from config_manager import get_version_settings, load_config
 
 class BlacklistedQueue:
     def __init__(self):
@@ -92,21 +93,77 @@ class BlacklistedQueue:
     def blacklist_item(self, item: Dict[str, Any], queue_manager):
         item_id = item['id']
         item_identifier = queue_manager.generate_identifier(item)
+        current_version = item.get('version')
+
+        # --- Fallback Logic Start ---
+        if current_version:
+            version_settings = get_version_settings(current_version)
+            fallback_version = version_settings.get('fallback_version', 'None')
+            config = load_config()
+            all_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
+
+            if fallback_version and fallback_version != 'None' and fallback_version in all_versions:
+                logging.info(f"Item {item_identifier} failed for version '{current_version}'. Attempting fallback to version '{fallback_version}'.")
+                
+                # Remove from current queue before modifying item state/version
+                current_queue_name = queue_manager.get_item_queue(item)
+                if current_queue_name and current_queue_name != 'Blacklisted': # Avoid double removal if somehow already blacklisted
+                    try:
+                        queue_manager.queues[current_queue_name].remove_item(item)
+                        logging.debug(f"Removed {item_identifier} from {current_queue_name} queue for fallback.")
+                    except KeyError:
+                         logging.warning(f"Could not find queue '{current_queue_name}' to remove item {item_identifier} during fallback.")
+                    except Exception as e:
+                         logging.error(f"Error removing item {item_identifier} from {current_queue_name} queue during fallback: {e}")
+                
+                # Update item's version in the local dictionary
+                item['version'] = fallback_version
+                item_identifier_new_version = queue_manager.generate_identifier(item) # Generate identifier with new version
+                
+                # Move to Wanted queue with the new version, passing it explicitly
+                # We pass the original version name as the 'source' for context
+                logging.debug(f"Calling move_to_wanted for {item_identifier_new_version} with new_version={fallback_version}")
+                queue_manager.move_to_wanted(item, f"Fallback from {current_version}", new_version=fallback_version)
+                logging.info(f"Moved item {item_identifier_new_version} back to Wanted queue with fallback version '{fallback_version}'.")
+                return # Skip the rest of the blacklisting process
+            else:
+                if fallback_version and fallback_version != 'None' and fallback_version not in all_versions:
+                     logging.warning(f"Configured fallback version '{fallback_version}' for version '{current_version}' does not exist. Proceeding with blacklisting {item_identifier}.")
+                # Else (no fallback configured or fallback is 'None'), just continue to blacklist
+        else:
+            logging.warning(f"Item {item_identifier} does not have a version associated. Cannot perform fallback check. Proceeding with blacklisting.")
+        # --- Fallback Logic End ---
+
+        # Original blacklisting logic starts here
+        logging.info(f"Blacklisting item {item_identifier} (version: {current_version or 'N/A'}). No fallback applied.")
         from database import update_media_item_state, update_blacklisted_date
-        update_media_item_state(item_id, 'Blacklisted')
+        
+        # Update database state first
+        update_media_item_state(item_id, 'Blacklisted') 
         
         # Update the blacklisted_date in the database
         blacklisted_date = datetime.now()
         update_blacklisted_date(item_id, blacklisted_date)
         
-        # Add to blacklisted queue
-        item['blacklisted_date'] = blacklisted_date  # Store as datetime object
-        self.add_item(item)
+        # Get potentially updated item details (though state/date are main changes)
+        # Re-fetch might be safer if update_media_item_state doesn't return updated item
+        # For now, assume 'item' dict is sufficiently up-to-date for adding to list
+        updated_item = item # Use existing item dict for now
+        updated_item['state'] = 'Blacklisted' # Ensure state is correct in the dict
+        updated_item['blacklisted_date'] = blacklisted_date # Store as datetime object
         
-        # Remove from current queue
-        current_queue = queue_manager.get_item_queue(item)
-        if current_queue:
-            queue_manager.queues[current_queue].remove_item(item)
+        # Record entry into this queue
+        # Note: Need to import BaseQueue or pass queue_manager correctly if needed
+        # Assuming self._record_item_entered exists via inheritance or mixin
+        if hasattr(self, '_record_item_entered'):
+             self._record_item_entered(queue_manager, updated_item)
+        else:
+             # Fallback to direct timer call if method not inherited
+             if hasattr(queue_manager, 'queue_timer'):
+                 queue_manager.queue_timer.item_entered_queue(item_id, 'Blacklisted', item_identifier)
+
+        # Add to blacklisted queue in memory
+        self.add_item(updated_item) # Use the updated_item dict
         
         logging.info(f"Moved item {item_identifier} to Blacklisted state and updated blacklisted_date")
 

@@ -1921,11 +1921,11 @@ def direct_emby_scan():
 
         # 2. Add collected items to the database
         logging.info("Adding collected Emby/Jellyfin items to the database...")
-        add_collected_items(combined_items, recent=False) # Use recent=False for a full sync
+        add_collected_items(combined_items, recent=True) # Change to recent=True for additive only
         logging.info("Successfully added Emby/Jellyfin items to the database.")
 
-        return jsonify({'status': 'success', 'message': f'Successfully processed {len(combined_items)} items from Emby/Jellyfin.'}), 200
+        return jsonify({'success': True, 'message': f'Successfully processed {len(combined_items)} items from Emby/Jellyfin.'}), 200
 
     except Exception as e:
         logging.error(f"Error during direct Emby/Jellyfin scan: {str(e)}", exc_info=True)
-        return jsonify({'status': 'error', 'message': f'An error occurred: {str(e)}'}), 500
+        return jsonify({'success': False, 'message': f'An error occurred: {str(e)}'}), 500 # Also change error response for consistency

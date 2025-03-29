@@ -391,6 +391,11 @@ SETTINGS_SCHEMA = {
                     "default": None,
                     "description": "Override global wake count limit. Leave empty to use global setting. Set to -1 to disable sleeping queue."
                 },
+                "fallback_version": {
+                    "type": "string",
+                    "description": "Version to fall back to if the current version fails and the item is blacklisted. Select 'None' to disable fallback.",
+                    "default": "None"
+                },
                 "filter_in": {
                     "type": "list",
                     "default": []

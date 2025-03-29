@@ -6,6 +6,29 @@ from utilities.settings import get_setting
 from database.database_reading import get_media_item_by_id
 import time
 import json
+from datetime import datetime, timezone
+
+def _parse_emby_date(date_str: Optional[str]) -> Optional[int]:
+    """Parse Emby/Jellyfin ISO date string to Unix timestamp (integer)."""
+    if not date_str:
+        return None
+    try:
+        # Handle timezone indicator (Z for UTC)
+        if date_str.endswith('Z'):
+            date_str = date_str[:-1] + '+00:00'
+        
+        # Parse the ISO format string
+        dt_object = datetime.fromisoformat(date_str)
+        
+        # Ensure it's timezone-aware (assume UTC if not specified, though fromisoformat usually handles this)
+        if dt_object.tzinfo is None:
+            dt_object = dt_object.replace(tzinfo=timezone.utc)
+            
+        # Convert to Unix timestamp (float) and then to integer
+        return int(dt_object.timestamp())
+    except (ValueError, TypeError) as e:
+        logging.warning(f"Could not parse Emby/Jellyfin date string '{date_str}': {e}")
+        return None
 
 def normalize_path_for_emby(path: str) -> str:
     """
@@ -235,7 +258,7 @@ def _process_emby_movie(movie_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return {
             'title': movie_item.get('Name'),
             'year': movie_item.get('ProductionYear'),
-            'addedAt': movie_item.get('DateCreated'), # Note: Emby/Jellyfin 'DateCreated' is item creation, not file addition like Plex 'addedAt'
+            'addedAt': _parse_emby_date(movie_item.get('DateCreated')),
             'guid': movie_item.get('Id'), # Using Item ID as a unique key
             'ratingKey': movie_item.get('Id'),
             'imdb_id': imdb_id,
@@ -273,7 +296,7 @@ def _process_emby_episode(episode_item: Dict[str, Any], show_item: Dict[str, Any
             'episode_number': episode_item.get('IndexNumber'),
             'year': show_item.get('ProductionYear'),
             'show_year': show_item.get('ProductionYear'),
-            'addedAt': episode_item.get('DateCreated'),
+            'addedAt': _parse_emby_date(episode_item.get('DateCreated')),
             'guid': episode_item.get('Id'),
             'ratingKey': episode_item.get('Id'),
             'release_date': episode_item.get('PremiereDate', '')[:10] if episode_item.get('PremiereDate') else None,
@@ -324,7 +347,7 @@ def get_collected_from_emby(progress_callback=None, bypass=False) -> Optional[Di
         try:
             # 1. Get User ID
             if progress_callback: progress_callback('scanning', 'Fetching user information...')
-            users_response = session.get(f"{emby_url}/Users", headers=headers, params={'isHidden': False, 'isDisabled': False}, timeout=30)
+            users_response = session.get(f"{emby_url}/Users", headers=headers, params={'isDisabled': False}, timeout=30)
             users_response.raise_for_status()
             users = users_response.json()
             if not users:
