@@ -393,12 +393,9 @@ def index():
         else:
             content_source_settings = content_source_settings_response        
             
-        # Fetch scraping versions
-        scraping_versions_response = get_scraping_versions()
-        if isinstance(scraping_versions_response, Response):
-            scraping_versions = scraping_versions_response.get_json()['versions']
-        else:
-            scraping_versions = scraping_versions_response['versions']
+        # Fetch scraping versions (Use the logic from scraping_content route)
+        scraping_versions = list(config.get('Scraping', {}).get('versions', {}).keys()) 
+        logging.debug(f"[index route] Extracted scraping versions: {scraping_versions}")
 
         # Ensure 'Scrapers' exists in the config
         if 'Scrapers' not in config:
@@ -458,7 +455,7 @@ def index():
                                scraper_settings=scraper_settings,
                                source_types=source_types,
                                content_source_settings=content_source_settings,
-                               scraping_versions=scraping_versions,
+                               version_names=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA,
                                is_windows=is_windows)
     except Exception as e:
@@ -739,6 +736,7 @@ def delete_version():
         from database.database_writing import update_version_for_items
         
         conn = get_db_connection()
+        updated_count = 0 # Initialize count
         try:
             updated_count = update_version_for_items(version_id, target_version_id)
             logging.info(f"Updated {updated_count} media items in database from version '{version_id}' to '{target_version_id or 'None'}'")
@@ -753,8 +751,17 @@ def delete_version():
         # Now update the config file
         config = load_config()
         if 'Scraping' in config and 'versions' in config['Scraping'] and version_id in config['Scraping']['versions']:
-            del config['Scraping']['versions'][version_id]
-            save_config(config)
+            # Before deleting, update fallbacks pointing to this version
+            versions = config['Scraping']['versions']
+            for v_name, v_config in versions.items():
+                if v_name != version_id and v_config.get('fallback_version') == version_id:
+                    versions[v_name]['fallback_version'] = 'None' # Set to None as requested
+                    logging.info(f"Reset fallback_version for version '{v_name}' as '{version_id}' was deleted.")
+            
+            # Delete the actual version
+            del versions[version_id]
+            save_config(config) # Save config with updated fallbacks and deleted version
+            
             message = f"Version '{version_id}' deleted."
             if updated_count > 0:
                 message += f" {updated_count} items reassigned to '{target_version_id or 'versionless'}'."
@@ -832,6 +839,16 @@ def rename_version():
             updated_count = update_version_name(old_name, new_name)
             logging.info(f"Updated {updated_count} media items in database from version '{old_name}' to '{new_name}'")
             
+            # Update fallback_version references in other versions
+            for v_name, v_config in versions.items():
+                # Check if the version is not the one being renamed AND its fallback matches the old name
+                if v_name != new_name and v_config.get('fallback_version') == old_name:
+                    versions[v_name]['fallback_version'] = new_name
+                    logging.info(f"Updated fallback_version for version '{v_name}' from '{old_name}' to '{new_name}'")
+            
+            # Save config again with updated fallbacks (if any)
+            save_config(config)
+            
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Version not found'}), 404
@@ -870,8 +887,18 @@ def duplicate_version():
 
 @settings_bp.route('/scraping/content')
 def scraping_content():
-    config = load_config()
-    return render_template('settings_tabs/scraping.html', settings=config, settings_schema=SETTINGS_SCHEMA)
+    config = load_config() # Initial load
+    # Add logging to see the config state within the route
+    logging.debug(f"[scraping_content] Loaded config: {config}") 
+    schema = SETTINGS_SCHEMA
+    # Explicitly reload config right before accessing versions
+    config = load_config() 
+    version_names = list(config.get('Scraping', {}).get('versions', {}).keys())
+    logging.debug(f"[scraping_content] Extracted version names: {version_names}") # Log extracted names
+    return render_template('settings_tabs/scraping.html', 
+                           settings=config, 
+                           settings_schema=schema, 
+                           version_names=version_names)
 
 @settings_bp.route('/get_scraping_versions', methods=['GET'])
 def get_scraping_versions_route():

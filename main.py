@@ -1117,6 +1117,21 @@ def main():
             save_config(config)
             logging.info("Successfully migrated version settings to include language_code")
 
+    # --- Add migration for fallback_version in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'fallback_version' not in version_config:
+                version_config['fallback_version'] = 'None'
+                versions_updated = True
+                logging.info(f"Adding default fallback_version 'None' to version {version_name}")
+
+        # Save the updated config if changes were made
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include fallback_version")
+    # --- End fallback_version migration ---
+
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
     if not str(threshold_value).strip():

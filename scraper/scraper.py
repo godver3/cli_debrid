@@ -139,25 +139,37 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 # Add other default settings as necessary
             }
 
-        preferred_language = version_settings.get('language_code', None)
-        logging.info(f"Language code from version '{version}' settings: {preferred_language}")
+        # Fetch translated title based on language settings
+        language_setting = version_settings.get('language_code', '')
+        languages_to_try = [lang.strip() for lang in language_setting.split(',') if lang.strip() and lang.strip().lower() != 'en']
+        logging.info(f"Languages to attempt translation for (from version '{version}' settings): {languages_to_try}")
 
-        # Fetch translated title if preferred language is set
-        if preferred_language and preferred_language.lower() != 'en': # Assuming 'en' is default or no translation needed
-            try:
-                logging.info(f"Attempting to fetch translated title for language: {preferred_language}")
-                if content_type.lower() == 'movie':
-                    translated_title, _ = direct_api.get_movie_title_translation(imdb_id, preferred_language)
-                else: # episode or show
-                    translated_title, _ = direct_api.get_show_title_translation(imdb_id, preferred_language)
+        preferred_language = None # Language for which translation was successful
+        translated_title = None
 
-                if translated_title:
-                    logging.info(f"Found translated title ({preferred_language}): {translated_title}")
-                else:
-                    logging.info(f"No translated title found for language: {preferred_language}")
-            except Exception as e:
-                logging.error(f"Error fetching translated title for {imdb_id} language {preferred_language}: {e}", exc_info=True)
-                translated_title = None
+        if languages_to_try:
+            for lang_code in languages_to_try:
+                try:
+                    logging.info(f"Attempting to fetch translated title for language: {lang_code}")
+                    current_translated_title = None
+                    if content_type.lower() == 'movie':
+                        current_translated_title, _ = direct_api.get_movie_title_translation(imdb_id, lang_code)
+                    else: # episode or show
+                        current_translated_title, _ = direct_api.get_show_title_translation(imdb_id, lang_code)
+
+                    if current_translated_title:
+                        translated_title = current_translated_title
+                        preferred_language = lang_code # Store the successful language code
+                        logging.info(f"Found translated title ({preferred_language}): {translated_title}")
+                        break # Stop searching once a translation is found
+                    else:
+                        logging.info(f"No translated title found for language: {lang_code}")
+                except Exception as e:
+                    logging.error(f"Error fetching translated title for {imdb_id} language {lang_code}: {e}", exc_info=True)
+                    # Continue to the next language if an error occurs
+
+            if not translated_title:
+                logging.info(f"No translated title found for any of the specified languages: {languages_to_try}")
 
         def _do_scrape(
             search_title: str,

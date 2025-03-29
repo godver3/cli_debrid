@@ -180,7 +180,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             'genres': [],
             'runtime': None,
             'airs': metadata.get('airs', {}),
-            'country': metadata.get('country', '').lower(),  # Add country code, defaulting to empty string
+            'country': (metadata.get('country') or '').lower(),  # Add country code, handling None
             # Preserve content source information if available
             'content_source': original_item.get('content_source') if original_item else None,
             'content_source_detail': original_item.get('content_source_detail') if original_item else None

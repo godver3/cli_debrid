@@ -612,7 +612,7 @@
         {# Sort config items based on settings_order #}
         {% set sorted_keys = (settings_order + config.keys()|list)|unique|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only'] %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version'] %}
                 {% set value = config[key] %}
                 <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
@@ -723,7 +723,7 @@
                                data-section="Scraping" 
                                data-key="versions.{{ version }}.{{ key }}">
                         {% if key == 'language_code' %}
-                            <p class="settings-description">Preferred language code (e.g., en, es, fr). See ISO 639-1.</p>
+                            <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
                         {% endif %}
                     {% endif %}
                 </div>
@@ -731,6 +731,24 @@
             {% endif %}
 
         {% endfor %}
+        
+        {# Add Fallback Version Dropdown Here #}
+        <div class="settings-form-group">
+            <label for="scraping-{{ version }}-fallback_version" class="settings-title">Fallback Version:</label>
+            <select id="scraping-{{ version }}-fallback_version"
+                    name="Scraping.versions.{{ version }}.fallback_version"
+                    class="settings-input"
+                    data-section="Scraping"
+                    data-key="versions.{{ version }}.fallback_version">
+                <option value="None" {% if settings.Scraping.versions[version].get('fallback_version', 'None') == 'None' %}selected{% endif %}>None</option>
+                {% for v_name in version_names %}
+                    {% if v_name != version %} {# Don't allow falling back to self #}
+                        <option value="{{ v_name }}" {% if settings.Scraping.versions[version].get('fallback_version') == v_name %}selected{% endif %}>{{ v_name }}</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+            <p class="settings-description">Version to use if this one is blacklisted. Select 'None' to disable.</p>
+        </div>
         
         <div class="filter-section">
             <h5>Filters</h5>

@@ -143,11 +143,15 @@ def update_media_item_state(item_id, state, **kwargs):
                 handle_state_change(item_dict)
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
+        
+        # Return the updated item dictionary if found
+        return dict(updated_item) if updated_item else None
 
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
         conn.rollback()
-        raise
+        # Return None on error
+        return None
     finally:
         conn.close()
     

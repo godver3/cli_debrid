@@ -146,52 +146,38 @@ jobs:
       - name: Set Docker tags
         run: |
           if [ "${{ github.ref_name }}" = "dev" ]; then
-            echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }}" >> $GITHUB_ENV
-            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:dev-arm64,godver3/cli_debrid:dev-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
+            echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }},godver3/cli_debrid:latest" >> $GITHUB_ENV
           elif [ "${{ github.ref_name }}" = "main" ]; then
             echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
-            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:main-arm64,godver3/cli_debrid:main-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
           else
             echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
-            echo "DOCKER_TAGS_ARM64=godver3/cli_debrid:batteryintegration-arm64,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}-arm64" >> $GITHUB_ENV
           fi
+          echo "Resolved tags: $DOCKER_TAGS" # Added for debugging/visibility
 
       - name: Notify Discord - Build Started
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_TOKEN }}
           title: "Docker Build Started"
-          description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
+          description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}"
           color: 0xFFA500
 
-      - name: Build and push amd64 image
+      - name: Build and push multi-platform image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ env.DOCKER_TAGS }}
           build-args: |
             BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            # You can pass the Windows executable into the build context here if needed
-
-      - name: Build and push arm64 image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/arm64
-          push: true
-          tags: ${{ env.DOCKER_TAGS_ARM64 }}
-          build-args: |
-            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            # You can pass the Windows executable into the build context here if needed
+            # Pass Windows executable info if needed via build context or args
 
       - name: Notify Discord - Build Completed
         uses: sarisia/actions-status-discord@v1
         with:
           webhook: ${{ secrets.DISCORD_TOKEN }}
           title: "Docker Build Completed"
-          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}, ${{ env.DOCKER_TAGS_ARM64 }}"
+          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}"
           color: 0x00FF00
