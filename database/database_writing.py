@@ -415,6 +415,41 @@ def update_version_name(old_version: str, new_version: str) -> int:
         conn.close()
 
 @retry_on_db_lock()
+def update_version_for_items(old_version_id: str, new_version_id: str | None) -> int:
+    """Update the version for all media items matching the old version ID.
+    
+    Args:
+        old_version_id: The version ID to find and replace.
+        new_version_id: The new version ID to set (can be None to make items versionless).
+        
+    Returns:
+        The number of rows updated.
+    """
+    conn = get_db_connection()
+    updated_count = 0
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE media_items
+            SET version = ?, last_updated = ?
+            WHERE version = ?
+        """, (new_version_id, datetime.now(), old_version_id))
+        updated_count = cursor.rowcount
+        conn.commit()
+        logging.info(f"Reassigned {updated_count} items from version '{old_version_id}' to '{new_version_id or 'None'}'")
+    except sqlite3.Error as e:
+        logging.error(f"Error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
+        conn.rollback() # Rollback on error
+        raise # Re-raise the exception to be caught by the caller
+    except Exception as e:
+        logging.error(f"Unexpected error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return updated_count
+
+@retry_on_db_lock()
 def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
     """Update the state of multiple media items in a single transaction.
     

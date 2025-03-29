@@ -1928,6 +1928,7 @@ def append_runtime_airtime(items):
             logging.error(traceback.format_exc())
     
 def get_and_add_all_collected_from_plex(bypass=False):
+    collected_content = None  # Initialize here
     if get_setting('File Management', 'file_collection_management') == 'Plex' or bypass:
         logging.info("Getting all collected content from Plex")
         if bypass:

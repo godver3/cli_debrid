@@ -233,89 +233,86 @@ def prepare_manual_assignment():
         # Iterate through target items and try to find a unique match
         for item in target_items:
             item['suggested_file_path'] = None # Initialize suggestion field
-            potential_matches = []
-
-            # Ensure required item fields exist before matching
-            item_title_lower = item.get('title', '').lower()
-            item_year = item.get('year')
             item_type = item.get('type')
-            item_season = item.get('season_number')
-            item_episode = item.get('episode_number')
 
-            for file_info in parsed_video_files:
-                # REMOVED: Check for assigned flag
-                # if file_info['assigned']: # Skip already assigned files
-                #    continue
+            # --- NEW Movie Logic: Assign largest file ---
+            if item_type == 'movie':
+                if video_files: # Ensure there are video files to check
+                    # Find the video file with the maximum size
+                    largest_file = max(video_files, key=lambda f: f.get('bytes', 0))
+                    largest_filename = largest_file.get('filename')
+                    if largest_filename:
+                         item['suggested_file_path'] = largest_filename
+                         assignment_count += 1
+                         logging.info(f"Auto-assigned largest file '{largest_file.get('path')}' (using filename: {largest_filename}) to movie item '{item.get('title')}' (TMDB ID: {item.get('tmdb_id')}).")
+                    else:
+                         logging.warning(f"Could not assign largest file for movie '{item.get('title')}' - filename missing.")
+                else:
+                    logging.warning(f"Cannot assign largest file for movie '{item.get('title')}' - no video files found.")
+                continue # Move to the next item after handling the movie
 
-                parsed = file_info['parsed']
-                match = False
+            # --- MODIFIED Episode Logic ---
+            elif item_type == 'episode':
+                potential_matches = []
+                item_season = item.get('season_number')
+                item_episode = item.get('episode_number')
+                item_title_lower = item.get('title', '').lower() # Keep for logging clarity
 
-                # Ensure required parsed fields exist
-                parsed_seasons = parsed.get('seasons', [])
-                parsed_episodes = parsed.get('episodes', [])
-                parsed_type = parsed.get('type')
-                parsed_year = parsed.get('year')
-                parsed_title_lower = parsed.get('title', '').lower()
+                # Ensure item has season/episode numbers before trying to match
+                if item_season is None or item_episode is None:
+                    logging.warning(f"Skipping auto-assignment for item {item.get('item_key', item.get('title'))} due to missing season/episode number.")
+                    continue
 
-                try:
-                    # --- Episode Matching Logic ---
-                    if item_type == 'episode' and item_season is not None and item_episode is not None:
+                for file_info in parsed_video_files:
+                    parsed = file_info['parsed']
+                    match = False
+
+                    # Ensure required parsed fields exist
+                    parsed_seasons = parsed.get('seasons', [])
+                    parsed_episodes = parsed.get('episodes', [])
+
+                    try:
                         logging.debug(f"-- Comparing Item (Episode): S{item_season:02d}E{item_episode:02d} ('{item_title_lower}') with File: '{file_info['original']['path']}'")
-                        logging.debug(f"    Parsed Seasons: {parsed_seasons}, Parsed Episodes: {parsed_episodes}, Parsed Title: '{parsed_title_lower}'")
-                        
-                        # Perform individual checks
+                        logging.debug(f"    Parsed Seasons: {parsed_seasons}, Parsed Episodes: {parsed_episodes}")
+
+                        # Perform individual checks (NO title check)
                         season_match = (item_season in parsed_seasons)
                         episode_match = (item_episode in parsed_episodes)
-                        # Looser title check: item title should be substring of parsed title
-                        title_match = (item_title_lower in parsed_title_lower)
-                        
-                        logging.debug(f"    Checks: Season Match? {season_match}, Episode Match? {episode_match}, Title Match? {title_match}")
-                        
-                        if season_match and episode_match and title_match:
+
+                        logging.debug(f"    Checks: Season Match? {season_match}, Episode Match? {episode_match}")
+
+                        # MODIFIED Condition: Only check season and episode
+                        if season_match and episode_match:
                             match = True
-                            # logging.debug(f"    >>> Episode S/E match SUCCESS") # Covered by the log below
-                        # else: Covered by the log below
-                            
-                    # --- Movie Matching Logic ---
-                    elif item_type == 'movie' and item_year is not None:
-                        logging.debug(f"-- Comparing Item (Movie): '{item_title_lower}' ({item_year}) with File: '{file_info['original']['path']}'")
-                        logging.debug(f"    Parsed Type: {parsed_type}, Parsed Year: {parsed_year}, Parsed Title: '{parsed_title_lower}'")
-                        type_match = (parsed_type == 'movie')
-                        # Ensure years are compared as integers
-                        year_match = False
-                        try:
-                            if parsed_year is not None and item_year is not None:
-                                year_match = (int(parsed_year) == int(item_year))
-                        except (ValueError, TypeError):
-                            logging.warning(f"Could not compare years due to type/value error. Parsed: {parsed_year} ({type(parsed_year)}), Item: {item_year} ({type(item_year)})", exc_info=True)
-                        
-                        title_match = (item_title_lower in parsed_title_lower)
-                        logging.debug(f"    Checks: Type Match? {type_match}, Year Match? {year_match}, Title Match? {title_match}")
-                        if type_match and year_match and title_match:
-                             match = True
-                             # logging.debug(f"    >>> Movie match SUCCESS") # Covered by the log below
-                        # else: Covered by the log below
-                             # logging.debug(f"    >>> Movie match FAILED")
-                except Exception as match_err:
-                     logging.error(f"Error during matching logic for item {item.get('item_key', 'N/A')} and file {file_info['original']['path']}: {match_err}", exc_info=True)
 
-                # Log the outcome of the check for this specific file
-                logging.debug(f"    >>> Overall Match Result for this file: {match}")
+                    except Exception as match_err:
+                         logging.error(f"Error during matching logic for item {item.get('item_key', 'N/A')} and file {file_info['original']['path']}: {match_err}", exc_info=True)
 
-                if match:
-                    potential_matches.append(file_info)
+                    # Log the outcome of the check for this specific file
+                    logging.debug(f"    >>> Overall Match Result for this file: {match}")
 
-            # Assign if exactly one unique match is found
-            if len(potential_matches) == 1:
-                match_info = potential_matches[0]
-                item['suggested_file_path'] = os.path.basename(match_info['original']['path'])
-                assignment_count += 1
-                logging.info(f"Auto-assigned file '{match_info['original']['path']}' (using filename: {item['suggested_file_path']}) to item '{item.get('item_key', item.get('title'))}' based on PTT results.")
-            elif len(potential_matches) > 1:
-                 logging.warning(f"Found {len(potential_matches)} potential file matches for item '{item.get('item_key', item.get('title'))}'. Leaving unassigned for manual selection. Files: {[p['original']['path'] for p in potential_matches]}")
-            # --- ADDED: Log when no matches are found ---
-            elif len(potential_matches) == 0:
-                 logging.debug(f"No suitable file matches found for item '{item.get('item_key', item.get('title'))}' after checking all files.")
+                    if match:
+                        potential_matches.append(file_info)
+
+                # Assign if exactly one unique match is found based on S/E
+                if len(potential_matches) == 1:
+                    match_info = potential_matches[0]
+                    # Use the original filename from the unfiltered video_files list
+                    suggested_filename = match_info['original'].get('filename')
+                    if suggested_filename:
+                        item['suggested_file_path'] = suggested_filename
+                        assignment_count += 1
+                        logging.info(f"Auto-assigned file '{match_info['original']['path']}' (using filename: {suggested_filename}) to item '{item.get('item_key', item.get('title'))}' based on S/E match.")
+                    else:
+                         logging.warning(f"Could not assign file '{match_info['original']['path']}' to item '{item.get('item_key', item.get('title'))}' - filename missing.")
+                elif len(potential_matches) > 1:
+                     logging.warning(f"Found {len(potential_matches)} potential S/E file matches for item '{item.get('item_key', item.get('title'))}'. Leaving unassigned for manual selection. Files: {[p['original']['path'] for p in potential_matches]}")
+                elif len(potential_matches) == 0:
+                     logging.debug(f"No suitable S/E file matches found for item '{item.get('item_key', item.get('title'))}' after checking all files.")
+            
+            # --- Handle other item types or unexpected cases ---
+            else:
+                 logging.warning(f"Skipping auto-assignment for unrecognized item type: {item_type} for item key {item.get('item_key', 'N/A')}")
 
         logging.info(f"Completed automatic assignment attempt. Suggested assignments for {assignment_count} out of {len(target_items)} items.")
         # --- End Auto-assignment Logic ---
@@ -415,11 +412,27 @@ def confirm_manual_assignment():
                 if item_type == 'movie':
                     item_data = create_movie_item(metadata, title, year, version, initial_torrent_id, magnet_link)
                 elif item_type == 'ep':
-                    season_str = parts[2] # e.g., s01
-                    episode_str = parts[3] # e.g., e01
-                    season_number = int(season_str[1:])
-                    episode_number = int(episode_str[1:])
+                    # Expecting format like 's01e13' in parts[2]
+                    if len(parts) < 3:
+                        logging.error(f"Invalid item key format for episode: {item_key}. Expected at least 3 parts.")
+                        failed_items_count += 1
+                        continue
                     
+                    se_part = parts[2] # e.g., s01e13
+                    match = re.search(r's(\d+)e(\d+)', se_part, re.IGNORECASE)
+                    if not match:
+                         logging.error(f"Could not parse season/episode from item key part: '{se_part}' in key '{item_key}'")
+                         failed_items_count += 1
+                         continue
+
+                    try:
+                        season_number = int(match.group(1))
+                        episode_number = int(match.group(2))
+                    except (ValueError, IndexError):
+                         logging.error(f"Error converting parsed season/episode to int from '{se_part}' in key '{item_key}'", exc_info=True)
+                         failed_items_count += 1
+                         continue
+
                     # Re-fetch season data if necessary
                     if 'seasons' not in metadata:
                         try:

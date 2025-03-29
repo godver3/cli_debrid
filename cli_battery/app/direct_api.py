@@ -62,3 +62,72 @@ class DirectAPI:
         """Get all aliases for a movie by IMDb ID"""
         aliases, source = MetadataManager.get_movie_aliases(imdb_id)
         return aliases, source
+
+    @staticmethod
+    def get_movie_title_translation(imdb_id: str, language_code: str) -> Tuple[Optional[str], str]:
+        """
+        Get the translated title for a movie in a specific language.
+
+        Args:
+            imdb_id: The IMDb ID of the movie.
+            language_code: The language code (e.g., 'es', 'fr', 'th').
+
+        Returns:
+            A tuple containing the translated title (str) if found, otherwise None,
+            and the source of the metadata (str).
+        """
+        metadata, source = DirectAPI.get_movie_metadata(imdb_id)
+        translated_title = None
+
+        if metadata and 'aliases' in metadata:
+            aliases = metadata['aliases']
+            if language_code in aliases:
+                # The alias value seems to be a list, get the first element
+                if aliases[language_code]:
+                    translated_title = aliases[language_code][0]
+                else:
+                    logger.warning(f"Found language code '{language_code}' for movie {imdb_id}, but the alias list was empty.")
+            else:
+                logger.info(f"Language code '{language_code}' not found in aliases for movie {imdb_id}.")
+        elif metadata:
+             logger.info(f"No 'aliases' key found in metadata for movie {imdb_id}.")
+        else:
+            logger.info(f"No metadata retrieved for movie {imdb_id}.")
+
+
+        return translated_title, source
+
+    @staticmethod
+    def get_show_title_translation(imdb_id: str, language_code: str) -> Tuple[Optional[str], str]:
+        """
+        Get the translated title for a TV show in a specific language.
+
+        Args:
+            imdb_id: The IMDb ID of the show.
+            language_code: The language code (e.g., 'es', 'fr').
+
+        Returns:
+            A tuple containing the translated title (str) if found, otherwise None,
+            and the source of the metadata (str).
+        """
+        metadata, source = DirectAPI.get_show_metadata(imdb_id)
+        translated_title = None
+
+        # Assuming show metadata structure includes 'aliases' similar to movies
+        if metadata and 'aliases' in metadata:
+            aliases = metadata['aliases']
+            if language_code in aliases:
+                 # Assuming the alias value is a list, get the first element
+                if aliases[language_code]:
+                    translated_title = aliases[language_code][0]
+                else:
+                     logger.warning(f"Found language code '{language_code}' for show {imdb_id}, but the alias list was empty.")
+            else:
+                 logger.info(f"Language code '{language_code}' not found in aliases for show {imdb_id}.")
+        elif metadata:
+             logger.info(f"No 'aliases' key found in metadata for show {imdb_id}.")
+        else:
+            logger.info(f"No metadata retrieved for show {imdb_id}.")
+
+
+        return translated_title, source
