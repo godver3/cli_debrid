@@ -1892,3 +1892,40 @@ def test_get_torrent_files():
         # if isinstance(e, ProviderUnavailableError):
         #     return jsonify({'success': False, 'error': f'Provider Error: {str(e)}'}), 503
         return jsonify({'success': False, 'error': error_msg}), 500
+
+@debug_bp.route('/api/direct_emby_scan', methods=['POST'])
+@admin_required
+def direct_emby_scan():
+    """Triggers a full scan of Emby/Jellyfin and adds items to the database."""
+    from utilities.emby_functions import get_collected_from_emby
+    from database.collected_items import add_collected_items
+    logging.info("Received request for direct Emby/Jellyfin scan and collection.")
+    try:
+        # 1. Get collected items from Emby/Jellyfin
+        logging.info("Starting Emby/Jellyfin collection...")
+        collected_data = get_collected_from_emby(bypass=True) # bypass=True to scan all configured libs
+
+        if collected_data is None:
+            logging.error("Failed to retrieve data from Emby/Jellyfin.")
+            return jsonify({'status': 'error', 'message': 'Failed to retrieve data from Emby/Jellyfin.'}), 500
+
+        movies = collected_data.get('movies', [])
+        episodes = collected_data.get('episodes', [])
+        combined_items = movies + episodes
+
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from Emby/Jellyfin.")
+
+        if not combined_items:
+             logging.warning("No items collected from Emby/Jellyfin scan.")
+             return jsonify({'status': 'success', 'message': 'No items collected from Emby/Jellyfin scan.'}), 200
+
+        # 2. Add collected items to the database
+        logging.info("Adding collected Emby/Jellyfin items to the database...")
+        add_collected_items(combined_items, recent=False) # Use recent=False for a full sync
+        logging.info("Successfully added Emby/Jellyfin items to the database.")
+
+        return jsonify({'status': 'success', 'message': f'Successfully processed {len(combined_items)} items from Emby/Jellyfin.'}), 200
+
+    except Exception as e:
+        logging.error(f"Error during direct Emby/Jellyfin scan: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f'An error occurred: {str(e)}'}), 500

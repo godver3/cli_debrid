@@ -349,7 +349,10 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeNavigation();
     initializeReleaseNotes();
     initializeTaskMonitor();
-    initializeTooltips();
+    // Only initialize tooltips on non-mobile screens
+    if (window.innerWidth > 1045) {
+        initializeTooltips();
+    }
     initializeRateLimitsSection();
     
     // Initialize program controls if the button exists

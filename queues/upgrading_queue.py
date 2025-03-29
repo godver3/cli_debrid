@@ -328,24 +328,31 @@ class UpgradingQueue:
                         queue_duration_hours = 24
                     max_duration = timedelta(hours=queue_duration_hours)
 
-                    # Check if the item has been in the queue for more than the configured duration
-                    if time_in_queue > max_duration:
-                        logging.info(f"Item {item_id} has been in the Upgrading queue for over {queue_duration_hours} hours.")
-                                            
-                        # Remove the item from the queue
-                        self.remove_item(item)
-
-                        from database import update_media_item_state
-                        update_media_item_state(item_id, state="Collected")
-
-                        logging.info(f"Moved item {item_id} to Collected state after {queue_duration_hours} hours in Upgrading queue.")
-                    
-
-                    # Check if an hour has passed since the last scrape
-                    elif self.should_perform_hourly_scrape(item_id, current_time):
-                        logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")
-                        self.hourly_scrape(item, queue_manager)
+                    # Perform the hourly scrape if due
+                    if self.should_perform_hourly_scrape(item_id, current_time):
+                        logging.info(f"Performing hourly scrape for item {item_id} which has been in queue for {time_in_queue}.")
+                        self.hourly_scrape(item, queue_manager) # This might remove the item if upgraded
                         self.last_scrape_times[item_id] = current_time
+
+                        # Nested Check: After scrape, check if item still exists AND has timed out
+                        if any(i['id'] == item_id for i in self.items):
+                            if time_in_queue > max_duration:
+                                logging.info(f"Item {item_id} timed out after scrape attempt (in queue > {queue_duration_hours} hours).")
+                                # Remove the item due to timeout
+                                self.remove_item(item)
+                                from database import update_media_item_state
+                                update_media_item_state(item_id, state="Collected")
+                                logging.info(f"Moved item {item_id} to Collected state due to timeout.")
+                            # else: 
+                                # Optional: Log if item survived scrape and hasn't timed out
+                                # logging.debug(f"Item {item_id} survived scrape and has not timed out.")
+                        else:
+                            # Item was removed during the scrape (upgraded)
+                            logging.info(f"Item {item_id} was removed during hourly scrape (likely upgraded). Skipping timeout check.")
+                    else:
+                        # This case is unlikely given the hourly task execution, but handles it
+                        logging.debug(f"Skipping scrape for item {item_id} - not time yet.")
+
             except Exception as e:
                 logging.error(f"Error processing item {item.get('id', 'unknown')}: {str(e)}")
                 logging.exception("Traceback:")
