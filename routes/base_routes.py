@@ -11,6 +11,7 @@ import time
 import hashlib
 import json
 from pathlib import Path
+import errno # Add errno for file locking checks
 
 # Global cache storage
 _function_cache = {}
@@ -308,81 +309,94 @@ def check_for_update():
 @cache_for_seconds(30)  # Cache for 30 seconds
 def get_notifications():
     """Get notifications from the notification file"""
-    try:
-        db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
-        notification_file = Path(db_content_dir) / 'notifications.json'
-        
-        if not notification_file.exists():
-            # Create empty notification file if it doesn't exist
-            notification_file.write_text(json.dumps({"notifications": []}, indent=2))
-            logging.info(f"Created new notifications file at {notification_file}")
-            return jsonify({"notifications": []})
-        
+    db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
+    notification_file = Path(db_content_dir) / 'notifications.json'
+    lock_file = notification_file.with_suffix('.lock') # Define lock file path
+    lock_timeout = 5 # seconds to wait for lock acquisition
+
+    # Define lock functions locally (or import if structured differently)
+    def acquire_lock(lock_file_path, timeout):
+        start_time = time.monotonic()
+        while time.monotonic() - start_time < timeout:
+            try:
+                fd = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                os.close(fd)
+                #logging.debug(f"Acquired lock: {lock_file_path}")
+                return True
+            except OSError as e:
+                if e.errno == errno.EEXIST:
+                    time.sleep(0.1)
+                else:
+                    logging.error(f"Error acquiring lock {lock_file_path}: {e}")
+                    return False
+        logging.warning(f"Timeout acquiring lock: {lock_file_path}")
+        return False
+
+    def release_lock(lock_file_path):
         try:
-            # Read the entire file content first for debugging
+            os.remove(lock_file_path)
+            #logging.debug(f"Released lock: {lock_file_path}")
+        except OSError as e:
+            if e.errno != errno.ENOENT:
+                logging.error(f"Error releasing lock {lock_file_path}: {e}")
+
+    # Acquire lock
+    if not acquire_lock(lock_file, lock_timeout):
+        logging.error("Failed to acquire lock for reading notifications, returning potentially stale data.")
+        # Depending on requirements, you might return an error or proceed without lock (riskier)
+        # For now, let's return a standard error structure, but cache might still serve old data.
+        return jsonify({"error": "Failed to acquire lock, cannot read notifications", "notifications": []}), 503 # Service Unavailable
+
+    try:
+        if not notification_file.exists():
+            # File doesn't exist, return empty list. No need to create it here.
+            logging.info(f"Notifications file does not exist at {notification_file}")
+            return jsonify({"notifications": []})
+
+        try:
             with open(notification_file, 'r') as f:
                 file_content = f.read().strip()
-                
+
             if not file_content:
-                logging.warning(f"Notifications file exists but is empty")
-                notification_file.write_text(json.dumps({"notifications": []}, indent=2))
+                # File exists but is empty. Return empty list.
+                logging.info(f"Notifications file exists but is empty at {notification_file}")
                 return jsonify({"notifications": []})
-            
-            # Try to extract the first valid JSON object from the content
+
+            # Try to parse the JSON
             try:
-                # Find the first { and the matching }
-                start = file_content.find('{')
-                if start == -1:
-                    raise json.JSONDecodeError("No JSON object found", file_content, 0)
-                
-                bracket_count = 0
-                for i, char in enumerate(file_content[start:], start):
-                    if char == '{':
-                        bracket_count += 1
-                    elif char == '}':
-                        bracket_count -= 1
-                        if bracket_count == 0:
-                            # We found the matching closing bracket
-                            valid_json = file_content[start:i+1]
-                            notifications = json.loads(valid_json)
-                            
-                            # If the file was corrupted, rewrite it with the valid portion
-                            if len(valid_json) != len(file_content):
-                                logging.warning(f"Found corrupted notifications file, cleaning up...")
-                                notification_file.write_text(json.dumps(notifications, indent=2))
-                            
-                            break
-                else:
-                    raise json.JSONDecodeError("No valid JSON object found", file_content, 0)
-                
+                notifications = json.loads(file_content)
+
+                # Validate structure - Log error but DO NOT rewrite
+                if not isinstance(notifications, dict) or "notifications" not in notifications:
+                    logging.error(f"Invalid notifications structure in {notification_file}. Content: {file_content[:200]}...")
+                    # Return empty list instead of rewriting
+                    return jsonify({"error": "Invalid notification file structure", "notifications": []}), 500
+
             except json.JSONDecodeError as je:
-                logging.warning(f"JSON decode error in notifications file. Content: {file_content[:200]}... Error: {str(je)}")
-                notification_file.write_text(json.dumps({"notifications": []}, indent=2))
-                return jsonify({"notifications": []})
-            
-            # Validate structure
-            if not isinstance(notifications, dict) or "notifications" not in notifications:
-                logging.warning(f"Invalid notifications structure: {json.dumps(notifications)[:200]}...")
-                notification_file.write_text(json.dumps({"notifications": []}, indent=2))
-                return jsonify({"notifications": []})
-                
-            # Filter out expired notifications
+                # JSON decode error - Log error but DO NOT rewrite
+                logging.error(f"JSON decode error in notifications file {notification_file}. Content: {file_content[:200]}... Error: {str(je)}")
+                # Return empty list instead of rewriting
+                return jsonify({"error": "Corrupted notification file", "notifications": []}), 500
+
+            # Filter out expired notifications (Optional, keep if needed)
             current_time = datetime.now().isoformat()
             if "notifications" in notifications:
                 notifications["notifications"] = [
-                    n for n in notifications["notifications"]
-                    if "expires" not in n or n["expires"] > current_time
+                    n for n in notifications.get("notifications", []) # Use get for safety
+                    if "expires" not in n or n.get("expires", "") > current_time
                 ]
-                
+
             return jsonify(notifications)
+
         except Exception as e:
-            logging.error(f"Unexpected error reading notifications file: {str(e)}", exc_info=True)
-            notification_file.write_text(json.dumps({"notifications": []}, indent=2))
-            return jsonify({"notifications": []})
-            
-    except Exception as e:
-        logging.error(f"Error reading notifications: {str(e)}", exc_info=True)
-        return jsonify({"error": "Failed to read notifications", "notifications": []})
+            # Catch other potential errors during file read/processing
+            logging.error(f"Unexpected error reading notifications file {notification_file}: {str(e)}", exc_info=True)
+            # Return error but DO NOT rewrite
+            return jsonify({"error": "Failed to read notifications file", "notifications": []}), 500
+
+    finally:
+        # Always release lock
+        release_lock(lock_file)
 
 @base_bp.route('/api/notifications/mark-read', methods=['POST'])
 def mark_notification_read():

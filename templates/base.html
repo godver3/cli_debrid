@@ -94,7 +94,8 @@
 
         .modal-content {
             background-color: #2a2a2a;
-            margin: 15% auto;
+            margin: auto;
+            margin-top: calc(15% - 100px);
             padding: 20px;
             border: 1px solid #444;
             border-radius: 8px;
@@ -188,6 +189,10 @@
 
         .notification.read {
             opacity: 0.7;
+        }
+
+        body[data-notifications-disabled="true"] .notification.read {
+            opacity: 1; /* Override opacity when notifications are disabled */
         }
 
         .notification-header {

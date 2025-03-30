@@ -214,54 +214,78 @@ def initialize(skip_initial_plex_update=False):
     # Start initialization
     update_initialization_step('Starting initialization')
     
-    # Reset Items Phase (5 seconds)
-    start_phase('reset', 'Reset Items', 'Starting item reset')
-    reset_queued_item_status()
-    complete_phase('reset')
+    # Keep for now: Disable reset_queued_item_status
+    # # Reset Items Phase (5 seconds)
+    # start_phase('reset', 'Reset Items', 'Starting item reset')
+    # reset_queued_item_status()
+    # complete_phase('reset')
        
-    if get_setting('File Management', 'file_collection_management') == 'Plex':
-        # Plex Update Phase (2 minutes)
-        start_phase('plex', 'Plex Update', 'Starting Plex scan')
-        plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update)
-        complete_phase('plex')
-    
-        # Content Sources Phase (2 minutes)
-        if plex_success and should_process_sources:
-            start_phase('sources', 'Content Sources', 'Processing content sources')
-            get_all_wanted_from_enabled_sources()
-            complete_phase('sources')
+    plex_managed = get_setting('File Management', 'file_collection_management') == 'Plex'
+    plex_success = True # Assume success unless Plex runs and fails
+    should_process_sources = True # Assume true, might be set to false by plex_collection_update
 
-    else:
-        # Content Sources Phase (2 minutes)
+    if plex_managed:
+        from database import get_all_media_items # Import here for conditional check
+        existing_collected = get_all_media_items(state='Collected')
+
+        if not existing_collected:
+            # No collected items found, run full Plex scan
+            update_initialization_step("Plex Update", "No collected items found, performing full library scan", is_substep=True)
+            logging.info("No collected items found, performing full library scan.")
+            start_phase('plex', 'Plex Update', 'Starting Plex scan')
+            # Force full scan, ignore skip_initial_plex_update parameter
+            plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update=False)
+            complete_phase('plex')
+        else:
+            # Collected items exist, skip Plex scan
+            update_initialization_step("Plex Update", f"Found {len(existing_collected)} collected items, skipping Plex scan as requested.", is_substep=True)
+            logging.info(f"Found {len(existing_collected)} collected items, skipping Plex scan as requested.")
+            # Keep for now: Disable plex_collection_update when items exist
+            # # Plex Update Phase (2 minutes)
+            # start_phase('plex', 'Plex Update', 'Starting Plex scan')
+            # plex_success, should_process_sources = plex_collection_update(skip_initial_plex_update) # Original call
+            # complete_phase('plex')
+            # When skipping, assume success and allow source processing
+            plex_success = True
+            should_process_sources = True
+    # else: # Not Plex managed - flags remain True
+
+    # Now process sources based on the flags
+    if should_process_sources:
         start_phase('sources', 'Content Sources', 'Processing content sources')
         get_all_wanted_from_enabled_sources()
         complete_phase('sources')
-        plex_success = True
+    else:
+         # This case should only happen if plex_collection_update ran and explicitly returned should_process_sources=False
+         update_initialization_step("Content Sources", "Skipping content source processing due to Plex update results.", is_substep=True)
+         logging.warning("Skipping content source processing due to Plex update results.")
     
-    # Release Dates Phase (30 seconds)
-    start_phase('release', 'Release Dates', 'Updating metadata for all items')
-    refresh_release_dates()
-    complete_phase('release')
+    # Keep for now: Disable refresh_release_Dates
+    # # Release Dates Phase (30 seconds)
+    # start_phase('release', 'Release Dates', 'Updating metadata for all items')
+    # refresh_release_dates()
+    # complete_phase('release')
     
-    from database.maintenance import update_show_ids, update_show_titles, update_movie_ids, update_movie_titles
+    # Keep for now: Disable database maintenance
+    # from database.maintenance import update_show_ids, update_show_titles, update_movie_ids, update_movie_titles
 
-    # Update Show IDs and Titles (1 minute)
-    start_phase('show_ids', 'Update Show IDs', 'Updating show IDs')
-    update_show_ids()
-    complete_phase('show_ids')
+    # # Update Show IDs and Titles (1 minute)
+    # start_phase('show_ids', 'Update Show IDs', 'Updating show IDs')
+    # update_show_ids()
+    # complete_phase('show_ids')
 
-    start_phase('show_titles', 'Update Show Titles', 'Updating show titles')
-    update_show_titles()
-    complete_phase('show_titles')
+    # start_phase('show_titles', 'Update Show Titles', 'Updating show titles')
+    # update_show_titles()
+    # complete_phase('show_titles')
 
-    # Update Movie IDs and Titles (1 minute)
-    start_phase('movie_ids', 'Update Movie IDs', 'Updating movie IDs')
-    update_movie_ids()
-    complete_phase('movie_ids')
+    # # Update Movie IDs and Titles (1 minute)
+    # start_phase('movie_ids', 'Update Movie IDs', 'Updating movie IDs')
+    # update_movie_ids()
+    # complete_phase('movie_ids')
 
-    start_phase('movie_titles', 'Update Movie Titles', 'Updating movie titles')
-    update_movie_titles()
-    complete_phase('movie_titles')
+    # start_phase('movie_titles', 'Update Movie Titles', 'Updating movie titles')
+    # update_movie_titles()
+    # complete_phase('movie_titles')
 
     # Complete
     final_status = "completed successfully" if plex_success else "completed with Plex update issues"

@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 import os
 import uuid
+import errno
 
 # Global notification buffer
 notification_buffer = []
@@ -25,6 +26,8 @@ SAFETY_VALVE_TIMEOUT = 60  # seconds maximum to wait before forcing send
 # Constants
 MAX_NOTIFICATIONS = 20
 NOTIFICATION_FILE = Path(os.getenv('USER_DB_CONTENT', '/user/db_content')) / 'notifications.json'
+LOCK_FILE = NOTIFICATION_FILE.with_suffix('.lock')
+LOCK_TIMEOUT = 5
 
 def safe_format_date(date_value):
     if not date_value:
@@ -335,8 +338,43 @@ def flush_notification_buffer(enabled_notifications, notification_category):
     except Exception as e:
         logging.error(f"Error in flush_notification_buffer: {str(e)}")
 
+def acquire_lock(lock_file_path, timeout):
+    """Attempt to acquire a lock file."""
+    start_time = time.monotonic()
+    while time.monotonic() - start_time < timeout:
+        try:
+            # Attempt atomic creation of the lock file
+            fd = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            os.close(fd) # Close the file descriptor immediately, we just need the file existence
+            #logging.debug(f"Acquired lock: {lock_file_path}")
+            return True
+        except OSError as e:
+            if e.errno == errno.EEXIST:
+                # Lock file already exists, wait and retry
+                time.sleep(0.1)
+            else:
+                # Other OS error
+                logging.error(f"Error acquiring lock {lock_file_path}: {e}")
+                return False
+    logging.warning(f"Timeout acquiring lock: {lock_file_path}")
+    return False
+
+def release_lock(lock_file_path):
+    """Release the lock file."""
+    try:
+        os.remove(lock_file_path)
+        #logging.debug(f"Released lock: {lock_file_path}")
+    except OSError as e:
+        if e.errno != errno.ENOENT: # Ignore if file doesn't exist (already released)
+            logging.error(f"Error releasing lock {lock_file_path}: {e}")
+
 def store_notification(title, message, notification_type='info', link=None):
     """Store a notification in the JSON file"""
+    # Acquire lock
+    if not acquire_lock(LOCK_FILE, LOCK_TIMEOUT):
+        logging.error("Failed to acquire lock for storing notification, skipping.")
+        return # Or raise an exception
+
     try:
         # Ensure directory exists
         NOTIFICATION_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -350,7 +388,8 @@ def store_notification(title, message, notification_type='info', link=None):
                 # Read the entire content first
                 with open(NOTIFICATION_FILE, 'r') as f:
                     content = f.read().strip()
-                    
+
+                # --- Start of locked read/write section ---
                 if content:  # Only try to parse if there's content
                     try:
                         notifications = json.loads(content)
@@ -393,17 +432,21 @@ def store_notification(title, message, notification_type='info', link=None):
             else:
                 # On Windows, try to remove the target file first if it exists
                 if NOTIFICATION_FILE.exists():
-                    NOTIFICATION_FILE.unlink()
+                    NOTIFICATION_FILE.unlink(missing_ok=True) # Use missing_ok=True
                 os.rename(temp_file, NOTIFICATION_FILE)
                 
         except Exception as e:
             logging.error(f"Error writing notifications file: {str(e)}")
             if temp_file.exists():
-                temp_file.unlink()
+                temp_file.unlink(missing_ok=True) # Use missing_ok=True
             raise
             
     except Exception as e:
         logging.error(f"Error storing notification: {str(e)}", exc_info=True)
+    finally:
+        # --- End of locked section ---
+        # Always release lock
+        release_lock(LOCK_FILE)
 
 def _send_notifications(notifications, enabled_notifications, notification_category=None):
     successful = True  # Track if all notifications were sent successfully

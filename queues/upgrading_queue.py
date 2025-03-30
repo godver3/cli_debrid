@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from database.database_writing import add_to_collected_notifications
 from queues.scraping_queue import ScrapingQueue
 from queues.adding_queue import AddingQueue
@@ -15,6 +15,8 @@ from database.core import get_db_connection
 from difflib import SequenceMatcher
 from debrid.common import extract_hash_from_magnet, extract_hash_from_file
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+from PTT import parse_title
+import re
 
 class UpgradingQueue:
     def __init__(self):
@@ -439,17 +441,33 @@ class UpgradingQueue:
 
         if results:
             # Find the position of the current item's 'filled_by_magnet' in the results
-            current_title = item.get('original_scraped_torrent_title')
-            if current_title is None:
-                logging.warning(f"No original_scraped_torrent_title found for item {item_identifier}, using filled_by_title as fallback")
-                current_title = item.get('filled_by_title')
-                if current_title is None:
-                    logging.error(f"No title information found for item {item_identifier}, skipping upgrade check")
-                    return
+            current_title_original = item.get('original_scraped_torrent_title')
+            current_title_fallback_file = item.get('filled_by_file')
+            current_title = None
+            normalized_current_title = ""
 
-            # Find our current position before any filtering
-            current_position = next((index for index, result in enumerate(results) if result.get('title') == current_title), None)
-            
+            if current_title_original:
+                current_title = current_title_original
+                logging.info(f"Using original_scraped_torrent_title: {current_title}")
+            elif current_title_fallback_file:
+                current_title = current_title_fallback_file
+                logging.warning(f"No original_scraped_torrent_title found, using filled_by_file as fallback: {current_title}")
+            else:
+                logging.error(f"No original_scraped_torrent_title or filled_by_file found for item {item_identifier}, skipping upgrade check")
+                return
+
+            # Normalize the chosen current title for comparison
+            normalized_current_title = self._normalize_title_for_comparison(current_title)
+            logging.info(f"Normalized current title for comparison: '{normalized_current_title}'")
+
+            # Find our current position before any filtering using normalized titles
+            current_position = next((index for index, result in enumerate(results)
+                                     if self._normalize_title_for_comparison(result.get('title')) == normalized_current_title), None)
+
+            if current_position is None:
+                logging.warning(f"Could not find current item '{current_title}' (normalized: '{normalized_current_title}') in initial results list. Skipping filtering step for this item.")
+                # We might still proceed, but filtering/comparison logic below needs to handle this
+
             # Get similarity threshold from settings, default to 95%
             similarity_threshold = 0.95
             try:
@@ -459,14 +477,22 @@ class UpgradingQueue:
                 logging.warning("Invalid upgrading_percentage_threshold setting, using default value of 0.1")
                 upgrading_percentage_threshold = 0.1
 
-            # Apply filtering to all results except our current item
+            # Apply filtering to all results except our current item (if found)
             filtered_results = []
             for result in results:
-                # Skip filtering for our current item
-                if result.get('title') == current_title:
+                normalized_result_title = self._normalize_title_for_comparison(result.get('title'))
+
+                # Skip filtering if this result matches the normalized current title (our current item)
+                if normalized_current_title and normalized_result_title == normalized_current_title:
+                    logging.debug(f"Identified current item (normalized match: '{normalized_current_title}'), keeping: {result.get('title')}")
                     filtered_results.append(result)
                     continue
-                    
+                # Also skip if original titles match exactly (handles edge cases where normalization might fail)
+                elif result.get('title') == current_title:
+                    logging.debug(f"Identified current item (exact match), keeping: {result.get('title')}")
+                    filtered_results.append(result)
+                    continue
+
                 if not item.get('disable_not_wanted_check'):
                     if is_magnet_not_wanted(result['magnet']):
                         logging.info(f"Result '{result['title']}' filtered out by not_wanted_magnets check")
@@ -479,16 +505,33 @@ class UpgradingQueue:
             # Filter out any previously failed upgrades (except our current item)
             failed_upgrades = self.failed_upgrades.get(item['id'], [])
             failed_magnets = {fu['magnet'] for fu in failed_upgrades}
-            filtered_results = [r for r in filtered_results if r.get('title') == current_title or r.get('magnet') not in failed_magnets]
-            
+            temp_filtered_results = []
+            for r in filtered_results:
+                normalized_result_title = self._normalize_title_for_comparison(r.get('title'))
+                # Keep the current item regardless of failed status
+                if normalized_current_title and normalized_result_title == normalized_current_title:
+                    temp_filtered_results.append(r)
+                elif r.get('title') == current_title:
+                     temp_filtered_results.append(r)
+                # Filter out others if they are failed magnets
+                elif r.get('magnet') not in failed_magnets:
+                    temp_filtered_results.append(r)
+            filtered_results = temp_filtered_results
+
             if not filtered_results:
                 logging.info(f"All results were filtered out for {item_identifier}")
                 return
 
-            # Find our new position after filtering
-            current_position = next((index for index, result in enumerate(filtered_results) if result.get('title') == current_title), None)
+            # Find our new position after filtering using normalized titles
+            current_position = next((index for index, result in enumerate(filtered_results)
+                                     if self._normalize_title_for_comparison(result.get('title')) == normalized_current_title), None)
+
             if current_position is None:
-                logging.warning(f"Lost track of current item after filtering, item may have been part of a multi-pack")
+                # Try finding with exact match as a fallback
+                current_position = next((index for index, result in enumerate(filtered_results) if result.get('title') == current_title), None)
+
+            if current_position is None:
+                logging.warning(f"Lost track of current item '{current_title}' (normalized: '{normalized_current_title}') after filtering.")
                 # Add current item to filtered results with score 0
                 current_result = {
                     'title': current_title,
@@ -691,6 +734,9 @@ class UpgradingQueue:
                 # Set upgrading_from to the current filled_by_file before updating
                 upgrading_from = item['filled_by_file']
 
+                # Ensure the new version string is free of asterisks before storing
+                clean_version = new_values['version'].strip('*') if new_values.get('version') else None
+
                 # Update the item in the database with new values
                 conn.execute('''
                     UPDATE media_items
@@ -700,7 +746,7 @@ class UpgradingQueue:
                     upgrading_from,
                     new_values['filled_by_file'],
                     new_values['filled_by_magnet'],
-                    new_values['version'],
+                    clean_version, # Use the cleaned version
                     datetime.now(),
                     'Checking',
                     item['filled_by_torrent_id'],
@@ -715,7 +761,7 @@ class UpgradingQueue:
                 item['filled_by_file'] = new_values['filled_by_file']
                 item['filled_by_magnet'] = new_values['filled_by_magnet']
                 item['upgrading_from_torrent_id'] = item['filled_by_torrent_id']
-                item['version'] = new_values['version']
+                item['version'] = clean_version # Update item dict with cleaned version
                 item['last_updated'] = datetime.now()
                 item['state'] = 'Checking'
 
@@ -779,6 +825,18 @@ class UpgradingQueue:
     def contains_item_id(self, item_id):
         """Check if the queue contains an item with the given ID"""
         return any(i['id'] == item_id for i in self.items)
+
+    def _normalize_title_for_comparison(self, title_string: Optional[str]) -> str:
+        """Normalizes a title string by replacing spaces with periods for comparison."""
+        if not title_string:
+            return ""
+        try:
+            # Only replace spaces with periods
+            return title_string.replace(' ', '.')
+        except Exception as e:
+            # Fallback in case of unexpected error, return original (though unlikely for replace)
+            logging.error(f"Unexpected error during simple title normalization: '{title_string}'. Error: {e}. Returning original string.")
+            return title_string
 
 def log_successful_upgrade(item: Dict[str, Any]):
     # Get db_content directory from environment variable with fallback
