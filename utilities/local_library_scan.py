@@ -416,91 +416,124 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             logging.debug(f"[UPGRADE] Current file: {item.get('filled_by_file')}")
             logging.debug(f"[UPGRADE] Upgrading from: {item.get('upgrading_from')}")
             logging.debug(f"[UPGRADE] Torrent ID: {item.get('filled_by_torrent_id')}")
-            
+
             # Only handle cleanup if we have a confirmed upgrade (upgrading_from is set)
             if item.get('upgrading_from'):
+                item_title = item.get('title') # For logging
                 logging.info(f"[UPGRADE] Processing confirmed upgrade for {item_identifier}")
-                # Remove old torrent from debrid service if we have the ID
-                is_downloading = False
-                if item.get('filled_by_torrent_id'):
+
+                # --- Start: Torrent/File Removal Logic ---
+                removal_successful = False
+                old_torrent_id = item.get('upgrading_from_torrent_id')
+                old_filename = item.get('upgrading_from') # Filename of the file being replaced
+
+                if old_torrent_id:
+                    logging.info(f"[UPGRADE] Attempting to remove old torrent {old_torrent_id} via debrid API.")
                     try:
                         from debrid import get_debrid_provider
                         debrid_provider = get_debrid_provider()
-                        torrent_id = item.get('filled_by_torrent_id')
-                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
-                        if torrent_info:
-                            progress = torrent_info.get('progress', 0)
-                            is_downloading = progress > 0 and progress < 100
-                    except Exception as e:
-                        logging.debug(f"Failed to check torrent status: {str(e)}")
-
-                # Only perform cleanup if not downloading
-                if not is_downloading:
-                    # Remove old torrent from debrid service if we have the ID
-                    if item.get('filled_by_torrent_id'):
-                        try:
-                            from debrid import get_debrid_provider
-                            debrid_provider = get_debrid_provider()
-                            debrid_provider.remove_torrent(
-                                item['upgrading_from_torrent_id'],
-                                removal_reason="Removed old torrent after successful upgrade"
-                            )
-                            logging.info(f"[UPGRADE] Removed old torrent {item['upgrading_from_torrent_id']} from debrid service")
-                        except Exception as e:
-                            logging.error(f"[UPGRADE] Failed to remove old torrent {item['filled_by_torrent_id']}: {str(e)}")
-                
-                # Remove old symlink if it exists
-                # Use the old file's name to get the old symlink path
-                old_source = os.path.join(original_path, item.get('filled_by_title'), item['upgrading_from'])
-                # Save current values
-                current_filled_by_file = item.get('filled_by_file')
-                current_version = item.get('version')
-                # Temporarily set the filled_by_file to the old file to get correct old path
-                item['filled_by_file'] = item['upgrading_from']
-
-                old_dest = get_symlink_path(item, old_source)
-                # Restore current values
-                item['filled_by_file'] = current_filled_by_file
-                item['version'] = current_version
-
-                if old_dest and os.path.lexists(old_dest):
-                    try:
-                        os.unlink(old_dest)
-                        logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
-                        # Wait for media server to detect the removed symlink
-                        time.sleep(1)
-                        
-                        # Remove the old file from Plex or Emby/Jellyfin
-                        if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                            from utilities.emby_functions import remove_file_from_emby
-                            remove_file_from_emby(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
-                        elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                            from utilities.plex_functions import remove_file_from_plex
-                            remove_file_from_plex(item['title'], old_dest, item.get('type') == 'episode' and item.get('episode_title'))
-
-                    except Exception as e:
-                        logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
+                        # Assuming remove_torrent returns True/False or raises Exception
+                        debrid_provider.remove_torrent(
+                            old_torrent_id,
+                            removal_reason="Removed old torrent after successful upgrade"
+                        )
+                        removal_successful = True # Assume success if no exception
+                        logging.info(f"[UPGRADE] Successfully initiated removal of old torrent {old_torrent_id} via debrid API.")
+                    except Exception as remove_err:
+                        # Check if it's a 404 (Not Found), which might mean it was already deleted
+                        if '404' in str(remove_err):
+                             logging.warning(f"[UPGRADE] Old torrent {old_torrent_id} not found on debrid (likely already removed). Proceeding.")
+                             removal_successful = True # Treat as success
+                        else:
+                            logging.error(f"[UPGRADE] Failed to remove old torrent {old_torrent_id} via debrid API: {remove_err}")
                 else:
-                    logging.debug(f"[UPGRADE] No old symlink found at {old_dest}")
-            
+                    old_file_path_from_item = item.get('original_path_for_symlink') # Get path from item dict
+                    logging.warning(f"[UPGRADE] Old torrent ID is missing for item {item['id']}. Attempting local file deletion using item's original path: '{old_file_path_from_item}'")
+                    # Directly use the path from the item dict
+                    if old_file_path_from_item and os.path.exists(old_file_path_from_item):
+                        try:
+                            os.remove(old_file_path_from_item)
+                            removal_successful = True # Assume success if os.remove doesn't raise error
+                            logging.info(f"[UPGRADE] Successfully removed old local file: {old_file_path_from_item}")
+                            # Optionally, check if the file is truly gone
+                            if os.path.exists(old_file_path_from_item):
+                                logging.warning(f"[UPGRADE] Local file {old_file_path_from_item} still exists after os.remove attempt.")
+                                removal_successful = False
+                        except OSError as delete_err:
+                            logging.error(f"[UPGRADE] Failed to delete old local file {old_file_path_from_item}: {delete_err}")
+                    elif not old_file_path_from_item:
+                         logging.error(f"[UPGRADE] Cannot attempt local file deletion: 'original_path_for_symlink' key is missing or None in item dict.")
+                    else: # Path provided in item dict but doesn't exist
+                         logging.warning(f"[UPGRADE] Cannot attempt local file deletion: Path from item dict '{old_file_path_from_item}' does not exist.")
+                         removal_successful = True # If the file doesn't exist where expected, treat as success for cleanup
+
+                # --- End: Torrent/File Removal Logic ---
+
+                # Only proceed if removal was successful or deemed unnecessary
+                if removal_successful:
+                    logging.info("[UPGRADE] Old file/torrent removal successful or not needed, proceeding with symlink cleanup/creation.")
+                    # Remove old symlink if it exists
+                    # Use the old file's name to get the old symlink path
+
+                    # Determine the source path of the OLD file to find its corresponding symlink
+                    # We need the original base path where the old file *would* have been downloaded.
+                    # Using the new file's directory might be the best guess if they are typically co-located.
+                    old_base_path = os.path.dirname(source_file) if source_file else None
+
+                    if old_base_path and old_filename:
+                        # Construct the hypothetical source path for the old file
+                        old_source_for_symlink_path = os.path.join(old_base_path, old_filename)
+
+                        # Temporarily modify a copy of the item to represent the OLD file state for get_symlink_path
+                        item_for_old_path = item.copy()
+                        item_for_old_path['filled_by_file'] = old_filename
+                        # Note: We might need the *old* version string here if get_symlink_path uses it.
+                        # This assumes the version didn't change or isn't critical for the old path calculation.
+
+                        old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path)
+
+                        if old_dest and os.path.lexists(old_dest):
+                            try:
+                                os.unlink(old_dest)
+                                logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+                                # Wait for media server to detect the removed symlink
+                                time.sleep(1)
+
+                                # Remove the old file from Plex or Emby/Jellyfin
+                                media_server_type = 'none'
+                                if get_setting('Debug', 'emby_jellyfin_url', default=False):
+                                    media_server_type = 'emby_jellyfin'
+                                elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+                                    media_server_type = 'plex'
+
+                                if media_server_type != 'none':
+                                    try:
+                                        episode_title = item.get('episode_title') if item.get('type') == 'episode' else None
+                                        if media_server_type == 'emby_jellyfin':
+                                            from utilities.emby_functions import remove_file_from_emby
+                                            remove_file_from_emby(item['title'], old_dest, episode_title)
+                                        elif media_server_type == 'plex':
+                                            from utilities.plex_functions import remove_file_from_plex
+                                            remove_file_from_plex(item['title'], old_dest, episode_title)
+                                    except Exception as media_server_remove_err:
+                                         logging.error(f"[UPGRADE] Failed removing old file {old_dest} from {media_server_type}: {media_server_remove_err}")
+
+                            except Exception as e:
+                                logging.error(f"[UPGRADE] Failed to remove old symlink {old_dest}: {str(e)}")
+                        else:
+                            logging.debug(f"[UPGRADE] No old symlink found at {old_dest} (or path couldn't be determined).")
+                    else:
+                         logging.warning("[UPGRADE] Could not determine old source path components for symlink removal.")
+                else:
+                    logging.error(f"[UPGRADE] Failed to remove the old file/torrent for {item_identifier}. Skipping symlink cleanup and creation for the new file.")
+                    # Exit the upgrade process for this item if old file couldn't be handled
+                    # We need to signal failure back up the call stack if necessary
+                    return False # Indicate failure
+
+            # --- Continue with new symlink creation only if old cleanup was handled ---
+            # This part should only execute if the code didn't return False above
             if not os.path.exists(dest_file):
                 success = create_symlink(source_file, dest_file, item.get('id'))
-                logging.debug(f"[UPGRADE] Created new symlink: {success}")
-            else:
-                # Verify existing symlink points to correct source
-                if os.path.islink(dest_file):
-                    real_source = os.path.realpath(dest_file)
-                    if real_source == source_file:
-                        success = True
-                        logging.debug(f"[UPGRADE] Existing symlink is correct")
-                    else:
-                        # Recreate symlink if pointing to wrong source
-                        os.unlink(dest_file)
-                        success = create_symlink(source_file, dest_file, item.get('id'))
-                        logging.debug(f"[UPGRADE] Recreated symlink with correct source: {success}")
-                else:
-                    logging.warning(f"[UPGRADE] Destination exists but is not a symlink: {dest_file}")
-                    return False
 
             if success:
                 logging.info(f"[UPGRADE] Successfully processed symlink at: {dest_file}")

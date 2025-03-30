@@ -276,12 +276,20 @@ def prepare_manual_assignment():
                         logging.debug(f"    Parsed Seasons: {parsed_seasons}, Parsed Episodes: {parsed_episodes}")
 
                         # Perform individual checks (NO title check)
-                        season_match = (item_season in parsed_seasons)
+                        season_match_strict = (item_season in parsed_seasons) # Keep original check for logging/debugging
                         episode_match = (item_episode in parsed_episodes)
 
-                        logging.debug(f"    Checks: Season Match? {season_match}, Episode Match? {episode_match}")
+                        # --- NEW: Handle missing season for Season 1 ---
+                        season_match = season_match_strict # Start with the strict match result
+                        if not parsed_seasons and item_season == 1:
+                            # If parser found no season AND we are looking for Season 1, consider it a match
+                            season_match = True
+                            logging.debug(f"    Assuming Season 1 match because parser found no seasons.")
+                        # --- END NEW ---
 
-                        # MODIFIED Condition: Only check season and episode
+                        logging.debug(f"    Checks: Season Match? {season_match} (Strict: {season_match_strict}), Episode Match? {episode_match}")
+
+                        # MODIFIED Condition: Use the potentially relaxed season_match
                         if season_match and episode_match:
                             match = True
 
