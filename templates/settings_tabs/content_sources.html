@@ -383,7 +383,7 @@
         </div>
         <div class="settings-section-content" style="display: none;">
             {% for key, value in config.items() %}
-            {% if key != 'type' %}
+            {% if key != 'type' and key != 'allow_specials' %}
             <div class="settings-form-group">
                 {% if key == 'versions' %}
                     <label class="settings-title">Versions:</label>
@@ -444,6 +444,23 @@
             </div>
             {% endif %}
             {% endfor %}
+
+            {# Add the allow_specials checkbox here #}
+            {% set source_type = config.type %}
+            {% if source_type in settings_schema['Content Sources'].schema and 'allow_specials' in settings_schema['Content Sources'].schema[source_type] %}
+            <!-- <div class="settings-form-group">
+                <label class="settings-title">
+                    <input type="checkbox" id="content-sources-{{ source_id }}-allow_specials"
+                           name="Content Sources.{{ source_id }}.allow_specials"
+                           data-section="Content Sources"
+                           data-key="{{ source_id }}.allow_specials"
+                           {% if config.allow_specials %}checked{% endif %}>
+                    Allow Specials
+                </label>
+                <p class="settings-description">{{ settings_schema['Content Sources'].schema[source_type]['allow_specials'].description }}</p>
+            </div> -->
+            {% endif %}
+
         </div>
     </div>
     {% endfor %}

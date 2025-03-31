@@ -90,7 +90,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             converted_item_media_type = item_media_type
 
         # Check if any Jackett scrapers are enabled and if title contains UFC before attempting conversion
-        from utilities.settings import load_config
+        from queues.config_manager import load_config
         config = load_config()
         has_enabled_jackett = False
         
@@ -577,24 +577,52 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     seasons = {}
                     
                 if not seasons:
-                    logging.error(f"No seasons data found for show {item['imdb_id']}")
-                    if DatabaseManager.remove_metadata(item['imdb_id']):
-                        logging.info(f"Retrying metadata fetch for show {item['imdb_id']}")
-                        metadata, _ = DirectAPI.get_show_metadata(item['imdb_id'])
+                    logging.error(f"No seasons data found for show {item.get('imdb_id') or item.get('tmdb_id')}") # Use TMDB ID if IMDB ID is missing
+                    if DatabaseManager.remove_metadata(item.get('imdb_id') or str(item.get('tmdb_id'))): # Handle both types
+                        logging.info(f"Retrying metadata fetch for show {item.get('imdb_id') or item.get('tmdb_id')}")
+                        # Attempt refetch using available ID
+                        refetch_id = item.get('imdb_id') or item.get('tmdb_id')
+                        if refetch_id:
+                            metadata, _ = DirectAPI.get_show_metadata(str(refetch_id)) # Ensure ID is string
+                            seasons = metadata.get('seasons')
+                        else:
+                            logging.error("Cannot retry metadata fetch, no valid ID found")
                     continue
-
 
                 # Get the requested seasons if they exist
                 requested_seasons = item.get('requested_seasons', [])
                 
+                # Determine the content source ID for checking the allow_specials setting
+                content_source_id = None
+                if 'content_source_detail' in item and item['content_source_detail']:
+                    # Assuming content_source_detail contains the specific source ID like 'MDBList_1'
+                    content_source_id = item['content_source_detail']
+                    logging.debug(f"Extracted content_source_id: {content_source_id}")
+                else:
+                    logging.warning(f"Could not determine content source ID for item: {item.get('title')}")
+
+                # Load config to check allow_specials setting for this source
+                allow_specials_for_source = False
+                if content_source_id:
+                    from queues.config_manager import load_config
+                    config = load_config()
+                    source_settings = config.get('Content Sources', {}).get(content_source_id, {})
+                    allow_specials_for_source = source_settings.get('allow_specials', False)
+                    logging.debug(f"'allow_specials' for source '{content_source_id}': {allow_specials_for_source}")
+
                 # If we have specific seasons requested (e.g. from Overseerr)
                 if requested_seasons:
                     logging.info(f"Processing specific requested seasons {requested_seasons} for show {metadata.get('title', 'Unknown')}")
                     seasons_to_process = requested_seasons
                 else:
-                    # For non-Overseerr sources, process all seasons
-                    logging.info(f"Processing all seasons for show {metadata.get('title', 'Unknown')} from non-Overseerr source")
-                    seasons_to_process = [int(s) for s in seasons.keys() if s != '0']  # Skip season 0 (specials)
+                    # For non-Overseerr sources, process based on allow_specials setting
+                    logging.info(f"Processing seasons for show {metadata.get('title', 'Unknown')} from non-Overseerr source (allow_specials={allow_specials_for_source})")
+                    if allow_specials_for_source:
+                        # Include all seasons, including 0 (specials)
+                        seasons_to_process = [int(s) for s in seasons.keys()]
+                    else:
+                        # Skip season 0 (specials) - original logic
+                        seasons_to_process = [int(s) for s in seasons.keys()]
 
                 # Process the determined seasons
                 all_episodes = []
@@ -912,7 +940,8 @@ def get_episode_count_for_seasons(imdb_id: str, seasons: List[int]) -> int:
 def get_all_season_episode_counts(imdb_id: str) -> Dict[int, int]:
     show_metadata, _ = DirectAPI.get_show_metadata(imdb_id)
     all_seasons = show_metadata.get('seasons', {})
-    return {int(season): data['episode_count'] for season, data in all_seasons.items() if season != '0'}
+    logging.debug(f"Raw seasons data received from DirectAPI for {imdb_id}: {all_seasons}")
+    return {int(season): data['episode_count'] for season, data in all_seasons.items()}
 
 def get_show_airtime_by_imdb_id(imdb_id: str) -> str:
     DEFAULT_AIRTIME = "19:00"

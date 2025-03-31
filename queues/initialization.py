@@ -104,7 +104,7 @@ def format_item_log(item):
 def reset_queued_item_status():
     update_initialization_step("Reset Items", "Identifying items in processing states", is_substep=True)
     logging.info("Resetting queued item status...")
-    states_to_reset = ['Scraping', 'Adding', 'Checking', 'Sleeping']
+    states_to_reset = ['Sleeping']
     total_reset = 0
     
     from database import update_media_item_state, get_all_media_items
@@ -215,10 +215,10 @@ def initialize(skip_initial_plex_update=False):
     update_initialization_step('Starting initialization')
     
     # Keep for now: Disable reset_queued_item_status
-    # # Reset Items Phase (5 seconds)
-    # start_phase('reset', 'Reset Items', 'Starting item reset')
-    # reset_queued_item_status()
-    # complete_phase('reset')
+    # Reset Items Phase (5 seconds)
+    start_phase('reset', 'Reset Items', 'Starting item reset')
+    reset_queued_item_status()
+    complete_phase('reset')
        
     plex_managed = get_setting('File Management', 'file_collection_management') == 'Plex'
     plex_success = True # Assume success unless Plex runs and fails

@@ -24,13 +24,9 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     Returns a dictionary containing season pack info, multi-episode flag, and lists of seasons/episodes.
     """
     if isinstance(parsed_info, str):
-        logging.debug(f"Parsing string with PTT for season/episode detection: '{parsed_info}'")
         # Parse string using PTT
         parsed_info = parse_with_ptt(parsed_info)
-        logging.debug(f"PTT parse result: {parsed_info}")
-    else:
-        logging.debug(f"Using pre-parsed info for season/episode detection: {parsed_info.get('title', 'no_title')}")
-    
+
     result = {
         'season_pack': 'Unknown',
         'multi_episode': False,
@@ -44,16 +40,12 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     
     if any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']) or \
        any(indicator in original_title for indicator in ['complete', 'collection', 'all.seasons']):
-        logging.debug(f"Complete series detected via indicators in title")
         result['season_pack'] = 'Complete'
         return result
 
     # Get season and episode info from parsed info
     season_info = parsed_info.get('seasons', [])
     episode_info = parsed_info.get('episodes', [])
-    
-    logging.debug(f"Raw season info: {season_info}")
-    logging.debug(f"Raw episode info: {episode_info}")
     
     # Handle season information
     if season_info:

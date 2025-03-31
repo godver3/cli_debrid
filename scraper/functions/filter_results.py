@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from fuzzywuzzy import fuzz
 from PTT import parse_title
 from utilities.settings import get_setting
@@ -16,7 +16,8 @@ def filter_results(
     runtime: int, episode_count: int, season_episode_counts: Dict[int, int],
     genres: List[str], matching_aliases: List[str] = None,
     preferred_language: str = None,
-    translated_title: str = None
+    translated_title: str = None,
+    target_air_date: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
     filtered_results = []
@@ -30,7 +31,7 @@ def filter_results(
     enable_hdr = version_settings.get('enable_hdr', False)
     disable_adult = get_setting('Scraping', 'disable_adult', False)
     
-    logging.debug(f"Starting filter_results with {len(results)} results")
+    #logging.debug(f"Starting filter_results with {len(results)} results")
     #logging.debug(f"Version settings: resolution={max_resolution}({resolution_wanted}), size={min_size_gb}-{max_size_gb}GB, HDR={enable_hdr}")
     #logging.debug(f"Filter patterns - in: {filter_in}, out: {filter_out}")
     
@@ -60,7 +61,7 @@ def filter_results(
         try:
             result['filter_reason'] = "Passed all filters"  # Default reason
             original_title = result.get('original_title', result.get('title', ''))
-            logging.debug(f"Processing result: {original_title}")
+            # logging.debug(f"Processing result: {original_title}")
             
             # Quick UFC check
             if "UFC" in original_title.upper():
@@ -72,14 +73,14 @@ def filter_results(
             parsed_info = result.get('parsed_info', {})
             if not parsed_info:
                 result['filter_reason'] = "Missing parsed info"
-                logging.debug("❌ Failed: Missing parsed info")
+                logging.info(f"Rejected: Missing parsed info for '{original_title}'")
                 continue
             
             # Check if it's marked as trash by PTT and filter_trash_releases is enabled
             filter_trash_releases = get_setting('Scraping', 'filter_trash_releases', True)
             if filter_trash_releases and parsed_info.get('trash', False):
                 result['filter_reason'] = "Marked as trash by parser"
-                logging.debug("❌ Failed: Release marked as trash by parser")
+                logging.info(f"Rejected: Marked as trash by parser for '{original_title}'")
                 continue
             
             # Store original title in parsed_info
@@ -89,7 +90,7 @@ def filter_results(
             if 'season_episode_info' not in parsed_info:
                 from scraper.functions.common import detect_season_episode_info
                 parsed_info['season_episode_info'] = detect_season_episode_info(original_title)
-                logging.debug(f"Detected season_episode_info: {parsed_info['season_episode_info']}")
+                # logging.debug(f"Detected season_episode_info: {parsed_info['season_episode_info']}")
                 
                 # Special handling for documentary tags that might be misinterpreted as episode titles
                 if 'episode_title' in parsed_info and parsed_info.get('episode_title', '').upper() == 'DOC':
@@ -98,7 +99,7 @@ def filter_results(
                     del parsed_info['episode_title']
                     # Re-detect season/episode info after fixing the parsed_info
                     parsed_info['season_episode_info'] = detect_season_episode_info(parsed_info)
-                    logging.debug(f"Corrected season_episode_info after DOC handling: {parsed_info['season_episode_info']}")
+                    # logging.debug(f"Corrected season_episode_info after DOC handling: {parsed_info['season_episode_info']}")
             
             result['parsed_info'] = parsed_info
 
@@ -128,21 +129,21 @@ def filter_results(
                 
                 # Log the failure reason including all comparison scores
                 result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
-                logging.debug(f"❌ Failed: Best title similarity {best_sim:.2f} below threshold {similarity_threshold}")
-                logging.debug(f"  - Main title ({main_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_query_title}'")
-                if normalized_aliases:
-                    logging.debug(f"  - Best alias ({best_alias_sim:.2f}): '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
-                if normalized_translated_title:
-                    logging.debug(f"  - Translated title ({translated_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_translated_title}'")
+                logging.info(f"Rejected: Title similarity too low ({best_sim:.2f} < {similarity_threshold}) for '{original_title}'")
+                # logging.debug(f"  - Main title ({main_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_query_title}'")
+                # if normalized_aliases:
+                #     logging.debug(f"  - Best alias ({best_alias_sim:.2f}): '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
+                # if normalized_translated_title:
+                #     logging.debug(f"  - Translated title ({translated_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_translated_title}'")
                 continue
-            else:
-                # Log which title matched
-                if main_title_sim >= similarity_threshold:
-                    logging.debug(f"✓ Passed title similarity via main title ({main_title_sim:.2f})")
-                elif best_alias_sim >= similarity_threshold:
-                    logging.debug(f"✓ Passed title similarity via alias ({best_alias_sim:.2f})")
-                elif translated_title_sim >= similarity_threshold:
-                    logging.debug(f"✓ Passed title similarity via translated title ({translated_title_sim:.2f})")
+            # else:
+                # Log which title matched - REMOVED FOR SIMPLICITY
+                # if main_title_sim >= similarity_threshold:
+                #     logging.debug(f"✓ Passed title similarity via main title ({main_title_sim:.2f})")
+                # elif best_alias_sim >= similarity_threshold:
+                #     logging.debug(f"✓ Passed title similarity via alias ({best_alias_sim:.2f})")
+                # elif translated_title_sim >= similarity_threshold:
+                #     logging.debug(f"✓ Passed title similarity via translated title ({translated_title_sim:.2f})")
                     
             #logging.debug("✓ Passed title similarity check")
             
@@ -150,14 +151,14 @@ def filter_results(
             detected_resolution = parsed_info.get('resolution', 'Unknown')
             if not resolution_filter(detected_resolution, max_resolution, resolution_wanted):
                 result['filter_reason'] = f"Resolution mismatch (max: {max_resolution}, wanted: {resolution_wanted})"
-                logging.debug(f"❌ Failed: Resolution {detected_resolution} doesn't match criteria {resolution_wanted} {max_resolution}")
+                logging.info(f"Rejected: Resolution '{detected_resolution}' doesn't match criteria '{resolution_wanted} {max_resolution}' for '{original_title}'")
                 continue
             #logging.debug("✓ Passed resolution check")
             
             # HDR check
             if not enable_hdr and parsed_info.get('is_hdr', False):
                 result['filter_reason'] = "HDR content when HDR is disabled"
-                logging.debug("❌ Failed: HDR content not allowed")
+                logging.info(f"Rejected: HDR content not allowed for '{original_title}'")
                 continue
             #logging.debug("✓ Passed HDR check")
             
@@ -168,11 +169,11 @@ def filter_results(
                     if isinstance(parsed_year, list):
                         if not any(abs(int(py) - year) <= 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.debug(f"❌ Failed: Year list {parsed_year} doesn't match {year}")
+                            logging.info(f"Rejected: Movie year list {parsed_year} doesn't match {year} for '{original_title}'")
                             continue
                     elif abs(int(parsed_year) - year) > 1:
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                        logging.debug(f"❌ Failed: Year {parsed_year} doesn't match {year}")
+                        logging.info(f"Rejected: Movie year {parsed_year} doesn't match {year} for '{original_title}'")
                         continue
                 #logging.debug("✓ Passed year check")
             
@@ -183,11 +184,11 @@ def filter_results(
                     if isinstance(parsed_year, list):
                         if not any(abs(int(py) - year) <= 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.debug(f"❌ Failed: Year list {parsed_year} doesn't match {year}")
+                            logging.info(f"Rejected: TV year list {parsed_year} doesn't match {year} for '{original_title}'")
                             continue
                     elif abs(int(parsed_year) - year) > 1:
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                        logging.debug(f"❌ Failed: Year {parsed_year} doesn't match {year}")
+                        logging.info(f"Rejected: TV year {parsed_year} doesn't match {year} for '{original_title}'")
                         continue
 
                 season_episode_info = parsed_info.get('season_episode_info', {})
@@ -207,18 +208,18 @@ def filter_results(
                     episodes = season_episode_info.get('episodes', [])
                     if len(episodes) == 1:
                         result['filter_reason'] = "Single episode result when searching for multi"
-                        logging.debug("❌ Failed: Single episode in multi mode")
+                        logging.info(f"Rejected: Single episode in multi mode for '{original_title}'")
                         continue
 
                     if episodes and episode not in episodes:
                         result['filter_reason'] = f"Multi-episode pack does not contain requested episode {episode}"
-                        logging.debug(f"❌ Failed: Multi-pack missing episode {episode}")
+                        logging.info(f"Rejected: Multi-pack missing episode {episode} for '{original_title}'")
                         continue
 
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'N/A':
                         result['filter_reason'] = "Single episode result when searching for multi"
-                        logging.debug("❌ Failed: Single episode in multi mode")
+                        logging.info(f"Rejected: Single episode in multi mode for '{original_title}'")
                         continue
                     elif season_pack == 'Complete':
                         #logging.debug("Complete series pack accepted")
@@ -226,167 +227,153 @@ def filter_results(
                     elif season_pack == 'Unknown':
                         if len(episodes) < 2:
                             result['filter_reason'] = "Non-multi result when searching for multi"
-                            logging.debug("❌ Failed: Not enough episodes for multi")
+                            logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}'")
                             continue
                     else:
                         if season not in season_episode_info.get('seasons', []):
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
-                            logging.debug(f"❌ Failed: Season pack missing season {season}")
+                            logging.info(f"Rejected: Season pack missing season {season} for '{original_title}'")
                             continue
                     #logging.debug("✓ Passed multi-episode checks")
-                else:
+                else: # Single episode mode
                     #logging.debug(f"Single episode mode: S{season}E{episode}")
                     
                     result_seasons = season_episode_info.get('seasons', [])
                     result_episodes = season_episode_info.get('episodes', [])
                     
-                    if not is_anime:
-                        if result_seasons and season not in result_seasons:
-                            result['filter_reason'] = f"Season mismatch: expected S{season}, got {result_seasons}"
-                            logging.debug(f"❌ Failed: Season mismatch - found {result_seasons} but needed {season}")
-                            continue
-                        elif not result_seasons:
-                            logging.debug(f"⚠️ No season information found, will de-rank later")
-                            
-                        # Debug the season pack detection
-                        season_pack = season_episode_info.get('season_pack', 'Unknown')
-                        logging.debug(f"Season pack detection for '{result.get('title', '')}': {season_pack}")
-                        logging.debug(f"Season info: {season_episode_info.get('seasons', [])} | Episode info: {season_episode_info.get('episodes', [])}")
-                        
-                        # Check for multi-season packs
-                        if not multi and (season_pack == 'Complete' or (season_pack != 'N/A' and season_pack != 'Unknown' and ',' in season_pack)):
-                            result['filter_reason'] = "Multi-season pack when searching for single episode"
-                            logging.debug("❌ Failed: Multi-season pack in single episode mode")
-                            continue
-                        
-                        # Check for single season packs (single season but no specific episode)
-                        # This is the key check for season packs like "Below Deck 2013 S01 DOC FRENCH 1080p WEB H264-TFA"
-                        if not multi and season_pack not in ['N/A', 'Unknown'] and not result_episodes:
-                            # Check if the title contains the specific episode we're looking for
-                            episode_pattern = f"S{season:02d}E{episode:02d}"
-                            if not re.search(episode_pattern, result.get('title', ''), re.IGNORECASE):
-                                result['filter_reason'] = "Season pack when searching for single episode"
-                                logging.debug(f"❌ Failed: Season pack '{season_pack}' in single episode mode")
-                                continue
-                        
-                        # Extra check: if we have season info but no episode info, and we're looking for a specific episode
-                        if not multi and season_episode_info.get('seasons') and not season_episode_info.get('episodes'):
-                            # This is likely a season pack
-                            episode_pattern = f"S{season:02d}E{episode:02d}"
-                            if not re.search(episode_pattern, result.get('title', ''), re.IGNORECASE):
-                                result['filter_reason'] = "Season pack (has season but no episodes) when searching for single episode"
-                                logging.debug(f"❌ Failed: Season pack with season {season_episode_info.get('seasons')} but no episodes in single episode mode")
-                                continue
-                            
-                        # Also check if multiple episodes are detected
-                        if not multi and len(result_episodes) > 1:
-                            result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
-                            logging.debug(f"❌ Failed: Multiple episodes {result_episodes} in single episode mode")
-                            continue
-                    else:
-                        # For anime, we need to handle season packs differently
-                        # Mark this result as anime for ranking
-                        result['is_anime'] = True
-                        
-                        season_pack = season_episode_info.get('season_pack', 'Unknown')
-                        logging.debug(f"Anime season pack detection for '{result.get('title', '')}': {season_pack}")
-                        logging.debug(f"Anime season info: {season_episode_info.get('seasons', [])} | Episode info: {season_episode_info.get('episodes', [])}")
-                        
-                        # Check for multi-season packs
-                        if not multi and (season_pack == 'Complete' or (season_pack != 'N/A' and season_pack != 'Unknown' and ',' in season_pack)):
-                            result['filter_reason'] = "Multi-season pack when searching for single episode"
-                            logging.debug("❌ Failed: Multi-season pack in single episode mode")
-                            continue
-                        
-                        # Check for single season packs (single season but no specific episode)
-                        if not multi and season_pack not in ['N/A', 'Unknown'] and not result_episodes:
-                            # Check if the title contains the specific episode we're looking for
-                            episode_pattern = f"S{season:02d}E{episode:02d}"
-                            if not re.search(episode_pattern, result.get('title', ''), re.IGNORECASE):
-                                result['filter_reason'] = "Season pack when searching for single episode"
-                                logging.debug(f"❌ Failed: Season pack '{season_pack}' in single episode mode")
-                                continue
-                        
-                        # Extra check: if we have season info but no episode info, and we're looking for a specific episode
-                        if not multi and season_episode_info.get('seasons') and not season_episode_info.get('episodes'):
-                            # This is likely a season pack
-                            episode_pattern = f"S{season:02d}E{episode:02d}"
-                            if not re.search(episode_pattern, result.get('title', ''), re.IGNORECASE):
-                                result['filter_reason'] = "Season pack (has season but no episodes) when searching for single episode"
-                                logging.debug(f"❌ Failed: Season pack with season {season_episode_info.get('seasons')} but no episodes in single episode mode")
-                                continue
-                            
-                        # Also check if multiple episodes are detected
-                        if not multi and len(result_episodes) > 1:
-                            result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
-                            logging.debug(f"❌ Failed: Multiple episodes {result_episodes} in single episode mode")
-                            continue
+                    # Determine if parsed season info is missing or defaulted (for anime leniency later)
+                    parsed_season_is_missing_or_default = not result_seasons or result_seasons == [1]
 
-                        # Special handling for anime based on the anime_format
-                        anime_format = result.get('anime_format')
-                        if anime_format and not result_seasons and not result_episodes:
-                            # For anime with no detected season/episode, validate based on the format used
-                            valid = False
-                            
-                            if anime_format == 'regular':
-                                # Regular format should have correct season/episode
-                                pattern = f"S{season:02d}E{episode:02d}"
-                                valid = pattern.lower() in result.get('title', '').lower()
-                                
-                            elif anime_format == 'absolute' or anime_format == 'absolute_with_e':
-                                # Calculate expected absolute episode number based on season episode counts if available
-                                from utilities.web_scraper import get_all_season_episode_counts
-                                try:
-                                    season_episode_counts = get_all_season_episode_counts(tmdb_id)
-                                    total_episodes_in_prev_seasons = sum(season_episode_counts.get(s, 13) for s in range(1, season))
-                                    expected_abs_ep = total_episodes_in_prev_seasons + episode
-                                except Exception as e:
-                                    # Fallback to default 13 episodes per season if API call fails
-                                    logging.warning(f"Failed to get episode counts, using default: {str(e)}")
-                                    expected_abs_ep = ((season - 1) * 13) + episode
-                                
-                                # Check if the absolute episode number appears in the title
-                                abs_pattern = f"{expected_abs_ep:03d}"
-                                e_abs_pattern = f"E{expected_abs_ep:03d}"
-                                valid = (abs_pattern in result.get('title', '') or 
-                                         e_abs_pattern.lower() in result.get('title', '').lower())
-                                
-                            elif anime_format == 'no_zeros':
-                                # Simple episode number format
-                                valid = f" {episode} " in f" {result.get('title', '')} "
-                                
-                            elif anime_format == 'combined':
-                                # Combined format (S01E018)
-                                from utilities.web_scraper import get_all_season_episode_counts
-                                try:
-                                    season_episode_counts = get_all_season_episode_counts(tmdb_id)
-                                    total_episodes_in_prev_seasons = sum(season_episode_counts.get(s, 13) for s in range(1, season))
-                                    expected_abs_ep = total_episodes_in_prev_seasons + episode
-                                except Exception as e:
-                                    # Fallback to default 13 episodes per season if API call fails
-                                    logging.warning(f"Failed to get episode counts, using default: {str(e)}")
-                                    expected_abs_ep = ((season - 1) * 13) + episode
-                                
-                                pattern = f"S{season:02d}E{expected_abs_ep:03d}"
-                                valid = pattern.lower() in result.get('title', '').lower()
-                            
-                            if not valid:
-                                result['filter_reason'] = f"Anime format mismatch: {anime_format} format doesn't match S{season}E{episode}"
-                                logging.debug(f"❌ Failed: Anime format mismatch - {anime_format} doesn't match S{season}E{episode}")
-                                continue
-                            else:
-                                logging.debug(f"✓ Passed anime format validation with {anime_format}")
-                        elif result_seasons and season not in result_seasons:
-                            # Still do season validation for anime if season info is available
-                            result['filter_reason'] = f"Season mismatch: expected S{season}, got {result_seasons}"
-                            logging.debug(f"❌ Failed: Season mismatch - found {result_seasons} but needed {season}")
-                            continue
+                    # --- Season Check --- 
+                    season_match = False
+                    lenient_season_pass = False # Flag if we passed season check due to leniency
+                    explicit_season_mismatch = False # Flag if title explicitly mentions a different season
 
-                    if result_episodes and episode not in result_episodes:
-                        result['filter_reason'] = f"Episode mismatch: expected E{episode}, got {result_episodes}"
-                        logging.debug(f"❌ Failed: Episode mismatch {result_episodes}")
+                    if season in result_seasons:
+                        # Parsed season explicitly matches the target season
+                        season_match = True
+                    elif is_anime and parsed_season_is_missing_or_default and season > 1:
+                         # Check if title explicitly mentions a different season before applying leniency
+                         # Example: Searching S7, title says "S01". We should NOT be lenient here.
+                         # Allow leniency only if no other season is clearly stated.
+                         if not re.search(rf'[Ss](?!{season:02d})\d\d?', original_title):
+                             season_match = True
+                             lenient_season_pass = True
+                             #logging.debug(f"Allowing anime result ({original_title}) parsed as S1/None when target is S{season} (no conflicting season found in title)")
+                         else:
+                            explicit_season_mismatch = True
+                            #logging.debug(f"Anime result ({original_title}) parsed as S1/None has conflicting season info when target is S{season}. Not applying leniency.")
+                    elif not result_seasons:
+                         # Allow titles with NO season info at all (might be absolute)
+                         season_match = True
+                         lenient_season_pass = True # Mark as lenient pass
+                         #logging.debug(f"Allowing result ({original_title}) with no season info to pass season check")
+
+                    if not season_match:
+                        # Reject if we didn't find an explicit match OR a lenient pass
+                        # Also reject if leniency was skipped due to explicit conflicting season info
+                        reason = f"Season mismatch: expected S{season}, parsed {result_seasons}"
+                        if explicit_season_mismatch:
+                             reason += " (and title mentions conflicting season)"
+                        result['filter_reason'] = reason
+                        logging.info(f"Rejected: {reason} for '{original_title}'")
+                        continue
+                    #logging.debug(f"✓ Passed season check {('(leniently)' if lenient_season_pass else '')}")
+                    # --- End Season Check ---
+                    
+                    # --- Pack Checks (Reject packs in single mode) ---
+                    season_pack = season_episode_info.get('season_pack', 'Unknown')
+                    # Check for multi-season packs (e.g., "Complete", "S01,S02")
+                    if (season_pack == 'Complete' or (season_pack not in ['N/A', 'Unknown'] and ',' in season_pack)):
+                        result['filter_reason'] = "Multi-season pack when searching for single episode"
+                        logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}'")
+                        continue
+
+                    # Check for single season packs (parsed season/pack, but no parsed episodes matching target)
+                    # This needs to be robust against the loose episode check later
+                    is_potential_single_season_pack = season_pack not in ['N/A', 'Unknown'] and not result_episodes
+                    
+                    # Also check if multiple distinct episodes are detected explicitly
+                    if len(result_episodes) > 1:
+                        result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
+                        logging.info(f"Rejected: Multiple episodes {result_episodes} in single episode mode for '{original_title}'")
+                        continue
+                    # --- End Pack Checks ---
+
+                    # --- Episode Check --- 
+                    episode_match = False
+                    parsed_date_str = None # Initialize parsed date string
+                    #logging.debug(f"Inspecting parsed_info for '{original_title}': {parsed_info}") # Log parsed_info
+
+                    # Attempt to parse date from title
+                    # Priority 1: Check for pre-formatted 'date' key from PTT
+                    if isinstance(parsed_info.get('date'), str) and re.match(r'^\d{4}-\d{2}-\d{2}$', parsed_info['date']):
+                        parsed_date_str = parsed_info['date']
+                        #logging.debug(f"Using pre-parsed date '{parsed_date_str}' from parsed_info['date'] for '{original_title}'")
+                    # Priority 2: Fallback to constructing from year, month, day keys
+                    elif parsed_info.get('year') and parsed_info.get('month') and parsed_info.get('day'):
+                        try:
+                            parsed_year = int(parsed_info['year'])
+                            parsed_month = int(parsed_info['month'])
+                            parsed_day = int(parsed_info['day'])
+                            parsed_date_str = f"{parsed_year:04d}-{parsed_month:02d}-{parsed_day:02d}"
+                            #logging.debug(f"Constructed date '{parsed_date_str}' from year/month/day keys for '{original_title}'")
+                        except (ValueError, TypeError) as date_parse_err:
+                            logging.warning(f"Could not parse date components from year/month/day keys in '{original_title}': {parsed_info}. Error: {date_parse_err}")
+                            parsed_date_str = None # Reset on error
+                    # else: parsed_date_str remains None if neither method works
+
+                    if not result_episodes:
+                        # Case 1: No episode numbers parsed by PTT. Check date or fallback number.
+                        comparison_result = "Skipped" # Default if check doesn't run
+                        if target_air_date and parsed_date_str:
+                             # Perform the comparison
+                             date_match = (target_air_date == parsed_date_str)
+                             comparison_result = f"Target='{target_air_date}' == Parsed='{parsed_date_str}' -> {date_match}"
+                             if date_match:
+                                 episode_match = True
+                                 #logging.debug(f"Episode matched via date: {comparison_result} for '{original_title}'")
+                        elif not lenient_season_pass and not is_potential_single_season_pack:
+                             # Only log comparison if the primary date check didn't pass/run
+                             #logging.debug(f"Date check failed or skipped. Target='{target_air_date}', Parsed='{parsed_date_str}'. Falling back to number check.")
+                             pass
+                             if re.search(rf'\b{episode}\b', original_title):
+                                 episode_match = True
+                                 #logging.debug(f"Episode number {episode} found directly in title '{original_title}' (non-lenient season match, not a detected pack).")
+                        else:
+                            # Log why we didn't even attempt the fallback number check
+                            #logging.debug(f"Date check failed/skipped (Target='{target_air_date}', Parsed='{parsed_date_str}') and fallback number check skipped (lenient_season={lenient_season_pass}, potential_pack={is_potential_single_season_pack}).")
+                            pass
+                            
+                        # Log the comparison result if the primary date check was attempted
+                        if target_air_date and parsed_date_str and not episode_match:
+                             #logging.debug(f"Date comparison result: {comparison_result} for '{original_title}'")
+                             pass
+
+                    elif episode in result_episodes:
+                        # Case 2: PTT parsed episode numbers, check if target episode is present.
+                        episode_match = True
+                    # Removed the complex anime absolute number fallback for now
+                    # elif is_anime and lenient_season_pass: 
+                    #     ...
+
+                    if not episode_match:
+                        # Before rejecting, check if it was identified as a potential single season pack earlier
+                        reason_suffix = f"from '{original_title}'"
+                        if is_potential_single_season_pack:
+                            result['filter_reason'] = f"Season pack '{season_pack}' detected when searching for single episode {episode} (no matching episode found)"
+                            logging.info(f"Rejected: Season pack '{season_pack}' in single episode mode (no matching episode found) {reason_suffix}")
+                        elif parsed_date_str and target_air_date:
+                             # If dates were available but didn't match
+                             result['filter_reason'] = f"Date mismatch: needed {target_air_date}, parsed {parsed_date_str}"
+                             logging.info(f"Rejected: Date mismatch - needed {target_air_date}, parsed {parsed_date_str} {reason_suffix}")
+                        else:
+                            # General episode mismatch
+                            result['filter_reason'] = f"Episode mismatch: needed E{episode}, parsed {result_episodes} (or not found explicitly in title/date)"
+                            logging.info(f"Rejected: Episode mismatch - needed E{episode}, parsed {result_episodes} {reason_suffix}")
                         continue
                     #logging.debug("✓ Passed episode checks")
+                    # --- End Episode Check ---
             
             # Size calculation
             size_gb = parse_size(result.get('size', 0))
@@ -427,11 +414,11 @@ def filter_results(
             if result['size'] > 0:
                 if result['size'] < min_size_gb:
                     result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
-                    logging.debug(f"❌ Failed: Size {result['size']:.2f}GB below minimum {min_size_gb}GB")
+                    logging.info(f"Rejected: Size {result['size']:.2f}GB below minimum {min_size_gb}GB for '{original_title}'")
                     continue
                 if result['size'] > max_size_gb:
                     result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
-                    logging.debug(f"❌ Failed: Size {result['size']:.2f}GB above maximum {max_size_gb}GB")
+                    logging.info(f"Rejected: Size {result['size']:.2f}GB above maximum {max_size_gb}GB for '{original_title}'")
                     continue
             #logging.debug("✓ Passed size checks")
             
@@ -443,11 +430,11 @@ def filter_results(
                 bitrate_mbps = result['bitrate'] / 1000  # Convert Kbps to Mbps for comparison
                 if bitrate_mbps < min_bitrate_mbps:
                     result['filter_reason'] = f"Bitrate too low: {bitrate_mbps:.2f} Mbps (min: {min_bitrate_mbps} Mbps)"
-                    logging.debug(f"❌ Failed: Bitrate {bitrate_mbps:.2f}Mbps below minimum {min_bitrate_mbps}Mbps")
+                    logging.info(f"Rejected: Bitrate {bitrate_mbps:.2f}Mbps below minimum {min_bitrate_mbps}Mbps for '{original_title}'")
                     continue
                 if bitrate_mbps > max_bitrate_mbps:
                     result['filter_reason'] = f"Bitrate too high: {bitrate_mbps:.2f} Mbps (max: {max_bitrate_mbps} Mbps)"
-                    logging.debug(f"❌ Failed: Bitrate {bitrate_mbps:.2f}Mbps above maximum {max_bitrate_mbps}Mbps")
+                    logging.info(f"Rejected: Bitrate {bitrate_mbps:.2f}Mbps above maximum {max_bitrate_mbps}Mbps for '{original_title}'")
                     continue
             #logging.debug("✓ Passed bitrate checks")
             
@@ -458,32 +445,32 @@ def filter_results(
                 matched_patterns = [pattern for pattern in filter_out_patterns if smart_search(pattern, normalized_filter_title)]
                 if matched_patterns:
                     result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_patterns)}"
-                    logging.debug(f"❌ Failed: Matched filter_out patterns: {matched_patterns}")
+                    logging.info(f"Rejected: Matched filter_out patterns '{matched_patterns}' for '{original_title}'")
                     continue
             
             if filter_in_patterns and not any(smart_search(pattern, normalized_filter_title) for pattern in filter_in_patterns):
                 result['filter_reason'] = "Not matching any filter_in patterns"
-                logging.debug("❌ Failed: No matching filter_in patterns")
+                logging.info(f"Rejected: No matching filter_in patterns for '{original_title}'")
                 continue
             #logging.debug("✓ Passed pattern checks")
             
             # Adult content check
             if adult_pattern and adult_pattern.search(original_title):
                 result['filter_reason'] = "Adult content filtered"
-                logging.debug("❌ Failed: Adult content detected")
+                logging.info(f"Rejected: Adult content detected for '{original_title}'")
                 continue
             #logging.debug("✓ Passed adult content check")
             
             # If we made it here, add to filtered results
             filtered_results.append(result)
-            logging.debug("✓ Result accepted!")
+            logging.info(f"Accepted: '{original_title}'")
             
         except Exception as e:
             logging.error(f"Error filtering result '{original_title}': {str(e)}", exc_info=True)
             result['filter_reason'] = f"Error during filtering: {str(e)}"
             continue
     
-    logging.debug(f"\nFiltering complete: {len(filtered_results)}/{len(results)} results passed")
+    #logging.debug(f"\nFiltering complete: {len(filtered_results)}/{len(results)} results passed")
     return filtered_results, pre_size_filtered_results
 
 def get_resolution_value(resolution: str) -> int:
@@ -520,11 +507,11 @@ def resolution_filter(result_resolution: str, max_resolution: str, resolution_wa
             # For unknown resolutions, we'll be lenient and assume it's SD/480p quality
             # This helps with older content where resolution isn't explicitly stated
             result_val = get_resolution_value('480p')
-            logging.debug(f"Unknown resolution detected - assuming SD/480p quality for filtering")
+            #logging.debug(f"Unknown resolution detected - assuming SD/480p quality for filtering")
     
     # If max_val is 0 (invalid resolution), default to blocking
     if max_val == 0:
-        logging.debug(f"Invalid maximum resolution value: {max_resolution}")
+        #logging.debug(f"Invalid maximum resolution value: {max_resolution}")
         return False
         
     if resolution_wanted == '<=':

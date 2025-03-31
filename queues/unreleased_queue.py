@@ -53,7 +53,6 @@ class UnreleasedQueue:
                     continue
 
             if not release_date_str or release_date_str.lower() == 'unknown':
-                logging.warning(f"Item {item_identifier} has no release date. Keeping in Unreleased queue.")
                 continue
 
             try:
@@ -142,7 +141,7 @@ class UnreleasedQueue:
                 for item_id, release_time, time_until in sorted_report:
                     move_time = release_time - timedelta(hours=24)
                     # Corrected logging message to reflect target time used for report sorting
-                    logging.debug(f"  {item_id}: Target scrape at {release_time}, time until target: {time_until}")
+                    # logging.debug(f"  {item_id}: Target scrape at {release_time}, time until target: {time_until}")
             self.last_report_time = current_datetime
 
         if items_to_move:

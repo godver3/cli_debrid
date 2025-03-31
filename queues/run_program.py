@@ -117,9 +117,16 @@ class ProgramRunner:
         # Store original intervals for reference
         self.original_task_intervals = self.task_intervals.copy()
         
+        # Initialize content_sources attribute FIRST
+        self.content_sources = None
+        self.file_location_cache = {}  # Cache to store known file locations
+
         self.start_time = time.time()
+        # Initialize with base intervals FIRST
         self.last_run_times = {task: self.start_time for task in self.task_intervals}
-        
+        self.original_task_intervals = self.task_intervals.copy() # Keep original intervals
+
+        # Initialize enabled_tasks with base tasks FIRST
         self.enabled_tasks = {
             'Wanted', 
             'Scraping', 
@@ -149,8 +156,13 @@ class ProgramRunner:
             'task_precompute_airing_shows',
             'task_generate_queue_timing_report'
         }
-        
-        # Load saved task toggle states from JSON file
+
+        # THEN populate content source intervals AND add enabled content source tasks
+        logging.info("Performing initial population of content source intervals and enabled tasks...")
+        self.get_content_sources(force_refresh=True) # This call will now work as self.enabled_tasks exists
+        logging.info("Initial content source interval/task population complete.")
+
+        # FINALLY load saved task toggle states from JSON file (AFTER intervals are populated)
         try:
             import os
             import json
@@ -198,6 +210,10 @@ class ProgramRunner:
         # Add this line to store content sources
         self.content_sources = None
         self.file_location_cache = {}  # Cache to store known file locations
+
+        # *** Add this line to update the original intervals AFTER dynamic tasks are added ***
+        self.original_task_intervals = self.task_intervals.copy()
+        logging.info("Finalized original task intervals after content source and toggle loading.")
 
     def task_heartbeat(self):
         random_number = random.randint(1, 100)
@@ -268,6 +284,19 @@ class ProgramRunner:
     def should_run_task(self, task_name):
         if task_name not in self.enabled_tasks or task_name in self.currently_running_tasks:
             return False
+        
+        # Defensive check: Ensure task exists in interval/timing dictionaries
+        if task_name not in self.task_intervals or task_name not in self.last_run_times:
+            logging.error(f"Task '{task_name}' found in enabled_tasks but missing from task_intervals or last_run_times. Skipping run.")
+            # Optionally, try to re-initialize content sources here if it's a source task
+            if task_name.endswith('_wanted'):
+                 logging.warning(f"Attempting to re-initialize content sources due to missing task interval for {task_name}")
+                 try:
+                     self.get_content_sources(force_refresh=True)
+                 except Exception as e:
+                     logging.error(f"Error during forced content source refresh: {e}")
+            return False
+            
         current_time = time.time()
         time_since_last_run = current_time - self.last_run_times[task_name]
         should_run = time_since_last_run >= self.task_intervals[task_name]
@@ -385,9 +414,14 @@ class ProgramRunner:
                     
                 self._last_heartbeat_check = current_time
             
-            # Only check task health every 60 seconds
+            # Only check task health and adjust intervals every 60 seconds
             if current_time - self._last_task_health_check >= 60:
-                self.check_task_health()
+                stale_tasks_found = self.check_task_health()
+                # Determine queue state for adjustment
+                queues_are_empty = self.queue_manager.are_main_queues_empty() if hasattr(self, 'queue_manager') else True
+                # Call adjustment function
+                self.adjust_task_intervals_based_on_load(queues_are_empty, stale_tasks_found)
+                
                 self._last_task_health_check = current_time
             
             # Update frequently polled queues first (to check for new items)
@@ -406,7 +440,6 @@ class ProgramRunner:
             # Always track the last Unreleased queue update separately
             elif not hasattr(self, '_last_unreleased_update') or current_time - self._last_unreleased_update >= 300:  # 5 minutes
                 if 'Unreleased' in self.queue_manager.queues:
-                    logging.debug("Performing scheduled Unreleased queue update")
                     self.queue_manager.queues['Unreleased'].update()  # Update queue contents
                     self._last_unreleased_update = current_time
             
@@ -738,92 +771,80 @@ class ProgramRunner:
             logging.info("Starting program run")
             self.running = True  # Make sure running flag is set
             logging.info(f"Program running state: {self.running}")
-            
+
             self.run_initialization()
-            
+
             # Track activity to adjust sleep times
-            last_cycle_time = 0
-            idle_count = 0
-            max_idle_count = 10
             all_empty_count = 0
-            max_backoff_seconds = 5.0  # Maximum backoff of 5 seconds
-            last_unreleased_check = 0  # Track when we last checked the Unreleased queue
             unreleased_check_interval = 300  # Check Unreleased queue every 5 minutes (300 seconds)
-            
+
+            # Initialize sleep_time before the loop
+            sleep_time = 0.1
+
             while self.running:
                 try:
                     cycle_start = time.time()
                     current_time = cycle_start  # Store current time for later use
-                    
+
                     # Check if all relevant queues are empty before processing
                     all_queues_empty = True
                     if hasattr(self, 'queue_manager'):
                         all_queues_empty = self.queue_manager.are_main_queues_empty()
-                    
+
                     # Process all queues and tasks
                     self.process_queues()
-                    
+
                     # If all main queues are empty, we still need to periodically check the Unreleased queue
                     # since it contains items that might be ready to move to Wanted based on release dates
                     if all_queues_empty and hasattr(self, 'queue_manager') and 'Unreleased' in self.queue_manager.queues:
                         if not hasattr(self, '_last_unreleased_check'):
                             self._last_unreleased_check = 0
-                            
+
                         # Check if it's time to process the Unreleased queue
                         if current_time - self._last_unreleased_check >= unreleased_check_interval:
                             logging.debug("Checking Unreleased queue despite empty main queues")
-                            self.queue_manager.queues['Unreleased'].update()  # Update queue contents
+                            if 'Unreleased' in self.queue_manager.queues: # Check again as update might remove it
+                                self.queue_manager.queues['Unreleased'].update()  # Update queue contents
                             self.safe_process_queue('Unreleased')  # Process the queue
                             self._last_unreleased_check = current_time
-                    
-                    # Calculate cycle duration
-                    cycle_duration = time.time() - cycle_start
-                    
+
                     # Track empty queue state
                     if all_queues_empty:
-                        all_empty_count = min(all_empty_count + 1, 100)  # Cap at 100 to prevent integer overflow
+                        all_empty_count = min(all_empty_count + 1, 120)  # Cap at 120 (60 seconds with 0.5s sleep)
                     else:
                         all_empty_count = 0  # Reset when any queue has items
-                    
-                    # Adjust sleep time based on activity
-                    if cycle_duration < 0.05:  # Very quick cycle = low activity
-                        idle_count = min(idle_count + 1, max_idle_count)
+
+                    # Simplified sleep time logic
+                    if all_queues_empty:
+                        # Use a fixed longer sleep when main queues are idle
+                        sleep_time = 0.5 # 500ms sleep when idle
+                        # Log occasionally if queues remain empty
+                        if all_empty_count > 0 and all_empty_count % 60 == 0: # Log every 30 seconds (0.5s sleep * 60)
+                             logging.debug(f"All main queues empty for {all_empty_count} cycles, sleeping for {sleep_time:.2f}s (still checking Unreleased queue every {unreleased_check_interval/60:.1f} minutes)")
                     else:
-                        idle_count = max(idle_count - 2, 0)  # Reset faster when activity is detected
-                    
-                    # Dynamic sleep time based on activity level and empty queues
-                    if all_empty_count > 20:
-                        # Apply exponential backoff when queues remain empty (capped at max_backoff_seconds)
-                        sleep_time = min(max_backoff_seconds, 0.5 * (1.2 ** min(all_empty_count - 20, 10)))
-                        if all_empty_count % 10 == 0:  # Log only occasionally to avoid log spam
-                            logging.debug(f"All main queues empty for {all_empty_count} cycles, sleeping for {sleep_time:.2f}s (still checking Unreleased queue every {unreleased_check_interval/60:.1f} minutes)")
-                    elif idle_count >= max_idle_count:
-                        sleep_time = 0.5  # More idle = longer sleep (500ms)
-                    elif idle_count > 5:
-                        sleep_time = 0.25  # Somewhat idle = medium sleep (250ms)
-                    else:
-                        sleep_time = 0.1  # Active = shorter sleep (100ms)
-                        
+                        # Use a fixed short sleep when active
+                        sleep_time = 0.1 # 100ms sleep when active
+
                     # Check queue manager state (log pause only occasionally)
                     if hasattr(self, 'queue_manager'):
                         paused = self.queue_manager.is_paused()
-                        current_time = time.time()
+                        # Use current_time already captured
                         if paused:
                             # Initialize last_pause_log if it doesn't exist
                             if not hasattr(self, 'last_pause_log'):
                                 self.last_pause_log = 0
-                            
+
                             # Log only every 30 seconds
                             if current_time - self.last_pause_log >= 30:
                                 logging.warning("Queue manager is currently paused")
                                 self.last_pause_log = current_time
-                
+
                 except Exception as e:
                     logging.error(f"Unexpected error in main loop: {str(e)}")
                     logging.error(traceback.format_exc())
                     sleep_time = 1.0  # Longer sleep after error
                 finally:
-                    time.sleep(sleep_time)  # Dynamic sleep time
+                    time.sleep(sleep_time)  # Use the calculated sleep time
 
             logging.warning("Program has stopped running")
         except Exception as e:
@@ -847,75 +868,69 @@ class ProgramRunner:
         except:
             logging.error("Failed to synchronize time with NTP server")
 
-    def adjust_task_intervals_based_on_load(self, stale_tasks_detected=False):
+    def adjust_task_intervals_based_on_load(self, queues_are_empty: bool, stale_tasks_found: bool):
         """
-        Dynamically adjust task intervals based on system load and queue status.
-        When queues are empty or system is under heavy load, increase intervals.
-        When queues have work to do, restore normal intervals.
+        Dynamically adjust task intervals based on queue status and task health.
+        When main queues are empty and no tasks are stale, slightly increase intervals for long-running tasks.
+        Otherwise, ensure intervals are reset to their defaults.
         
         Args:
-            stale_tasks_detected: Whether stale tasks were detected in the health check
+            queues_are_empty: Whether the main processing queues are empty.
+            stale_tasks_found: Whether check_task_health detected stale tasks.
         """
         if not hasattr(self, '_interval_adjustment_time'):
             self._interval_adjustment_time = 0
         
         current_time = time.time()
-        # Only check every 30 seconds to avoid thrashing
-        if current_time - self._interval_adjustment_time < 30:
+        # Only adjust every 60 seconds to avoid thrashing
+        if current_time - self._interval_adjustment_time < 60:
             return
             
         self._interval_adjustment_time = current_time
         
-        # Check system load and queue status
-        cpu_usage = None
-        try:
-            import psutil
-            cpu_usage = psutil.cpu_percent(interval=0.1)  # Quick CPU check
-        except (ImportError, Exception) as e:
-            logging.debug(f"Could not get CPU usage: {str(e)}")
-            
-        all_queues_empty = self.queue_manager.are_main_queues_empty() if hasattr(self, 'queue_manager') else True
-        
-        # Conditions for slowing down tasks
-        high_load = cpu_usage is not None and cpu_usage > 80
-        low_activity = all_queues_empty
-        
-        # Slowdown factor
-        slowdown_factor = 1
-        
-        if stale_tasks_detected:
-            # Log the warning but don't increase slowdown factor
-            logging.warning("Stale tasks detected - system may be busy with other operations")
-            # Note: We're intentionally not modifying slowdown_factor here
-        elif high_load:
-            # High CPU load, slow down a bit
-            slowdown_factor = 2
-            logging.info(f"High CPU usage ({cpu_usage}%) - slowing down task intervals")
-        elif low_activity:
-            # Empty queues, can slow down slightly
-            slowdown_factor = 1.5
-            if hasattr(self, '_last_idle_log'):
-                if current_time - self._last_idle_log >= 300:  # Log every 5 minutes
-                    logging.info("All main queues empty - slightly slowing down task intervals")
-                    self._last_idle_log = current_time
-            else:
-                self._last_idle_log = current_time
-        
-        # Apply adjustments if needed
-        if slowdown_factor > 1:
-            # Apply slowdown to non-critical tasks
-            for task, original_interval in self.original_task_intervals.items():
-                # Don't slow down important tasks 
-                if task in ['Wanted', 'Scraping', 'Adding', 'task_heartbeat', 'task_send_notifications', 'Unreleased']:
-                    continue
-                    
-                # Apply slowdown
-                self.task_intervals[task] = original_interval * slowdown_factor
+        # Define non-critical tasks that can be slowed down when idle
+        # (Exclude frequent checks, content sources with short intervals, etc.)
+        slowdown_candidates = {
+            'Checking', 'Sleeping', 'Blacklisted', 'Pending Uncached', 'Upgrading',
+            'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
+            'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
+            'task_reconcile_queues', 'task_refresh_download_stats',
+            'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
+            'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
+            'task_check_database_health', 'task_run_library_maintenance',
+            'task_verify_symlinked_files', 'task_update_statistics_summary',
+            'task_precompute_airing_shows', 'task_generate_queue_timing_report'
+        }
+        # Also add content sources with intervals > 15 minutes (900 seconds)
+        for task, interval in self.original_task_intervals.items():
+             if task.endswith('_wanted') and interval > 900:
+                 slowdown_candidates.add(task)
+
+        idle_increase_seconds = 300 # Increase interval by 5 minutes when idle
+
+        # Determine if system is truly idle (empty queues AND no task delays)
+        system_is_idle = queues_are_empty and not stale_tasks_found
+
+        if system_is_idle:
+            if not hasattr(self, '_last_idle_adjustment_log') or current_time - self._last_idle_adjustment_log >= 600: # Log every 10 mins
+                 logging.info("System idle (main queues empty, no stale tasks) - slightly increasing non-critical task intervals.")
+                 self._last_idle_adjustment_log = current_time
+                 
+            # Apply slight increase to candidate tasks
+            for task in slowdown_candidates:
+                if task in self.original_task_intervals:
+                    self.task_intervals[task] = self.original_task_intervals[task] + idle_increase_seconds
         else:
-            # Reset to original intervals
-            for task, original_interval in self.original_task_intervals.items():
-                self.task_intervals[task] = original_interval
-                
+            if not queues_are_empty:
+                 logging.debug("System active (main queues have items) - ensuring default task intervals.")
+            if stale_tasks_found:
+                 logging.info("System potentially busy (stale tasks detected) - ensuring default task intervals.")
+                 
+            # Reset all intervals to original values
+            if self.task_intervals != self.original_task_intervals:
+                 logging.info("Resetting task intervals to default values.")
+                 self.task_intervals = self.original_task_intervals.copy()
+
     def check_task_health(self):
         """Check task health and reset any stale tasks, but only log actual issues"""
         current_time = time.time()
@@ -945,7 +960,7 @@ class ProgramRunner:
                 logging.info(f"Multiple stale tasks detected ({len(stale_tasks)}), could be slower task processing but likely normal")
         
         # Adjust task intervals based on system load - but don't apply slowdown for stale tasks
-        self.adjust_task_intervals_based_on_load(stale_tasks_detected=False)
+        # self.adjust_task_intervals_based_on_load(stale_tasks_detected=False) # Removed call - will be handled elsewhere
                 
         return len(stale_tasks) > 0  # Return whether stale tasks were found
 
@@ -1123,63 +1138,65 @@ class ProgramRunner:
         from database.core import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
+        reconciled_count = 0
+        deleted_count = 0
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         try:
-            # Get all items in Checking state
+            # Find pairs of (Checking item, Matching non-Checking item) with the same filled_by_file
             cursor.execute("""
-                SELECT * FROM media_items 
-                WHERE state = 'Checking' 
-                AND filled_by_file IS NOT NULL
+                SELECT 
+                    c.id as checking_id, c.title as checking_title, c.type as checking_type, c.filled_by_file,
+                    m.id as matching_id, m.title as matching_title, m.state as matching_state, m.type as matching_type
+                FROM media_items c
+                JOIN media_items m ON c.filled_by_file = m.filled_by_file AND c.id != m.id
+                WHERE c.state = 'Checking'
+                  AND c.filled_by_file IS NOT NULL
+                  AND m.state != 'Checking'
             """)
-            checking_items = cursor.fetchall()
+            reconciliation_pairs = cursor.fetchall()
+
+            items_to_update = []
+            items_to_delete = set() # Use set to avoid duplicates
+
+            for pair in reconciliation_pairs:
+                # Log the reconciliation
+                reconciliation_logger.info(
+                    f"Reconciliation Found:\n"
+                    f"  Checking Item: ID={pair['checking_id']}, Title={pair['checking_title']}, "
+                    f"Type={pair['checking_type']}, File={pair['filled_by_file']}\n"
+                    f"  Matching Item: ID={pair['matching_id']}, Title={pair['matching_title']}, "
+                    f"State={pair['matching_state']}, Type={pair['matching_type']}"
+                )
+                items_to_update.append(pair['checking_id'])
+                items_to_delete.add(pair['matching_id'])
+
+            if items_to_update:
+                # Bulk update Checking items to Collected state
+                update_sql = f"UPDATE media_items SET state = 'Collected', collected_at = ? WHERE id IN ({','.join(['?']*len(items_to_update))})"
+                params = [now_str] + items_to_update
+                cursor.execute(update_sql, params)
+                reconciled_count = cursor.rowcount
+                reconciliation_logger.info(f"Updated {reconciled_count} checking items to Collected: IDs {items_to_update}")
             
-            for checking_item in checking_items:
-                if not checking_item['filled_by_file']:
-                    continue
-
-                # Find matching items with the same filled_by_file
-                cursor.execute("""
-                    SELECT * FROM media_items 
-                    WHERE filled_by_file = ? 
-                    AND id != ? 
-                    AND state != 'Checking'
-                """, (checking_item['filled_by_file'], checking_item['id']))
-                matching_items = cursor.fetchall()
-
-                for matching_item in matching_items:
-                    # Log the reconciliation
-                    reconciliation_logger.info(
-                        f"Reconciling items:\n"
-                        f"  Checking Item: ID={checking_item['id']}, Title={checking_item['title']}, "
-                        f"Type={checking_item['type']}, File={checking_item['filled_by_file']}\n"
-                        f"  Matching Item: ID={matching_item['id']}, Title={matching_item['title']}, "
-                        f"State={matching_item['state']}, Type={matching_item['type']}"
-                    )
-
-                    # Update the checking item to Collected state with timestamp
-                    cursor.execute("""
-                        UPDATE media_items 
-                        SET state = 'Collected', 
-                            collected_at = ? 
-                        WHERE id = ?
-                    """, (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), checking_item['id']))
-
-                    # Delete the matching item
-                    cursor.execute('DELETE FROM media_items WHERE id = ?', (matching_item['id'],))
-                    
-                    reconciliation_logger.info(
-                        f"Updated checking item (ID={checking_item['id']}) to Collected state and "
-                        f"deleted matching item (ID={matching_item['id']})"
-                    )
+            if items_to_delete:
+                # Bulk delete the matching items
+                # Ensure items being updated aren't accidentally deleted if IDs overlap somehow (unlikely)
+                delete_ids = list(items_to_delete - set(items_to_update))
+                if delete_ids:
+                    delete_sql = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(delete_ids))})"
+                    cursor.execute(delete_sql, delete_ids)
+                    deleted_count = cursor.rowcount
+                    reconciliation_logger.info(f"Deleted {deleted_count} matching items: IDs {delete_ids}")
 
             conn.commit()
-            logging.info("Queue reconciliation completed successfully")
+            if reconciled_count > 0 or deleted_count > 0:
+                 logging.info(f"Queue reconciliation completed: {reconciled_count} items updated to Collected, {deleted_count} duplicate items deleted.")
+            else:
+                 logging.debug("Queue reconciliation found no items needing reconciliation.")
             
-        except Exception as e:
-            logging.error(f"Error during queue reconciliation: {str(e)}")
-            conn.rollback()
-        finally:
-            conn.close()
+        except sqlite3.Error as e:
+            logging.error(f"Database error during queue reconciliation: {str(e)}")
 
     def reinitialize(self):
         """Force reinitialization of the program runner to pick up new settings"""
@@ -1286,6 +1303,8 @@ class ProgramRunner:
             updated_items = 0
             not_found_items = 0
 
+            sections_to_update = {}  # Store {section_object: set_of_paths}
+
             for item in items:
                 filled_by_title = item['filled_by_title']
                 filled_by_file = item['filled_by_file']
@@ -1304,70 +1323,126 @@ class ProgramRunner:
                     logging.debug(f"Skipping previously verified file: {filled_by_title}")
                     continue
 
-                if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
+                file_found_on_disk = False
+                actual_file_path = None
+                if os.path.exists(file_path):
+                    file_found_on_disk = True
+                    actual_file_path = file_path
+                elif os.path.exists(file_path_no_ext):
+                    file_found_on_disk = True
+                    actual_file_path = file_path_no_ext
+                else:
                     # Try to find the file anywhere under plex_file_location
                     from utilities.local_library_scan import find_file
                     found_path = find_file(filled_by_file, plex_file_location)
                     if found_path:
                         logging.info(f"Found file in alternate location: {found_path}")
+                        file_found_on_disk = True
                         actual_file_path = found_path
-                        self.file_location_cache[cache_key] = 'exists'
+                        self.file_location_cache[cache_key] = 'exists' # Cache if found via find_file
                     else:
                         not_found_items += 1
                         logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
                         continue
 
-                # Use the path that exists (prefer original if both exist)
-                actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
-                logging.info(f"Found file on disk: {actual_file_path}")
-                self.file_location_cache[cache_key] = 'exists'
-                
-                # Update item state to Collected
-                conn = get_db_connection()
-                cursor = conn.cursor()
-                now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                cursor.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ?', (now, item['id']))
-                conn.commit()
-                conn.close()
-                updated_items += 1
+                if file_found_on_disk:
+                    logging.info(f"Found file on disk: {actual_file_path}")
+                    if cache_key not in self.file_location_cache:
+                        self.file_location_cache[cache_key] = 'exists'
+                    updated_items += 1 # Count item as 'updated' if found
+                    
+                    # Update item state to Collected if found
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    # Important: Only update if the item is still in 'Checking' state
+                    cursor.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"', (now, item['id']))
+                    if cursor.rowcount > 0: # Check if the update actually happened
+                        conn.commit()
+                        logging.info(f"Updated item {item['id']} ({item.get('title', 'N/A')}) to Collected state.")
 
-                # Add post-processing call after state update
-                updated_item = get_media_item_by_id(item['id'])
-                if updated_item:
-                    handle_state_change(dict(updated_item))
+                        # Add post-processing call after state update
+                        updated_item_details = get_media_item_by_id(item['id']) # Fetch the updated details
+                        if updated_item_details:
+                            handle_state_change(dict(updated_item_details))
 
-                # Send notification for collected item
-                try:
-                    from routes.notifications import send_notifications
-                    from routes.settings_routes import get_enabled_notifications_for_category
-                    from routes.extensions import app
+                        # Send notification for collected item
+                        try:
+                            # Imports moved inside to avoid potential top-level issues if routes aren't ready
+                            from routes.notifications import send_notifications
+                            from routes.settings_routes import get_enabled_notifications_for_category
+                            from routes.extensions import app
 
-                    with app.app_context():
-                        response = get_enabled_notifications_for_category('collected')
-                        if response.json['success']:
-                            enabled_notifications = response.json['enabled_notifications']
-                            if enabled_notifications:
-                                # Get full item details for notification
-                                from database.database_reading import get_media_item_by_id
-                                item_details = get_media_item_by_id(item['id'])
-                                notification_data = {
-                                    'id': item['id'],
-                                    'title': item_details.get('title', 'Unknown Title'),
-                                    'type': item_details.get('type', 'unknown'),
-                                    'year': item_details.get('year', ''),
-                                    'version': item_details.get('version', ''),
-                                    'season_number': item_details.get('season_number'),
-                                    'episode_number': item_details.get('episode_number'),
-                                    'new_state': 'Collected'
-                                }
-                                send_notifications([notification_data], enabled_notifications, notification_category='collected')
-                except Exception as e:
-                    logging.error(f"Failed to send collected notification: {str(e)}")
+                            with app.app_context():
+                                response = get_enabled_notifications_for_category('collected')
+                                # Check status code and content type for safety
+                                if response.status_code == 200 and response.is_json:
+                                    response_data = response.get_json()
+                                    if response_data.get('success'):
+                                        enabled_notifications = response_data.get('enabled_notifications')
+                                        if enabled_notifications:
+                                            # Use updated_item_details fetched above
+                                            notification_data = {
+                                                'id': updated_item_details['id'],
+                                                'title': updated_item_details.get('title', 'Unknown Title'),
+                                                'type': updated_item_details.get('type', 'unknown'),
+                                                'year': updated_item_details.get('year', ''),
+                                                'version': updated_item_details.get('version', ''),
+                                                'season_number': updated_item_details.get('season_number'),
+                                                'episode_number': updated_item_details.get('episode_number'),
+                                                'new_state': 'Collected'
+                                            }
+                                            send_notifications([notification_data], enabled_notifications, notification_category='collected')
+                                else:
+                                     logging.error(f"Failed to get enabled notifications: Status {response.status_code}, Response: {response.text}")
+                        except Exception as e:
+                            logging.error(f"Failed to send collected notification for item {item['id']}: {str(e)}")
+                    else:
+                        # Log if the item wasn't updated (e.g., it was already Collected or state changed concurrently)
+                        logging.debug(f"Item {item['id']} was not updated to Collected (possibly already in correct state or state changed concurrently).")
+                    conn.close()
 
-            logging.info(f"Plex check disabled summary: {updated_items} items marked as Collected, {not_found_items} items not found")
-            if get_setting('Plex', 'disable_plex_library_checks'):
-                logging.info(f"Plex library checks disabled, skipping Plex scans")
-                return
+                    # Identify relevant Plex sections and paths to update for this file
+                    for section in sections:
+                        for location in section.locations:
+                            # Check if the found file path is within this library location
+                            # This check needs refinement based on how Zurg maps files
+                            # For now, let's assume the file *should* be based on filled_by_title
+                            expected_path = os.path.join(location, filled_by_title)
+                            # More robust check: is actual_file_path under location?
+                            try:
+                                if Path(actual_file_path).resolve().is_relative_to(Path(location).resolve()):
+                                    if section not in sections_to_update:
+                                        sections_to_update[section] = set()
+                                    # We might want to update the specific file path or the parent directory
+                                    # Updating the parent dir (expected_path) seems more aligned with Plex behavior
+                                    sections_to_update[section].add(expected_path)
+                                    # break # Found the correct section for this file
+                            except ValueError: # Can happen if paths are on different drives on Windows
+                                pass # Ignore this section if paths can't be compared
+                            except Exception as e:
+                                logging.warning(f"Error checking path relation for {actual_file_path} and {location}: {e}")
+
+            # Now, update the relevant Plex sections once per section, using one relevant path
+            if sections_to_update:
+                logging.info(f"Updating {len(sections_to_update)} Plex sections...")
+                for section, paths in sections_to_update.items():
+                    # Decide which path to use for the update - maybe the first one found?
+                    path_to_scan = next(iter(paths)) if paths else None
+                    if path_to_scan:
+                        try:
+                            logging.info(f"Updating Plex section '{section.title}' for path: {path_to_scan}")
+                            section.update(path=path_to_scan)
+                            updated_sections.add(section) # Keep track for final summary
+                        except Exception as e:
+                            logging.error(f"Failed to update Plex section '{section.title}' with path '{path_to_scan}': {str(e)}", exc_info=True)
+                    else:
+                         logging.warning(f"No valid paths found to update section '{section.title}'")
+
+            # Log summary of operations
+            logging.info(f"Plex check summary: {updated_items} items found on disk, {not_found_items} items not found")
+            if updated_sections:
+                logging.info("Plex sections updated in this run:")
 
         if not get_setting('Plex', 'url', default=False):
                 return

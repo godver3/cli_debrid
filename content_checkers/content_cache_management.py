@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-CACHE_EXPIRY_DAYS = 7
+CACHE_EXPIRY_HOURS = 6
 
 def get_cache_file_path(source_id: str) -> str:
     """Get the cache file path for a specific content source."""
@@ -88,7 +88,7 @@ def should_process_item(item: Dict[str, Any], source_id: str, cache: Dict[str, A
         last_processed = datetime.fromtimestamp(last_processed)
     
     # Check if cache has expired
-    if datetime.now() - last_processed >= timedelta(days=CACHE_EXPIRY_DAYS):
+    if datetime.now() - last_processed >= timedelta(hours=CACHE_EXPIRY_HOURS):
         return True
     
     # For TV shows with season info, check if requested seasons match

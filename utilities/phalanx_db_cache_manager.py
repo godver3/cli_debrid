@@ -58,24 +58,21 @@ class PhalanxDBClassManager:
         for url in self._urls:
             # Determine timeout based on endpoint and connection type
             if endpoint in ['/api/debug', '/api/entries']:
-                timeout = 0.5 if 'localhost' in url else 0.5  # Longer timeouts for status endpoints
+                timeout = 1.0 if 'localhost' in url else 1.0  # Longer timeouts for status endpoints
             else:
-                timeout = 0.5 if 'localhost' in url else 0.5  # Default timeouts for other endpoints
+                timeout = 1.0 if 'localhost' in url else 1.0  # Default timeouts for other endpoints
                 
             try:
                 full_url = f"{url}{endpoint}"
-                logging.debug(f"Trying URL: {full_url}")
                 
                 if method == 'GET':
                     response = self._session.get(full_url, headers=self.headers, params=params, timeout=timeout)
                     response_text = response.text
-                    logging.debug(f"URL {url} response status: {response.status_code}, content: {response_text[:200]}")
                     if response.status_code == 200:
                         try:
                             result = response.json()
                             if result:  # Found a working URL
                                 self._primary_url = url  # Cache this working URL
-                                logging.debug(f"Found working URL: {url}")
                                 return result, url, errors
                         except json.JSONDecodeError as je:
                             logging.debug(f"Failed to parse JSON from URL {url}: {str(je)}")
@@ -90,25 +87,20 @@ class PhalanxDBClassManager:
                 elif method == 'POST':
                     response = self._session.post(full_url, headers=self.headers, json=data, timeout=timeout)
                     response_text = response.text
-                    logging.debug(f"URL {url} response status: {response.status_code}, content: {response_text[:200]}")
                     if response.status_code in [200, 201]:  # Accept both 200 OK and 201 Created
                         try:
                             result = response.json()
                             self._primary_url = url  # Cache this working URL
-                            logging.debug(f"Found working URL: {url}")
                             return result, url, errors
                         except json.JSONDecodeError as je:
                             # Still consider it successful even if we cannot parse JSON
                             if response_text:
-                                logging.debug(f"Request succeeded but returned non-JSON: {response_text[:200]}")
                                 self._primary_url = url
                                 return {"success": True}, url, errors
-                            logging.debug(f"Failed to parse JSON from URL {url}: {str(je)}")
                             errors.append((url, f"JSON parse error: {str(je)}"))
                     else:
                         errors.append((url, f"HTTP {response.status_code}: {response_text[:200]}"))
             except Exception as e:
-                logging.debug(f"URL {url} failed with exception: {str(e)}")
                 errors.append((url, str(e)))
                 continue
                 

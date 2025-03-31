@@ -437,8 +437,8 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
         logging.error(f"Error fetching TMDb data: {e}")
         return {}
 
-def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None) -> Dict[str, Any]:
-    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}")
+def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None, allow_specials: bool = False) -> Dict[str, Any]:
+    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, allow_specials: {allow_specials}")
     
     trakt_client_id = get_setting('Trakt', 'client_id')
     
@@ -488,6 +488,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
         tmdb_data = get_tmdb_data(media_id, 'tv', season)
 
         if season is not None:
+            # Fetch episode details
             return {
                 "episode_results": [
                     {
@@ -505,11 +506,12 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
                         "multi": False
                     }
                     for episode in trakt_data
-                    if episode['number'] != 0  # Only filter out special episodes
+                    # Conditionally filter out special episodes (number 0) based on allow_specials flag
+                    if allow_specials or episode['number'] != 0 
                 ]
             }
         else:
-            # Get TMDB season data for fallback air dates
+            # Fetch season details
             tmdb_seasons = tmdb_data.get('seasons', [])
             tmdb_seasons_dict = {s['season_number']: s for s in tmdb_seasons}
             
@@ -518,18 +520,19 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
                     {
                         "id": media_id,
                         "title": title,
-                        "season_id": season['ids']['trakt'],
-                        "season_num": season['number'],
+                        "season_id": season_data['ids']['trakt'],
+                        "season_num": season_data['number'],
                         "year": year,
                         "media_type": 'tv',
-                        "poster_path": tmdb_data.get('poster_path'),
-                        "air_date": season.get('first_aired') or tmdb_seasons_dict.get(season['number'], {}).get('air_date'),
-                        "season_overview": season.get('overview', '') or tmdb_seasons_dict.get(season['number'], {}).get('overview', ''),
-                        "episode_count": season.get('episode_count', 0) or tmdb_seasons_dict.get(season['number'], {}).get('episode_count', 0),
+                        "poster_path": tmdb_seasons_dict.get(season_data['number'], {}).get('poster_path') or tmdb_data.get('poster_path'), # Fallback to show poster
+                        "air_date": season_data.get('first_aired') or tmdb_seasons_dict.get(season_data['number'], {}).get('air_date'),
+                        "season_overview": season_data.get('overview', '') or tmdb_seasons_dict.get(season_data['number'], {}).get('overview', ''),
+                        "episode_count": season_data.get('episode_count', 0) or tmdb_seasons_dict.get(season_data['number'], {}).get('episode_count', 0),
                         "multi": True
                     }
-                    for season in trakt_data
-                    if season['number'] != 0  # Only filter out special episodes
+                    for season_data in trakt_data
+                    # Conditionally filter out special seasons (number 0) based on allow_specials flag
+                    if allow_specials or season_data['number'] != 0 
                 ]
             }
     except api.exceptions.RequestException as e:

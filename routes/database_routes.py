@@ -15,6 +15,7 @@ from datetime import datetime
 from time import sleep
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from database.torrent_tracking import get_torrent_history
+from utilities.web_scraper import get_media_meta
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
@@ -781,3 +782,121 @@ def test_phalanx_hash():
     except Exception as e:
         logging.error(f"Error testing hash: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@database_bp.route('/visual')
+@admin_required
+def visual_browser():
+    """Render the visual database browser page."""
+    return render_template('database_visual.html')
+
+@database_bp.route('/visual_data')
+@admin_required
+def visual_data():
+    """Fetch data formatted for the visual browser, grouped by unique media, with pagination and search."""
+    conn = None
+    try:
+        # Get limit, offset, and search term from query parameters
+        limit = request.args.get('limit', default=50, type=int)
+        offset = request.args.get('offset', default=0, type=int)
+        search_term = request.args.get('search', default='', type=str).strip()
+        limit = max(1, min(limit, 200))
+
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        columns = ['MIN(id) as id', 'title', 'year', 'imdb_id', 'tmdb_id', 'type']
+        columns_str = ", ".join(columns)
+        output_columns = ['id', 'title', 'year', 'imdb_id', 'tmdb_id', 'type']
+
+        # Parameters for the query
+        params = []
+
+        # WHERE clause for search (apply before grouping)
+        where_clause = ""
+        if search_term:
+            where_clause = "WHERE title LIKE ?"
+            params.append(f'%{search_term}%')
+
+        # Base query structure (including potential WHERE clause)
+        # Improved GROUP BY to prioritize non-null IDs
+        base_query = f"""
+            FROM media_items
+            {where_clause}
+            GROUP BY
+                CASE
+                    WHEN imdb_id IS NOT NULL AND imdb_id != '' THEN imdb_id
+                    WHEN tmdb_id IS NOT NULL AND tmdb_id != '' THEN CAST(tmdb_id AS TEXT) -- Cast tmdb_id to TEXT for concatenation
+                    ELSE title || '-' || year
+                END
+        """
+
+        # Query to get the current batch of items
+        query = f"""
+            SELECT {columns_str}
+            {base_query}
+            ORDER BY title, year
+            LIMIT ? OFFSET ?
+        """
+
+        # Add limit and offset to parameters
+        query_params = params + [limit, offset]
+        logging.debug(f"Executing visual data query: {query} with params {query_params}")
+        cursor.execute(query, query_params)
+        items_raw = cursor.fetchall()
+        logging.debug(f"Fetched {len(items_raw)} raw items")
+
+        # Process items to add poster path
+        items = []
+        for row in items_raw:
+            item_dict = dict(zip(output_columns, row))
+            # Fetch media metadata including poster path
+            tmdb_id = item_dict.get('tmdb_id')
+            media_type = item_dict.get('type')
+            poster_path = '/static/images/placeholder.png' # Default placeholder
+
+            if tmdb_id and media_type:
+                logging.debug(f"Fetching metadata for TMDB ID: {tmdb_id}, Type: {media_type}")
+                try:
+                    # Use get_media_meta to leverage caching and TMDB API (if available)
+                    media_meta = get_media_meta(tmdb_id, media_type)
+                    if media_meta and media_meta[0]: # Check if poster_url (index 0) exists
+                        poster_path = media_meta[0]
+                        logging.debug(f"Got poster path: {poster_path}")
+                    else:
+                        logging.debug(f"No poster path found in metadata for {tmdb_id}")
+                        poster_path = '/static/images/placeholder.png' # Ensure placeholder if metadata lacks poster
+
+                except Exception as meta_error:
+                    logging.error(f"Error fetching metadata for TMDB ID {tmdb_id}, Type {media_type}: {meta_error}", exc_info=True)
+                    poster_path = '/static/images/placeholder.png' # Ensure placeholder on error
+            else:
+                logging.debug(f"Skipping metadata fetch for item: {item_dict.get('title')}, TMDB ID: {tmdb_id}, Type: {media_type}")
+
+            item_dict['poster_path'] = poster_path
+            items.append(item_dict)
+
+        # Query to check if there are more items beyond the current batch
+        more_check_query = f"""
+            SELECT 1
+            {base_query}
+            ORDER BY title, year
+            LIMIT 1 OFFSET ?
+        """
+        more_check_params = params + [offset + limit]
+        logging.debug(f"Executing more check query: {more_check_query} with params {more_check_params}")
+        cursor.execute(more_check_query, more_check_params)
+        has_more = cursor.fetchone() is not None
+        logging.debug(f"Has more items: {has_more}")
+
+        return jsonify({'success': True, 'items': items, 'has_more': has_more})
+
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in visual_data route: {str(e)}")
+        return jsonify({'success': False, 'error': f"Database error: {str(e)}"}), 500
+    except Exception as e:
+        logging.error(f"Unexpected error in visual_data route: {str(e)}", exc_info=True) # Log full traceback
+        return jsonify({'success': False, 'error': "An unexpected error occurred."}), 500
+    finally:
+        if conn:
+            conn.close()

@@ -292,8 +292,9 @@ class ScrapingQueue:
 
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False):
         item_identifier = queue_manager.generate_identifier(item)
+        original_season = item.get('season_number')
+        original_episode = item.get('episode_number')
 
-        # Add check for fall_back_to_single_scraper flag
         from database import get_media_item_by_id
         if get_media_item_by_id(item['id']).get('fall_back_to_single_scraper'):
             is_multi_pack = False
@@ -321,18 +322,42 @@ class ScrapingQueue:
 
         is_anime = True if item.get('genres') and 'anime' in item['genres'] else False
         
-        # For episodes, filter by exact season/episode match
+        # For episodes, filter by exact season/episode match, considering XEM mapping
         if not is_anime:
-            season = None
-            episode = None
             if item['type'] == 'episode' and not is_multi_pack:
-                season = item.get('season_number')
-                episode = item.get('episode_number')
-            results = [
-                r for r in results 
-                if (season is None or r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season])
-                and (episode is None or r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode])
-            ]
+                # Filter results based on scene mapping if available, otherwise original item S/E
+                filtered_results_using_mapping = []
+                for r in results:
+                    parsed_info = r.get('parsed_info', {})
+                    season_episode_info = parsed_info.get('season_episode_info', {})
+                    parsed_seasons = season_episode_info.get('seasons', [])
+                    parsed_episodes = season_episode_info.get('episodes', [])
+                    
+                    scene_mapping = r.get('xem_scene_mapping')
+                    
+                    target_season = None
+                    target_episode = None
+                    
+                    if scene_mapping: # Use scene mapping if present in result
+                        target_season = scene_mapping.get('season')
+                        target_episode = scene_mapping.get('episode')
+                        # logging.debug(f"Using scene mapping S{target_season}E{target_episode} for result: {r.get('original_title')}")
+                    else: # Fallback to original item numbers if no mapping attached
+                        target_season = original_season
+                        target_episode = original_episode
+                        # logging.debug(f"Using original item S{target_season}E{target_episode} for result: {r.get('original_title')}")
+                        
+                    # Perform the check using the determined target season/episode
+                    # Handles cases where target_season/target_episode might be None
+                    season_match = (target_season is None or parsed_seasons == [target_season])
+                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    
+                    if season_match and episode_match:
+                        filtered_results_using_mapping.append(r)
+                    # else: 
+                    #    logging.debug(f"Filtering out result {r.get('original_title')} - Parsed: S{parsed_seasons}E{parsed_episodes}, Target: S{target_season}E{target_episode}")
+                
+                results = filtered_results_using_mapping # Update results list
 
         if results or item['type'] != 'episode':
             return results, filtered_out
@@ -360,28 +385,50 @@ class ScrapingQueue:
         if not skip_filter and not item.get('disable_not_wanted_check'):
             individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
 
-        # For episodes, ensure we have the correct season and episode
-        if item['type'] == 'episode':
-            season = item.get('season_number')
-            episode = item.get('episode_number')
-            if season is not None and episode is not None:
-                # First, mark any results that are date-based
-                for result in individual_results:
-                    if result.get('parsed_info', {}).get('date'):
-                        result['is_date_based'] = True
-
-                # Filter only non-date-based results by season/episode
-                date_based_results = [r for r in individual_results if r.get('is_date_based', False)]
-                regular_results = [r for r in individual_results if not r.get('is_date_based', False)]
+        # For episodes, use the original season/episode numbers from the item for the fallback filtering logic as well
+        # The logic below compares against these original numbers unless overridden by scene_mapping in the result
+        season = original_season # Ensure we use the original item season number here
+        episode = original_episode # Ensure we use the original item episode number here
+        
+        if season is not None and episode is not None:
+            date_based_results = []
+            regular_results = []
+            # Separate date-based and regular results
+            for result in individual_results:
+                if result.get('parsed_info', {}).get('date'):
+                    result['is_date_based'] = True # Mark it
+                    date_based_results.append(result)
+                else:
+                    regular_results.append(result)
+            
+            filtered_regular_results = []
+            for r in regular_results:
+                parsed_info = r.get('parsed_info', {})
+                season_episode_info = parsed_info.get('season_episode_info', {})
+                parsed_seasons = season_episode_info.get('seasons', [])
+                parsed_episodes = season_episode_info.get('episodes', [])
                 
-                filtered_regular_results = [
-                    r for r in regular_results 
-                    if r.get('parsed_info', {}).get('season_episode_info', {}).get('seasons', []) == [season]
-                    and r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []) == [episode]
-                ]
+                scene_mapping = r.get('xem_scene_mapping')
+                
+                target_season = None
+                target_episode = None
+                
+                if scene_mapping: # Use scene mapping if present
+                    target_season = scene_mapping.get('season')
+                    target_episode = scene_mapping.get('episode')
+                else: # Fallback to original item numbers
+                    target_season = season # Uses the original item season from above
+                    target_episode = episode # Uses the original item episode from above
+                    
+                # Perform the check using the determined target season/episode
+                season_match = (target_season is None or parsed_seasons == [target_season])
+                episode_match = (target_episode is None or parsed_episodes == [target_episode])
 
-                # Combine date-based and filtered regular results
-                individual_results = date_based_results + filtered_regular_results
+                if season_match and episode_match:
+                    filtered_regular_results.append(r)
+
+            # Combine date-based and filtered regular results
+            individual_results = date_based_results + filtered_regular_results
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")

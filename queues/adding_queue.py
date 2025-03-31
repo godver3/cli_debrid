@@ -158,6 +158,12 @@ class AddingQueue:
                         self._handle_failed_item(item, "Invalid scrape results format", queue_manager)
                         continue
                 
+                # Ensure results is a list of dictionaries
+                if not isinstance(results, list) or not all(isinstance(r, dict) for r in results):
+                    logging.error(f"Scrape results are not in the expected format (list of dicts) for {item_identifier}")
+                    self._handle_failed_item(item, "Invalid scrape results structure", queue_manager)
+                    continue
+                    
                 if not results:
                     logging.info(f"No scrape results found for {item_identifier}")
                     self._handle_failed_item(item, "No results found", queue_manager)
@@ -213,8 +219,37 @@ class AddingQueue:
                     logging.info(f"Filtered {len(files) - len(filtered_files)} files out of {len(files)} total files")
                     files = filtered_files
 
+                # --- Determine target season/episode for matching, considering XEM --- 
+                target_season = item.get('season_number')
+                target_episode = item.get('episode_number')
+                best_result_for_mapping = results[0] if results else None
+                
+                if item.get('type') == 'episode' and best_result_for_mapping:
+                    scene_mapping = best_result_for_mapping.get('xem_scene_mapping')
+                    if scene_mapping:
+                        mapped_season = scene_mapping.get('season')
+                        mapped_episode = scene_mapping.get('episode')
+                        if mapped_season is not None and mapped_episode is not None:
+                            logging.info(f"Using XEM mapping S{mapped_season}E{mapped_episode} for media matching (original S{item.get('season_number')}E{item.get('episode_number')}).")
+                            target_season = mapped_season
+                            target_episode = mapped_episode
+                        else:
+                            logging.warning("Found xem_scene_mapping in result, but season or episode was missing.")
+                    # else: No mapping found, target_season/episode remain original
+                # --- End XEM determination --- 
+                
+                # Create a copy of the item potentially updated with target S/E for matching
+                item_for_matching = item.copy()
+                if item.get('type') == 'episode':
+                    item_for_matching['season_number'] = target_season
+                    item_for_matching['episode_number'] = target_episode
+                    # Clear original keys if they exist and are different, to avoid confusion in matcher?
+                    # if 'season' in item_for_matching: item_for_matching['season'] = target_season
+                    # if 'episode' in item_for_matching: item_for_matching['episode'] = target_episode
+                    
                 torrent_title = self.debrid_provider.get_cached_torrent_title(torrent_info.get('hash'))
-                matches = self.media_matcher.match_content(files, item)
+                # Use the modified item copy for matching
+                matches = self.media_matcher.match_content(files, item_for_matching)
                 
                 if not matches:
                     logging.error(f"No matching files found in torrent for {item_identifier}")
@@ -258,7 +293,26 @@ class AddingQueue:
                     
                     for related in related_items:
                         related_identifier = f"{related.get('title')} S{related.get('season_number')}E{related.get('episode_number')}"
-                        related_matches = self.media_matcher.match_content(files, related)
+                        # We need to pass the correct target S/E for matching related items too
+                        related_target_season = related.get('season_number')
+                        related_target_episode = related.get('episode_number')
+                        
+                        # Check if the *original* torrent result had XEM mapping that might apply
+                        # (Assume related items from same torrent use same scene numbering)
+                        if best_result_for_mapping:
+                           scene_mapping = best_result_for_mapping.get('xem_scene_mapping')
+                           if scene_mapping:
+                               # Use the *scene* S/E from the mapping found for the primary item
+                               related_target_season = scene_mapping.get('season')
+                               related_target_episode = scene_mapping.get('episode')
+                               logging.debug(f"Using scene mapping S{related_target_season}E{related_target_episode} for matching related item {related_identifier}")
+                               
+                        related_item_for_matching = related.copy()
+                        related_item_for_matching['season_number'] = related_target_season
+                        related_item_for_matching['episode_number'] = related_target_episode
+                        
+                        # Use the modified related item for matching
+                        related_matches = self.media_matcher.match_content(files, related_item_for_matching)
                         if related_matches:
                             # Pass resolution to related episodes
                             resolution = None
