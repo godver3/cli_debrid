@@ -19,9 +19,6 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
     # Get the raw result from PTT
     raw_result = parse_title(title)
     
-    # Log the raw PTT results for debugging
-    logging.debug(f"RAW PTT RESULT: {raw_result}")
-    
     # Create a copy to avoid modifying the original
     result = raw_result.copy()
     
@@ -124,10 +121,7 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
             try:
                 # Get the parsed info from PTT
                 parsed_info = _parse_with_ptt(title)
-                
-                # Log the full parsed info at this stage
-                logging.debug(f"PTT parsed info before processing: {parsed_info}")
-                
+
                 # Extract the clean title - if there's a site field, make sure it's not in the title
                 clean_title = parsed_info.get('title', title)
                 site = parsed_info.get('site')
@@ -141,13 +135,11 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                         site = site_match.group(1).strip()
                         # Clean the title by removing the site prefix
                         clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
-                        logging.debug(f"Extracted site '{site}' from title, cleaned title: '{clean_title}'")
                 
                 # If site exists in PTT result but the title still starts with it, clean it
                 if site and isinstance(clean_title, str) and clean_title.lower().startswith(site.lower()):
                     # Strip the site and any trailing dash/space from the title
                     clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
-                    logging.debug(f"Cleaned title from site prefix: '{clean_title}'")
                 
                 # Further cleaning - if title still contains site-like patterns at the beginning
                 if isinstance(clean_title, str):
@@ -156,7 +148,6 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                     if leftover_pattern.search(clean_title):
                         # Further clean the title
                         cleaned_title = leftover_pattern.sub("", clean_title)
-                        logging.debug(f"Further cleaned site prefix from title: '{cleaned_title}'")
                         clean_title = cleaned_title
                 
                 # Convert PTT result to our standard format
@@ -180,9 +171,6 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                     'site': site,  # Store site info separately
                     'trash': parsed_info.get('trash', False)  # Include trash flag
                 }
-                
-                # Log the processed info
-                logging.debug(f"Processed title info: {processed_info}")
                 
                 # Handle size if provided
                 if size is not None:

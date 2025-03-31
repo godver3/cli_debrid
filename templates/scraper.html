@@ -144,8 +144,15 @@
         vertical-align: middle !important;
     }
 
+    #skip-cache-check-container {
+        display: none !important;
+    }
     .checkbox-container {
         display: none !important;
+    }
+
+    .checkbox-container input[type="checkbox"] {
+        all: revert !important;
     }
 
     /* Request icon styling - Current blue plus style */
@@ -501,7 +508,11 @@
                 {% endfor %}
                 <option value="No Version">No Version</option>
             </select>
-            <div class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+            <div class="checkbox-container specials-checkbox" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+                <input type="checkbox" id="allow-specials" name="allow_specials">
+                <label for="allow-specials" style="color: #ccc; font-size: 0.9em;">Allow Specials</label>
+            </div>
+            <div id="skip-cache-check-container" class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
                 <input type="checkbox" id="skip-cache-check" name="skip_cache_check">
                 <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
             </div>

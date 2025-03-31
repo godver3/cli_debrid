@@ -52,7 +52,8 @@ class ScraperManager:
         multi: bool = False,
         genres: List[str] = None,
         episode_formats: Optional[Dict[str, str]] = None,
-        tmdb_id: Optional[str] = None
+        tmdb_id: Optional[str] = None,
+        is_translated_search: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Scrape all configured sources for content.
@@ -68,6 +69,7 @@ class ScraperManager:
             genres: List of genres
             episode_formats: Dictionary of episode format patterns for anime
             tmdb_id: TMDB ID of the content
+            is_translated_search: Flag indicating if the search title is a translation
         """
         all_results = []
         is_anime = genres and 'anime' in [genre.lower() for genre in genres]
@@ -82,7 +84,7 @@ class ScraperManager:
         self.batch_timeout = None if self.batch_timeout == 0 else self.batch_timeout
         
         # Helper function to run a scraper and handle exceptions
-        def run_scraper(instance, scraper_type, settings):
+        def run_scraper(instance, scraper_type, settings, is_translated):
             try:
                 if scraper_type in ['Nyaa', 'OldNyaa']:
                     # Nyaa has a different function signature
@@ -95,7 +97,8 @@ class ScraperManager:
                             episode=episode,
                             episode_formats=episode_formats if is_anime and content_type.lower() == 'episode' else None,
                             tmdb_id=tmdb_id,
-                            multi=multi
+                            multi=multi,
+                            is_translated_search=is_translated
                         )
                     else:  # OldNyaa
                         results = self.scrapers[scraper_type](
@@ -112,7 +115,7 @@ class ScraperManager:
                 else:
                     # Only Jackett accepts genres parameter
                     if scraper_type == 'Jackett':
-                        results = self.scrapers[scraper_type](instance, settings, imdb_id, title, year, content_type, season, episode, multi, genres)
+                        results = self.scrapers[scraper_type](instance, settings, imdb_id, title, year, content_type, season, episode, multi, genres, is_translated_search=is_translated)
                     else:
                         results = self.scrapers[scraper_type](instance, settings, imdb_id, title, year, content_type, season, episode, multi)
                 
@@ -133,7 +136,7 @@ class ScraperManager:
                 
                 if nyaa_enabled:
                     logging.info(f"Trying Nyaa for anime episode without IMDB ID: {title}")
-                    instance, results = run_scraper('Nyaa', 'Nyaa', nyaa_settings)
+                    instance, results = run_scraper('Nyaa', 'Nyaa', nyaa_settings, is_translated_search)
                     if results:
                         all_results.extend(results)
                         return all_results
@@ -149,7 +152,7 @@ class ScraperManager:
                     continue
 
                 logging.info(f"Running Jackett scraper '{instance}' without IMDB ID")
-                instance, results = run_scraper(instance, scraper_type, current_settings)
+                instance, results = run_scraper(instance, scraper_type, current_settings, is_translated_search)
                 if results:
                     all_results.extend(results)
 
@@ -170,12 +173,12 @@ class ScraperManager:
                 with ThreadPoolExecutor() as executor:
                     if old_nyaa_enabled:
                         anime_scraper_tasks.append(
-                            executor.submit(run_scraper, 'OldNyaa', 'OldNyaa', old_nyaa_settings)
+                            executor.submit(run_scraper, 'OldNyaa', 'OldNyaa', old_nyaa_settings, is_translated_search)
                         )
                     
                     if nyaa_enabled:
                         anime_scraper_tasks.append(
-                            executor.submit(run_scraper, 'Nyaa', 'Nyaa', nyaa_settings)
+                            executor.submit(run_scraper, 'Nyaa', 'Nyaa', nyaa_settings, is_translated_search)
                         )
                     
                     # Collect results as they complete with timeout
@@ -243,7 +246,7 @@ class ScraperManager:
         # Run all scrapers in parallel using ThreadPoolExecutor
         with ThreadPoolExecutor() as executor:
             futures = [
-                executor.submit(run_scraper, instance, scraper_type, settings)
+                executor.submit(run_scraper, instance, scraper_type, settings, is_translated_search)
                 for instance, scraper_type, settings in scraper_tasks
             ]
             

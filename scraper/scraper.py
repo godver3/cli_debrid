@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Tuple, Optional, Union
 from difflib import SequenceMatcher
 from utilities.settings import get_setting
 import time
+from datetime import datetime, timedelta, timezone
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from database.database_writing import update_anime_format, update_preferred_alias, get_preferred_alias
 from fuzzywuzzy import fuzz
@@ -21,6 +22,7 @@ from PTT import parse_title
 from pathlib import Path
 from scraper.functions import *
 from cli_battery.app.direct_api import DirectAPI
+import json
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
@@ -61,6 +63,14 @@ def convert_anime_episode_format(season: int, episode: int, total_episodes: int)
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}")
+
+    # Store original season/episode and initialize scene numbers
+    original_season = season
+    original_episode = episode 
+    scene_season = None
+    scene_episode = None
+    
+    xem_applied = False # Flag to track if XEM logic actually modified/confirmed season/episode
 
     try:
         start_time = time.time()
@@ -119,6 +129,185 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.info(f"Total episodes for season {season}: {total_episodes}")
             episode_formats = convert_anime_episode_format(season, episode, total_episodes)
             logging.info(f"Generated episode formats for anime: {episode_formats}")
+
+        # --- XEM Mapping Lookup --- 
+        target_air_date = None # Initialize target air date
+        if content_type.lower() == 'episode' and season is not None and original_episode is not None:
+            try:
+                logging.info(f"Checking for XEM mapping for {title} S{season}E{original_episode} (IMDb: {imdb_id})")
+                show_metadata, meta_source = direct_api.get_show_metadata(imdb_id)
+                if show_metadata:
+                    xem_mapping_list = show_metadata.get('xem_mapping')
+                    trakt_seasons_data = show_metadata.get('seasons') # Get Trakt season structure
+
+                    # --- Extract Target Air Date ---
+                    try:
+                        if isinstance(trakt_seasons_data, dict) and str(season) in trakt_seasons_data:
+                            season_data = trakt_seasons_data[str(season)]
+                            if isinstance(season_data, dict) and 'episodes' in season_data and str(original_episode) in season_data['episodes']:
+                                episode_data = season_data['episodes'][str(original_episode)]
+                                if isinstance(episode_data, dict) and 'first_aired' in episode_data:
+                                    air_date_full = episode_data['first_aired']
+                                    if isinstance(air_date_full, str) and air_date_full:
+                                        try:
+                                            # Parse the ISO 8601 timestamp
+                                            # Replace 'Z' with '+00:00' for Python compatibility if necessary
+                                            if air_date_full.endswith('Z'):
+                                                air_date_full = air_date_full[:-1] + '+00:00'
+                                            
+                                            utc_dt = datetime.fromisoformat(air_date_full)
+                                            
+                                            # Ensure it's timezone-aware (should be from isoformat with offset)
+                                            if utc_dt.tzinfo is None:
+                                                 utc_dt = utc_dt.replace(tzinfo=timezone.utc) # Add UTC timezone if missing
+                                            else:
+                                                 utc_dt = utc_dt.astimezone(timezone.utc) # Convert to UTC if it had a different offset
+
+                                            # Heuristic: If UTC time is before noon, assume local air date was the previous day
+                                            # This is common for shows airing in the evening in the Americas.
+                                            adjusted_dt = utc_dt
+                                            if utc_dt.hour < 12:
+                                                adjusted_dt = utc_dt - timedelta(days=1)
+                                                logging.debug(f"Adjusted UTC date {utc_dt.date()} to {adjusted_dt.date()} based on early UTC hour ({utc_dt.hour})")
+                                            
+                                            target_air_date = adjusted_dt.strftime('%Y-%m-%d')
+                                            logging.info(f"Found target air date for S{season}E{original_episode}: {target_air_date} (adjusted from UTC {utc_dt.date()} if necessary)")
+                                            
+                                        except ValueError as format_err:
+                                            logging.error(f"Could not parse air date string '{air_date_full}': {format_err}")
+                                            # Fallback: Try splitting just in case it's only YYYY-MM-DD
+                                            target_air_date = air_date_full.split('T')[0]
+                                            logging.warning(f"Using fallback date extraction: {target_air_date}")
+                                            
+                                    elif air_date_full is None:
+                                         logging.warning(f"Target episode S{season}E{original_episode} has a null 'first_aired' date.")
+                                    else:
+                                         logging.warning(f"'first_aired' for S{season}E{original_episode} is not a string or is empty: {air_date_full}")
+                                else:
+                                    logging.warning(f"Could not find 'first_aired' key or value in episode data for S{season}E{original_episode}.")
+                            else:
+                                logging.warning(f"Could not find episode {original_episode} in season {season} episode data.")
+                        else:
+                             logging.warning(f"Could not find season {season} data in Trakt metadata or it's not a dictionary.")
+                    except Exception as date_err:
+                         logging.error(f"Error extracting target air date for S{season}E{original_episode}: {date_err}", exc_info=True)
+                    # --- End Extract Target Air Date ---
+
+                    if isinstance(xem_mapping_list, list):
+                        logging.info(f"Found XEM mapping list with {len(xem_mapping_list)} entries in metadata.")
+                        found_mapping = False
+                        
+                        # --- 1. Attempt Standard SxxExx Lookup --- 
+                        logging.debug(f"Attempting standard XEM lookup for TVDB S{season}E{original_episode}")
+                        for mapping_entry in xem_mapping_list:
+                            tvdb_info = mapping_entry.get('tvdb')
+                            scene_info = mapping_entry.get('scene')
+                            if tvdb_info and scene_info and \
+                               tvdb_info.get('season') == season and \
+                               tvdb_info.get('episode') == original_episode:
+                                
+                                scene_season = scene_info.get('season')
+                                scene_ep = scene_info.get('episode')
+                                
+                                if scene_season is not None and scene_ep is not None and \
+                                   (scene_season != season or scene_ep != original_episode):
+                                    logging.info(f"XEM Standard Mapping Found: TVDB S{season}E{original_episode} maps to Scene S{scene_season}E{scene_ep}")
+                                    # Update the season and episode numbers to be used for scraping
+                                    season = scene_season 
+                                    episode = scene_ep
+                                    found_mapping = True
+                                    xem_applied = True # Mark XEM as applied
+                                    break # Stop searching once mapping is found
+                                elif scene_season is not None and scene_ep is not None:
+                                    # Mapping exists but scene number is the same
+                                    logging.info(f"XEM Standard Mapping Found: TVDB S{season}E{original_episode} maps to Scene S{scene_season}E{scene_ep} (no change needed). ")
+                                    found_mapping = True
+                                    xem_applied = True # Mark XEM as confirmed
+                                    break
+                        
+                        # --- 2. Attempt Absolute Lookup (if standard failed and Trakt data available) --- 
+                        if not found_mapping and isinstance(trakt_seasons_data, dict):
+                            logging.debug(f"Standard XEM lookup failed. Calculating Trakt absolute number for S{season}E{original_episode}")
+                            # Calculate Trakt absolute episode number
+                            trakt_absolute_ep = 0
+                            calculated_trakt_abs = False
+                            try:
+                                # Iterate through Trakt seasons in order (ensure keys are integers for sorting)
+                                sorted_trakt_seasons = sorted([int(k) for k in trakt_seasons_data.keys() if k.isdigit()])
+                                for s_num in sorted_trakt_seasons:
+                                    s_num_str = str(s_num) # Use string key for lookup
+                                    if s_num < season:
+                                        # Use 'episode_count' if available, else count episodes
+                                        count = trakt_seasons_data[s_num_str].get('episode_count')
+                                        if count is None:
+                                             count = len(trakt_seasons_data[s_num_str].get('episodes', {}))
+                                        trakt_absolute_ep += count
+                                    elif s_num == season:
+                                        trakt_absolute_ep += original_episode
+                                        calculated_trakt_abs = True
+                                        break
+                                    else: # s_num > season (shouldn't happen if S/E valid)
+                                        break 
+                            except Exception as abs_calc_err:
+                                logging.error(f"Error calculating Trakt absolute episode number: {abs_calc_err}")
+                                calculated_trakt_abs = False
+                            
+                            if calculated_trakt_abs:
+                                logging.info(f"Calculated Trakt absolute episode: {trakt_absolute_ep}. Attempting absolute XEM lookup.")
+                                for mapping_entry in xem_mapping_list:
+                                    tvdb_info = mapping_entry.get('tvdb')
+                                    scene_info = mapping_entry.get('scene')
+                                    # Match based on TVDB absolute number
+                                    if tvdb_info and scene_info and tvdb_info.get('absolute') == trakt_absolute_ep:
+                                        scene_season = scene_info.get('season')
+                                        scene_ep = scene_info.get('episode')
+                                        tvdb_abs = tvdb_info.get('absolute') # Get TVDB absolute from mapping
+
+                                        # --- Prioritize TVDB Absolute for Anime --- 
+                                        if is_anime and tvdb_abs is not None:
+                                            if tvdb_abs != original_episode or scene_season != season:
+                                                 logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}. Targeting TVDB ABS number {tvdb_abs}.")
+                                                 season = scene_season # Still use scene season
+                                                 episode = tvdb_abs # Use TVDB ABSOLUTE as target episode
+                                                 found_mapping = True
+                                                 xem_applied = True # Mark XEM as applied
+                                                 break 
+                                            else:
+                                                 logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}. Using TVDB ABS {tvdb_abs} (no change needed). ")
+                                                 found_mapping = True
+                                                 xem_applied = True # Mark XEM as confirmed
+                                                 break
+                                        # --- Fallback/Non-Anime: Use Scene SxxExx ---
+                                        elif scene_season is not None and scene_ep is not None: 
+                                            if scene_season != season or scene_ep != original_episode:
+                                                logging.info(f"XEM Absolute Mapping (Standard): TVDB Absolute {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}")
+                                                season = scene_season
+                                                episode = scene_ep
+                                                found_mapping = True
+                                                xem_applied = True # Mark XEM as applied
+                                                break
+                                            else:
+                                                logging.info(f"XEM Absolute Mapping (Standard): TVDB Absolute {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep} (no S/E change needed). ")
+                                                found_mapping = True
+                                                xem_applied = True # Mark XEM as confirmed
+                                                break
+                        
+                        if not found_mapping:
+                             logging.info(f"No specific XEM mapping entry found for Trakt S{season}E{original_episode} via standard or absolute lookup.")
+                    else:
+                        logging.info(f"No XEM mapping list found in metadata for {imdb_id}.")
+                else:
+                    logging.warning(f"Could not retrieve show metadata for {imdb_id} to check XEM mapping.")
+            except Exception as e:
+                logging.error(f"Error during XEM mapping lookup for {imdb_id} S{season}E{original_episode}: {e}", exc_info=True)
+        
+        # Store the final season/episode used after potential XEM mapping
+        # Use the xem_applied flag to decide if we should store these
+        if xem_applied:
+            scene_season = season
+            scene_episode = episode
+        # else: scene_season and scene_episode remain None
+        # --- End XEM Mapping Lookup ---
 
         # Initialize results lists
         all_filtered_results = []
@@ -191,7 +380,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             is_alias: bool = False,
             alias_country: str = None,
             preferred_language: str = None,
-            translated_title: str = None
+            translated_title: str = None,
+            target_air_date: Optional[str] = None,
+            # Add parameters to receive scene mapping info
+            scene_season_map: Optional[int] = None,
+            scene_episode_map: Optional[int] = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
@@ -240,6 +433,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Use ScraperManager to handle scraping
             task_start = time.time()
             scraper_manager = ScraperManager(load_config())
+            # Determine if the current search is using the translated title
+            is_translated = bool(translated_title and search_title == translated_title)
             all_results = scraper_manager.scrape_all(
                 imdb_id=imdb_id,
                 title=search_title,
@@ -250,9 +445,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 multi=multi,
                 genres=genres,
                 episode_formats=episode_formats,
-                tmdb_id=tmdb_id
+                tmdb_id=tmdb_id,
+                is_translated_search=is_translated # Pass the flag here
             )
             task_timings['scraping'] = time.time() - task_start
+            # --- Log initial results --- 
+            logging.info(f"Initial results for '{search_title}': {len(all_results)}")
+            for res in all_results:
+                logging.info(f"  - {res.get('title')}")
+            # --- End log initial results ---
 
             # Deduplicate results before filtering
             task_start = time.time()
@@ -295,10 +496,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 season, episode, multi, version_settings, runtime, episode_count,
                 season_episode_counts, genres, matching_aliases,
                 preferred_language=preferred_language,
-                translated_title=translated_title
+                translated_title=translated_title,
+                target_air_date=target_air_date
             )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
+
+            # --- Attach scene mapping info to results --- 
+            if scene_season_map is not None and scene_episode_map is not None:
+                logging.debug(f"Attaching scene mapping S{scene_season_map}E{scene_episode_map} to {len(filtered_results)} results.")
+                for result in filtered_results:
+                    result['xem_scene_mapping'] = {'season': scene_season_map, 'episode': scene_episode_map}
+            # --- End attaching scene mapping --- 
 
             return filtered_results, filtered_out_results, task_timings
 
@@ -338,8 +547,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 content_type=content_type,
                 version=version,
                 version_settings=version_settings,
-                season=season,
-                episode=episode,
+                season=scene_season if xem_applied else original_season, # Pass final season used for scraping
+                episode=scene_episode if xem_applied else original_episode, # Pass final episode used for scraping
                 multi=multi,
                 genres=genres,
                 episode_formats=episode_formats,
@@ -347,7 +556,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 is_alias=(source != 'original'),
                 alias_country=media_country_code if source != 'original' else None,
                 preferred_language=preferred_language,
-                translated_title=translated_title # Always pass the actual translation
+                translated_title=translated_title, # Always pass the actual translation
+                target_air_date=target_air_date, # Pass target_air_date here
+                # Pass the determined scene mapping (or None) to _do_scrape
+                scene_season_map=scene_season, 
+                scene_episode_map=scene_episode
             )
             
             if filtered_results:
@@ -374,8 +587,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         content_type=content_type,
                         version=version,
                         version_settings=version_settings,
-                        season=season,
-                        episode=episode,
+                        season=scene_season if xem_applied else original_season, # Pass final season used for scraping
+                        episode=scene_episode if xem_applied else original_episode, # Pass final episode used for scraping
                         multi=multi,
                         genres=genres,
                         episode_formats=episode_formats,
@@ -383,7 +596,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         is_alias=True,
                         alias_country=media_country_code,
                         preferred_language=preferred_language,
-                        translated_title=translated_title # Always pass translation
+                        translated_title=translated_title, # Always pass translation
+                        target_air_date=target_air_date, # Pass target_air_date here
+                        # Pass the determined scene mapping (or None) to _do_scrape
+                        scene_season_map=scene_season, 
+                        scene_episode_map=scene_episode
                     )
                     
                     if filtered_results and len(filtered_results) > len(best_alias_results):
@@ -398,7 +615,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 logging.info(f"Setting new preferred alias: {best_alias}")
                 # Ensure alias update function exists and handles None season
                 try:
-                    update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, season)
+                    update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, scene_season if xem_applied else original_season)
                 except Exception as alias_update_err:
                     logging.error(f"Error updating preferred alias: {alias_update_err}")
                 all_filtered_results.extend(best_alias_results)
@@ -422,7 +639,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 x['is_anime'] = is_anime
             # Pass preferred_language and translated_title to rank_result_key (Modification needed in rank_results function signature)
             return rank_result_key(
-                x, deduplicated_results, title, year, season, episode, multi, # Pass original title to ranker
+                x, deduplicated_results, title, year, scene_season if xem_applied else original_season, scene_episode if xem_applied else original_episode, multi, # Pass original title to ranker
                 content_type, version_settings,
                 preferred_language=preferred_language, # Pass new arg
                 translated_title=translated_title     # Pass new arg
@@ -439,9 +656,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             deduplicated_results = sorted(deduplicated_results, key=stable_rank_key)
 
         # Log final results
-        logging.debug(f"Total scrape results after trying all titles: {len(deduplicated_results)}")
+        logging.info(f"Final sorted results for '{title}' ({year}): {len(deduplicated_results)}")
         for result in deduplicated_results:
-            logging.info(f"-- Final result: {result.get('original_title')}")
+            score = result.get('score_breakdown', {}).get('total_score', 'N/A')
+            logging.info(f"  - Score: {score} | Title: {result.get('original_title')}")
 
         return deduplicated_results, all_filtered_out_results
 

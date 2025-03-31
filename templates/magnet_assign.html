@@ -71,13 +71,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Add seasons to both dropdowns
                 Object.entries(data).forEach(([seasonNum, episodeCount]) => {
-                    // Skip season 0 (specials)
-                    if (seasonNum === '0') return;
-
                     // Add to multi-select seasons dropdown
                     const seasonOption = document.createElement('option');
                     seasonOption.value = seasonNum;
-                    seasonOption.textContent = `Season ${seasonNum} (${episodeCount} episodes)`;
+                    seasonOption.textContent = seasonNum === '0' ? `Specials (${episodeCount} episodes)` : `Season ${seasonNum} (${episodeCount} episodes)`;
                     seasonsSelect.appendChild(seasonOption);
 
                     // Add to single season dropdown

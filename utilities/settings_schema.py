@@ -687,31 +687,56 @@ SETTINGS_SCHEMA = {
                 "urls": {"type": "string", "default": ""},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "MDBList"}
+                "display_name": {"type": "string", "default": "MDBList"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Collected": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
-                "display_name": {"type": "string", "default": "Collected"}
+                "display_name": {"type": "string", "default": "Collected"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Trakt Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "Trakt Watchlist"}
+                "display_name": {"type": "string", "default": "Trakt Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Trakt Lists": {
                 "enabled": {"type": "boolean", "default": False},
                 "trakt_lists": {"type": "string", "default": ""},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "Trakt Lists"}
+                "display_name": {"type": "string", "default": "Trakt Lists"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Trakt Collection": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "Trakt Collection"}
+                "display_name": {"type": "string", "default": "Trakt Collection"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Overseerr": {
                 "enabled": {"type": "boolean", "default": False},
@@ -719,13 +744,23 @@ SETTINGS_SCHEMA = {
                 "api_key": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "Overseerr"}
+                "display_name": {"type": "string", "default": "Overseerr"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "My Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "My Plex Watchlist"}
+                "display_name": {"type": "string", "default": "My Plex Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Other Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
@@ -733,21 +768,36 @@ SETTINGS_SCHEMA = {
                 "token": {"type": "string", "default": "", "sensitive": True},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "Other Plex Watchlist"}
+                "display_name": {"type": "string", "default": "Other Plex Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "My Plex RSS Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "My Plex RSS Watchlist"}
+                "display_name": {"type": "string", "default": "My Plex RSS Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "My Friends Plex RSS Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"}
+                "display_name": {"type": "string", "default": "My Friends Plex RSS Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             },
             "Friends Trakt Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
@@ -755,7 +805,12 @@ SETTINGS_SCHEMA = {
                 "username": {"type": "string", "default": ""},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
-                "display_name": {"type": "string", "default": "Friend's Trakt Watchlist"}
+                "display_name": {"type": "string", "default": "Friend's Trakt Watchlist"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             }
         }
     },

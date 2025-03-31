@@ -354,45 +354,50 @@ def get_notifications():
             return jsonify({"notifications": []})
 
         try:
+            # Read and parse JSON directly within the try block
             with open(notification_file, 'r') as f:
+                # Read the whole content first
                 file_content = f.read().strip()
 
-            if not file_content:
-                # File exists but is empty. Return empty list.
-                logging.info(f"Notifications file exists but is empty at {notification_file}")
-                return jsonify({"notifications": []})
+                if not file_content:
+                    # File exists but is empty. Return empty list.
+                    logging.info(f"Notifications file exists but is empty at {notification_file}")
+                    return jsonify({"notifications": []})
 
-            # Try to parse the JSON
-            try:
+                # Try to parse the JSON
                 notifications = json.loads(file_content)
 
-                # Validate structure - Log error but DO NOT rewrite
-                if not isinstance(notifications, dict) or "notifications" not in notifications:
-                    logging.error(f"Invalid notifications structure in {notification_file}. Content: {file_content[:200]}...")
-                    # Return empty list instead of rewriting
-                    return jsonify({"error": "Invalid notification file structure", "notifications": []}), 500
+            # Validate structure - Log error but DO NOT rewrite from reader
+            if not isinstance(notifications, dict) or "notifications" not in notifications:
+                logging.error(f"Invalid notifications structure in {notification_file}. Content snippet: {file_content[:200]}...")
+                # Return empty list instead of potentially corrupted data
+                return jsonify({"error": "Invalid notification file structure", "notifications": []}), 500
 
-            except json.JSONDecodeError as je:
-                # JSON decode error - Log error but DO NOT rewrite
-                logging.error(f"JSON decode error in notifications file {notification_file}. Content: {file_content[:200]}... Error: {str(je)}")
-                # Return empty list instead of rewriting
-                return jsonify({"error": "Corrupted notification file", "notifications": []}), 500
-
-            # Filter out expired notifications (Optional, keep if needed)
-            current_time = datetime.now().isoformat()
-            if "notifications" in notifications:
-                notifications["notifications"] = [
-                    n for n in notifications.get("notifications", []) # Use get for safety
-                    if "expires" not in n or n.get("expires", "") > current_time
-                ]
-
-            return jsonify(notifications)
-
+        except json.JSONDecodeError as je:
+            # JSON decode error - Log error but DO NOT rewrite from reader
+            logging.error(f"JSON decode error in notifications file {notification_file}. Content snippet: {file_content[:200]}... Error: {str(je)}")
+            # Return empty list instead of corrupted data
+            return jsonify({"error": "Corrupted notification file", "notifications": []}), 500
         except Exception as e:
             # Catch other potential errors during file read/processing
             logging.error(f"Unexpected error reading notifications file {notification_file}: {str(e)}", exc_info=True)
             # Return error but DO NOT rewrite
             return jsonify({"error": "Failed to read notifications file", "notifications": []}), 500
+
+        # Filter out expired notifications (Optional, keep if needed)
+        current_time = datetime.now().isoformat()
+        if "notifications" in notifications:
+            # Use get with default empty list for safer access
+            valid_notifications = [
+                n for n in notifications.get("notifications", [])
+                if isinstance(n, dict) and ("expires" not in n or n.get("expires", "") > current_time)
+            ]
+            # If filtering removed invalid entries, log a warning
+            if len(valid_notifications) != len(notifications.get("notifications", [])):
+                logging.warning(f"Filtered out invalid or expired entries from {notification_file}")
+            notifications["notifications"] = valid_notifications
+
+        return jsonify(notifications)
 
     finally:
         # Always release lock

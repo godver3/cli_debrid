@@ -815,6 +815,24 @@ def main():
     except Exception as e:
         logging.warning(f"Could not delete not wanted files on startup: {str(e)}")
     
+    # Purge content source cache files on startup
+    try:
+        logging.info("Purging content source cache files on startup...")
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        deleted_count = 0
+        for filename in os.listdir(db_content_dir):
+            if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+                file_path = os.path.join(db_content_dir, filename)
+                try:
+                    os.remove(file_path)
+                    logging.debug(f"Deleted cache file: {file_path}")
+                    deleted_count += 1
+                except OSError as e:
+                    logging.warning(f"Could not delete cache file {file_path}: {e}")
+        logging.info(f"Deleted {deleted_count} content source cache files.")
+    except Exception as e:
+        logging.error(f"Error purging content source cache files: {str(e)}")
+    
     # Verify database health before proceeding
     if not verify_database_health():
         logging.error("Database health check failed. Please check the logs and resolve any issues.")
@@ -1143,6 +1161,20 @@ def main():
             save_config(config)
             logging.info("Successfully migrated version settings to include fallback_version")
     # --- End fallback_version migration ---
+
+    # --- Add migration for allow_specials in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'allow_specials' not in source_config:
+                source_config['allow_specials'] = False
+                content_sources_updated = True
+                logging.info(f"Adding default allow_specials=False to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include allow_specials setting")
+    # --- End allow_specials migration ---
 
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')

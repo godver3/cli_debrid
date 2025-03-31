@@ -174,50 +174,52 @@ class TraktMetadata:
             return movie_data
         return None
 
-    def get_show_seasons_and_episodes(self, imdb_id):
+    def get_show_seasons_and_episodes(self, imdb_id, include_specials: bool = False):
         # Get seasons data directly using IMDB ID
         url = f"{self.base_url}/shows/{imdb_id}/seasons?extended=full,episodes"
-        logger.debug(f"Fetching seasons data from: {url}")
+        logger.debug(f"Fetching seasons data from: {url} (Include Specials: {include_specials})")
         response = self._make_request(url)
         if response and response.status_code == 200:
-            seasons_data = response.json()
-            logger.debug(f"Raw seasons data received: {len(seasons_data)} seasons")
-            logger.debug(f"Raw seasons data structure: {json.dumps(seasons_data, indent=2)}")
+            seasons_data_raw = response.json()
+            logger.debug(f"Raw seasons response from Trakt for {imdb_id}: {json.dumps(seasons_data_raw)}")
+            logger.debug(f"Raw seasons data received: {len(seasons_data_raw)} seasons")
             
             processed_seasons = {}
-            for season in seasons_data:
-                if season['number'] is not None and season['number'] > 0:
-                    season_number = season['number']
-                    logger.debug(f"Processing season {season_number}")
-                    logger.debug(f"Season {season_number} raw data: {json.dumps(season, indent=2)}")
-                    
-                    episodes = season.get('episodes', [])
-                    logger.debug(f"Found {len(episodes)} episodes in season {season_number}")
-                    
-                    processed_seasons[season_number] = {
-                        'episode_count': season.get('episode_count', 0),
-                        'episodes': {}
+            for season in seasons_data_raw:
+                season_number = season.get('number')
+                if season_number is None:
+                    logger.warning(f"Skipping season with null number for IMDb ID {imdb_id}")
+                    continue
+
+                if not include_specials and season_number == 0:
+                    logger.debug(f"Skipping season 0 for {imdb_id} as include_specials is False.")
+                    continue
+
+                logger.debug(f"Processing season {season_number}")
+                
+                episodes = season.get('episodes', [])
+                
+                processed_seasons[season_number] = {
+                    'episode_count': season.get('episode_count', len(episodes)),
+                    'episodes': {}
+                }
+                
+                for episode in episodes:
+                    episode_number = episode.get('number')
+                    if episode_number is None:
+                        logger.warning(f"Episode in season {season_number} has no number: {json.dumps(episode, indent=2)}")
+                        continue
+                        
+                    processed_seasons[season_number]['episodes'][episode_number] = {
+                        'title': episode.get('title', ''),
+                        'overview': episode.get('overview', ''),
+                        'runtime': episode.get('runtime', 0),
+                        'first_aired': episode.get('first_aired'),
+                        'imdb_id': episode['ids'].get('imdb')
                     }
-                    
-                    for episode in episodes:
-                        episode_number = episode.get('number')
-                        if episode_number is None:
-                            logger.warning(f"Episode in season {season_number} has no number: {json.dumps(episode, indent=2)}")
-                            continue
-                            
-                        logger.debug(f"Processing S{season_number}E{episode_number}")
-                        processed_seasons[season_number]['episodes'][episode_number] = {
-                            'title': episode.get('title', ''),
-                            'overview': episode.get('overview', ''),
-                            'runtime': episode.get('runtime', 0),
-                            'first_aired': episode.get('first_aired'),
-                            'imdb_id': episode['ids'].get('imdb')
-                        }
-                        logger.debug(f"Added episode S{season_number}E{episode_number}: {processed_seasons[season_number]['episodes'][episode_number]}")
-                    
-                    logger.debug(f"Completed season {season_number} with {len(processed_seasons[season_number]['episodes'])} episodes")
+                
+                logger.debug(f"Completed season {season_number} with {len(processed_seasons[season_number]['episodes'])} episodes")
             
-            logger.debug(f"Final processed seasons structure: {json.dumps(processed_seasons, indent=2)}")
             return processed_seasons, 'trakt'
             
         logger.warning(f"Failed to get seasons data. Status code: {response.status_code if response else 'No response'}")

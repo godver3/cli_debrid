@@ -39,7 +39,7 @@ def rank_result_key(
             # For unknown resolutions in older content/WEBRips, assign a low but non-zero score
             # This matches our filter behavior of treating unknown as SD/480p
             resolution_score = 1  # Equivalent to SD/480p ranking
-            logging.debug(f"Assigned resolution score of 1 (SD/480p) for unknown resolution in: {torrent_title}")
+            # logging.debug(f"Assigned resolution score of 1 (SD/480p) for unknown resolution in: {torrent_title}")
     
     hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
 
@@ -177,7 +177,7 @@ def rank_result_key(
             # For anime, only match episode numbers, ignore season mismatch
             episode_match = 5 if query_episode == torrent_episode else 0
             season_match = 5  # Always give full season match score for anime
-            logging.debug(f"Anime content - ignoring season mismatch. Episode match: {episode_match}")
+            # logging.debug(f"Anime content - ignoring season mismatch. Episode match: {episode_match}")
         else:
             # Regular TV show matching
             season_match = 5 if query_season == torrent_season else 0
@@ -364,33 +364,33 @@ def rank_result_key(
     result['score_breakdown'] = score_breakdown
 
     # Log detailed score breakdown
-    logging.debug(f"Score breakdown for '{torrent_title}':")
-    logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
-    logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
-    logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
-    logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
-    logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
-    logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
-    logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
-    logging.debug(f"├─ Year: {score_breakdown['year_match']:.2f} ({year_reason})")
-    if content_type.lower() == 'episode':
-        logging.debug(f"├─ Season Match: {score_breakdown['season_match']:.2f}")
-        logging.debug(f"├─ Episode Match: {score_breakdown['episode_match']:.2f}")
-        if score_breakdown['is_multi_pack']:
-            logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
-        if score_breakdown['single_episode_score']:
-            logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
-    if score_breakdown['content_type_score']:
-        logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
-    if preferred_filter_in_breakdown:
-        logging.debug("├─ Preferred Filter Bonuses:")
-        for pattern, score in preferred_filter_in_breakdown.items():
-            logging.debug(f"│  ├─ {pattern}: +{score}")
-    if preferred_filter_out_breakdown:
-        logging.debug("├─ Preferred Filter Penalties:")
-        for pattern, score in preferred_filter_out_breakdown.items():
-            logging.debug(f"│  ├─ {pattern}: {score}")
-    logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
+    # logging.debug(f"Score breakdown for '{torrent_title}':")
+    # logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
+    # logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
+    # logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
+    # logging.debug(f"├─ Size: {score_breakdown['size_score']:.2f} (weight: {size_weight})")
+    # logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
+    # logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
+    # logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
+    # logging.debug(f"├─ Year: {score_breakdown['year_match']:.2f} ({year_reason})")
+    # if content_type.lower() == 'episode':
+    #     logging.debug(f"├─ Season Match: {score_breakdown['season_match']:.2f}")
+    #     logging.debug(f"├─ Episode Match: {score_breakdown['episode_match']:.2f}")
+    #     if score_breakdown['is_multi_pack']:
+    #         logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
+    #     if score_breakdown['single_episode_score']:
+    #         logging.debug(f"├─ Single Episode Penalty: {score_breakdown['single_episode_score']:.2f}")
+    # if score_breakdown['content_type_score']:
+    #     logging.debug(f"├─ Content Type Score: {score_breakdown['content_type_score']:.2f}")
+    # if preferred_filter_in_breakdown:
+    #     logging.debug("├─ Preferred Filter Bonuses:")
+    #     for pattern, score in preferred_filter_in_breakdown.items():
+    #         logging.debug(f"│  ├─ {pattern}: +{score}")
+    # if preferred_filter_out_breakdown:
+    #     logging.debug("├─ Preferred Filter Penalties:")
+    #     for pattern, score in preferred_filter_out_breakdown.items():
+    #         logging.debug(f"│  ├─ {pattern}: {score}")
+    # logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
 
     # Return negative total_score to sort in descending order
     return (-total_score, -year_match, -season_match, -episode_match)

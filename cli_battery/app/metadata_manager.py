@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 import random
 from typing import Optional
 import logging
+from .xem_utils import fetch_xem_mapping
 
 class MetadataManager:
 
@@ -865,12 +866,16 @@ class MetadataManager:
                         logger.error(f"Error processing metadata for key {m.key}: {str(e)}")
                         metadata[m.key] = m.value
 
-                # Force refresh if seasons data is missing or if metadata is stale
-                if 'seasons' not in metadata or MetadataManager.is_metadata_stale(item.updated_at):
+                # Check if metadata needs a full refresh (stale or missing seasons)
+                needs_full_refresh = ('seasons' not in metadata or MetadataManager.is_metadata_stale(item.updated_at))
+
+                if needs_full_refresh:
                     if 'seasons' not in metadata:
-                        logging.info("No seasons data found, forcing refresh from Trakt")
+                        logging.info(f"No seasons data found for {imdb_id}, forcing refresh from Trakt")
                     else:
-                        logging.info("Metadata is stale, refreshing from Trakt")
+                        logging.info(f"Metadata for {imdb_id} is stale, refreshing from Trakt")
+                    
+                    # Perform full refresh (this now includes XEM fetch within update_show_metadata)
                     trakt = TraktMetadata()
                     show_data = trakt.get_show_metadata(imdb_id)
                     if show_data:
@@ -880,18 +885,94 @@ class MetadataManager:
                             logging.info(f"Successfully updated metadata for {imdb_id}")
                             return show_data, "trakt (refreshed)"
                         except Exception as e:
-                            logger.error(f"Error saving show metadata for {imdb_id}: {str(e)}")
-                            session.rollback()
-                            return show_data, "trakt (save failed)"
+                            logger.error(f"Error saving refreshed show metadata for {imdb_id}: {str(e)}")
+                            session.rollback() # Rollback potential partial changes from update_show_metadata
+                            # Return the fetched data even if save failed, but indicate the source issue
+                            return show_data, "trakt (refresh save failed)" 
+                    else:
+                         # If refresh fails, return existing (stale) data if available
+                         logger.warning(f"Failed to refresh metadata for {imdb_id}. Returning potentially stale data from battery.")
+                         return metadata, "battery (stale, refresh failed)"
+
                 else:
+                    # Metadata is fresh, return from battery, but check for missing XEM mapping
+                    logging.info(f"Metadata for {imdb_id} is fresh, returning from battery.")
+                    
+                    # --- Check and Fetch Missing XEM Mapping ---
+                    if 'xem_mapping' not in metadata:
+                        logging.info(f"Existing metadata for {imdb_id} is missing XEM mapping. Attempting to fetch...")
+                        tvdb_id = metadata.get('ids', {}).get('tvdb')
+                        if tvdb_id:
+                            try:
+                                xem_mapping_data = fetch_xem_mapping(tvdb_id)
+                                # Always store the mapping result, even if it's None/empty
+                                xem_mapping_data = xem_mapping_data if xem_mapping_data else {}
+                                logger.info(f"{'Successfully fetched' if xem_mapping_data else 'No'} XEM mapping for TVDB ID {tvdb_id}. Adding to DB and response.")
+                                
+                                # Add to the dictionary we are returning
+                                metadata['xem_mapping'] = xem_mapping_data
+                                
+                                # Save the new mapping to the database immediately
+                                try:
+                                    from metadata.metadata import _get_local_timezone
+                                    new_xem_metadata = Metadata(
+                                        item_id=item.id,
+                                        key='xem_mapping',
+                                        value=json.dumps(xem_mapping_data),
+                                        provider='xem', # Use 'xem' as provider for clarity
+                                        last_updated=datetime.now(_get_local_timezone())
+                                    )
+                                    session.add(new_xem_metadata)
+                                    session.commit() # Commit this specific addition
+                                    logger.info(f"Successfully saved XEM mapping to database for {imdb_id}.")
+                                except Exception as xem_error:
+                                    logger.error(f"Error fetching XEM mapping for TVDB ID {tvdb_id}: {xem_error}")
+                                    # Store empty mapping on error to prevent repeated failed attempts
+                                    metadata['xem_mapping'] = {}
+                                    new_xem_metadata = Metadata(
+                                        item_id=item.id,
+                                        key='xem_mapping',
+                                        value=json.dumps({}),
+                                        provider='xem',
+                                        last_updated=datetime.now(_get_local_timezone())
+                                    )
+                                    session.add(new_xem_metadata)
+                                    session.commit()
+                            except Exception as xem_error:
+                                logger.error(f"Error fetching XEM mapping for TVDB ID {tvdb_id}: {xem_error}")
+                                # Store empty mapping on error to prevent repeated failed attempts
+                                metadata['xem_mapping'] = {}
+                                new_xem_metadata = Metadata(
+                                    item_id=item.id,
+                                    key='xem_mapping',
+                                    value=json.dumps({}),
+                                    provider='xem',
+                                    last_updated=datetime.now(_get_local_timezone())
+                                )
+                                session.add(new_xem_metadata)
+                                session.commit()
+                        else:
+                            logger.warning(f"Cannot fetch XEM mapping for {imdb_id}: TVDB ID not found in existing metadata. Storing empty mapping.")
+                            metadata['xem_mapping'] = {}
+                            new_xem_metadata = Metadata(
+                                item_id=item.id,
+                                key='xem_mapping',
+                                value=json.dumps({}),
+                                provider='xem',
+                                last_updated=datetime.now(_get_local_timezone())
+                            )
+                            session.add(new_xem_metadata)
+                            session.commit()
+                    # --- End Check ---
+
+                    # Log season info if present
                     if 'seasons' in metadata:
-                        logging.info(f"Found {len(metadata['seasons'])} seasons in cached metadata")
-                        #for season_num in metadata['seasons'].keys():
-                            #logging.info(f"Cached season {season_num} has {len(metadata['seasons'][season_num].get('episodes', {}))} episodes")
+                        logger.info(f"Found {len(metadata['seasons'])} seasons in cached metadata")
+
                     return metadata, "battery"
 
-            # Fetch from Trakt if not in database
-            logging.info("No metadata in database, fetching from Trakt")
+            # Fetch from Trakt if not in database (initial fetch)
+            logging.info(f"Item {imdb_id} not found in database, fetching from Trakt")
             trakt = TraktMetadata()
             show_data = trakt.get_show_metadata(imdb_id)
             if show_data:
@@ -913,11 +994,33 @@ class MetadataManager:
     def update_show_metadata(item, show_data, session):
         try:
             from metadata.metadata import _get_local_timezone
-            item.updated_at = datetime.now(_get_local_timezone())
+            current_time = datetime.now(_get_local_timezone())
+            item.updated_at = current_time
             # Delete existing metadata in a separate query
             deleted_count = session.query(Metadata).filter_by(item_id=item.id).delete()
             logger.info(f"Deleted {deleted_count} existing metadata entries for {item.imdb_id}")
             session.flush()  # Ensure the delete is processed
+
+            # --- Fetch XEM Mapping --- 
+            xem_mapping_data = None
+            tvdb_id = show_data.get('ids', {}).get('tvdb')
+            if tvdb_id:
+                try:
+                    xem_mapping_data = fetch_xem_mapping(tvdb_id)
+                    # Always store the mapping result, even if it's None/empty
+                    show_data['xem_mapping'] = xem_mapping_data if xem_mapping_data else {}
+                    if xem_mapping_data:
+                        logger.info(f"Successfully fetched XEM mapping for TVDB ID {tvdb_id}")
+                    else:
+                        logger.info(f"No XEM mapping found for TVDB ID {tvdb_id}, storing empty mapping")
+                except Exception as xem_error:
+                    logger.error(f"Error fetching XEM mapping for TVDB ID {tvdb_id}: {xem_error}")
+                    # Store empty mapping on error to prevent repeated failed attempts
+                    show_data['xem_mapping'] = {}
+            else:
+                logger.warning(f"TVDB ID not found in show_data for {item.imdb_id}, storing empty XEM mapping")
+                show_data['xem_mapping'] = {}
+            # --- End Fetch XEM Mapping ---
 
             # Add new metadata
             metadata_entries = []
@@ -933,16 +1036,26 @@ class MetadataManager:
 
             for key, value in show_data.items():
                 if isinstance(value, (list, dict)):
-                    value = json.dumps(value)
+                    # Convert list/dict to JSON string for storage
+                    try:
+                        value = json.dumps(value)
+                    except TypeError as e:
+                        logger.error(f"Error converting value to JSON for key '{key}' in {item.imdb_id}: {e}. Storing as string.")
+                        value = str(value) # Fallback to string representation
+                        
+                # Ensure value is a string before creating Metadata object
+                if not isinstance(value, str):
+                    value = str(value)
+                    
                 metadata = Metadata(
                     item_id=item.id,
                     key=key,
-                    value=str(value),
-                    provider='trakt',
-                    last_updated=datetime.now(_get_local_timezone())
+                    value=value, # Ensure value is a string
+                    provider='trakt', # Provider is still trakt for core data
+                    last_updated=current_time
                 )
                 metadata_entries.append(metadata)
-                logger.info(f"Added metadata entry for {item.imdb_id}: {key} (length: {len(str(value))})")
+                logger.info(f"Added metadata entry for {item.imdb_id}: {key} (length: {len(value)})")
 
             # Bulk insert all metadata entries
             session.bulk_save_objects(metadata_entries)

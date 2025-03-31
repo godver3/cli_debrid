@@ -468,9 +468,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
 
 // Function to close the overlay
 function closeOverlay() {
-    const overlay = document.getElementById('overlay');
-    if (overlay) {
-        overlay.style.display = 'none';
+    const overlayElement = document.getElementById('overlay'); // Use overlayElement here as well
+    if (overlayElement) {
+        overlayElement.style.display = 'none';
         document.body.classList.remove('modal-open');
     }
 }
@@ -525,6 +525,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (event.key === 'Escape') {
             const versionModal = document.getElementById('versionModal');
             const mobileActionModal = document.getElementById('mobileActionModal');
+            const overlayElement = document.getElementById('overlay'); // Use a different name
             
             if (versionModal && versionModal.style.display === 'flex') {
                 closeVersionModal();
@@ -533,58 +534,62 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (mobileActionModal && mobileActionModal.style.display === 'flex') {
                 closeMobileActionModal();
             }
+
+            if (overlayElement && overlayElement.style.display === 'flex') { // Check for flex
+                closeOverlay();
+            }
         }
     });
     
     // Initialize the Loading object
     Loading.init();
+
+    // Handle Allow Specials checkbox
+    const allowSpecialsCheckbox = document.getElementById('allow-specials');
+    if (allowSpecialsCheckbox) {
+        // Load initial state from localStorage
+        const allowSpecials = localStorage.getItem('allowSpecials') === 'true';
+        allowSpecialsCheckbox.checked = allowSpecials;
+
+        // Save state to localStorage on change
+        allowSpecialsCheckbox.addEventListener('change', function() {
+            localStorage.setItem('allowSpecials', this.checked);
+            console.log(`Allow Specials set to: ${this.checked}`);
+        });
+    }
     
     // Setup scroll functionality for movie container
-    const container_mv = document.getElementById('movieContainer');
-    const scrollLeftBtn_mv = document.getElementById('scrollLeft_mv');
-    const scrollRightBtn_mv = document.getElementById('scrollRight_mv');
+    const container_mv = document.getElementById('movieContainer'); // Original declaration
+    const scrollLeftBtn_mv = document.getElementById('scrollLeft_mv'); // Original declaration
+    const scrollRightBtn_mv = document.getElementById('scrollRight_mv'); // Original declaration
     
-    // Initialize button states
+    // Initialize button states for movies
     if (scrollLeftBtn_mv) {
         scrollLeftBtn_mv.disabled = false; // Don't disable initially
     }
     
     function updateButtonStates_mv() {
-        const container = document.querySelector('#movieContainer');
-        if (!container) return;
+        if (!container_mv) return;
         
-        const leftButton = document.querySelector('#scrollLeft_mv');
-        const rightButton = document.querySelector('#scrollRight_mv');
-        
-        if (leftButton) {
-            const isAtStart = container.scrollLeft <= 0;
-            leftButton.disabled = isAtStart;
+        if (scrollLeftBtn_mv) {
+            const isAtStart = container_mv.scrollLeft <= 0;
+            scrollLeftBtn_mv.disabled = isAtStart;
         }
         
-        if (rightButton) {
-            // Add a margin to account for the right padding
-            const maxScroll = container.scrollWidth - container.clientWidth - 80;
-            const isAtEnd = container.scrollLeft >= maxScroll - 5;
-            rightButton.disabled = isAtEnd;
-            console.log(`Movie scroll: ${container.scrollLeft}/${maxScroll}, scrollWidth: ${container.scrollWidth}, clientWidth: ${container.clientWidth}`);
+        if (scrollRightBtn_mv) {
+            const maxScroll = container_mv.scrollWidth - container_mv.clientWidth - 80; // Adjust margin if needed
+            const isAtEnd = container_mv.scrollLeft >= maxScroll - 5;
+            scrollRightBtn_mv.disabled = isAtEnd;
         }
     }
     
     function scroll_mv(direction) {
-        const container = document.querySelector('#movieContainer');
-        if (!container) return;
-        
-        const scrollAmount = container.clientWidth * 0.8;
+        if (!container_mv) return;
+        const scrollAmount = container_mv.clientWidth * 0.8;
         const targetScroll = direction === 'left' 
-            ? Math.max(container.scrollLeft - scrollAmount, 0)
-            : Math.min(container.scrollLeft + scrollAmount, container.scrollWidth - container.clientWidth);
-        
-        container.scrollTo({
-            left: targetScroll,
-            behavior: 'smooth'
-        });
-        
-        // Update button states after scrolling
+            ? Math.max(container_mv.scrollLeft - scrollAmount, 0)
+            : Math.min(container_mv.scrollLeft + scrollAmount, container_mv.scrollWidth - container_mv.clientWidth);
+        container_mv.scrollTo({ left: targetScroll, behavior: 'smooth' });
         setTimeout(updateButtonStates_mv, 500);
     }
     
@@ -593,51 +598,37 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
     
     // Setup scroll functionality for TV shows container
-    const container_tv = document.getElementById('showContainer');
-    const scrollLeftBtn_tv = document.getElementById('scrollLeft_tv');
-    const scrollRightBtn_tv = document.getElementById('scrollRight_tv');
+    const container_tv = document.getElementById('showContainer'); // Original declaration
+    const scrollLeftBtn_tv = document.getElementById('scrollLeft_tv'); // Original declaration
+    const scrollRightBtn_tv = document.getElementById('scrollRight_tv'); // Original declaration
     
-    // Initialize button states
+    // Initialize button states for TV shows
     if (scrollLeftBtn_tv) {
         scrollLeftBtn_tv.disabled = false; // Don't disable initially
     }
     
     function updateButtonStates_tv() {
-        const container = document.querySelector('#showContainer');
-        if (!container) return;
+        if (!container_tv) return;
         
-        const leftButton = document.querySelector('#scrollLeft_tv');
-        const rightButton = document.querySelector('#scrollRight_tv');
-        
-        if (leftButton) {
-            const isAtStart = container.scrollLeft <= 0;
-            leftButton.disabled = isAtStart;
+        if (scrollLeftBtn_tv) {
+            const isAtStart = container_tv.scrollLeft <= 0;
+            scrollLeftBtn_tv.disabled = isAtStart;
         }
         
-        if (rightButton) {
-            // Add a margin to account for the right padding
-            const maxScroll = container.scrollWidth - container.clientWidth - 50;
-            const isAtEnd = container.scrollLeft >= maxScroll - 5;
-            rightButton.disabled = isAtEnd;
-            console.log(`TV scroll: ${container.scrollLeft}/${maxScroll}, scrollWidth: ${container.scrollWidth}, clientWidth: ${container.clientWidth}`);
+        if (scrollRightBtn_tv) {
+            const maxScroll = container_tv.scrollWidth - container_tv.clientWidth - 50; // Adjust margin if needed
+            const isAtEnd = container_tv.scrollLeft >= maxScroll - 5;
+            scrollRightBtn_tv.disabled = isAtEnd;
         }
     }
     
     function scroll_tv(direction) {
-        const container = document.querySelector('#showContainer');
-        if (!container) return;
-        
-        const scrollAmount = container.clientWidth * 0.8;
+        if (!container_tv) return;
+        const scrollAmount = container_tv.clientWidth * 0.8;
         const targetScroll = direction === 'left' 
-            ? Math.max(container.scrollLeft - scrollAmount, 0)
-            : Math.min(container.scrollLeft + scrollAmount, container.scrollWidth - container.clientWidth);
-        
-        container.scrollTo({
-            left: targetScroll,
-            behavior: 'smooth'
-        });
-        
-        // Update button states after scrolling
+            ? Math.max(container_tv.scrollLeft - scrollAmount, 0)
+            : Math.min(container_tv.scrollLeft + scrollAmount, container_tv.scrollWidth - container_tv.clientWidth);
+        container_tv.scrollTo({ left: targetScroll, behavior: 'smooth' });
         setTimeout(updateButtonStates_tv, 500);
     }
     
@@ -645,49 +636,38 @@ document.addEventListener('DOMContentLoaded', async function() {
         container_tv.addEventListener('scroll', updateButtonStates_tv);
     }
     
-    // Check if Trakt is authorized before attempting to load trending content
+    // Check Trakt Auth and Load Trending Content
     fetch('/trakt/trakt_auth_status', { method: 'GET' })
         .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP error! Status: ${response.status}`);
-            }
+            if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
             return response.json();
         })
         .then(status => {
             if (status.status == 'authorized') {
-                get_trendingMovies();
-                get_trendingShows();
+                get_trendingMovies(); // Call overridden function
+                get_trendingShows();  // Call overridden function
             } else {
                 displayTraktAuthMessage();
             }
         })
         .catch(error => {
             console.error('Trakt Auth Check Error:', error);
-            // Fallback to show trending content even if auth check fails
-            get_trendingMovies();
-            get_trendingShows();
+            get_trendingMovies(); // Fallback
+            get_trendingShows();  // Fallback
         });
     
-    // Setup scroll buttons for trending sections
-    document.getElementById('scrollLeft_mv').addEventListener('click', function() {
-        scroll_mv('left');
-    });
-    document.getElementById('scrollRight_mv').addEventListener('click', function() {
-        scroll_mv('right');
-    });
-    document.getElementById('scrollLeft_tv').addEventListener('click', function() {
-        scroll_tv('left');
-    });
-    document.getElementById('scrollRight_tv').addEventListener('click', function() {
-        scroll_tv('right');
-    });
+    // Setup scroll buttons using already declared variables
+    if (scrollLeftBtn_mv) scrollLeftBtn_mv.addEventListener('click', () => scroll_mv('left'));
+    if (scrollRightBtn_mv) scrollRightBtn_mv.addEventListener('click', () => scroll_mv('right'));
+    if (scrollLeftBtn_tv) scrollLeftBtn_tv.addEventListener('click', () => scroll_tv('left'));
+    if (scrollRightBtn_tv) scrollRightBtn_tv.addEventListener('click', () => scroll_tv('right'));
     
-    // Initialize the button states
+    // Initialize button states
     updateButtonStates_mv();
     updateButtonStates_tv();
     
-    // Add window resize listener to update button states
-    window.addEventListener('resize', function() {
+    // Add window resize listener
+    window.addEventListener('resize', () => {
         updateButtonStates_mv();
         updateButtonStates_tv();
     });
@@ -702,7 +682,7 @@ document.addEventListener('DOMContentLoaded', async function() {
                 updateButtonStates_mv();
                 updateButtonStates_tv();
             } else {
-                img.addEventListener('load', function() {
+                img.addEventListener('load', () => {
                     updateButtonStates_mv();
                     updateButtonStates_tv();
                 });
@@ -712,39 +692,34 @@ document.addEventListener('DOMContentLoaded', async function() {
     
     // Setup initial button states and recalculate after images load
     function initializeTrendingScrolling() {
-        setTimeout(function() {
+        setTimeout(() => {
             updateButtonStates_mv();
             updateButtonStates_tv();
             setupImageLoadHandlers();
         }, 500);
     }
     
-    // Override get_trendingMovies and get_trendingShows to initialize after content loads
-    const originalGetTrendingMovies = get_trendingMovies;
+    // Override global functions - *Do this outside DOMContentLoaded?*
+    // No, keep them here where original functions are defined or accessible.
+    const originalGetTrendingMovies = window.get_trendingMovies; // Assuming get_trendingMovies is global
     window.get_trendingMovies = function() {
-        originalGetTrendingMovies();
-        setTimeout(initializeTrendingScrolling, 1000);
+        if (originalGetTrendingMovies) originalGetTrendingMovies();
+        setTimeout(initializeTrendingScrolling, 1000); // Initialize scrolling after content loads
     };
     
-    const originalGetTrendingShows = get_trendingShows;
+    const originalGetTrendingShows = window.get_trendingShows; // Assuming get_trendingShows is global
     window.get_trendingShows = function() {
-        originalGetTrendingShows();
-        setTimeout(initializeTrendingScrolling, 1000);
+        if (originalGetTrendingShows) originalGetTrendingShows();
+        setTimeout(initializeTrendingScrolling, 1000); // Initialize scrolling after content loads
     };
+    
+    // No need to reassign to global scope if already modifying window object
+    // get_trendingMovies = window.get_trendingMovies;
+    // get_trendingShows = window.get_trendingShows;
 
-    // Also override the global functions
-    get_trendingMovies = window.get_trendingMovies;
-    get_trendingShows = window.get_trendingShows;
-    
-    // Recalculate on window resize
-    window.addEventListener('resize', function() {
-        updateButtonStates_mv();
-        updateButtonStates_tv();
-    });
-    
     // Final initialization when everything is loaded
-    window.addEventListener('load', function() {
-        setTimeout(function() {
+    window.addEventListener('load', () => {
+        setTimeout(() => {
             updateButtonStates_mv();
             updateButtonStates_tv();
             setupImageLoadHandlers();
@@ -755,7 +730,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     initializeMobileActionModal();
     
     // Close overlay when clicking outside content
-    const overlay = document.getElementById('overlay');
+    const overlay = document.getElementById('overlay'); // Original declaration
     if (overlay) {
         overlay.addEventListener('click', function(event) {
             if (event.target === overlay) {
@@ -764,16 +739,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         });
     }
     
-    // Close overlay when pressing Escape key
-    window.addEventListener('keydown', function(event) {
-        if (event.key === 'Escape') {
-            const overlay = document.getElementById('overlay');
-            if (overlay && overlay.style.display === 'block') {
-                closeOverlay();
-            }
-        }
-    });
-});
+}); // End of DOMContentLoaded
 
 // Available versions and selected content
 let availableVersions = [];
@@ -1873,6 +1839,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     if (episode !== null) formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
+    formData.append('allow_specials', localStorage.getItem('allowSpecials') === 'true'); // Add allow_specials flag
 
     fetch('/scraper/select_season', {
         method: 'POST',
@@ -1906,7 +1873,8 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
             seasonResults.forEach(item => {
                 const option = document.createElement('option');
                 option.value = JSON.stringify(item);
-                option.textContent = `Season: ${item.season_num}`;
+                // Display "Specials" for season 0
+                option.textContent = item.season_num === 0 ? 'Specials' : `Season: ${item.season_num}`;
                 dropdown.appendChild(option);
             });
 
@@ -2018,12 +1986,15 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
         backgroundImageStyle = 'background: linear-gradient(to bottom, #333333, #121212);';
     }
 
+    // Display "Specials" for season 0
+    const seasonLabel = season_num === 0 ? 'Specials' : `Season ${season_num}`;
+
     seasonInfo.innerHTML = `
         <div class="season-info-container">
-            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} Season ${season_num}" class="season-poster">
+            <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} ${seasonLabel}" class="season-poster">
             <div class="season-details">
                 <span class="show-rating">${(vote_average).toFixed(1)}</span>
-                <h2>${title} - Season ${season_num}</h2>
+                <h2>${title} - ${seasonLabel}</h2>
                 <p>${genreString}</p>
                 <div class="season-overview">
                     <p>${season_overview ? season_overview : show_overview}</p>
@@ -2036,10 +2007,12 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
 
 function displaySeasonInfoTextOnly(title, season_num) {
     const seasonInfo = document.getElementById('season-info');
+    // Display "Specials" for season 0
+    const seasonLabel = season_num === 0 ? 'Specials' : `Season ${season_num}`;
 
     seasonInfo.innerHTML = `
         <div class="season-info-container text-only">
-            <h2>${title} - Season ${season_num}</h2>
+            <h2>${title} - ${seasonLabel}</h2>
         </div>
     `;
 }
@@ -2048,6 +2021,9 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     // Get requester status for later use
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+
+    // Get Allow Specials preference
+    const allowSpecials = localStorage.getItem('allowSpecials') === 'true';
 
     showLoadingState();
     const version = document.getElementById('version-select').value;
@@ -2060,6 +2036,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     if (episode !== null) formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
+    formData.append('allow_specials', allowSpecials); // Add allow_specials flag
 
     fetch('/scraper/select_episode', {
         method: 'POST',

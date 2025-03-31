@@ -41,9 +41,9 @@ def rename_special_characters(text: str) -> str:
     
     return text
 
-def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, tmdb_id: str = None) -> List[Dict[str, Any]]:
+def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, tmdb_id: str = None, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     #logging.info(f"Starting Jackett scrape for: {title} ({year}) - Type: {content_type}")
-    #logging.info(f"Parameters - IMDB: {imdb_id}, Season: {season}, Episode: {episode}, Multi: {multi}, Genres: {genres}, TMDB ID: {tmdb_id}")
+    #logging.info(f"Parameters - IMDB: {imdb_id}, Season: {season}, Episode: {episode}, Multi: {multi}, Genres: {genres}, TMDB ID: {tmdb_id}, Translated: {is_translated_search}")
     
     jackett_results = []
     all_settings = get_jackett_settings()
@@ -58,14 +58,15 @@ def scrape_jackett(imdb_id: str, title: str, year: int, content_type: str, seaso
                 continue
             
             try:
-                instance_results = scrape_jackett_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi, genres, tmdb_id)
+                # Pass the is_translated_search flag down
+                instance_results = scrape_jackett_instance(instance, settings, imdb_id, title, year, content_type, season, episode, multi, genres, tmdb_id, is_translated_search)
                 jackett_results.extend(instance_results)
             except Exception as e:
                 logging.error(f"Error scraping Jackett instance '{instance}': {str(e)}", exc_info=True)
     return jackett_results
 
-def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, tmdb_id: str = None) -> List[Dict[str, Any]]:
-    logging.info(f"Scraping Jackett instance: {instance}")
+def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, tmdb_id: str = None, is_translated_search: bool = False) -> List[Dict[str, Any]]:
+    logging.info(f"Scraping Jackett instance: {instance} (Translated Search: {is_translated_search})")
     jackett_url = settings.get('url', '')
     jackett_api = settings.get('api', '')
     enabled_indexers = settings.get('enabled_indexers', '').lower()

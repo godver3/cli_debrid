@@ -88,7 +88,7 @@ class TorrentProcessor:
                 - 'rate_limited': Using cached uncached status due to rate limit
         """
         try:
-            logging.info(f"[REMOVAL_DEBUG] Starting enhanced cache_status check with remove_uncached=True and remove_cached={remove_cached}")
+            logging.debug(f"Starting enhanced cache_status check with remove_uncached=True and remove_cached={remove_cached}")
             # Extract hash for cache lookup
             hash_value = None
             if magnet_or_url and magnet_or_url.startswith('magnet:'):
@@ -97,7 +97,7 @@ class TorrentProcessor:
                 hash_value = extract_hash_from_file(temp_file)
                 
             if not hash_value:
-                logging.warning("[REMOVAL_DEBUG] Could not extract hash for cache check, falling back to direct check")
+                logging.warning("Could not extract hash for cache check, falling back to direct check")
                 direct_check = self.debrid_provider.is_cached_sync(
                     magnet_or_url if not temp_file else "",
                     temp_file,
@@ -116,12 +116,10 @@ class TorrentProcessor:
                 if db_cache_status:
                     if db_cache_status.get('is_cached', False):
                         # Trust cached status
-                        logging.info(f"[REMOVAL_DEBUG] Using cached status for {hash_value}: cached")
                         return True, 'db_cached'
                     else:
                         # For uncached status, verify if rate limiting allows
                         if self._should_direct_check(hash_value):
-                            logging.info(f"[REMOVAL_DEBUG] Verifying uncached status for {hash_value}")
                             direct_check = self.debrid_provider.is_cached_sync(
                                 magnet_or_url if not temp_file else "",
                                 temp_file,
@@ -130,17 +128,14 @@ class TorrentProcessor:
                             )
                             
                             if direct_check != db_cache_status.get('is_cached', False):
-                                logging.info(f"[REMOVAL_DEBUG] Cache status changed for {hash_value}: now cached")
                                 if phalanx_enabled and hasattr(self.debrid_provider, 'update_cached_status'):
                                     self.debrid_provider.update_cached_status(hash_value, direct_check)
                             
                             return direct_check, 'db_uncached_verified'
                         else:
-                            logging.info(f"[REMOVAL_DEBUG] Rate limited, using cached uncached status for {hash_value}")
                             return False, 'rate_limited'
             
             # If no cached status or provider doesn't support caching or phalanx is disabled
-            logging.info(f"[REMOVAL_DEBUG] Performing direct cache check for {hash_value} with remove_uncached=True, remove_cached={remove_cached}")
             direct_check = self.debrid_provider.is_cached_sync(
                 magnet_or_url if not temp_file else "",
                 temp_file,
@@ -221,7 +216,6 @@ class TorrentProcessor:
             - False: Torrent is not cached
             - None: Error occurred
         """
-        logging.info(f"[REMOVAL_DEBUG] Starting check_cache_for_url with URL: {url[:60]}... (remove_cached={remove_cached})")
         torrent_id_to_remove = None
         
         try:
@@ -250,9 +244,7 @@ class TorrentProcessor:
                     tmp.flush()
                     
                     # Check cache status using enhanced method
-                    logging.info(f"[REMOVAL_DEBUG] Calling check_cache_status for URL with remove_uncached=True, remove_cached={remove_cached}")
                     is_cached, cache_source = self.check_cache_status("", temp_file_path, remove_cached=remove_cached)
-                    logging.info(f"[REMOVAL_DEBUG] Cache check result for URL: {is_cached} (source: {cache_source})")
                     
                     return is_cached
                     
@@ -285,24 +277,21 @@ class TorrentProcessor:
             - None: Error occurred (no video files, invalid magnet, etc)
         """
         try:
-            logging.info(f"[REMOVAL_DEBUG] Starting check_cache for: {magnet_or_url[:60]}... (remove_cached={remove_cached})")
             
             # Handle URLs that are torrent files
             if not magnet_or_url.startswith('magnet:') and (
                 magnet_or_url.startswith('http') or 
                 'jackett' in magnet_or_url.lower() or 
                 'prowlarr' in magnet_or_url.lower()):
-                logging.info("[REMOVAL_DEBUG] Processing URL as a potential torrent file")
+                logging.debug("Processing URL as a potential torrent file")
                 return self.check_cache_for_url(magnet_or_url, remove_cached=remove_cached)
             
             # Use enhanced cache checking
-            logging.info(f"[REMOVAL_DEBUG] Calling check_cache_status with remove_uncached=True, remove_cached={remove_cached}")
             is_cached, cache_source = self.check_cache_status(magnet_or_url, temp_file, remove_cached=remove_cached)
-            logging.info(f"[REMOVAL_DEBUG] Cache check result: {is_cached} (source: {cache_source})")
+            logging.debug(f"Cache check result: {is_cached} (source: {cache_source})")
             
             # Check if this is a RealDebridProvider and explicitly verify removal
             if not is_cached and hasattr(self.debrid_provider, 'verify_removal_state'):
-                logging.info(f"[REMOVAL_DEBUG] Verifying removal state for torrent")
                 self.debrid_provider.verify_removal_state()
             
             return is_cached

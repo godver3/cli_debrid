@@ -607,11 +607,14 @@ def select_season():
         media_id = request.form.get('media_id')
         title = request.form.get('title')
         year = request.form.get('year')
+        # Get allow_specials flag from form data
+        allow_specials = request.form.get('allow_specials', 'false').lower() == 'true'
         
         if media_id:
             try:
                 # Allow both requesters and regular users to get season data for browsing
-                results = web_scrape_tvshow(media_id, title, year)
+                # Pass the allow_specials flag to web_scrape_tvshow
+                results = web_scrape_tvshow(media_id, title, year, season=None, allow_specials=allow_specials)
                 if not results:
                     return jsonify({'error': 'No results found'}), 404
                 elif 'error' in results:
@@ -644,11 +647,14 @@ def select_episode():
         season = request.form.get('season')
         title = request.form.get('title')
         year = request.form.get('year')
+        # Get allow_specials flag from form data
+        allow_specials = request.form.get('allow_specials', 'false').lower() == 'true'
         
         if media_id:
             try:
                 # Allow episode data to be retrieved for both requesters and regular users
-                episodeResults = web_scrape_tvshow(media_id, title, year, season)
+                # Pass the allow_specials flag to web_scrape_tvshow
+                episodeResults = web_scrape_tvshow(media_id, title, year, season, allow_specials=allow_specials)
                 if not episodeResults:
                     return jsonify({'error': 'No results found'}), 404
                 elif 'error' in episodeResults:

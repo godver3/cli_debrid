@@ -582,11 +582,22 @@ def run_main():
     
     # Set up environment first to ensure we can read settings
     setup_environment()
-    
+
+    # Log the config path being used
+    config_path_to_check = os.path.join(os.environ.get('USER_CONFIG', 'UNKNOWN_PATH'), 'config.json')
+    logging.info(f"Checking for config at: {config_path_to_check}")
+    logging.info(f"Config exists: {os.path.exists(config_path_to_check)}")
+
     # Check both command line argument and settings for phalanx db
-    phalanx_enabled = args.enable_phalanx_db or get_setting('UI Settings', 'enable_phalanx_db', default=False)
-    os.environ['ENABLE_PHALANX_DB'] = str(phalanx_enabled).lower()
+    phalanx_setting_value = get_setting('UI Settings', 'enable_phalanx_db', default=None) # Use None default to distinguish from False
+    logging.info(f"Value read from get_setting for enable_phalanx_db: {phalanx_setting_value}")
     
+    phalanx_enabled = args.enable_phalanx_db or (phalanx_setting_value is True) # Explicitly check for True
+    logging.info(f"Command line arg --enable-phalanx-db: {args.enable_phalanx_db}")
+    logging.info(f"Final calculated phalanx_enabled value: {phalanx_enabled}")
+    
+    os.environ['ENABLE_PHALANX_DB'] = str(phalanx_enabled).lower()
+
     if phalanx_enabled:
         logging.info("Phalanx DB integration enabled")
         # Check Node.js installation before proceeding

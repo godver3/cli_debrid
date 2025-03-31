@@ -76,9 +76,6 @@ class RealDebridProvider(DebridProvider):
         elif result_title:
             log_prefix = f"[{result_title}]"
         
-        logging.debug(f"{log_prefix} Starting cache check for {len([magnet_links] if isinstance(magnet_links, str) else magnet_links)} magnet(s)")
-        logging.debug(f"{log_prefix} Temp file path: {temp_file_path}")
-        logging.info(f"{log_prefix} [REMOVAL_DEBUG] Removal settings: remove_uncached={remove_uncached}, remove_cached={remove_cached}")
         
         # If single magnet link, convert to list
         if isinstance(magnet_links, str):
@@ -147,20 +144,17 @@ class RealDebridProvider(DebridProvider):
             torrent_id = None
             try:
                 # Add the magnet/torrent to RD
-                logging.info(f"{log_prefix} [REMOVAL_DEBUG] PHASE: Addition - Adding to Real-Debrid for cache check (remove_uncached={remove_uncached}, remove_cached={remove_cached})")
                 torrent_id = self.add_torrent(magnet_link if magnet_link and magnet_link.startswith('magnet:') else None, temp_file_path)
                 
                 if not torrent_id:
                     # If add_torrent returns None, the torrent might already be added
                     # Try to get the hash and look up existing torrent
                     if hash_value:
-                        logging.info(f"{log_prefix} [REMOVAL_DEBUG] PHASE: Lookup - Checking for existing torrent")
                         # Search for existing torrent with this hash
                         torrents = make_request('GET', '/torrents', self.api_key) or []
                         for torrent in torrents:
                             if torrent.get('hash', '').lower() == hash_value.lower():
                                 torrent_id = torrent['id']
-                                logging.info(f"{log_prefix} [REMOVAL_DEBUG] Found existing torrent with ID {torrent_id}")
                                 break
                     
                     if not torrent_id:
@@ -174,31 +168,29 @@ class RealDebridProvider(DebridProvider):
                         continue
                     
                 # Get torrent info
-                logging.info(f"{log_prefix} [REMOVAL_DEBUG] PHASE: Info Fetch - Getting torrent info for ID: {torrent_id}")
                 info = self.get_torrent_info(torrent_id)
                 if not info:
-                    logging.error(f"{log_prefix} [REMOVAL_DEBUG] Failed to get torrent info for ID: {torrent_id}")
+                    logging.error(f"{log_prefix} Failed to get torrent info for ID: {torrent_id}")
                     try:
                         add_to_not_wanted(hash_value)
                         self.remove_torrent(torrent_id, "Failed to get torrent info during cache check")
                     except Exception as e:
-                        logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error in cleanup after info fetch failure: {str(e)}")
+                        logging.error(f"{log_prefix} Error in cleanup after info fetch failure: {str(e)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                     results[hash_value] = None
                     continue
                     
                 # Check if it's already cached
                 status = info.get('status', '')
-                logging.debug(f"{log_prefix} [REMOVAL_DEBUG] Torrent status: {status}")
                 
                 # Handle error statuses
                 if status in ['magnet_error', 'error', 'virus', 'dead']:
-                    logging.error(f"{log_prefix} [REMOVAL_DEBUG] Torrent has error status: {status}")
+                    logging.error(f"{log_prefix} Torrent has error status: {status}")
                     try:
                         add_to_not_wanted(hash_value)
                         self.remove_torrent(torrent_id, f"Torrent has error status: {status}")
                     except Exception as e:
-                        logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error in cleanup after error status: {str(e)}")
+                        logging.error(f"{log_prefix} Error in cleanup after error status: {str(e)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                     results[hash_value] = None
                     continue
@@ -206,19 +198,18 @@ class RealDebridProvider(DebridProvider):
                 # If there are no video files, return None to indicate error
                 video_files = [f for f in info.get('files', []) if is_video_file(f.get('path', '') or f.get('name', ''))]
                 if not video_files:
-                    logging.error(f"{log_prefix} [REMOVAL_DEBUG] No video files found in torrent")
+                    logging.error(f"{log_prefix} No video files found in torrent")
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     try:
                         add_to_not_wanted(hash_value)
                         self.remove_torrent(torrent_id, "No video files found in torrent")
                     except Exception as e:
-                        logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error in cleanup after no video files: {str(e)}")
+                        logging.error(f"{log_prefix} Error in cleanup after no video files: {str(e)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                     results[hash_value] = None
                     continue
                 
                 is_cached = status == 'downloaded'
-                logging.info(f"{log_prefix} [REMOVAL_DEBUG] Cache status: {'Cached' if is_cached else 'Not cached'}")
                 
                 # Update PhalanxDB with new cache status if enabled
                 if self.phalanx_enabled and self.phalanx_cache:
@@ -238,49 +229,41 @@ class RealDebridProvider(DebridProvider):
                 
                 # Store torrent ID if cached, remove if not cached
                 if is_cached:
-                    logging.info(f"{log_prefix} [REMOVAL_DEBUG] Torrent is cached, keeping ID {torrent_id} for future use")
                     self._cached_torrent_ids[hash_value] = torrent_id
                     self._cached_torrent_titles[hash_value] = info.get('filename', '')
                     
                     # Remove cached torrents if requested
                     if remove_cached:
                         try:
-                            logging.info(f"{log_prefix} [REMOVAL_DEBUG] Torrent is cached, but remove_cached=True, attempting to remove ID: {torrent_id}")
                             self.remove_torrent(torrent_id, "Torrent is cached - removed after cache check due to remove_cached=True")
-                            logging.info(f"{log_prefix} [REMOVAL_DEBUG] Successfully removed cached torrent ID: {torrent_id}")
                         except Exception as e:
-                            logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error removing cached torrent: {str(e)}")
+                            logging.error(f"{log_prefix} Error removing cached torrent: {str(e)}")
                             self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                 else:
                     if remove_uncached:
                         try:
-                            logging.info(f"{log_prefix} [REMOVAL_DEBUG] Torrent is NOT cached, attempting to remove ID: {torrent_id}")
                             self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
                             from database.torrent_tracking import update_cache_check_removal
                             update_cache_check_removal(hash_value)
-                            logging.info(f"{log_prefix} [REMOVAL_DEBUG] Successfully removed uncached torrent ID: {torrent_id}")
                         except Exception as e:
-                            logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error removing uncached torrent: {str(e)}")
+                            logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
                             self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
-                    else:
-                        # Keep the torrent for later use
-                        logging.info(f"{log_prefix} [REMOVAL_DEBUG] Keeping uncached torrent (ID: {torrent_id}) because remove_uncached={remove_uncached}")
                 
                 results[hash_value] = is_cached
                 
             except Exception as e:
-                logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error checking cache: {str(e)}")
+                logging.error(f"{log_prefix} Error checking cache: {str(e)}")
                 if torrent_id:
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     try:
                         self.remove_torrent(torrent_id, f"Error during cache check: {str(e)}")
                     except Exception as rm_err:
-                        logging.error(f"{log_prefix} [REMOVAL_DEBUG] Error removing torrent after unhandled error: {str(rm_err)}")
+                        logging.error(f"{log_prefix} Error removing torrent after unhandled error: {str(rm_err)}")
                         self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                 try:
                     add_to_not_wanted(hash_value)
                 except Exception as add_err:
-                    logging.error(f"{log_prefix} [REMOVAL_DEBUG] Failed to add to not wanted list: {str(add_err)}")
+                    logging.error(f"{log_prefix} Failed to add to not wanted list: {str(add_err)}")
                 results[hash_value] = None
 
         logging.debug(f"{log_prefix} Cache check complete. Results: {results}")
@@ -678,19 +661,13 @@ class RealDebridProvider(DebridProvider):
             # Get torrent info before removal to get the hash
             hash_value = None
             try:
-                logging.info(f"[REMOVAL_DEBUG] Getting torrent info before removal for ID: {torrent_id}")
                 info = self.get_torrent_info(torrent_id)
                 if info:
                     hash_value = info.get('hash', '').lower()
-                    logging.info(f"[REMOVAL_DEBUG] Got hash {hash_value} for torrent ID: {torrent_id}")
-                else:
-                    logging.info(f"[REMOVAL_DEBUG] No torrent info returned for ID: {torrent_id}")
             except Exception as e:
-                logging.warning(f"[REMOVAL_DEBUG] Could not get torrent info before removal: {str(e)}")
+                logging.warning(f"Could not get torrent info before removal: {str(e)}")
 
-            logging.info(f"[REMOVAL_DEBUG] Attempting to remove torrent {torrent_id} from Real-Debrid (reason: {removal_reason})")
             removal_response = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
-            logging.info(f"[REMOVAL_DEBUG] Successfully removed torrent {torrent_id} from Real-Debrid, response: {removal_response}")
             
             # Update status and tracking
             self.update_status(torrent_id, TorrentStatus.REMOVED)
@@ -698,33 +675,29 @@ class RealDebridProvider(DebridProvider):
             # Record removal in tracking database if we have the hash
             if hash_value:
                 from database.torrent_tracking import mark_torrent_removed
-                logging.info(f"[REMOVAL_DEBUG] Marking torrent {hash_value} as removed in database (reason: {removal_reason})")
                 mark_torrent_removed(hash_value, removal_reason)
                 
                 # Clean up cached data
                 if hash_value in self._cached_torrent_ids:
-                    logging.info(f"[REMOVAL_DEBUG] Removing hash {hash_value} from _cached_torrent_ids")
                     del self._cached_torrent_ids[hash_value]
                 if hash_value in self._cached_torrent_titles:
-                    logging.info(f"[REMOVAL_DEBUG] Removing hash {hash_value} from _cached_torrent_titles")
                     del self._cached_torrent_titles[hash_value]
                 if hash_value in self._all_torrent_ids:
-                    logging.info(f"[REMOVAL_DEBUG] Removing hash {hash_value} from _all_torrent_ids")
                     del self._all_torrent_ids[hash_value]
                     
         except Exception as e:
             if "404" in str(e):
-                logging.warning(f"[REMOVAL_DEBUG] Torrent {torrent_id} already removed from Real-Debrid")
+                logging.warning(f"Torrent {torrent_id} already removed from Real-Debrid")
                 # Still try to update tracking if we have the hash
                 if hash_value:
                     from database.torrent_tracking import mark_torrent_removed
                     mark_torrent_removed(hash_value, f"{removal_reason} (already removed)")
             else:
-                logging.error(f"[REMOVAL_DEBUG] Error removing torrent {torrent_id}: {str(e)}", exc_info=True)
+                logging.error(f"Error removing torrent {torrent_id}: {str(e)}", exc_info=True)
                 # Get caller information for debugging
                 caller_frame = inspect.currentframe().f_back
                 caller_info = f"{caller_frame.f_code.co_filename}:{caller_frame.f_code.co_name}:{caller_frame.f_lineno}"
-                logging.error(f"[REMOVAL_DEBUG] Remove torrent failed when called from {caller_info}")
+                logging.error(f"Remove torrent failed when called from {caller_info}")
             raise
 
     def get_torrent_file_list(self, magnet_link: str) -> Optional[Tuple[List[Dict], str, str]]:
@@ -806,7 +779,6 @@ class RealDebridProvider(DebridProvider):
     def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
         """Synchronous version of is_cached"""
         try:
-            logging.info(f"[REMOVAL_DEBUG] Running is_cached_sync with remove_uncached={remove_uncached}, remove_cached={remove_cached}, skip_phalanx_db={skip_phalanx_db}")
             # Create a new event loop for this thread if one doesn't exist
             try:
                 loop = asyncio.get_event_loop()
@@ -826,15 +798,12 @@ class RealDebridProvider(DebridProvider):
     def verify_removal_state(self) -> None:
         """Verify removal state by listing all torrents in the account"""
         try:
-            logging.info(f"[REMOVAL_DEBUG] Verifying removal state by listing all torrents")
             torrents = make_request('GET', '/torrents', self.api_key) or []
-            logging.info(f"[REMOVAL_DEBUG] Found {len(torrents)} torrents in the account")
             
             for torrent in torrents[:5]:  # Log the first 5 torrents for debugging
                 torrent_id = torrent.get('id', 'unknown')
                 hash_value = torrent.get('hash', 'unknown')
                 status = torrent.get('status', 'unknown')
                 filename = torrent.get('filename', 'unknown')
-                logging.info(f"[REMOVAL_DEBUG] Torrent ID: {torrent_id}, Hash: {hash_value}, Status: {status}, Filename: {filename}")
         except Exception as e:
-            logging.error(f"[REMOVAL_DEBUG] Error verifying removal state: {str(e)}")
+            logging.error(f"Error verifying removal state: {str(e)}")
