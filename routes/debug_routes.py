@@ -44,11 +44,27 @@ from content_checkers.content_cache_management import (
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
 from content_checkers.content_source_detail import append_content_source_detail
+# Import necessary modules for symlink recovery
+import re
+from pathlib import Path
+from utilities.settings import get_setting
+from metadata.metadata import get_metadata
+from datetime import datetime
+# Import reverse parser
+from utilities.reverse_parser import parse_filename_for_version
+# Imports for streaming
+import threading
+import time
+import json
+from flask import Response, stream_with_context
 
 debug_bp = Blueprint('debug', __name__)
 
 # Global progress tracking
 scan_progress = {}
+
+# Global dictionary to store analysis progress
+analysis_progress = {}
 
 # --- Helper function to get cache files ---
 def get_cache_files():
@@ -2103,3 +2119,534 @@ def delete_cache_files_route():
         # Return success=True even with partial failures, but include error details
         return jsonify({'success': True, 'message': error_message, 'errors': errors})
 # --- End new route ---
+
+# --- Symlink Recovery Routes ---
+
+@debug_bp.route('/recover_symlinks')
+@admin_required
+def recover_symlinks_page():
+    """Renders the symlink recovery page."""
+    return render_template('recover_symlinks.html')
+
+def parse_symlink(symlink_path: Path):
+    """Parses a symlink path based on filename patterns, not templates."""
+    filename = symlink_path.name
+    parsed_data = {
+        'symlink_path': str(symlink_path),
+        'original_path_for_symlink': None, # Populated in analyze_symlinks
+        'media_type': None, # Determined below
+        'imdb_id': None, # Determined below
+        'tmdb_id': None, # Populated by get_metadata
+        'title': None, # Populated by get_metadata
+        'year': None, # Populated by get_metadata
+        'season_number': None, # Determined below
+        'episode_number': None, # Determined below
+        'episode_title': None, # Populated by get_metadata
+        'version': None, # Populated by reverse_parser in analyze_symlinks
+        'original_filename': None, # Populated in analyze_symlinks
+        'is_anime': False # Populated by get_metadata
+    }
+
+    # 1. Extract IMDb ID (tt#######)
+    imdb_match = re.search(r'(tt\d{7,})', filename, re.IGNORECASE)
+    if imdb_match:
+        parsed_data['imdb_id'] = imdb_match.group(1)
+    else:
+        logging.warning(f"Could not extract IMDb ID from filename: {filename}")
+        return None # Cannot proceed without IMDb ID
+
+    # 2. Extract Season and Episode Numbers (S##E## or similar)
+    # More robust regex to handle variations like S01E01, S1E1, Season 1 Episode 1, 1x01 etc.
+    se_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3})|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
+    if se_match:
+        parsed_data['media_type'] = 'episode'
+        # Extract numbers from the first matching group that isn't None
+        if se_match.group(1) is not None and se_match.group(2) is not None:
+            parsed_data['season_number'] = int(se_match.group(1))
+            parsed_data['episode_number'] = int(se_match.group(2))
+        elif se_match.group(3) is not None and se_match.group(4) is not None:
+             parsed_data['season_number'] = int(se_match.group(3))
+             parsed_data['episode_number'] = int(se_match.group(4))
+        elif se_match.group(5) is not None and se_match.group(6) is not None:
+             parsed_data['season_number'] = int(se_match.group(5))
+             parsed_data['episode_number'] = int(se_match.group(6))
+        else:
+             logging.warning(f"Regex matched S/E pattern but failed to extract numbers for: {filename}")
+             # Decide if this is fatal? Maybe still treat as movie?
+             parsed_data['media_type'] = 'movie' # Fallback to movie if numbers aren't extracted
+    else:
+        parsed_data['media_type'] = 'movie'
+
+    logging.debug(f"Parsed initial data from {filename}: IMDb={parsed_data['imdb_id']}, Type={parsed_data['media_type']}, S={parsed_data['season_number']}, E={parsed_data['episode_number']}")
+    return parsed_data
+
+def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id):
+    """The actual analysis logic, run in a background thread."""
+    global analysis_progress
+    analysis_progress[task_id] = {
+        'status': 'starting',
+        'message': 'Initializing analysis...',
+        'total_items_scanned': 0,
+        'total_symlinks_processed': 0,
+        'total_files_processed': 0,
+        'items_found': 0,
+        'parser_errors': 0,
+        'metadata_errors': 0,
+        'recoverable_items_preview': [], # Store first few recoverable items
+        'recoverable_items': [], # Store all recoverable items (populated on completion)
+        'complete': False
+    }
+
+    def update_progress(**kwargs):
+        if task_id in analysis_progress:
+            analysis_progress[task_id].update(kwargs)
+            # Limit the preview list size
+            preview = analysis_progress[task_id]['recoverable_items_preview']
+            if len(preview) > 5:
+                 analysis_progress[task_id]['recoverable_items_preview'] = preview[:5]
+        else:
+            logging.warning(f"Task ID {task_id} not found in progress dict during update.")
+
+    try:
+        symlink_root_path = Path(symlink_root_path_str)
+        original_root_path = Path(original_root_path_str) if original_root_path_str else None
+
+        if not symlink_root_path.is_dir():
+            raise ValueError('Symlink Root Path must be a valid directory.')
+        if original_root_path and not original_root_path.is_dir():
+            raise ValueError('Original Root Path must be valid if provided.')
+
+        separate_anime = get_setting('Debug', 'enable_separate_anime_folders')
+        movies_folder = get_setting('Debug', 'movies_folder_name')
+        tv_shows_folder = get_setting('Debug', 'tv_shows_folder_name')
+        anime_movies_folder = get_setting('Debug', 'anime_movies_folder_name') if separate_anime else None
+        anime_tv_shows_folder = get_setting('Debug', 'anime_tv_shows_folder_name') if separate_anime else None
+
+        ignored_extensions = {'.srt', '.sub', '.idx', '.nfo', '.txt', '.jpg', '.png', '.db', '.partial', '.!qB'}
+        search_folders = [movies_folder, tv_shows_folder]
+        if separate_anime:
+            if anime_movies_folder: search_folders.append(anime_movies_folder)
+            if anime_tv_shows_folder: search_folders.append(anime_tv_shows_folder)
+
+        total_items_scanned = 0
+        total_symlinks_processed = 0
+        total_files_processed = 0
+        items_found = 0
+        parser_errors = 0
+        metadata_errors = 0
+        recoverable_items_preview = []
+
+        update_progress(status='scanning', message='Starting directory scan...')
+
+        for folder_name in search_folders:
+            current_search_path = symlink_root_path / folder_name
+            if current_search_path.is_dir():
+                update_progress(message=f'Scanning {folder_name}...')
+                try:
+                    for item_path in current_search_path.rglob('*'):
+                        total_items_scanned += 1
+                        if total_items_scanned % 100 == 0: # Update progress periodically
+                            update_progress(
+                                total_items_scanned=total_items_scanned,
+                                total_symlinks_processed=total_symlinks_processed,
+                                total_files_processed=total_files_processed,
+                                items_found=items_found,
+                                parser_errors=parser_errors,
+                                metadata_errors=metadata_errors,
+                                message=f'Scanned {total_items_scanned} items...'
+                             )
+
+                        if item_path.suffix.lower() in ignored_extensions:
+                            continue
+
+                        if item_path.is_file() or item_path.is_symlink():
+                            if item_path.is_symlink():
+                                total_symlinks_processed += 1
+                            else:
+                                total_files_processed += 1
+
+                            parsed_data = parse_symlink(item_path)
+                            if not parsed_data:
+                                parser_errors += 1
+                                continue # Skip if initial parse fails
+
+                            # --- Determine original path and filename ---
+                            original_path_obj = None
+                            if item_path.is_symlink():
+                                try:
+                                    target_path_str = os.readlink(str(item_path))
+                                    if not os.path.isabs(target_path_str):
+                                        target_path_str = os.path.abspath(os.path.join(item_path.parent, target_path_str))
+                                    original_path_obj = Path(target_path_str)
+                                except Exception as e:
+                                    parsed_data['original_path_for_symlink'] = f"Error: Cannot read link target ({e})"
+                                    parsed_data['original_filename'] = item_path.name
+                            elif item_path.is_file():
+                                original_path_obj = item_path
+
+                            if original_path_obj and original_path_obj.is_file():
+                                parsed_data['original_path_for_symlink'] = str(original_path_obj)
+                                parsed_data['original_filename'] = original_path_obj.name
+                            elif 'original_path_for_symlink' not in parsed_data:
+                                if original_path_obj:
+                                     parsed_data['original_path_for_symlink'] = f"Error: Target not a file ({original_path_obj})"
+                                else:
+                                    parsed_data['original_path_for_symlink'] = "Error: Original path unknown"
+                                parsed_data['original_filename'] = item_path.name
+                            # --- End original path determination ---
+
+                            # --- Get version ---    
+                            filename_for_version = parsed_data.get('original_filename')
+                            if filename_for_version:
+                                try:
+                                    version_raw = parse_filename_for_version(filename_for_version)
+                                    parsed_data['version'] = version_raw.strip('*') if version_raw else 'Default'
+                                except Exception as e:
+                                    parsed_data['version'] = 'Default'
+                            else:
+                                parsed_data['version'] = 'Default'
+                            # --- End version --- 
+                                
+                            # --- Fetch metadata --- 
+                            if parsed_data['imdb_id']:
+                                metadata_args = {
+                                    'imdb_id': parsed_data['imdb_id'],
+                                    'item_media_type': parsed_data.get('media_type') # Re-add based on function signature
+                                }
+                                # Removed conditional adding of season/episode number
+                                # get_metadata likely handles this internally based on imdb_id
+                                try:
+                                    # Pass the original parsed_data as original_item if needed by get_metadata internal logic
+                                    metadata_args['original_item'] = parsed_data 
+                                    metadata = get_metadata(**metadata_args)
+                                    if metadata:
+                                        parsed_data['title'] = metadata.get('title')
+                                        parsed_data['year'] = metadata.get('year')
+                                        # Update tmdb_id if get_metadata found it
+                                        parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
+                                        parsed_data['release_date'] = metadata.get('release_date')
+                                        if parsed_data['media_type'] == 'episode':
+                                            parsed_data['episode_title'] = metadata.get('episode_title')
+                                        genres = metadata.get('genres', [])
+                                        if isinstance(genres, list):
+                                            parsed_data['is_anime'] = any(g.lower() in ['animation', 'anime'] for g in genres)
+                                        
+                                        items_found += 1
+                                        # Add to the main list for final recovery
+                                        analysis_progress[task_id]['recoverable_items'].append(parsed_data)
+                                        # Update preview list for UI feedback during scan
+                                        if len(recoverable_items_preview) < 5:
+                                             recoverable_items_preview.append(parsed_data) 
+                                        update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
+                                    else:
+                                        metadata_errors += 1
+                                except Exception as e:
+                                    logging.error(f"Metadata error for {metadata_args}: {e}", exc_info=False) # Less verbose logging
+                                    metadata_errors += 1
+                except Exception as e:
+                    logging.error(f"Error scanning {current_search_path}: {e}", exc_info=True)
+                    update_progress(status='error', message=f'Error scanning {folder_name}: {e}')
+                    # Continue to next folder on error
+            else:
+                logging.warning(f"Directory not found: {current_search_path}")
+                
+        update_progress(
+            status='complete', 
+            message='Analysis finished.', 
+            complete=True,
+            recoverable_items=analysis_progress[task_id]['recoverable_items'], # Include full list in final update
+            total_items_scanned=total_items_scanned,
+            total_symlinks_processed=total_symlinks_processed,
+            total_files_processed=total_files_processed,
+            items_found=items_found,
+            parser_errors=parser_errors,
+            metadata_errors=metadata_errors
+        )
+
+    except Exception as e:
+        logging.error(f"Analysis thread error for task {task_id}: {e}", exc_info=True)
+        update_progress(status='error', message=f'Analysis failed: {e}', complete=True)
+    finally:
+        # Optional: Clean up the progress entry after some time? 
+        # threading.Timer(300, lambda: analysis_progress.pop(task_id, None)).start()
+        pass
+
+@debug_bp.route('/analyze_symlinks', methods=['POST'])
+@admin_required
+def analyze_symlinks():
+    """Initiates the symlink analysis in a background thread and returns a task ID."""
+    import uuid
+    symlink_root_path_str = request.form.get('symlink_root_path')
+    original_root_path_str = request.form.get('original_root_path')
+
+    if not symlink_root_path_str:
+        return jsonify({'success': False, 'error': 'Symlink Root Path is required.'}), 400
+
+    task_id = str(uuid.uuid4())
+    
+    # Start analysis in background thread
+    thread = threading.Thread(
+        target=_run_analysis_thread, 
+        args=(symlink_root_path_str, original_root_path_str, task_id)
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'task_id': task_id}) # Return task ID for progress tracking
+
+@debug_bp.route('/analysis_progress/<task_id>')
+def analysis_progress_stream(task_id):
+    """SSE endpoint for tracking analysis progress."""
+    def generate():
+        while True:
+            if task_id not in analysis_progress:
+                progress = {'status': 'error', 'message': 'Task not found or expired', 'complete': True}
+                yield f"data: {json.dumps(progress)}\n\n"
+                break
+                
+            progress = analysis_progress[task_id]
+            yield f"data: {json.dumps(progress)}\n\n"
+            
+            if progress.get('complete', False):
+                # Maybe remove from dict after sending final status?
+                # analysis_progress.pop(task_id, None) 
+                break
+                
+            time.sleep(1) # Poll interval
+            
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+@debug_bp.route('/perform_recovery', methods=['POST'])
+@admin_required
+def perform_recovery():
+    """Recovers all items found during a specific analysis task."""
+    from database import get_db_connection, add_or_update_media_item
+
+    data = request.get_json()
+    task_id = data.get('task_id')
+
+    if not task_id:
+        return jsonify({'success': False, 'error': 'Missing task_id.'}), 400
+    
+    # Retrieve the full list of items from the completed analysis task
+    if task_id not in analysis_progress or not analysis_progress[task_id].get('complete'):
+        return jsonify({'success': False, 'error': f'Analysis task {task_id} not found or not complete.'}), 404
+    
+    items_to_recover = analysis_progress[task_id].get('recoverable_items')
+    if not items_to_recover or not isinstance(items_to_recover, list):
+        return jsonify({'success': False, 'error': f'No recoverable items found for task {task_id}.'}), 404
+
+    conn = get_db_connection()
+    successful_recoveries = 0
+    failed_recoveries = 0
+    errors = []
+
+    try:
+        for item_data in items_to_recover:
+            try:
+                now_iso = datetime.now().isoformat()
+                # Prepare data for database insertion
+                db_item = {
+                    'imdb_id': item_data.get('imdb_id'),
+                    'tmdb_id': item_data.get('tmdb_id'),
+                    'title': item_data.get('title'),
+                    'year': item_data.get('year'),
+                    'release_date': item_data.get('release_date'),
+                    'state': 'Collected', # Mark as collected
+                    'media_type': item_data.get('media_type'),
+                    'season_number': item_data.get('season_number'),
+                    'episode_number': item_data.get('episode_number'),
+                    'episode_title': item_data.get('episode_title'),
+                    'last_collected_date': now_iso, # Updated
+                    'collected_at': now_iso, # Added
+                    'original_collected_at': now_iso, # Added
+                    'symlink_path': item_data.get('symlink_path'),
+                    'original_path_for_symlink': item_data.get('original_path_for_symlink'),
+                    'version': item_data.get('version', 'Default'),
+                    'original_filename': item_data.get('original_filename'),
+                    'filled_by_file': item_data.get('original_filename'), # Added
+                    'manually_added': True, # Indicate it was recovered
+                    'last_updated': now_iso, # Updated
+                    'metadata_updated': now_iso, # Added
+                    'date_added': now_iso, # Updated
+                    'wake_count': 0,
+                    'attempts': 0,
+                    'is_anime': item_data.get('is_anime', False)
+                }
+
+                # Filter out None values before passing to db function
+                db_item_filtered = {k: v for k, v in db_item.items() if v is not None}
+
+                if not db_item_filtered.get('imdb_id') or not db_item_filtered.get('media_type'):
+                    raise ValueError(f"Missing essential data (imdb_id or media_type) for item: {item_data.get('symlink_path')}")
+
+                # Call the database function (ensure it handles potential duplicates gracefully)
+                add_or_update_media_item(conn, **db_item_filtered)
+                successful_recoveries += 1
+                logging.info(f"Successfully recovered item: {db_item_filtered.get('title')} ({db_item_filtered.get('year')}) - {db_item_filtered.get('imdb_id')}")
+
+            except Exception as e:
+                failed_recoveries += 1
+                error_msg = f"Failed to recover item {item_data.get('symlink_path', 'Unknown')}: {str(e)}"
+                errors.append(error_msg)
+                logging.error(error_msg, exc_info=True)
+                # Optionally rollback transaction for this item? Depends on desired behavior.
+
+        # Commit changes if all items processed (or handle per item)
+        conn.commit()
+
+    except Exception as conn_err:
+        # Error getting the initial connection
+        failed_recoveries = len(items_to_recover) # Mark all as failed if connection fails
+        error_msg = f"Database connection error during recovery: {str(conn_err)}"
+        errors.append(error_msg)
+        logging.error(error_msg, exc_info=True)
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception as close_err:
+                logging.error(f"Error closing DB connection after recovery: {close_err}")
+
+    return jsonify({
+        'success': failed_recoveries == 0,
+        'successful_recoveries': successful_recoveries,
+        'failed_recoveries': failed_recoveries,
+        'errors': errors
+    })
+
+# --- End Symlink Recovery Routes ---
+
+# --- Symlink Path Modification --- 
+@debug_bp.route('/api/modify_symlink_paths', methods=['POST'])
+@admin_required
+def modify_symlink_paths():
+    """API endpoint to modify base paths for symlinks and original files in the database."""
+    current_symlink_base = request.form.get('current_symlink_base', '').strip()
+    new_symlink_base = request.form.get('new_symlink_base', '').strip()
+    current_original_base = request.form.get('current_original_base', '').strip()
+    new_original_base = request.form.get('new_original_base', '').strip()
+    dry_run = request.form.get('dry_run') == 'on'
+
+    modify_symlink = bool(current_symlink_base and new_symlink_base)
+    modify_original = bool(current_original_base and new_original_base)
+
+    if not modify_symlink and not modify_original:
+        return jsonify({'success': False, 'error': 'Please provide at least one pair of current and new base paths to modify.'}), 400
+
+    logging.info(f"Symlink path modification requested. Dry run: {dry_run}")
+    if modify_symlink: logging.info(f"  Symlink: '{current_symlink_base}' -> '{new_symlink_base}'")
+    if modify_original: logging.info(f"  Original: '{current_original_base}' -> '{new_original_base}'")
+
+    from database import get_db_connection
+    conn = None
+    items_to_update = []
+    preview_items = [] # For dry run
+    MAX_PREVIEW = 10
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Query items that might need updating
+        query = "SELECT id, location_on_disk, original_path_for_symlink FROM media_items WHERE "
+        conditions = []
+        params = []
+        if modify_symlink:
+            conditions.append("location_on_disk LIKE ?")
+            params.append(current_symlink_base + '%')
+        if modify_original:
+            conditions.append("original_path_for_symlink LIKE ?")
+            params.append(current_original_base + '%')
+        
+        query += " OR ".join(conditions)
+        cursor.execute(query, params)
+        items = cursor.fetchall()
+
+        logging.info(f"Found {len(items)} potentially matching items in the database.")
+
+        for item in items:
+            item_id = item['id']
+            current_location = item['location_on_disk']
+            current_original = item['original_path_for_symlink']
+            new_location = current_location
+            new_original = current_original
+            updated = False
+
+            if modify_symlink and current_location and current_location.startswith(current_symlink_base):
+                new_location = current_location.replace(current_symlink_base, new_symlink_base, 1)
+                updated = True
+                logging.debug(f"Item {item_id}: Symlink change '{current_location}' -> '{new_location}'")
+
+            if modify_original and current_original and current_original.startswith(current_original_base):
+                new_original = current_original.replace(current_original_base, new_original_base, 1)
+                updated = True
+                logging.debug(f"Item {item_id}: Original change '{current_original}' -> '{new_original}'")
+            
+            if updated:
+                update_data = {
+                    'id': item_id,
+                    'new_location': new_location,
+                    'new_original': new_original
+                }
+                items_to_update.append(update_data)
+                if dry_run and len(preview_items) < MAX_PREVIEW:
+                    preview_items.append({
+                        'id': item_id,
+                        'old_location': current_location,
+                        'new_location': new_location,
+                        'old_original': current_original,
+                        'new_original': new_original
+                    })
+
+        logging.info(f"Identified {len(items_to_update)} items for potential update.")
+
+        if dry_run:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'message': f"Dry run complete. Found {len(items_to_update)} items to update.",
+                'items_to_update_count': len(items_to_update),
+                'preview': preview_items
+            })
+        else:
+            # Perform actual updates
+            updated_count = 0
+            if items_to_update:
+                update_sql = "UPDATE media_items SET location_on_disk = ?, original_path_for_symlink = ? WHERE id = ?"
+                # Prepare data for executemany
+                update_params = [
+                    (item['new_location'], item['new_original'], item['id'])
+                    for item in items_to_update
+                ]
+                cursor.executemany(update_sql, update_params)
+                conn.commit()
+                updated_count = cursor.rowcount # Note: executemany rowcount might be unreliable on some drivers/dbs
+                # Fetch actual count as fallback 
+                if updated_count == -1 or updated_count is None:
+                    updated_count = len(items_to_update)
+                    
+                logging.info(f"Successfully updated {updated_count} items in the database.")
+                message = f"Successfully updated {updated_count} items."
+            else:
+                 message = "No items required updating based on the provided paths."
+
+            return jsonify({
+                'success': True,
+                'dry_run': False,
+                'message': message,
+                'updated_count': updated_count
+            })
+
+    except Exception as e:
+        logging.error(f"Error modifying symlink paths: {e}", exc_info=True)
+        if conn and not dry_run: # Rollback if it wasn't a dry run
+            try:
+                conn.rollback()
+            except Exception as rb_err:
+                 logging.error(f"Rollback failed: {rb_err}")
+        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
+    finally:
+        if conn:
+            conn.close()
+# --- End Symlink Path Modification ---

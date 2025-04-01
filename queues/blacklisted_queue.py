@@ -215,6 +215,10 @@ class BlacklistedQueue:
         return related_items
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:
+        # If early release flag is set, it's never considered old for the purpose of immediate blacklisting
+        if item.get('early_release', False):
+            return False
+            
         if 'release_date' not in item or item['release_date'] is None or item['release_date'] == 'Unknown':
             logging.info(f"Item {self.generate_identifier(item)} has no release date, None, or unknown release date. Considering it as old.")
             return True

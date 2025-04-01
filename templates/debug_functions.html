@@ -278,6 +278,37 @@
                 <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Symlink Library Recovery</h3>
+            <p class="description">Recover database entries from your existing symlink structure if the database was lost.</p>
+            <a href="{{ url_for('debug.recover_symlinks_page') }}" class="btn">Recover Symlink Library</a>
+        </div>
+        <div class="debug_item">
+            <h3>Modify Symlink Base Paths</h3>
+            <p class="description">Update the base paths for symlinks and original file locations in the database. Use carefully!</p>
+            <form id="modify-symlink-paths-form">
+                <div class="form-group form-group-horizontal">
+                    <label for="current_symlink_base">Current Symlink Base:</label>
+                    <input type="text" id="current_symlink_base" name="current_symlink_base" placeholder="/mnt/symlinked">
+                    <label for="new_symlink_base">New Symlink Base:</label>
+                    <input type="text" id="new_symlink_base" name="new_symlink_base" placeholder="/mnt/new_symlinked">
+                </div>
+                 <div class="form-group form-group-horizontal">
+                    <label for="current_original_base">Current Original Base:</label>
+                    <input type="text" id="current_original_base" name="current_original_base" placeholder="/mnt/zurg/__all__">
+                    <label for="new_original_base">New Original Base:</label>
+                    <input type="text" id="new_original_base" name="new_original_base" placeholder="/mnt/rclone/__all__">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Modify Paths</button>
+                <div id="modify-symlink-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -306,16 +337,22 @@
     }
     
     document.addEventListener('DOMContentLoaded', function() {
-        const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
-        
-        forms.forEach(form => {
-            if (form.id !== 'send-test-notification-form' && 
-                form.id !== 'get-collected-form' && 
-                form.id !== 'get-wanted-form' && 
-                form.id !== 'run-task-form' && 
-                form.id !== 'bulk-queue-action-form' &&
-                form.id !== 'convert-to-symlinks-form' &&
-                form.id !== 'manage-cache-files-form') {
+        // --- Generic Form Handler (with Confirmation Popup) ---
+        // Select only forms intended for the generic handler
+        const genericFormIds = [
+            'bulk-delete-form',
+            'download-logs-form', 
+            'delete-database-form',
+            'refresh-release-dates-form',
+            'move-to-upgrading-form',
+            'version-propagator-form',
+            'direct-emby-scan-form'
+            // Add other form IDs here if they follow the simple submitForm pattern
+        ];
+
+        genericFormIds.forEach(formId => {
+            const form = document.getElementById(formId);
+            if (form) {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -428,7 +465,6 @@
                     });
                 });
         }
-
 
         function checkProgramStatus() {
             fetch('/program_operation/api/program_status')
@@ -558,7 +594,6 @@
 
             lastChecked = e.target;
         }
-
 
         const bulkActionForm = document.getElementById('bulk-queue-action-form');
         if (bulkActionForm) {
@@ -1097,8 +1132,6 @@
         // Load versions when the page loads
         loadVersions();
 
-        // Removed the duplicate handler for version propagator form since it's handled by the generic form handler
-
         // Add event listener for convert to symlinks form
         const convertToSymlinksForm = document.getElementById('convert-to-symlinks-form');
         if (convertToSymlinksForm) {
@@ -1550,6 +1583,112 @@
             });
         }
         // --- End Cache File Management Logic ---
+
+        // --- Symlink Path Modification Logic ---
+        const modifySymlinkForm = document.getElementById('modify-symlink-paths-form');
+        const modifySymlinkResultsDiv = document.getElementById('modify-symlink-results');
+
+        if (modifySymlinkForm) {
+            modifySymlinkForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                modifySymlinkResultsDiv.innerHTML = ''; // Clear previous results
+                Loading.show();
+
+                const formData = new FormData(modifySymlinkForm);
+                const isDryRun = formData.get('dry_run') === 'on';
+                const currentSymlink = formData.get('current_symlink_base').trim();
+                const newSymlink = formData.get('new_symlink_base').trim();
+                const currentOriginal = formData.get('current_original_base').trim();
+                const newOriginal = formData.get('new_original_base').trim();
+
+                // Basic validation
+                if (!(currentSymlink && newSymlink) && !(currentOriginal && newOriginal)) {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Please provide at least one complete pair (current and new) of base paths to modify.',
+                        title: 'Input Error'
+                    });
+                    return;
+                }
+                if ((currentSymlink && !newSymlink) || (!currentSymlink && newSymlink) || (currentOriginal && !newOriginal) || (!currentOriginal && newOriginal)){
+                     Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'If modifying a path type (symlink or original), both current and new paths must be provided.',
+                        title: 'Input Error'
+                    });
+                    return;
+                }
+
+                fetch('/debug/api/modify_symlink_paths', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    Loading.hide();
+                    if (data.success) {
+                        showPopup({
+                            type: data.dry_run ? POPUP_TYPES.INFO : POPUP_TYPES.SUCCESS,
+                            message: data.message,
+                            title: data.dry_run ? 'Dry Run Results' : 'Update Complete',
+                            autoClose: false
+                        });
+
+                        if (data.dry_run) {
+                            let previewHtml = `<h4>Preview of Changes (${data.items_to_update_count} items affected):</h4>`;
+                            if (data.preview && data.preview.length > 0) {
+                                // Use a more descriptive class for modal tables
+                                previewHtml += '<table class="preview-results-table"><thead><tr><th>ID</th><th>Old Location</th><th>New Location</th><th>Old Original</th><th>New Original</th></tr></thead><tbody>';
+                                data.preview.forEach(item => {
+                                    previewHtml += `<tr>
+                                        <td>${item.id}</td>
+                                        <td class="path-cell">${item.old_location || 'N/A'}</td>
+                                        <td class="path-cell">${item.new_location || 'N/A'}</td>
+                                        <td class="path-cell">${item.old_original || 'N/A'}</td>
+                                        <td class="path-cell">${item.new_original || 'N/A'}</td>
+                                    </tr>`;
+                                });
+                                previewHtml += '</tbody></table>';
+                                if (data.items_to_update_count > data.preview.length) {
+                                    previewHtml += `<p><i>(Showing first ${data.preview.length} changes)</i></p>`;
+                                }
+                            } else {
+                                previewHtml += '<p>No items would be changed with these inputs.</p>';
+                            }
+                            // Show the preview in a popup instead of the results div
+                            showPopup({
+                                type: POPUP_TYPES.INFO,
+                                title: 'Dry Run Preview',
+                                message: previewHtml,
+                                large: true,
+                                autoClose: false
+                            });
+                            modifySymlinkResultsDiv.innerHTML = '<p>Dry run preview displayed in popup.</p>'; // Update results div
+                        } else {
+                            // Optionally clear form or results after successful update
+                            // modifySymlinkForm.reset(); // Uncomment to clear form
+                            modifySymlinkResultsDiv.innerHTML = `<p>${data.message}</p>`;
+                        }
+                    } else {
+                        throw new Error(data.error || 'An unknown error occurred.');
+                    }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    console.error('Error modifying symlink paths:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error',
+                        autoClose: false
+                    });
+                    modifySymlinkResultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                });
+            });
+        }
+        // --- End Symlink Path Modification Logic ---
     });
 </script>
 

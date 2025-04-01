@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+
+{% block title %}Symlink Library Recovery{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
+
+<style>
+    /* Specific styles for Symlink Recovery Page */
+    .debug-container.symlink-recovery {
+        max-width: 80%;
+        margin: 20px auto;
+        padding: 25px;
+        background-color: #2c2c2c; /* Slightly different background */
+        border-radius: 8px;
+        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+
+    .symlink-recovery h2, .symlink-recovery h3 {
+        color: #e0e0e0;
+        border-bottom: 1px solid #444;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+    }
+
+    .symlink-recovery .description {
+        margin-bottom: 25px;
+        color: #b0b0b0;
+        font-size: 0.95em;
+    }
+
+    .symlink-recovery .debug_items {
+        display: flex;
+        flex-direction: column;
+        gap: 30px;
+    }
+
+    .symlink-recovery .debug_item {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 6px;
+        border: 1px solid #484848;
+        width: auto;
+    }
+
+    .symlink-recovery .form-group {
+        margin-bottom: 20px;
+    }
+
+    .symlink-recovery label {
+        display: block;
+        margin-bottom: 8px;
+        color: #ccc;
+        font-weight: bold;
+    }
+
+    .symlink-recovery input[type="text"] {
+        width: calc(100% - 22px); /* Adjust for padding */
+        padding: 10px;
+        border: 1px solid #555;
+        background-color: #252525;
+        color: #ddd;
+        border-radius: 4px;
+    }
+
+    .symlink-recovery small {
+        display: block;
+        margin-top: 6px;
+        font-size: 0.85em;
+        color: #888;
+    }
+
+    .symlink-recovery .btn {
+        padding: 10px 18px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-weight: bold;
+        transition: background-color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .symlink-recovery .btn-primary {
+        background-color: #007bff;
+        color: white;
+        border: 1px solid #0056b3;
+    }
+    .symlink-recovery .btn-primary:hover {
+        background-color: #0056b3;
+        border-color: #004085;
+    }
+
+     .symlink-recovery .btn-secondary {
+        background-color: #6c757d;
+        color: white;
+        border: 1px solid #5a6268;
+    }
+    .symlink-recovery .btn-secondary:hover {
+        background-color: #5a6268;
+        border-color: #545b62;
+    }
+
+    .symlink-recovery #analysis-summary ul {
+        list-style: none;
+        padding-left: 0;
+        margin-top: 10px;
+    }
+     .symlink-recovery #analysis-summary li {
+        margin-bottom: 8px;
+        color: #bbb;
+        background-color: #3a3a3a;
+        padding: 8px;
+        border-radius: 3px;
+     }
+
+    .symlink-recovery #recoverable-items-list .queue-item {
+        background-color: #3a3a3a;
+        border: 1px solid #505050;
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+        display: flex;
+        align-items: flex-start; /* Align items to the top */
+        gap: 10px; /* Space between checkbox and label */
+    }
+
+    .symlink-recovery #recoverable-items-list input[type="checkbox"] {
+        margin-top: 5px; /* Adjust checkbox vertical alignment slightly */
+        flex-shrink: 0; /* Prevent checkbox from shrinking */
+    }
+
+    .symlink-recovery #recoverable-items-list label {
+        font-weight: normal; /* Reset bold from form-group label */
+        color: #ddd;
+        line-height: 1.5;
+        flex-grow: 1; /* Allow label to take remaining space */
+    }
+
+    .symlink-recovery #recoverable-items-list label strong {
+        color: #fff;
+        font-size: 1.1em;
+    }
+    .symlink-recovery #recoverable-items-list label em {
+        color: #aaa;
+        font-style: normal;
+    }
+     .symlink-recovery #recoverable-items-list label small {
+        color: #999;
+        font-size: 0.8em;
+        margin-top: 3px;
+    }
+
+    .symlink-recovery .select-all-container {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        margin-bottom: 15px;
+    }
+
+</style>
+
+<div class="debug-container symlink-recovery">
+    <h2>Symlink Library Recovery</h2>
+    <p class="description">This tool attempts to scan your symlink directory, parse filenames based on your settings, and recreate database entries for collected items. Use this if you have lost your database but still have your symlinked media structure.</p>
+
+    <div class="debug_items">
+        <div class="debug_item">
+            <h3>Analyze Symlink Structure</h3>
+            <form id="analyze-symlinks-form">
+                <div class="form-group">
+                    <label for="symlink_root_path">Symlink Root Path:</label>
+                    <input type="text" id="symlink_root_path" name="symlink_root_path" required placeholder="/mnt/symlinked">
+                    <small>Enter the absolute path to the root directory containing your 'Movies' and/or 'TV Shows' symlink folders.</small>
+                </div>
+                 <div class="form-group">
+                    <label for="original_root_path">Original Files Root Path:</label>
+                    <input type="text" id="original_root_path" name="original_root_path" required placeholder="/mnt/zurg/__all__">
+                    <small>Enter the absolute path to the root directory containing the original files your symlinks point to.</small>
+                </div>
+                <button type="submit" class="btn">Analyze Library</button>
+            </form>
+        </div>
+
+        <div class="debug_item" id="analysis-results" style="display: none;">
+            <h3>Analysis Results</h3>
+            <div id="analysis-summary"></div>
+            <form id="recover-items-form" style="display: none;">
+                <button type="submit" id="recover-all-btn" class="btn btn-primary">Recover All Found Items</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script type="module">
+    import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const analyzeForm = document.getElementById('analyze-symlinks-form');
+        const recoverForm = document.getElementById('recover-items-form');
+        const analysisResultsDiv = document.getElementById('analysis-results');
+        const analysisSummary = document.getElementById('analysis-summary');
+        const analyzeButton = analyzeForm.querySelector('button[type="submit"]');
+        const recoverButton = document.getElementById('recover-all-btn');
+
+        let eventSource = null;
+        let currentTaskId = null;
+        let totalItemsFound = 0;
+
+        analyzeForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            analyzeButton.disabled = true;
+            analyzeButton.textContent = 'Analyzing...'; 
+
+            analysisResultsDiv.style.display = 'block';
+            analysisSummary.innerHTML = '<p>Starting analysis...</p>';
+            recoverForm.style.display = 'none';
+            currentTaskId = null;
+            totalItemsFound = 0;
+
+            if (eventSource) {
+                eventSource.close();
+                console.log("Closed previous EventSource connection.");
+            }
+
+            const formData = new FormData(analyzeForm);
+
+            fetch('{{ url_for("debug.analyze_symlinks") }}', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.task_id) {
+                    console.log("Analysis started with task ID:", data.task_id);
+                    currentTaskId = data.task_id;
+                    analysisSummary.innerHTML = `<p>Analysis started (Task ID: ${data.task_id}). Waiting for progress updates...</p>`;
+                    startListeningForProgress(data.task_id);
+                } else {
+                    Loading.hide();
+                     analyzeButton.disabled = false;
+                     analyzeButton.textContent = 'Analyze Library';
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: data.error || 'Failed to start analysis task.',
+                        title: 'Analysis Initiation Error'
+                    });
+                    analysisResultsDiv.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                Loading.hide();
+                 analyzeButton.disabled = false;
+                 analyzeButton.textContent = 'Analyze Library';
+                console.error('Error starting analysis:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'An unexpected error occurred when trying to start the analysis.',
+                    title: 'Error'
+                });
+                analysisResultsDiv.style.display = 'none';
+            });
+        });
+
+        function startListeningForProgress(taskId) {
+            const progressUrl = `{{ url_for("debug.analysis_progress_stream", task_id="TASK_ID_PLACEHOLDER") }}`.replace("TASK_ID_PLACEHOLDER", taskId);
+            console.log("Connecting to SSE:", progressUrl);
+            eventSource = new EventSource(progressUrl);
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const progressData = JSON.parse(event.data);
+                    console.log("SSE Received:", progressData);
+
+                    totalItemsFound = progressData.items_found || 0;
+
+                    analysisSummary.innerHTML = `
+                        <p><strong>Status:</strong> ${progressData.status || 'N/A'} - ${progressData.message || ''}</p>
+                        <ul>
+                            <li>Total Items Scanned: ${progressData.total_items_scanned || 0}</li>
+                            <li>Symlinks Processed: ${progressData.total_symlinks_processed || 0}</li>
+                            <li>Files Processed: ${progressData.total_files_processed || 0}</li>
+                            <li>Recoverable Items Found: ${progressData.items_found || 0}</li>
+                            <li>Parser Errors: ${progressData.parser_errors || 0}</li>
+                            <li>Metadata Errors: ${progressData.metadata_errors || 0}</li>
+                        </ul>
+                    `;
+
+                    if (progressData.complete) {
+                        console.log("SSE Complete:", progressData);
+                        eventSource.close();
+                        console.log("Closed EventSource connection.");
+                         analyzeButton.disabled = false;
+                         analyzeButton.textContent = 'Analyze Library';
+                        Loading.hide();
+
+                        let finalMessage = `<p><strong>Analysis Finished:</strong> ${progressData.message}</p>`;
+                        if (progressData.status === 'error') {
+                             finalMessage += `<p style="color: red;">An error occurred during analysis.</p>`;
+                              showPopup({ type: POPUP_TYPES.ERROR, message: progressData.message || 'Analysis failed.', title: 'Analysis Error' });
+                              recoverForm.style.display = 'none';
+                         } else if (totalItemsFound === 0) {
+                             finalMessage += `<p>No recoverable items found matching the criteria.</p>`;
+                              recoverForm.style.display = 'none';
+                         } else {
+                             recoverButton.textContent = `Recover All ${totalItemsFound} Found Items`;
+                             showPopup({ type: POPUP_TYPES.SUCCESS, message: `Analysis complete. Found ${totalItemsFound} potentially recoverable items.`, title: 'Analysis Complete' });
+                              recoverForm.style.display = 'block';
+                         }
+                         analysisSummary.innerHTML += finalMessage;
+
+                    } else {
+                    }
+
+                } catch (e) {
+                    console.error("Error parsing SSE data:", e);
+                    console.error("Raw data:", event.data);
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error("EventSource failed:", error);
+                eventSource.close();
+                console.log("Closed EventSource connection due to error.");
+                 analyzeButton.disabled = false;
+                 analyzeButton.textContent = 'Analyze Library';
+                Loading.hide();
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Connection to analysis progress stream lost or failed.',
+                    title: 'Connection Error'
+                });
+                 analysisSummary.innerHTML += '<p style="color: red;"><strong>Error:</strong> Lost connection to the analysis progress stream.</p>';
+            };
+        }
+
+        recoverForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!currentTaskId) {
+                showPopup({ type: POPUP_TYPES.ERROR, message: 'No active analysis task found to recover from.', title: 'Error' });
+                return;
+            }
+
+            if (totalItemsFound === 0) {
+                 showPopup({ type: POPUP_TYPES.INFO, message: 'No items were found in the completed analysis to recover.', title: 'No Items Found' });
+                 return;
+            }
+
+            const message = `You are about to attempt recovery for all ${totalItemsFound} found item(s) from task ${currentTaskId.substring(0, 8)}... This will add them to the database as 'Collected'. Continue?`;
+
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: message,
+                title: 'Confirm Recovery',
+                onConfirm: () => {
+                    Loading.show('Recovering selected items...');
+                    fetch('{{ url_for("debug.perform_recovery") }}', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ task_id: currentTaskId })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        Loading.hide();
+                        if (data.success) {
+                            showPopup({
+                                type: data.errors && data.errors.length > 0 ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                                message: `Recovery attempt finished. Success: ${data.successful_recoveries}, Failures: ${data.failed_recoveries}. Failures: ${data.errors && data.errors.length > 0 ? data.errors.join('; ') : 'None'}`,
+                                title: data.errors && data.errors.length > 0 ? 'Partial Recovery' : 'Recovery Successful'
+                            });
+                        } else {
+                             showPopup({ type: POPUP_TYPES.ERROR, message: data.error || 'Recovery process failed.', title: 'Recovery Error' });
+                        }
+                    })
+                    .catch(error => {
+                        Loading.hide();
+                        console.error('Error:', error);
+                        showPopup({ type: POPUP_TYPES.ERROR, message: 'An unexpected error occurred during recovery.', title: 'Error' });
+                    });
+                }
+            });
+        });
+
+    });
+</script>
+{% endblock %} 
