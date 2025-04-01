@@ -307,15 +307,27 @@
                 {% elif value.choices %}
                     <select id="file management-{{ key }}" name="File Management.{{ key }}" class="settings-input"
                             data-section="File Management" data-key="{{ key }}"
-                            {% if key == 'file_collection_management' %}data-previous-value="{{ settings.get('File Management', {}).get(key, '') }}"{% endif %}>
+                            {% if key == 'file_collection_management' %}data-current-value="{{ settings.get('File Management', {}).get(key, '') }}" 
+                            data-previous-value="{{ settings.get('File Management', {}).get(key, '') }}"
+                            data-is-windows="{{ is_windows | tojson }}" 
+                            data-allow-windows-symlinks="{{ allow_windows_symlinks | tojson }}"
+                            {% endif %}>
+                        {% set current_value = settings.get('File Management', {}).get(key, '') %}
                         {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('File Management', {}).get(key) == choice %}selected{% endif %} {% if is_windows and choice == 'Symlinked/Local' %}disabled{% endif %}>{{ choice }}</option>
+                            {% set is_disallowed = is_windows and choice == 'Symlinked/Local' and not allow_windows_symlinks %}
+                            <option value="{{ choice }}" 
+                                    {% if current_value == choice %}selected{% endif %} 
+                                    {% if is_disallowed and current_value != 'Symlinked/Local' %}disabled{% endif %}>{{ choice }}</option>
                         {% endfor %}
                     </select>
-                    {% if key == 'file_collection_management' and is_windows %}
-                    <div class="windows-warning" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;">
-                        <strong>Warning:</strong> On Windows systems, symlinks cannot be scanned into Plex. Plex management has been selected.
-                    </div>
+                    {% if key == 'file_collection_management' and is_windows and not allow_windows_symlinks %}
+                        {% set current_value = settings.get('File Management', {}).get(key, '') %}
+                            {% if current_value != 'Symlinked/Local' %}
+                            <div class="windows-warning" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;">
+                                <strong>Warning:</strong> Selecting Symlinked/Local is disabled on Windows unless the 'Allow Symlinks on Windows' debug setting is enabled.
+                            </div>
+                            {% endif %}
+
                     {% endif %}
                 {% else %}
                     <input type="{{ value.type }}" id="file management-{{ key }}" name="File Management.{{ key }}"
@@ -452,133 +464,82 @@ document.addEventListener('DOMContentLoaded', function() {
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Get the file collection management select element
     const collectionTypeSelect = document.querySelector('select[name="File Management.file_collection_management"]');
-    
+    // Read values from data attributes, parsing the JSON string representation
+    const isWindows = collectionTypeSelect ? JSON.parse(collectionTypeSelect.dataset.isWindows || 'false') : false;
+    const allowWindowsSymlinks = collectionTypeSelect ? JSON.parse(collectionTypeSelect.dataset.allowWindowsSymlinks || 'false') : false;
+
     if (collectionTypeSelect) {
-        // Initial UI setup based on current value
         updateUIVisibility(collectionTypeSelect.value);
-        
-        {% if is_windows %}
-        // For Windows: Ensure Symlinked/Local is not selected
-        if (collectionTypeSelect.value === 'Symlinked/Local') {
-            collectionTypeSelect.value = 'Plex';
-            // Update the previous value attribute
-            collectionTypeSelect.setAttribute('data-previous-value', 'Plex');
-            // Trigger UI update
-            updateUIVisibility('Plex');
-        }
-        
-        // Add event listener to prevent selecting Symlinked/Local on Windows
-        collectionTypeSelect.addEventListener('change', function(event) {
-            if (this.value === 'Symlinked/Local') {
-                event.preventDefault();
-                event.stopPropagation();
-                
-                showPopup({
-                    type: POPUP_TYPES.WARNING,
-                    title: 'Windows Limitation',
-                    message: 'Symlinked/Local management is not supported on Windows. Please use Plex management instead.',
-                    autoClose: 5000
-                });
-                
-                // Reset to previous value
-                this.value = this.getAttribute('data-previous-value') || 'Plex';
-            }
-        });
-        {% endif %}
-        
+
         collectionTypeSelect.addEventListener('change', async function(event) {
-            // Prevent any immediate changes
-            event.preventDefault();
-            event.stopPropagation();
-            
-            {% if is_windows %}
-            // Skip confirmation for Windows if trying to select Symlinked/Local
-            if (this.value === 'Symlinked/Local') {
-                return;
-            }
-            {% endif %}
-            
             const previousValue = this.getAttribute('data-previous-value');
             const newValue = this.value;
-            
-            // Immediately set back to previous value to prevent UI flicker
-            this.value = previousValue;
-            
-            if (previousValue !== newValue) {
-                let confirmMessage = 'Changing the collection management type may affect your existing library structure. Are you sure you want to proceed?';
-                
-                // Customize message based on the specific change
-                if (previousValue === 'Symlinked/Local' && newValue === 'Plex') {
-                    confirmMessage = 'Changing from Symlinked/Local to Plex management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
-                } else if (previousValue === 'Plex' && newValue === 'Symlinked/Local') {
-                    confirmMessage = 'Changing from Plex to Symlinked/Local management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
-                } else if (previousValue === 'None' && (newValue === 'Plex' || newValue === 'Symlinked/Local')) {
-                    confirmMessage = 'Setting up ' + newValue + ' management will require additional configuration. Are you sure you want to proceed?';
-                }
-                
-                showPopup({
-                    type: POPUP_TYPES.CONFIRM,
-                    title: '⚠️ Change Collection Management Type',
-                    message: confirmMessage,
-                    confirmText: 'Yes, Change',
-                    cancelText: 'No, Keep Current',
-                    onConfirm: () => {
-                        // Update the select value
-                        this.value = newValue;
-                        
-                        // Update the previous value attribute
-                        this.setAttribute('data-previous-value', newValue);
-                        
-                        // Manually trigger the settings change event for the UI
-                        const event = new CustomEvent('settings-changed', {
-                            detail: {
-                                section: 'File Management',
-                                key: 'file_collection_management',
-                                value: newValue
-                            }
-                        });
-                        document.dispatchEvent(event);
-                        
-                        // Update UI based on the new value
-                        updateUIVisibility(newValue);
-                    },
-                    onCancel: () => {
-                        // Value is already set back to previous, no need to do anything
-                    }
-                });
-            }
-        });
-    }
-    
-    // Function to update UI visibility
-    function updateUIVisibility(value) {
-        const plexSection = document.getElementById('plex-settings-in-file-management');
-        const symlinkFields = [
-            document.querySelector('div.settings-form-group:has(#file\\ management-original_files_path)'),
-            document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)'),
-            ...document.querySelectorAll('.symlink-plex-setting')
-        ];
 
-        if (value === 'Plex') {
-            // Show Plex settings, hide symlink fields
-            if (plexSection) plexSection.style.display = 'block';
-            symlinkFields.forEach(field => {
-                if (field) field.style.display = 'none';
+            // If the value didn't actually change (e.g., clicked disabled option or re-selected same), do nothing
+            if (newValue === previousValue) {
+                return;
+            }
+            
+            // Prevent immediate change & temporarily revert for confirmation dialog
+            event.preventDefault();
+            event.stopPropagation();
+            this.value = previousValue; // Revert visually for confirmation
+            
+            // Confirmation logic
+            let confirmMessage = 'Changing the collection management type may affect your existing library structure. Are you sure you want to proceed?';
+            if (previousValue === 'Symlinked/Local' && newValue === 'Plex') {
+                confirmMessage = 'Changing from Symlinked/Local to Plex management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
+            } else if (previousValue === 'Plex' && newValue === 'Symlinked/Local') {
+                confirmMessage = 'Changing from Plex to Symlinked/Local management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
+            } // (Add other conditions if needed)
+            
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: '⚠️ Change Collection Management Type',
+                message: confirmMessage,
+                confirmText: 'Yes, Change',
+                cancelText: 'No, Keep Current',
+                onConfirm: () => {
+                    // Apply the change
+                    this.value = newValue;
+                    this.setAttribute('data-previous-value', newValue); // Update previous value reference
+                    
+                    // Trigger settings change event & UI update
+                    const settingsEvent = new CustomEvent('settings-changed', {
+                        detail: {
+                            section: 'File Management',
+                            key: 'file_collection_management',
+                            value: newValue
+                        }
+                    });
+                    document.dispatchEvent(settingsEvent);
+                    updateUIVisibility(newValue);
+                },
+                onCancel: () => {
+                    // Value is already visually reverted, do nothing further
+                }
             });
-        } else if (value === 'Symlinked/Local') {
-            // Show symlink fields, hide Plex settings
-            if (plexSection) plexSection.style.display = 'none';
-            symlinkFields.forEach(field => {
-                if (field) field.style.display = 'block';
-            });
-        } else {
-            // Hide both
-            if (plexSection) plexSection.style.display = 'none';
-            symlinkFields.forEach(field => {
-                if (field) field.style.display = 'none';
-            });
+        });
+
+        function updateUIVisibility(value) {
+            const plexSection = document.getElementById('plex-settings-in-file-management');
+            const symlinkFields = [
+                document.querySelector('div.settings-form-group:has(#file\\ management-original_files_path)'),
+                document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)'),
+                ...document.querySelectorAll('.symlink-plex-setting')
+            ];
+
+            if (value === 'Plex') {
+                if (plexSection) plexSection.style.display = 'block';
+                symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
+            } else if (value === 'Symlinked/Local') {
+                if (plexSection) plexSection.style.display = 'none';
+                symlinkFields.forEach(field => { if (field) field.style.display = 'block'; });
+            } else {
+                if (plexSection) plexSection.style.display = 'none';
+                symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
+            }
         }
     }
 

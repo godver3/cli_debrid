@@ -814,29 +814,37 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
             // Check if completed or failed
             if (statusData.status === 'completed' && statusData.url) {
                 clearInterval(intervalId);
-                
-                // Update share URL link
+
+                // Construct the command to copy
+                const commandToCopy = `wget -qO - ${statusData.url} | gzip -dc | lnav`;
+
+                // Update share URL link (display raw URL)
                 shareUrl.href = statusData.url;
-                shareUrl.textContent = `oshi.at link`;
+                // shareUrl.textContent = `oshi.at link`; // Old text
+                shareUrl.textContent = `View Raw Log`; // New text
                 shareUrl.style.display = 'inline-block';
-                
-                // Try to copy URL to clipboard with fallback
+
+                // Show copy button (optional, could be removed if only command matters)
+                document.getElementById('copy-url-btn').style.display = 'inline-block';
+
+                // Try to copy the command to clipboard with fallback
                 if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(statusData.url)
+                    navigator.clipboard.writeText(commandToCopy)
                         .then(() => {
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
                                 title: 'Success',
-                                message: `Logs shared successfully! URL copied to clipboard.`,
-                                autoClose: 10000
+                                message: `Logs shared! Command copied to clipboard:\n${commandToCopy}`,
+                                autoClose: 15000 // Longer time to read the command
                             });
                         })
                         .catch(err => {
-                            console.warn('Failed to copy to clipboard:', err);
+                            console.warn('Failed to copy command to clipboard:', err);
+                            // Show command in popup if copy failed
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
                                 title: 'Success',
-                                message: `Logs shared successfully!\nURL: ${statusData.url}`,
+                                message: `Logs shared! Use this command:\n${commandToCopy}`,
                                 autoClose: 60000
                             });
                         });
@@ -845,14 +853,14 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
                     showPopup({
                         type: POPUP_TYPES.SUCCESS,
                         title: 'Success',
-                        message: `Logs shared successfully!\nURL: ${statusData.url}`,
-                        autoClose: 5000
+                        message: `Logs shared! Use this command:\n${commandToCopy}`,
+                        autoClose: 60000
                     });
                 }
-                
+
                 button.textContent = 'Share Logs';
                 button.disabled = false;
-                
+
             } else if (statusData.status === 'failed') {
                 clearInterval(intervalId);
                 shareUrl.style.display = 'none';
@@ -882,21 +890,21 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     }
 });
 
-// Add copy button functionality
+// Add copy button functionality (now copies the raw URL if clicked)
 document.getElementById('copy-url-btn').addEventListener('click', function() {
     const shareUrl = document.getElementById('share-url');
     navigator.clipboard.writeText(shareUrl.href).then(() => {
         showPopup({
             type: POPUP_TYPES.SUCCESS,
             title: 'Success',
-            message: 'URL copied to clipboard!',
+            message: 'Raw URL copied to clipboard!',
             autoClose: 2000
         });
     }).catch(() => {
         showPopup({
             type: POPUP_TYPES.ERROR,
             title: 'Error',
-            message: 'Failed to copy URL to clipboard',
+            message: 'Failed to copy raw URL to clipboard',
             autoClose: 2000
         });
     });

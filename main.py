@@ -816,22 +816,22 @@ def main():
         logging.warning(f"Could not delete not wanted files on startup: {str(e)}")
     
     # Purge content source cache files on startup
-    try:
-        logging.info("Purging content source cache files on startup...")
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        deleted_count = 0
-        for filename in os.listdir(db_content_dir):
-            if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
-                file_path = os.path.join(db_content_dir, filename)
-                try:
-                    os.remove(file_path)
-                    logging.debug(f"Deleted cache file: {file_path}")
-                    deleted_count += 1
-                except OSError as e:
-                    logging.warning(f"Could not delete cache file {file_path}: {e}")
-        logging.info(f"Deleted {deleted_count} content source cache files.")
-    except Exception as e:
-        logging.error(f"Error purging content source cache files: {str(e)}")
+    # try:
+    #     logging.info("Purging content source cache files on startup...")
+    #     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    #     deleted_count = 0
+    #     for filename in os.listdir(db_content_dir):
+    #         if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+    #             file_path = os.path.join(db_content_dir, filename)
+    #             try:
+    #                 os.remove(file_path)
+    #                 logging.debug(f"Deleted cache file: {file_path}")
+    #                 deleted_count += 1
+    #             except OSError as e:
+    #                 logging.warning(f"Could not delete cache file {file_path}: {e}")
+    #     logging.info(f"Deleted {deleted_count} content source cache files.")
+    # except Exception as e:
+    #     logging.error(f"Error purging content source cache files: {str(e)}")
     
     # Verify database health before proceeding
     if not verify_database_health():

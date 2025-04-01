@@ -448,6 +448,9 @@ def index():
                 }
             }
 
+        # Determine if Windows symlinks are allowed
+        allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
+
         return render_template('settings_base.html', 
                                settings=config, 
                                notification_settings=config['Notifications'],
@@ -457,7 +460,8 @@ def index():
                                content_source_settings=content_source_settings,
                                version_names=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA,
-                               is_windows=is_windows)
+                               is_windows=is_windows,
+                               allow_windows_symlinks=allow_windows_symlinks_value)
     except Exception as e:
         current_app.logger.error(f"Error in settings route: {str(e)}")
         current_app.logger.error(traceback.format_exc())

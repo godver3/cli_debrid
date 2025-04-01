@@ -2,7 +2,7 @@ from .core import get_db_connection
 import logging
 import os
 import json
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -333,3 +333,132 @@ def get_media_items_by_ids_batch(item_ids: List[int]) -> List[Dict]:
         return []
     finally:
         conn.close()
+
+def get_media_item_by_filename(filename: str) -> Optional[Dict]:
+    """
+    Retrieve a media item from the database based on its filename.
+
+    Args:
+        filename: The name of the file associated with the media item (filled_by_file column).
+
+    Returns:
+        A dictionary containing the media item's details, or None if not found.
+    """
+    conn = get_db_connection()
+    try:
+        # Select all columns for the matching filename
+        # Using filled_by_file as the target column for the filename lookup
+        query = 'SELECT * FROM media_items WHERE filled_by_file = ?'
+        cursor = conn.execute(query, (filename,))
+        item = cursor.fetchone()
+        
+        if item:
+            item_dict = row_to_dict(item) # Use existing helper function
+            # Ensure necessary fields for the webhook are present, even if null
+            item_dict.setdefault('imdb_id', None)
+            item_dict.setdefault('tmdb_id', None)
+            item_dict.setdefault('tvdb_id', None) # Add tvdb_id default
+            item_dict.setdefault('type', None)
+            item_dict.setdefault('title', None)
+            item_dict.setdefault('year', None)
+            if item_dict.get('type') == 'episode':
+                 item_dict.setdefault('season_number', None)
+                 item_dict.setdefault('episode_number', None)
+                 item_dict.setdefault('show_title', None) # Add show_title default (may need to derive this)
+                 item_dict.setdefault('show_year', None) # Add show_year default (may need to derive this)
+            return item_dict
+        else:
+            logging.debug(f"No media item found for filename: {filename}")
+            return None
+    except Exception as e:
+        logging.error(f"Error retrieving media item by filename ({filename}): {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+def check_existing_media_item(item_details: Dict, target_version: str, target_states: List[str]) -> bool:
+    """
+    Check if a media item already exists in the database with specific identifiers, 
+    a target version, and one of the target states.
+
+    Args:
+        item_details: Dictionary containing identifying details (type, imdb_id, tmdb_id, season_number, episode_number).
+        target_version: The version string to check for.
+        target_states: A list of state strings (e.g., ['Collected', 'Upgrading']) to check for.
+
+    Returns:
+        True if a matching item exists in one of the target states, False otherwise.
+    """
+    conn = get_db_connection()
+    try:
+        base_query = 'SELECT 1 FROM media_items WHERE version = ? AND state IN ({})'.format(','.join('?' * len(target_states)))
+        params = [target_version] + target_states
+        
+        item_type = item_details.get('type')
+        
+        # Prefer IMDB ID if available
+        imdb_id = item_details.get('imdb_id')
+        if imdb_id:
+            base_query += ' AND imdb_id = ?'
+            params.append(imdb_id)
+        else:
+            # Fallback to TMDB ID if IMDB ID is missing
+            tmdb_id = item_details.get('tmdb_id')
+            if tmdb_id:
+                base_query += ' AND tmdb_id = ?'
+                params.append(tmdb_id)
+            else:
+                logging.warning("Cannot check for existing item without imdb_id or tmdb_id.")
+                return False # Cannot reliably check without an ID
+
+        if item_type == 'episode':
+            season_number = item_details.get('season_number')
+            episode_number = item_details.get('episode_number')
+            if season_number is not None and episode_number is not None:
+                base_query += ' AND season_number = ? AND episode_number = ?'
+                params.extend([season_number, episode_number])
+            else:
+                logging.warning(f"Cannot check for existing episode without season/episode number for ID {imdb_id or tmdb_id}.")
+                return False # Cannot reliably check episode without season/episode
+        elif item_type == 'movie':
+            # No further fields needed for movies besides ID
+            pass
+        else:
+            logging.warning(f"Unknown item type '{item_type}' for checking existing media.")
+            return False
+
+        base_query += ' LIMIT 1'
+        
+        cursor = conn.execute(base_query, params)
+        result = cursor.fetchone()
+        
+        return result is not None
+
+    except Exception as e:
+        logging.error(f"Error checking for existing media item (Version: {target_version}, States: {target_states}): {str(e)}")
+        logging.error(f"Item details used for check: {item_details}")
+        return False # Assume not found on error
+    finally:
+        conn.close()
+
+# Define __all__ for explicit exports
+__all__ = [
+    'search_movies', 
+    'search_tv_shows', 
+    'get_all_media_items', 
+    'get_media_item_presence', 
+    'get_media_item_by_id',
+    'get_movie_runtime', 
+    'get_episode_runtime', 
+    'get_episode_count',
+    'get_all_season_episode_counts',
+    'row_to_dict',
+    'get_all_videos',
+    'get_video_by_id',
+    'get_media_country_code',
+    'get_episode_details',
+    'get_imdb_aliases',
+    'get_media_items_by_ids_batch',
+    'get_media_item_by_filename',
+    'check_existing_media_item'
+]

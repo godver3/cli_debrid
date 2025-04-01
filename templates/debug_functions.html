@@ -253,6 +253,31 @@
                 <button type="submit">Run Emby/Jellyfin Scan</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Manage Cache Files</h3>
+            <form id="manage-cache-files-form">
+                <div id="cache_files_container" class="cache-files-container">
+                    <h4>Select Cache Files:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_cache_btn">Select All</button>
+                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
+                    </div>
+                    <div id="cache_files_list">
+                        {% if cache_files %}
+                            {% for filename in cache_files %}
+                                <div class="cache-file-item">
+                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
+                                    <label for="cache_file_{{ loop.index }}">{{ filename }}</label>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p>No cache files found.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -289,7 +314,8 @@
                 form.id !== 'get-wanted-form' && 
                 form.id !== 'run-task-form' && 
                 form.id !== 'bulk-queue-action-form' &&
-                form.id !== 'convert-to-symlinks-form') {
+                form.id !== 'convert-to-symlinks-form' &&
+                form.id !== 'manage-cache-files-form') {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -1441,6 +1467,89 @@
         
         // Initial fetch of verification queue
         fetchVerificationQueue();
+
+        // --- Cache File Management Logic ---
+        const cacheFilesList = document.getElementById('cache_files_list');
+        const selectAllCacheBtn = document.getElementById('select_all_cache_btn');
+        const unselectAllCacheBtn = document.getElementById('unselect_all_cache_btn');
+        const manageCacheFilesForm = document.getElementById('manage-cache-files-form');
+
+        if (cacheFilesList && selectAllCacheBtn && unselectAllCacheBtn) {
+            selectAllCacheBtn.addEventListener('click', function() {
+                toggleAllCacheCheckboxes(true);
+            });
+
+            unselectAllCacheBtn.addEventListener('click', function() {
+                toggleAllCacheCheckboxes(false);
+            });
+        }
+
+        function toggleAllCacheCheckboxes(checked) {
+            if (!cacheFilesList) return;
+            const checkboxes = cacheFilesList.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = checked;
+            });
+        }
+
+        if (manageCacheFilesForm) {
+            manageCacheFilesForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                if (!cacheFilesList) return;
+                const selectedCheckboxes = cacheFilesList.querySelectorAll('input[name="selected_files"]:checked');
+                
+                if (selectedCheckboxes.length === 0) {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Please select at least one cache file to delete.',
+                        title: 'No Files Selected'
+                    });
+                    return;
+                }
+
+                const fileCount = selectedCheckboxes.length;
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: `Are you sure you want to delete ${fileCount} selected cache file(s)? This action cannot be undone.`,
+                    title: 'Confirm Deletion',
+                    onConfirm: () => {
+                        Loading.show();
+                        const formData = new FormData(manageCacheFilesForm);
+                        fetch('/debug/api/delete_cache_files', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            if (data.success) {
+                                showPopup({
+                                    type: data.errors ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                                    message: data.message,
+                                    title: data.errors ? 'Partial Success' : 'Success'
+                                });
+                                // Refresh the page or just the list after deletion
+                                setTimeout(() => { 
+                                    window.location.reload(); // Simple page reload
+                                }, 2000); 
+                            } else {
+                                throw new Error(data.error || 'Failed to delete cache files');
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message || 'An error occurred while deleting cache files.',
+                                title: 'Error'
+                            });
+                        });
+                    }
+                });
+            });
+        }
+        // --- End Cache File Management Logic ---
     });
 </script>
 

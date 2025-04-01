@@ -492,3 +492,51 @@ body {
     border-radius: 4px;
     margin: 10px 0;
 }
+
+/* Cache File Management Styles */
+.debug-container .cache-files-container {
+    margin-top: 15px;
+    margin-bottom: 15px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 15px;
+    max-height: 300px; /* Adjust as needed */
+    overflow-y: auto;
+    background-color: #333;
+}
+
+.debug-container .cache-files-container h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #ddd;
+}
+
+.debug-container .cache-files-list {
+    /* Styles for the list itself if needed */
+}
+
+.debug-container .cache-file-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.debug-container .cache-file-item input[type="checkbox"] {
+    margin-right: 10px;
+}
+
+.debug-container .cache-file-item label {
+    color: #ccc;
+    font-size: 0.9rem;
+    word-break: break-all; /* Prevent long filenames from overflowing */
+    margin-bottom: 0; /* Override default label margin */
+    flex-grow: 1;
+}
+
+.debug-container #manage-cache-files-form .btn-danger {
+    background-color: #dc3545; /* Red for delete */
+}
+
+.debug-container #manage-cache-files-form .btn-danger:hover {
+    background-color: #c82333;
+}

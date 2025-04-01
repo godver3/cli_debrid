@@ -1,6 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 import os
+import sys  # Import sys module
 from utilities.settings import get_setting
 import shutil
 from pathlib import Path
@@ -283,19 +284,35 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) 
         return False
 
 def find_file(filename: str, search_path: str) -> Optional[str]:
-    """Find a file by name using the find command."""
+    """Find a file by name using the find command (non-Windows) or os.walk (Windows)."""
     try:
-        import subprocess
-        result = subprocess.run(
-            ['find', search_path, '-name', filename, '-type', 'f', '-print', '-quit'],
-            capture_output=True, text=True
-        )
-        if result.stdout:
-            found_path = result.stdout.strip()
-            return found_path if found_path else None
-        return None
+        if sys.platform.startswith('win'):
+            # Windows-specific implementation using os.walk
+            logging.debug(f"Using os.walk to find '{filename}' in '{search_path}' (Windows)")
+            for root, dirs, files in os.walk(search_path):
+                if filename in files:
+                    found_path = os.path.join(root, filename)
+                    logging.debug(f"Found file using os.walk: {found_path}")
+                    return found_path
+            logging.debug(f"File '{filename}' not found using os.walk in '{search_path}'")
+            return None
+        else:
+            # Existing implementation for non-Windows systems
+            logging.debug(f"Using find command to find '{filename}' in '{search_path}' (non-Windows)")
+            import subprocess
+            result = subprocess.run(
+                ['find', search_path, '-name', filename, '-type', 'f', '-print', '-quit'],
+                capture_output=True, text=True
+            )
+            if result.stdout:
+                found_path = result.stdout.strip()
+                if found_path:
+                    logging.debug(f"Found file using find command: {found_path}")
+                    return found_path
+            logging.debug(f"File '{filename}' not found using find command in '{search_path}'")
+            return None
     except Exception as e:
-        logging.error(f"Error using find command: {str(e)}")
+        logging.error(f"Error finding file '{filename}' in '{search_path}': {str(e)}")
         return None
 
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False) -> bool:

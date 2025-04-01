@@ -453,10 +453,28 @@ class ScrapingQueue:
                 queue_manager.move_to_blacklisted(item, "Scraping")
                 self.reset_not_wanted_check(item['id'])
         else:
-            logging.warning(f"No results found for {item_identifier}. Moving to Sleeping queue.")
-            wake_count = wake_count_manager.get_wake_count(item['id'])
-            queue_manager.move_to_sleeping(item, "Scraping")
-            self.reset_not_wanted_check(item['id'])
+            logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping.")
+
+            # Get wake count settings for this item's version
+            version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
+            # Default to a reasonable positive number if not set to avoid immediate blacklisting unless explicitly configured.
+            max_wake_count = version_settings.get('max_wake_count', 5) 
+
+            # Get current wake count
+            current_wake_count = wake_count_manager.get_wake_count(item['id'])
+
+            if max_wake_count <= 0:
+                logging.info(f"Item {item_identifier} version '{item.get('version')}' has max_wake_count <= 0 ({max_wake_count}). Blacklisting immediately.")
+                queue_manager.move_to_blacklisted(item, "Scraping")
+                self.reset_not_wanted_check(item['id'])
+            elif current_wake_count >= max_wake_count:
+                logging.info(f"Item {item_identifier} reached max wake count ({current_wake_count}/{max_wake_count}). Blacklisting.")
+                queue_manager.move_to_blacklisted(item, "Scraping")
+                self.reset_not_wanted_check(item['id'])
+            else:
+                logging.info(f"Item {item_identifier} (Wake count: {current_wake_count}/{max_wake_count}) moving to Sleeping queue.")
+                queue_manager.move_to_sleeping(item, "Scraping") # This call handles wake count increment if needed
+                self.reset_not_wanted_check(item['id'])
             
     def is_item_old(self, item: Dict[str, Any]) -> bool:
         if 'release_date' not in item or item['release_date'] is None or item['release_date'] == 'Unknown':

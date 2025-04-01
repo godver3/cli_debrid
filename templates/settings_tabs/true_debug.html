@@ -32,6 +32,15 @@
                 <p class="settings-description">If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available</p>
             </div>
 
+            <!-- Use Symlinks on Windows -->
+            <div class="settings-form-group">
+                <label for="debug-use_symlinks_on_windows" class="settings-title">Allow Symlinks on Windows:</label>
+                <input type="checkbox" id="debug-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
+                       data-section="Debug" data-key="use_symlinks_on_windows"
+                       {% if settings.get('Debug', {}).get('use_symlinks_on_windows') %}checked{% endif %}>
+                <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
+            </div>
+
             <!-- Staleness Threshold -->
             <div class="settings-form-group">
                 <label for="debug-staleness_threshold" class="settings-title">Staleness Threshold (Days):</label>
