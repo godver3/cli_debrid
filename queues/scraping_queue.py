@@ -477,6 +477,10 @@ class ScrapingQueue:
                 self.reset_not_wanted_check(item['id'])
             
     def is_item_old(self, item: Dict[str, Any]) -> bool:
+        # If early release flag is set, it's never considered old for the purpose of immediate blacklisting
+        if item.get('early_release', False):
+            return False
+            
         if 'release_date' not in item or item['release_date'] is None or item['release_date'] == 'Unknown':
             return True
         try:

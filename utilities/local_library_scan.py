@@ -541,20 +541,28 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             logging.debug(f"[UPGRADE] No old symlink found at {old_dest} (or path couldn't be determined).")
                     else:
                          logging.warning("[UPGRADE] Could not determine old source path components for symlink removal.")
+
+                    # Note: Symlink creation moved outside the upgrade block to run unconditionally
+
                 else:
                     logging.error(f"[UPGRADE] Failed to remove the old file/torrent for {item_identifier}. Skipping symlink cleanup and creation for the new file.")
                     # Exit the upgrade process for this item if old file couldn't be handled
                     # We need to signal failure back up the call stack if necessary
                     return False # Indicate failure
 
-            # --- Continue with new symlink creation only if old cleanup was handled ---
-            # This part should only execute if the code didn't return False above
-            if not os.path.exists(dest_file):
-                success = create_symlink(source_file, dest_file, item.get('id'))
+            # --- Unconditionally attempt to create/replace the symlink --- 
+            # This runs for both upgrades (after cleanup) and non-upgrades
+            logging.info(f"Attempting to create/replace symlink: {source_file} -> {dest_file}")
+            success = create_symlink(source_file, dest_file, item.get('id'))
+            if not success:
+                 logging.error(f"Failed to create/replace symlink at {dest_file}. Aborting process for this item.")
+                 return False # Abort if symlink creation fails for any reason
 
-            if success:
-                logging.info(f"[UPGRADE] Successfully processed symlink at: {dest_file}")
-                
+            # --- Proceed with database update if symlink process was successful ---
+            # Note: The 'if success:' check remains, now referring to the unconditional attempt above
+            if success: 
+                logging.info(f"Successfully processed symlink at: {dest_file}")
+
                 # Set state based on whether this is an upgrade candidate
                 new_state = 'Upgrading' if is_upgrade_candidate else 'Collected'
                 logging.info(f"[UPGRADE] Setting item state to: {new_state}")

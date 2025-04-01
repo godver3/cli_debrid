@@ -70,7 +70,8 @@ def cache_for_seconds(seconds):
                 result, timestamp = _function_cache[cache_key][key]
                 if now - timestamp < seconds:
                     #logging.debug(f"Cache hit for {func.__name__}, returning cached value. Age: {now - timestamp:.1f}s")
-                    if isinstance(result, Response):
+                    # Use duck typing to check if it's a Response-like object
+                    if hasattr(result, 'get_data') and hasattr(result, 'status_code'):
                         return result
                     response = make_response(jsonify(result))
                     response.headers['ETag'] = _function_etags[cache_key].get(key, '')
@@ -80,8 +81,9 @@ def cache_for_seconds(seconds):
             # If no valid cached value, call the function
             result = func(*args, **kwargs)
             
+            # Use duck typing to check if it's a Response-like object
             # Don't cache Response objects
-            if isinstance(result, Response):
+            if hasattr(result, 'get_data') and hasattr(result, 'status_code'):
                 #logging.debug(f"Not caching Response object for {func.__name__}")
                 return result
                 
