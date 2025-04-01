@@ -87,8 +87,14 @@ def should_process_item(item: Dict[str, Any], source_id: str, cache: Dict[str, A
     if isinstance(last_processed, (int, float)):
         last_processed = datetime.fromtimestamp(last_processed)
     
+    # Determine expiry based on source type
+    if source_id.startswith('Collected_'): # Check if it's a Collected source
+        expiry_hours = 24
+    else:
+        expiry_hours = CACHE_EXPIRY_HOURS
+
     # Check if cache has expired
-    if datetime.now() - last_processed >= timedelta(hours=CACHE_EXPIRY_HOURS):
+    if datetime.now() - last_processed >= timedelta(hours=expiry_hours):
         return True
     
     # For TV shows with season info, check if requested seasons match

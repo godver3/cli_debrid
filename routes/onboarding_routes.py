@@ -230,13 +230,17 @@ def onboarding_step(step):
         # Get Trakt auth status
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
         
+        # Determine if Windows symlinks are allowed
+        allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
+        
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
                                trakt_status=trakt_status,
                                is_onboarding=True,
-                               is_windows=is_windows)
+                               is_windows=is_windows,
+                               allow_windows_symlinks=allow_windows_symlinks_value)
 
     elif step_num == 3:
         config = load_config()

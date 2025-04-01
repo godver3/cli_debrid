@@ -319,19 +319,23 @@
 
         <select id="file_collection_management" name="file_collection_management" required class="onboarding-input">
             <option value="Plex" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Plex' %}selected{% endif %}>Plex</option>
-            <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %} {% if is_windows %}disabled{% endif %}>Symlinked/Local</option>
+            <option value="Symlinked/Local" {% if settings.get('File Management', {}).get('file_collection_management', '') == 'Symlinked/Local' %}selected{% endif %} {% if is_windows and not allow_windows_symlinks %}disabled{% endif %}>Symlinked/Local</option>
         </select>
+        
         {% if is_windows %}
-        <div class="windows-warning">
-            <strong>Warning:</strong> Symlinked/Local management is not supported on Windows. Plex management has been selected.
+        <div class="windows-override-section" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #e9ecef; border: 1px solid #ced4da;">
+            <input type="checkbox" id="windows_symlink_override" style="margin-right: 5px;">
+            <label for="windows_symlink_override" style="color: #495057; font-weight: normal;">Allow Symlinks on Windows (Requires Admin/Developer Mode)</label>
+            <p style="font-size: 0.8em; color: #6c757d; margin-top: 5px; margin-bottom: 0;">Overrides the default behavior which uses hard links. Enable this only if you have the necessary permissions.</p>
+        </div>
+        
+        <div id="windows-symlink-warning" class="windows-warning" {% if allow_windows_symlinks %}style="display: none;"{% endif %}>
+            <strong>Warning:</strong> Symlinked/Local management is normally disabled on Windows due to Plex limitations and permission requirements. Use the override above if you understand the implications.
         </div>
         {% endif %}
+
         <div id="plex-description" class="settings-description">
             Plex management will integrate with your Plex Media Server to manage and organize your media files.
-            {% if is_windows %}
-            <br><br>
-            <strong>Note:</strong> On Windows systems, symlinks cannot be scanned into Plex. The Symlinked/Local option has been disabled.
-            {% endif %}
         </div>
         <div id="local-description" class="settings-description" style="display: none;">
             Symlinked/Local management will organize files in your local filesystem using symbolic links.
@@ -342,7 +346,7 @@
                 <i class="fas fa-chevron-down toggle-icon"></i>
             </div>
             <div class="advice-content">
-                If you are starting fresh - I recommend using a Symlinked library (especially if you are watching Anime content).<br><br>
+                If you are starting fresh - I recommend using a Symlinked library if you are on Linux, otherwise you will need to use a Plex Library (especially if you are watching Anime content).<br><br>
                 If you already have an rclone mounted library in Plex and are not having issues - continue using it.<br><br>
                 If you are having issues with an rclone mounted library (items not scanning in, Anime not recognized by Plex) consider either starting a new Symlinked library or converting your library to Symlinks (done later in Step 5)
             </div>
@@ -544,6 +548,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const localFields = document.getElementById('local-fields');
     const plexDescription = document.getElementById('plex-description');
     const localDescription = document.getElementById('local-description');
+    const overrideCheckbox = document.getElementById('windows_symlink_override');
+    const symlinkWarningDiv = document.getElementById('windows-symlink-warning');
 
     // Plex-related variables
     const plexAuthBtn = document.getElementById('plex-auth-btn');
@@ -557,6 +563,10 @@ document.addEventListener('DOMContentLoaded', function() {
     let plexToken = null;
     let selectedServer = null;
     let currentStep = 1;
+
+    // Read values from the global config object
+    const isWindows = window.ONBOARDING_CONFIG.isWindows;
+    let allowWindowsSymlinks = window.ONBOARDING_CONFIG.allowWindowsSymlinks;
 
     // Change next step button text to "Validate Settings" and set next step URL
     if (nextStepBtn) {
@@ -608,16 +618,57 @@ document.addEventListener('DOMContentLoaded', function() {
         updateRequiredFields(managementType);
     }
 
-    // Initialize fields based on current selection
-    if (fileManagementSelect) {
-        toggleFields(fileManagementSelect.value);
+    // Function to update the Symlinked/Local option availability and warning visibility
+    function updateSymlinkOptionState() {
+        const symlinkOption = fileManagementSelect.querySelector('option[value="Symlinked/Local"]');
+        if (!symlinkOption) return; // Safety check
+
+        const currentlyAllowed = allowWindowsSymlinks || (overrideCheckbox && overrideCheckbox.checked);
         
+        symlinkOption.disabled = isWindows && !currentlyAllowed;
+        
+        if (isWindows) {
+             if (symlinkWarningDiv) {
+                symlinkWarningDiv.style.display = currentlyAllowed ? 'none' : 'block';
+             }
+            // If disallowed and selected, force back to Plex
+            if (!currentlyAllowed && fileManagementSelect.value === 'Symlinked/Local') {
+                fileManagementSelect.value = 'Plex';
+                toggleFields('Plex'); // Update conditional fields display
+                 showPopup({
+                     type: POPUP_TYPES.WARNING,
+                     title: 'Windows Limitation',
+                     message: 'Symlinked/Local management is disabled on Windows unless explicitly allowed. Resetting to Plex.',
+                     autoClose: 4000
+                 });
+            }
+        }
+    }
+
+    // Initialize fields based on current selection and override state
+    if (fileManagementSelect) {
+        // Set initial state of override checkbox based on backend setting
+        if (overrideCheckbox) {
+            overrideCheckbox.checked = allowWindowsSymlinks;
+            // Add listener to the override checkbox
+            overrideCheckbox.addEventListener('change', updateSymlinkOptionState);
+        }
+        
+        // Initial update of option state and UI visibility
+        updateSymlinkOptionState();
+        toggleFields(fileManagementSelect.value);
+
+        // Change listener for the main select dropdown
         fileManagementSelect.addEventListener('change', function() {
+            // Update the UI fields based on selection
             toggleFields(this.value);
+            // Reset validation button state whenever selection changes
             if (nextStepBtn) {
                 nextStepBtn.textContent = 'Validate Settings';
                 nextStepBtn.classList.add('validate-btn');
             }
+            // Re-validate symlink option state (in case it was forced back to Plex)
+            updateSymlinkOptionState();
         });
     }
 
@@ -1095,32 +1146,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         }
     });
-
-    {% if is_windows %}
-    if (fileManagementSelect.value === 'Symlinked/Local') {
-        fileManagementSelect.value = 'Plex';
-        // Trigger change event to update UI
-        const event = new Event('change');
-        fileManagementSelect.dispatchEvent(event);
-    }
-    
-    // Add event listener to prevent selecting Symlinked/Local on Windows
-    fileManagementSelect.addEventListener('change', function() {
-        if (this.value === 'Symlinked/Local') {
-            showPopup({
-                type: POPUP_TYPES.WARNING,
-                title: 'Windows Limitation',
-                message: 'Symlinked/Local management is not supported on Windows. Please use Plex management instead.',
-                autoClose: 5000
-            });
-            // Reset to Plex
-            this.value = 'Plex';
-            // Trigger change event to update UI
-            const event = new Event('change');
-            this.dispatchEvent(event);
-        }
-    });
-    {% endif %}
 });
 
 function initializeTraktAuthorization() {
@@ -1215,6 +1240,14 @@ function checkTraktAuthStatus() {
             traktAuthStatus.textContent = 'Unable to check Trakt authorization status.';
         });
 }
+</script>
+
+<script>
+  // Define global config accessible by the module script
+  window.ONBOARDING_CONFIG = {
+    isWindows: {{ is_windows | tojson }},
+    allowWindowsSymlinks: {{ allow_windows_symlinks | tojson }}
+  };
 </script>
 
 {% include 'onboarding_navigation.html' with context %}

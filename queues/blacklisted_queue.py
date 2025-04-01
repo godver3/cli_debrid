@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from utilities.settings import get_setting
 from config_manager import get_version_settings, load_config
+from database.database_reading import check_existing_media_item
 
 class BlacklistedQueue:
     def __init__(self):
@@ -103,29 +104,39 @@ class BlacklistedQueue:
             all_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
 
             if fallback_version and fallback_version != 'None' and fallback_version in all_versions:
-                logging.info(f"Item {item_identifier} failed for version '{current_version}'. Attempting fallback to version '{fallback_version}'.")
-                
-                # Remove from current queue before modifying item state/version
-                current_queue_name = queue_manager.get_item_queue(item)
-                if current_queue_name and current_queue_name != 'Blacklisted': # Avoid double removal if somehow already blacklisted
-                    try:
-                        queue_manager.queues[current_queue_name].remove_item(item)
-                        logging.debug(f"Removed {item_identifier} from {current_queue_name} queue for fallback.")
-                    except KeyError:
-                         logging.warning(f"Could not find queue '{current_queue_name}' to remove item {item_identifier} during fallback.")
-                    except Exception as e:
-                         logging.error(f"Error removing item {item_identifier} from {current_queue_name} queue during fallback: {e}")
-                
-                # Update item's version in the local dictionary
-                item['version'] = fallback_version
-                item_identifier_new_version = queue_manager.generate_identifier(item) # Generate identifier with new version
-                
-                # Move to Wanted queue with the new version, passing it explicitly
-                # We pass the original version name as the 'source' for context
-                logging.debug(f"Calling move_to_wanted for {item_identifier_new_version} with new_version={fallback_version}")
-                queue_manager.move_to_wanted(item, f"Fallback from {current_version}", new_version=fallback_version)
-                logging.info(f"Moved item {item_identifier_new_version} back to Wanted queue with fallback version '{fallback_version}'.")
-                return # Skip the rest of the blacklisting process
+                # --- Check for existing item with fallback version --- START
+                target_states_to_check = ['Collected', 'Upgrading']
+                if check_existing_media_item(item, fallback_version, target_states_to_check):
+                    logging.info(f"Item {item_identifier} failed for version '{current_version}'. Fallback version '{fallback_version}' already exists in state {target_states_to_check}. Proceeding with blacklisting original.")
+                    # Do not apply fallback, proceed to original blacklisting logic below
+                    pass # Explicitly doing nothing here, will fall through to blacklist
+                else:
+                    # --- Original Fallback Logic --- START
+                    logging.info(f"Item {item_identifier} failed for version '{current_version}'. Attempting fallback to version '{fallback_version}'.")
+                    
+                    # Remove from current queue before modifying item state/version
+                    current_queue_name = queue_manager.get_item_queue(item)
+                    if current_queue_name and current_queue_name != 'Blacklisted': # Avoid double removal if somehow already blacklisted
+                        try:
+                            queue_manager.queues[current_queue_name].remove_item(item)
+                            logging.debug(f"Removed {item_identifier} from {current_queue_name} queue for fallback.")
+                        except KeyError:
+                             logging.warning(f"Could not find queue '{current_queue_name}' to remove item {item_identifier} during fallback.")
+                        except Exception as e:
+                             logging.error(f"Error removing item {item_identifier} from {current_queue_name} queue during fallback: {e}")
+                    
+                    # Update item's version in the local dictionary
+                    item['version'] = fallback_version
+                    item_identifier_new_version = queue_manager.generate_identifier(item) # Generate identifier with new version
+                    
+                    # Move to Wanted queue with the new version, passing it explicitly
+                    # We pass the original version name as the 'source' for context
+                    logging.debug(f"Calling move_to_wanted for {item_identifier_new_version} with new_version={fallback_version}")
+                    queue_manager.move_to_wanted(item, f"Fallback from {current_version}", new_version=fallback_version)
+                    logging.info(f"Moved item {item_identifier_new_version} back to Wanted queue with fallback version '{fallback_version}'.")
+                    return # Skip the rest of the blacklisting process
+                    # --- Original Fallback Logic --- END
+                # --- Check for existing item with fallback version --- END
             else:
                 if fallback_version and fallback_version != 'None' and fallback_version not in all_versions:
                      logging.warning(f"Configured fallback version '{fallback_version}' for version '{current_version}' does not exist. Proceeding with blacklisting {item_identifier}.")

@@ -461,6 +461,11 @@ SETTINGS_SCHEMA = {
             "description": "Disable initialization tasks",
             "default": False
         },
+        "use_symlinks_on_windows": {
+            "type": "boolean",
+            "description": "Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.",
+            "default": False
+        },
         "sort_by_uncached_status": {
             "type": "boolean",
             "description": "Sort results by uncached status over cached status",

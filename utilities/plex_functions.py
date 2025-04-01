@@ -95,7 +95,12 @@ async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str
 
 async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, library_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
     url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
-    data = await fetch_data(session, url, headers, semaphore)
+    # Add pagination headers
+    request_headers = headers.copy()
+    request_headers['X-Plex-Container-Start'] = '0'
+    request_headers['X-Plex-Container-Size'] = '50000'  # Set a large size to get all items
+
+    data = await fetch_data(session, url, request_headers, semaphore)
     metadata = data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
     logger.info(f"Retrieved {len(metadata)} items from library {library_key}")
     return metadata

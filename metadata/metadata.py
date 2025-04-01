@@ -252,6 +252,8 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
     # Get the first_aired datetime string
     first_aired_str = episode_data.get('first_aired')
+    release_date = 'Unknown'
+    airtime = '19:00' # Default fallback airtime
 
     if first_aired_str:
         try:
@@ -261,55 +263,36 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
             # Convert UTC to local timezone using cross-platform function
             local_tz = _get_local_timezone()
-            local_dt = first_aired_utc.astimezone(local_tz)
-            
-            # Format the local date (stripping time) as a string
-            release_date = local_dt.strftime("%Y-%m-%d")
-        except ValueError:
-            logging.warning(f"Invalid datetime format: {first_aired_str}")
-            release_date = 'Unknown'
+            premiere_dt_local_tz = first_aired_utc.astimezone(local_tz)
+
+            # Use the localized datetime for both date and time
+            release_date = premiere_dt_local_tz.strftime("%Y-%m-%d")
+            airtime = premiere_dt_local_tz.strftime("%H:%M")
+            logging.info(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
+
+        except ValueError as e:
+            logging.warning(f"Invalid datetime format or timezone conversion error: {first_aired_str} - {e}")
+            # Keep release_date as 'Unknown' and airtime as default '19:00'
     else:
-        release_date = 'Unknown'
-
-    # Handle airtime conversion
-    airs = show_item.get('airs', {})
-    airtime = airs.get('time')
-    timezone_str = airs.get('timezone')
-
-    if airtime and timezone_str:
-        try:
-            # Try parsing with seconds first (HH:MM:SS)
+        # No first_aired string, try to use show's default airtime if available
+        airs = show_item.get('airs', {})
+        default_airtime_str = airs.get('time')
+        if default_airtime_str:
             try:
-                air_time = datetime.strptime(airtime, "%H:%M:%S").time()
+                 # Try parsing with seconds first (HH:MM:SS)
+                try:
+                    air_time_obj = datetime.strptime(default_airtime_str, "%H:%M:%S").time()
+                except ValueError:
+                    # If that fails, try without seconds (HH:MM)
+                    air_time_obj = datetime.strptime(default_airtime_str, "%H:%M").time()
+                airtime = air_time_obj.strftime("%H:%M")
+                logging.info(f"Using show's default airtime: {airtime} as fallback.")
             except ValueError:
-                # If that fails, try without seconds (HH:MM)
-                air_time = datetime.strptime(airtime, "%H:%M").time()
-            
-            # Get the show's timezone
-            show_tz = ZoneInfo(timezone_str)
-            
-            # Use the release date if available, otherwise use today's date
-            if release_date != 'Unknown':
-                base_date = datetime.strptime(release_date, "%Y-%m-%d").date()
-            else:
-                base_date = datetime.now(show_tz).date()
-
-            # Combine date and time
-            show_datetime = datetime.combine(base_date, air_time)
-            show_datetime = show_datetime.replace(tzinfo=show_tz)
-            
-            # Get the local timezone dynamically
-            local_tz = _get_local_timezone()
-            local_airtime = show_datetime.astimezone(local_tz)
-            
-            # Format as HH:MM
-            airtime = local_airtime.strftime("%H:%M")
-        except (ValueError, ZoneInfoNotFoundError) as e:
-            logging.warning(f"Error converting airtime: {e}")
-            logging.warning(f"Invalid airtime or timezone: {airtime}, {timezone_str}")
-            airtime = '19:00'  # Default fallback
-    else:
-        airtime = '19:00'  # Default fallback
+                 logging.warning(f"Invalid show default airtime format: {default_airtime_str}. Using default 19:00.")
+                 # airtime remains '19:00'
+        else:
+            logging.info("No first_aired data and no default show airtime. Using default 19:00.")
+            # airtime remains '19:00'
 
     episode_item = {
         'imdb_id': show_item['imdb_id'],
@@ -319,11 +302,11 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'season_number': int(season_number),
         'episode_number': int(episode_number),
         'episode_title': episode_data.get('title', f"Episode {episode_number}"),
-        'release_date': release_date,
+        'release_date': release_date, # Calculated local date
         'media_type': 'episode',
         'genres': ['anime'] if is_anime else show_item.get('genres', []),
         'runtime': episode_data.get('runtime') or show_item.get('runtime'),
-        'airtime': airtime,
+        'airtime': airtime, # Calculated local time
         'country': show_item.get('country', '').lower(),  # Add country code from show metadata
         'content_source': show_item.get('content_source'),  # Preserve content source
         'content_source_detail': show_item.get('content_source_detail')  # Preserve content source detail
@@ -871,16 +854,16 @@ def refresh_release_dates():
                                             # Parse the UTC datetime string
                                             first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
                                             first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-                                            
+
                                             # Convert UTC to local timezone
                                             local_tz = _get_local_timezone()
                                             local_dt = first_aired_utc.astimezone(local_tz)
-                                            
+
                                             # Format the local date
                                             new_release_date = local_dt.strftime("%Y-%m-%d")
-                                            logging.info(f"Converted UTC {first_aired_str} to local date {new_release_date}")
+                                            logging.info(f"Calculated local release date {new_release_date} from UTC {first_aired_str}")
                                         except ValueError as e:
-                                            logging.error(f"Invalid datetime format: {first_aired_str} - Error: {e}")
+                                            logging.error(f"Invalid datetime format or conversion error: {first_aired_str} - Error: {e}")
                                             new_release_date = 'Unknown'
                                     else:
                                         logging.warning("No first_aired date found in episode data")

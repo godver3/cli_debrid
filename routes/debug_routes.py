@@ -43,35 +43,98 @@ from content_checkers.content_cache_management import (
 )
 import traceback
 from database.symlink_verification import get_unverified_files, get_verification_stats
+from content_checkers.content_source_detail import append_content_source_detail
 
 debug_bp = Blueprint('debug', __name__)
 
 # Global progress tracking
 scan_progress = {}
 
+# --- Helper function to get cache files ---
+def get_cache_files():
+    """Returns a list of content source cache filenames."""
+    try:
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        if not os.path.isdir(db_content_dir):
+            logging.error(f"Cache directory not found: {db_content_dir}")
+            return []
+        
+        # Find files matching the pattern
+        pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
+        cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
+        return sorted(cache_files)
+    except Exception as e:
+        logging.error(f"Error getting cache files: {str(e)}")
+        return []
+# --- End Helper function ---
+
 def async_get_wanted_content(source):
+    results = {}
     try:
         if source == 'all':
-            get_all_wanted_from_enabled_sources()
-            message = 'Successfully retrieved and added wanted items from all enabled sources'
+            # Get all enabled sources
+            content_sources = get_all_settings().get('Content Sources', {})
+            enabled_sources = {source_id: data for source_id, data in content_sources.items() if data.get('enabled', False)}
+            
+            total_added = 0
+            total_processed = 0
+            total_cache_skipped = 0
+            total_media_type_skipped = 0
+            all_errors = []
+
+            for source_id in enabled_sources:
+                logging.info(f"Processing source {source_id} as part of 'all'...")
+                result = get_and_add_wanted_content(source_id)
+                total_added += result.get('added', 0)
+                total_processed += result.get('processed', 0)
+                total_cache_skipped += result.get('cache_skipped', 0)
+                total_media_type_skipped += result.get('media_type_skipped', 0)
+                if result.get('error'):
+                    all_errors.append(f"{source_id}: {result['error']}")
+            
+            message_parts = [f"All Sources: Added {total_added} items"]
+            if total_processed > 0: message_parts.append(f"Processed {total_processed}")
+            if total_cache_skipped > 0: message_parts.append(f"Skipped {total_cache_skipped} (cache)")
+            if total_media_type_skipped > 0: message_parts.append(f"Skipped {total_media_type_skipped} (media type)")
+            message = ", ".join(message_parts) + "."
+            
+            results = {'success': True, 'message': message}
+            if all_errors:
+                results['error'] = "Errors: " + "; ".join(all_errors)
+                results['success'] = False # Mark as failure if any source had errors
+
         else:
-            # Get the display name for the content source
+            # Get the display name for the single content source
             content_sources = get_all_settings().get('Content Sources', {})
             source_config = content_sources.get(source, {})
-            
-            # Determine display name
             if isinstance(source_config, dict) and source_config.get('display_name'):
                 display_name = source_config['display_name']
             else:
-                # Format the source name if no display name is set
                 display_name = ' '.join(word.capitalize() for word in source.split('_'))
             
-            get_and_add_wanted_content(source)
-            message = f'Successfully retrieved and added wanted items from {display_name}'
+            # Process the single source
+            result = get_and_add_wanted_content(source)
+            
+            added = result.get('added', 0)
+            processed = result.get('processed', 0)
+            cache_skipped = result.get('cache_skipped', 0)
+            media_type_skipped = result.get('media_type_skipped', 0)
+            error = result.get('error')
+            
+            message_parts = [f"{display_name}: Added {added} items"]
+            if processed > 0: message_parts.append(f"Processed {processed}")
+            if cache_skipped > 0: message_parts.append(f"Skipped {cache_skipped} (cache)")
+            if media_type_skipped > 0: message_parts.append(f"Skipped {media_type_skipped} (media type)")
+            message = ", ".join(message_parts) + "."
+
+            results = {'success': error is None, 'message': message}
+            if error:
+                results['error'] = str(error)
         
-        return {'success': True, 'message': message}
+        return results
     except Exception as e:
-        return {'success': False, 'error': str(e)}
+        logging.error(f"Error in async_get_wanted_content for source '{source}': {e}", exc_info=True)
+        return {'success': False, 'error': f"Unexpected error processing source {source}: {str(e)}"}
 
 def async_get_collected_from_plex(collection_type):
     try:
@@ -101,7 +164,12 @@ def async_get_collected_from_plex(collection_type):
 def debug_functions():
     content_sources = get_all_settings().get('Content Sources', {})
     enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
-    return render_template('debug_functions.html', content_sources=enabled_sources)
+    cache_files = get_cache_files() # Fetch cache files
+    return render_template(
+        'debug_functions.html', 
+        content_sources=enabled_sources,
+        cache_files=cache_files # Pass cache files to template
+    )
 
 @debug_bp.route('/bulk_delete_by_imdb', methods=['POST'])
 def bulk_delete_by_imdb():
@@ -619,7 +687,11 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.content_source_detail import append_content_source_detail
 
     content_sources = get_all_settings().get('Content Sources', {})
-    source_data = content_sources[source_id]
+    source_data = content_sources.get(source_id) # Use .get for safety
+    if not source_data:
+        logging.error(f"Source ID {source_id} not found in settings.")
+        return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Source {source_id} not found"}
+
     source_type = source_id.split('_')[0]
     versions = source_data.get('versions', {})
     source_media_type = source_data.get('media_type', 'All')
@@ -627,128 +699,188 @@ def get_and_add_wanted_content(source_id):
     logging.info(f"Processing source: {source_id}")
     logging.debug(f"Source type: {source_type}, media type: {source_media_type}")
     
-    # Load cache for this source
     source_cache = load_source_cache(source_id)
     logging.debug(f"Initial cache state for {source_id}: {len(source_cache)} entries")
     cache_skipped = 0
     items_processed = 0
-    total_items = 0
+    total_items_added = 0 # Renamed for clarity
     media_type_skipped = 0
 
     wanted_content = []
-    if source_type == 'Overseerr':
-        wanted_content = get_wanted_from_overseerr(versions)
-    elif source_type == 'My Plex Watchlist':
-        wanted_content = get_wanted_from_plex_watchlist(versions)
-    elif source_type == 'My Plex RSS Watchlist':
-        plex_rss_url = source_data.get('url', '')
-        if not plex_rss_url:
-            logging.error(f"Missing URL for source: {source_id}")
-            return
-        wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions)
-    elif source_type == 'My Friends Plex RSS Watchlist':
-        plex_rss_url = source_data.get('url', '')
-        if not plex_rss_url:
-            logging.error(f"Missing URL for source: {source_id}")
-            return
-        wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
-    elif source_type == 'Other Plex Watchlist':
-        wanted_content = get_wanted_from_other_plex_watchlist(
-            username=source_data.get('username', ''),
-            token=source_data.get('token', ''),
-            versions=versions
-        )
-    elif source_type == 'MDBList':
-        mdblist_urls = source_data.get('urls', '').split(',')
-        for mdblist_url in mdblist_urls:
-            mdblist_url = mdblist_url.strip()
-            wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
-    elif source_type == 'Trakt Watchlist':
-        update_trakt_settings(content_sources)
-        wanted_content = get_wanted_from_trakt_watchlist(versions)
-    elif source_type == 'Trakt Lists':
-        update_trakt_settings(content_sources)
-        trakt_lists = source_data.get('trakt_lists', '').split(',')
-        for trakt_list in trakt_lists:
-            trakt_list = trakt_list.strip()
-            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
-    elif source_type == 'Friends Trakt Watchlist':
-        update_trakt_settings(content_sources)
-        wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions)
-    elif source_type == 'Trakt Collection':
-        update_trakt_settings(content_sources)
-        wanted_content = get_wanted_from_trakt_collection(versions)
-    elif source_type == 'Collected':
-        wanted_content = get_wanted_from_collected()
+    try: # Add try block for source fetching
+        if source_type == 'Overseerr':
+            wanted_content = get_wanted_from_overseerr(versions)
+        elif source_type == 'My Plex Watchlist':
+            wanted_content = get_wanted_from_plex_watchlist(versions)
+        elif source_type == 'My Plex RSS Watchlist':
+            plex_rss_url = source_data.get('url', '')
+            if not plex_rss_url:
+                logging.error(f"Missing URL for source: {source_id}")
+                return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
+            wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions)
+        elif source_type == 'My Friends Plex RSS Watchlist':
+            plex_rss_url = source_data.get('url', '')
+            if not plex_rss_url:
+                logging.error(f"Missing URL for source: {source_id}")
+                return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
+            wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
+        elif source_type == 'Other Plex Watchlist':
+            wanted_content = get_wanted_from_other_plex_watchlist(
+                username=source_data.get('username', ''),
+                token=source_data.get('token', ''),
+                versions=versions
+            )
+        elif source_type == 'MDBList':
+            mdblist_urls = source_data.get('urls', '').split(',')
+            for mdblist_url in mdblist_urls:
+                mdblist_url = mdblist_url.strip()
+                if mdblist_url: # Check if url is not empty
+                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
+        elif source_type == 'Trakt Watchlist':
+            update_trakt_settings(content_sources)
+            wanted_content = get_wanted_from_trakt_watchlist(versions)
+        elif source_type == 'Trakt Lists':
+            update_trakt_settings(content_sources)
+            trakt_lists = source_data.get('trakt_lists', '').split(',')
+            for trakt_list in trakt_lists:
+                trakt_list = trakt_list.strip()
+                if trakt_list: # Check if list name is not empty
+                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+        elif source_type == 'Friends Trakt Watchlist':
+            update_trakt_settings(content_sources)
+            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions)
+        elif source_type == 'Trakt Collection':
+            update_trakt_settings(content_sources)
+            wanted_content = get_wanted_from_trakt_collection(versions)
+        elif source_type == 'Collected':
+            wanted_content = get_wanted_from_collected()
+        else:
+            logging.warning(f"Unknown source type: {source_type}")
+            # Optionally return an error or empty result here
+            return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Unknown source type {source_type}"}
 
-    logging.debug(f"wanted_content for {source_id}: {wanted_content}")
+    except Exception as fetch_error:
+        logging.error(f"Error fetching content from {source_id}: {fetch_error}", exc_info=True)
+        return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Error fetching from {source_id}: {str(fetch_error)}"}
+
+    logging.debug(f"Fetched {len(wanted_content)} raw items for {source_id}")
 
     if wanted_content:
-        total_items = 0
-        if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
-            # Handle list of tuples
-            for items, item_versions in wanted_content:
-                try:
-                    logging.debug(f"Processing batch of {len(items)} items from {source_id}")
-                    
-                    # Filter items by media type first if applicable
-                    if source_media_type != 'All' and not source_type.startswith('Collected'):
-                        original_count = len(items)
-                        items = [
-                            item for item in items
-                            if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
-                               (source_media_type == 'Shows' and item.get('media_type') == 'tv')
-                        ]
-                        media_type_skipped += original_count - len(items)
-                        if media_type_skipped > 0:
-                            logging.debug(f"Skipped {media_type_skipped} items due to media type mismatch")
-                    
-                    # Filter items based on cache before metadata processing
-                    items_to_process = [
-                        item for item in items 
-                        if should_process_item(item, source_id, source_cache)
-                    ]
-                    items_skipped = len(items) - len(items_to_process)
-                    cache_skipped += items_skipped
-                    logging.debug(f"Cache filtering results for {source_id}: {items_skipped} skipped, {len(items_to_process)} to process")
-                    
-                    if not items_to_process:
-                        continue
+        try: # Add try block for processing
+            if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+                # Handle list of tuples
+                for items, item_versions in wanted_content:
+                    batch_items_processed = 0
+                    batch_total_items_added = 0
+                    batch_cache_skipped = 0
+                    batch_media_type_skipped = 0
 
-                    # Process metadata for non-cached items
-                    processed_items = process_metadata(items_to_process)
-                    if processed_items:
-                        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-                        # Add content source and detail
-                        for item in all_items:
+                    try:
+                        logging.debug(f"Processing batch of {len(items)} items from {source_id}")
+
+                        original_count = len(items)
+                        # Filter by media type
+                        if source_media_type != 'All' and not source_type.startswith('Collected'):
+                            items = [
+                                item for item in items
+                                if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
+                                   (source_media_type == 'Shows' and item.get('media_type') == 'tv')
+                            ]
+                            batch_media_type_skipped += original_count - len(items)
+                            if batch_media_type_skipped > 0:
+                                logging.debug(f"Batch {source_id}: Skipped {batch_media_type_skipped} items due to media type mismatch")
+
+                        # Filter by cache
+                        items_to_process = [
+                            item for item in items
+                            if should_process_item(item, source_id, source_cache)
+                        ]
+                        batch_cache_skipped += len(items) - len(items_to_process)
+                        logging.debug(f"Batch {source_id}: Cache filtering results: {batch_cache_skipped} skipped, {len(items_to_process)} to process")
+
+                        if items_to_process:
+                            batch_items_processed += len(items_to_process)
+                            processed_items_meta = process_metadata(items_to_process)
+                            if processed_items_meta:
+                                all_items_meta = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                                for item in all_items_meta:
+                                    item['content_source'] = source_id
+                                    item = append_content_source_detail(item, source_type=source_type)
+
+                                for item_original in items_to_process:
+                                    update_cache_for_item(item_original, source_id, source_cache)
+
+                                from database import add_wanted_items
+                                added_count = add_wanted_items(all_items_meta, item_versions or versions) # Assuming add_wanted_items returns count
+                                batch_total_items_added += added_count or 0
+
+                    except Exception as batch_error:
+                        logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
+                        # Continue to next batch
+
+                    # Aggregate results from batch
+                    items_processed += batch_items_processed
+                    total_items_added += batch_total_items_added
+                    cache_skipped += batch_cache_skipped
+                    media_type_skipped += batch_media_type_skipped
+
+            else: # Handle single list of items (assuming this path is less common based on previous logic)
+                original_count = len(wanted_content)
+                # Filter by media type
+                if source_media_type != 'All' and not source_type.startswith('Collected'):
+                    wanted_content = [
+                        item for item in wanted_content
+                        if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
+                           (source_media_type == 'Shows' and item.get('media_type') == 'tv')
+                    ]
+                    media_type_skipped += original_count - len(wanted_content)
+                    if media_type_skipped > 0:
+                        logging.debug(f"{source_id}: Skipped {media_type_skipped} items due to media type mismatch")
+
+                # Filter by cache
+                items_to_process = [
+                    item for item in wanted_content
+                    if should_process_item(item, source_id, source_cache)
+                ]
+                cache_skipped += len(wanted_content) - len(items_to_process)
+                logging.debug(f"{source_id}: Cache filtering results: {cache_skipped} skipped, {len(items_to_process)} to process")
+
+                if items_to_process:
+                    items_processed += len(items_to_process)
+                    processed_items_meta = process_metadata(items_to_process)
+                    if processed_items_meta:
+                        all_items_meta = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                        for item in all_items_meta:
                             item['content_source'] = source_id
                             item = append_content_source_detail(item, source_type=source_type)
-                        
-                        # Update cache for the original items (pre-metadata processing)
-                        for item in items_to_process:
-                            update_cache_for_item(item, source_id, source_cache)
-                        
+
+                        for item_original in items_to_process:
+                            update_cache_for_item(item_original, source_id, source_cache)
+
                         from database import add_wanted_items
-                        add_wanted_items(all_items, item_versions or versions)
-                        total_items += len(all_items)
-                        items_processed += len(items_to_process)
-                except Exception as e:
-                    logging.error(f"Error processing items from {source_id}: {str(e)}")
-                    logging.error(traceback.format_exc())
-        
-        # Save the updated cache
-        save_source_cache(source_id, source_cache)
-        logging.debug(f"Final cache state for {source_id}: {len(source_cache)} entries")
-        
-        stats_msg = f"Added {total_items} wanted items from {source_id} (processed {items_processed} items"
-        if cache_skipped > 0:
-            stats_msg += f", skipped {cache_skipped} cached items"
-        if media_type_skipped > 0:
-            stats_msg += f", skipped {media_type_skipped} items due to media type mismatch"
-        stats_msg += ")"
-        logging.info(stats_msg)
+                        added_count = add_wanted_items(all_items_meta, versions) # Assuming add_wanted_items returns count
+                        total_items_added += added_count or 0
+
+            # Save the updated cache
+            save_source_cache(source_id, source_cache)
+            logging.debug(f"Final cache state for {source_id}: {len(source_cache)} entries")
+
+            stats_msg = f"Source {source_id}: Added {total_items_added} items"
+            if items_processed > 0: stats_msg += f" (Processed {items_processed} items)"
+            if cache_skipped > 0: stats_msg += f", Skipped {cache_skipped} (cache)"
+            if media_type_skipped > 0: stats_msg += f", Skipped {media_type_skipped} (media type)"
+            logging.info(stats_msg)
+
+        except Exception as process_error:
+            logging.error(f"Error processing items from {source_id}: {str(process_error)}", exc_info=True)
+            # Return counts accumulated so far, plus the error
+            return {'added': total_items_added, 'processed': items_processed, 'cache_skipped': cache_skipped, 'media_type_skipped': media_type_skipped, 'error': f"Error processing items: {str(process_error)}"}
+
     else:
-        logging.warning(f"No wanted content retrieved from {source_id}")
+        logging.info(f"No wanted content retrieved from {source_id}")
+
+    # Return the final counts
+    return {'added': total_items_added, 'processed': items_processed, 'cache_skipped': cache_skipped, 'media_type_skipped': media_type_skipped}
 
 def get_content_sources():
     """Get content sources from ProgramRunner instance."""
@@ -1929,3 +2061,45 @@ def direct_emby_scan():
     except Exception as e:
         logging.error(f"Error during direct Emby/Jellyfin scan: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'message': f'An error occurred: {str(e)}'}), 500 # Also change error response for consistency
+
+# --- New route to delete cache files ---
+@debug_bp.route('/api/delete_cache_files', methods=['POST'])
+@admin_required
+def delete_cache_files_route():
+    """API endpoint to delete selected cache files."""
+    selected_files = request.form.getlist('selected_files') # Get list of filenames from form
+    if not selected_files:
+        return jsonify({'success': False, 'error': 'No cache files selected'}), 400
+
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    deleted_count = 0
+    errors = []
+
+    for filename in selected_files:
+        # Basic validation to prevent deleting unintended files
+        if not (filename.startswith('content_source_') and filename.endswith('_cache.pkl')):
+            errors.append(f"Invalid cache filename skipped: {filename}")
+            continue
+            
+        file_path = os.path.join(db_content_dir, filename)
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                deleted_count += 1
+                logging.info(f"Deleted cache file: {file_path}")
+            else:
+                logging.warning(f"Cache file not found, skipping deletion: {file_path}")
+        except OSError as e:
+            logging.error(f"Error deleting cache file {file_path}: {e}")
+            errors.append(f"Failed to delete {filename}: {e.strerror}")
+        except Exception as e:
+            logging.error(f"Unexpected error deleting cache file {file_path}: {e}")
+            errors.append(f"Failed to delete {filename}: {str(e)}")
+
+    if not errors:
+        return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} cache file(s).'})
+    else:
+        error_message = f'Deleted {deleted_count} cache file(s). Errors encountered: {"; ".join(errors)}'
+        # Return success=True even with partial failures, but include error details
+        return jsonify({'success': True, 'message': error_message, 'errors': errors})
+# --- End new route ---

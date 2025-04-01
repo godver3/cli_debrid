@@ -130,7 +130,7 @@ def process_log_upload(task_id):
         upload_tasks[task_id]['progress'] = 10
         
         # Get all logs without any filtering
-        logs = get_all_logs_for_upload(level='all')
+        logs = get_all_logs_for_upload(max_lines=500000)
         if not logs:
             upload_tasks[task_id]['status'] = 'failed'
             upload_tasks[task_id]['error'] = 'No logs found'
@@ -140,7 +140,7 @@ def process_log_upload(task_id):
         logging.info(f"Task {task_id}: Collected {len(logs)} log entries, preparing for compression")
         
         # Format logs for sharing
-        log_content = '\n'.join([f"{log['timestamp']} - {log['level'].upper()} - {log['message']}" for log in logs])
+        log_content = '\n'.join(logs)
         
         # Compress the logs with maximum compression
         upload_tasks[task_id]['status'] = 'compressing'
@@ -159,46 +159,49 @@ def process_log_upload(task_id):
         upload_tasks[task_id]['progress'] = 40
         
         # Check if the compressed size exceeds typical limits
-        if compressed_size_kb > 10000:  # 10MB file size limit for oshi.at
-            logging.warning(f"Task {task_id}: Compressed log size ({compressed_size_kb:.2f}KB) may exceed oshi.at's limits")
-            
-            # Try with a reduced set of logs (only errors and warnings)
+        # paste.c-net.org has a 50MB limit
+        if compressed_size_kb > 50000:  # 50MB limit
+            logging.warning(f"Task {task_id}: Compressed log size ({compressed_size_kb:.2f}KB) exceeds paste.c-net.org's 50MB limit")
+            # Try with a reduced set of logs (only errors and warnings) - keep this logic
             upload_tasks[task_id]['status'] = 'reducing'
             try:
                 logging.info(f"Task {task_id}: Attempting to create a reduced log set due to size constraints")
-                reduced_logs = get_all_logs_for_upload(level='warning', max_lines=100000)
+                reduced_logs = get_all_logs_for_upload(max_lines=100000) # Keep a max_lines limit for performance
                 if reduced_logs:
-                    reduced_content = '\n'.join([f"{log['timestamp']} - {log['level'].upper()} - {log['message']}" for log in reduced_logs])
-                    
+                    reduced_content = '\n'.join(reduced_logs)
+
                     compressed_buffer = io.BytesIO()
                     with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
                         gz.write(reduced_content.encode('utf-8'))
-                    
+
                     compressed_data = compressed_buffer.getvalue()
                     compressed_size_kb = len(compressed_data) / 1024
                     logging.info(f"Task {task_id}: Reduced log set: {len(reduced_logs)} entries, size: {compressed_size_kb:.2f}KB")
-                    
-                    # Still too large
-                    if compressed_size_kb > 10000:
+
+                    # Still too large even after reduction
+                    if compressed_size_kb > 50000:
                         upload_tasks[task_id]['status'] = 'failed'
-                        upload_tasks[task_id]['error'] = 'Log file is too large even after reduction'
+                        upload_tasks[task_id]['error'] = 'Log file is too large even after reduction (limit 50MB)'
                         return
             except Exception as e:
                 logging.error(f"Task {task_id}: Error creating reduced logs: {str(e)}")
                 upload_tasks[task_id]['status'] = 'failed'
                 upload_tasks[task_id]['error'] = f'Error creating reduced logs: {str(e)}'
                 return
-        
+
         # Update status to uploading
         upload_tasks[task_id]['status'] = 'uploading'
         upload_tasks[task_id]['progress'] = 50
-        
+
         try:
-            logging.info(f"Task {task_id}: Attempting upload to oshi.at")
-            file_url = upload_to_oshi(compressed_data, task_id)
-            
+            # logging.info(f"Task {task_id}: Attempting upload to oshi.at")
+            # file_url = upload_to_oshi(compressed_data, task_id) # Commented out
+            logging.info(f"Task {task_id}: Attempting upload to paste.c-net.org")
+            file_url = upload_to_paste_cnet(compressed_data, task_id) # Use new function
+
             if file_url:
-                logging.info(f"Task {task_id}: Upload completed successfully to oshi.at")
+                # logging.info(f"Task {task_id}: Upload completed successfully to oshi.at") # Updated log message
+                logging.info(f"Task {task_id}: Upload completed successfully to paste.c-net.org")
                 upload_tasks[task_id]['status'] = 'completed'
                 upload_tasks[task_id]['progress'] = 100
                 upload_tasks[task_id]['url'] = file_url
@@ -206,10 +209,11 @@ def process_log_upload(task_id):
                 upload_tasks[task_id]['status'] = 'failed'
                 upload_tasks[task_id]['error'] = 'Upload completed but no URL returned'
         except Exception as e:
-            logging.error(f"Task {task_id}: Failed to upload to oshi.at: {str(e)}")
+            # logging.error(f"Task {task_id}: Failed to upload to oshi.at: {str(e)}") # Updated log message
+            logging.error(f"Task {task_id}: Failed to upload to paste.c-net.org: {str(e)}")
             upload_tasks[task_id]['status'] = 'failed'
             upload_tasks[task_id]['error'] = f'Upload failed: {str(e)}'
-            
+
     except Exception as e:
         logging.error(f"Task {task_id}: Error during log sharing: {str(e)}")
         upload_tasks[task_id]['status'] = 'failed'
@@ -218,145 +222,121 @@ def process_log_upload(task_id):
     # Update timestamp regardless of outcome
     upload_tasks[task_id]['timestamp'] = time.time()
 
-def upload_to_oshi(data, task_id=None):
-    """Upload to oshi.at with 24 hour expiration"""
-    url = 'https://oshi.at'
-    
-    files = {
-        'f': ('debug.log.gz', data, 'application/gzip')
+def upload_to_paste_cnet(data, task_id=None):
+    """Upload to paste.c-net.org"""
+    url = 'https://paste.c-net.org/'
+    filename = 'debug.log.gz'
+    headers = {
+        'X-FileName': filename  # Set filename header
     }
-    
-    # Set expiry to 24 hours in minutes (1440 minutes)
-    form_data = {
-        'expire': '1440'  # 24 hours in minutes
-    }
-    
-    logging.info(f"Uploading to oshi.at: file size {len(data)/1024:.2f}KB, mime: application/gzip")
-    
+
+    logging.info(f"Uploading to {url}: file size {len(data)/1024:.2f}KB as {filename}")
+
     try:
         # Update progress if task_id is provided
         if task_id and task_id in upload_tasks:
             upload_tasks[task_id]['progress'] = 60
-        
+
         response = requests.post(
             url,
-            files=files,
-            data=form_data,
-            timeout=240  # 4 minute timeout to handle larger uploads
+            data=data,  # Send raw compressed data
+            headers=headers,
+            timeout=300  # 5 minute timeout, paste.c-net allows larger files
         )
-        
+
         # Update progress if task_id is provided
         if task_id and task_id in upload_tasks:
             upload_tasks[task_id]['progress'] = 90
-        
+
         logging.info(f"Response status: {response.status_code}")
-        
+
         if response.status_code != 200:
-            logging.error(f"Upload error response from oshi.at: {response.text[:500]}")
-            response.raise_for_status()
-        
-        # oshi.at returns a text response with multiple lines:
-        # Line 1: Management URL (https://oshi.at/filename/random.extension)
-        # Line 2: Direct download URL (https://oshi.at/DL/filename/random.extension)
-        # Line 3: Deletion URL
-        # Line 4: Expiration info
-        lines = response.text.strip().split('\n')
-        
-        logging.info(f"oshi.at response lines: {len(lines)}")
-        
-        # Check if the response has the expected format and extract direct download URL from line 2
-        if len(lines) >= 2 and 'DL:' in lines[1]:
-            direct_download_url = lines[1].strip().replace('DL: ', '')
-            logging.info(f"Extracted direct download URL: {direct_download_url}")
-            return direct_download_url
-        elif len(lines) >= 1 and 'http' in lines[0]:
-            # Fallback to the management URL if we can't find a direct download URL
-            management_url = lines[0].strip()
-            logging.info(f"Using management URL as fallback: {management_url}")
-            return management_url
+            logging.error(f"Upload error response from {url}: {response.text[:500]}")
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+
+        # paste.c-net.org returns the URL directly in the response body
+        file_url = response.text.strip()
+
+        if file_url and file_url.startswith('https://'):
+            logging.info(f"Extracted URL: {file_url}")
+            return file_url
         else:
-            logging.error(f"Unexpected response format from oshi.at: {response.text[:500]}")
-            raise Exception("Failed to parse oshi.at response")
-        
+            logging.error(f"Unexpected response format from {url}: {response.text[:500]}")
+            raise Exception(f"Failed to parse response from {url}")
+
     except requests.exceptions.RequestException as e:
-        logging.error(f"Request error during upload to oshi.at: {str(e)}")
+        logging.error(f"Request error during upload to {url}: {str(e)}")
         raise Exception(f"Upload failed: {str(e)}")
 
-def get_all_logs_for_upload(level='all', max_lines=500000):
-    """Get all logs from all rotated files in chronological order for upload"""
-    # Get logs directory from environment variable with fallback
+def get_all_logs_for_upload(max_lines=500000):
+    """Optimized: Get the last N raw log lines from rotated files for upload."""
     logs_dir = os.environ.get('USER_LOGS', '/user/logs')
     base_log_path = os.path.join(logs_dir, 'debug.log')
-    
+
     if not os.path.exists(base_log_path):
+        logging.warning("Base log file 'debug.log' not found.")
         return []
-    
-    # Get all log files and sort them correctly
+
+    # Find all relevant log files
     log_files = []
-    for file in os.listdir(logs_dir):
-        if file.startswith('debug.log'):
-            log_files.append(file)
-    
-    def sort_key(filename):
-        # Extract the number from the filename (e.g., 'debug.log.1' -> 1)
+    try:
+        for file in os.listdir(logs_dir):
+            if file == 'debug.log' or re.match(r'^debug\.log\.\d+$', file):
+                log_files.append(os.path.join(logs_dir, file))
+    except OSError as e:
+        logging.error(f"Error listing log directory {logs_dir}: {e}")
+        return []
+
+    if not log_files:
+        logging.warning("No log files found matching pattern 'debug.log*' in {logs_dir}.")
+        return []
+
+    # Sort files: debug.log.N (oldest) -> debug.log (newest)
+    def sort_key(filepath):
+        filename = os.path.basename(filepath)
         match = re.search(r'debug\.log(?:\.(\d+))?$', filename)
         if not match or not match.group(1):
-            return -1  # Current log file (no number) should be processed last
+            return -1 # Current log file (no number) should be last
         return int(match.group(1))
-    
-    # Sort files in order: highest number (oldest) to debug.log (newest)
-    log_files.sort(key=sort_key, reverse=True)  # Process oldest files first
-    logging.info(f"Found {len(log_files)} log files to process in order: {', '.join(log_files)}")
-    
-    all_logs = []
-    
-    # Process each file and append its logs (oldest to newest)
-    for log_file in log_files:
-        file_path = os.path.join(logs_dir, log_file)
+
+    log_files.sort(key=sort_key, reverse=True) # Process oldest files first
+    # logging.info(f"Processing {len(log_files)} log files in order: {', '.join(os.path.basename(f) for f in log_files)}")
+
+    # Use a deque to efficiently keep only the last max_lines
+    combined_lines = deque(maxlen=max_lines)
+    total_lines_read = 0
+
+    # Read lines from files (oldest to newest) into the deque
+    for file_path in log_files:
         try:
-            file_size = os.path.getsize(file_path) / 1024  # Size in KB
-            logging.info(f"Processing {log_file} (Size: {file_size:.2f}KB)")
-            
-            current_file_logs = []
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = deque(f, maxlen=max_lines)
-                current_log = None
-                for line in lines:
-                    line = line.strip()
-                    parsed_line = parse_log_line(line)
-                    
-                    if parsed_line:
-                        # If we have a current log, append it before starting new one
-                        if current_log and should_include_log(current_log, since='', level=level):
-                            current_file_logs.append(current_log)
-                        current_log = parsed_line
-                    elif current_log:
-                        # This is a continuation line - append to current message
-                        current_log['message'] += '\n' + line
-                
-                # Don't forget to append the last log if it exists
-                if current_log and should_include_log(current_log, since='', level=level):
-                    current_file_logs.append(current_log)
-            
-            # Add this file's logs to the end of all_logs
-            all_logs.extend(current_file_logs)
-            logging.info(f"Processed {log_file}: added {len(current_file_logs)} entries. Total: {len(all_logs)}")
-            
+            # file_size_kb = os.path.getsize(file_path) / 1024
+            # logging.info(f"Reading {os.path.basename(file_path)} (Size: {file_size_kb:.2f}KB)")
+            lines_in_file = 0
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                for line in f:
+                    combined_lines.append(line.strip()) # deque handles maxlen efficiently
+                    lines_in_file += 1
+            total_lines_read += lines_in_file
+            # logging.info(f"Read {lines_in_file} lines from {os.path.basename(file_path)}. Total lines processed so far: {total_lines_read}")
+        except FileNotFoundError:
+            logging.warning(f"Log file {file_path} not found during read, skipping.")
         except Exception as e:
             logging.error(f"Error reading log file {file_path}: {str(e)}")
-            continue
-    
-    # Take the last max_lines entries
-    if max_lines and len(all_logs) > max_lines:
-        all_logs = all_logs[-max_lines:]
-        logging.info(f"Trimmed to last {max_lines} entries")
-    
-    logging.info(f"Final log count: {len(all_logs)} entries")
-    # Log first and last timestamps to verify order
-    if all_logs:
-        logging.info(f"First log timestamp: {all_logs[0]['timestamp']}")
-        logging.info(f"Last log timestamp: {all_logs[-1]['timestamp']}")
-    return all_logs
+            continue # Try next file
+
+    logging.info(f"Finished reading files. Total lines read: {total_lines_read}. Returning last {len(combined_lines)} lines (max_lines={max_lines}).")
+
+    # Convert deque to list and return raw lines
+    final_lines = list(combined_lines)
+
+    # Optional: Log first/last lines for basic verification
+    if final_lines:
+        logging.info(f"First line in final list: {final_lines[0]}")
+        logging.info(f"Last line in final list: {final_lines[-1]}")
+    else:
+        logging.info("No lines found or read.")
+
+    return final_lines
 
 def get_recent_logs(n, since='', level='all'):
     """Get recent logs for the live viewer"""

@@ -20,10 +20,11 @@ from database.core import get_db_connection
 from utilities.reverse_parser import parse_filename_for_version
 from datetime import datetime, timezone
 from database.database_writing import update_media_item_state, add_media_item, update_release_date_and_state
-from database.database_reading import get_media_item_by_id, get_media_item_presence
+from database.database_reading import get_media_item_by_id, get_media_item_presence, get_media_item_by_filename
 import json
 from metadata.metadata import get_release_date
 import time
+import requests # Added for TMDB API calls
 
 webhook_bp = Blueprint('webhook', __name__)
 
@@ -310,22 +311,40 @@ def rclone_webhook():
         dir_path = os.path.join(original_path, file_path)
         logging.debug(f"Full directory path: {dir_path}")
 
-        # Try up to 10 times with 5 second delay
-        for attempt in range(10):
-            if os.path.exists(dir_path):
-                break
-            if attempt < 9:  # Don't sleep on last attempt
-                logging.info(f"Directory not found, attempt {attempt + 1}/10. Retrying in 5 seconds...")
-                time.sleep(5)
-        
-        if not os.path.exists(dir_path):
-            logging.error(f"Directory not found after 10 attempts: {dir_path}")
+        # --- Custom Retry Logic ---
+        found = False
+        delays = [5, 30, 90]  # Delays in seconds
+        attempt = 1
+
+        # Initial check (Attempt 1)
+        if os.path.exists(dir_path):
+            found = True
+            logging.info(f"Directory found on initial check (attempt 1): {dir_path}")
+        else:
+            logging.info(f"Directory not found on initial check, proceeding with retries...")
+            for delay in delays:
+                attempt += 1
+                logging.info(f"Directory not found. Retrying attempt {attempt} in {delay} seconds...")
+                time.sleep(delay)
+                if os.path.exists(dir_path):
+                    found = True
+                    logging.info(f"Directory found on attempt {attempt}: {dir_path}")
+                    break # Exit the retry loop once found
+                else:
+                    logging.info(f"Directory still not found after attempt {attempt}.")
+
+
+        if not found:
+            # Final check after all delays (redundant check if loop finished without break, but safe)
+            # Log error if still not found after the last delay
+            logging.error(f"Directory not found after {attempt} attempts (delays: {', '.join(map(str, delays))}s): {dir_path}")
             return jsonify({
                 "status": "error",
-                "message": f"Directory not found: {file_path}"
+                "message": f"Directory not found after multiple attempts: {file_path}"
             }), 404
+        # --- End Custom Retry Logic ---
 
-        # List directory contents to debug
+        # List directory contents to debug (only if found)
         try:
             dir_contents = os.listdir(dir_path)
             logging.debug(f"Directory contents: {dir_contents}")
@@ -693,3 +712,140 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
             'success': False,
             'message': str(e)
         }
+
+@webhook_bp.route('/plex_scan', methods=['POST'])
+def plex_scan_webhook():
+    """
+    Webhook endpoint for the custom Plex scanner.
+    Receives a file path, looks it up in the database, fetches detailed metadata
+    from TMDB if it's a movie, and returns the combined media info.
+    """
+    data = request.json
+    file_path = data.get('file_path')
+
+    if not file_path:
+        logging.error("Plex scan webhook received request without 'file_path'")
+        return jsonify({"status": "error", "message": "Missing 'file_path' in request"}), 400
+
+    filename = os.path.basename(file_path)
+    logging.info(f"Plex scan webhook received request for file: {filename} (Full path: {file_path})" )
+
+    try:
+        media_item = get_media_item_by_filename(filename)
+
+        if not media_item:
+            logging.warning(f"No database entry found for filename: {filename}")
+            return jsonify({"status": "error", "message": f"Media item not found for file: {filename}"}), 404
+
+        logging.info(f"Found media item for {filename}: ID {media_item.get('id')}, Title: {media_item.get('title')}, Type: {media_item.get('type')}")
+
+        # Initialize response with basic data from DB
+        response_data = {
+            "status": "success",
+            "imdb_id": media_item.get('imdb_id'),
+            "tmdb_id": media_item.get('tmdb_id'),
+            "tvdb_id": media_item.get('tvdb_id'),
+            "type": media_item.get('type'),
+            "title": media_item.get('title'),
+            "year": media_item.get('year'),
+        }
+
+        # If it's a movie, try to fetch enhanced metadata from TMDB
+        if response_data['type'] == 'movie' and response_data['tmdb_id']:
+            tmdb_id = response_data['tmdb_id']
+            logging.info(f"Attempting to fetch enhanced TMDB data for movie TMDB ID: {tmdb_id}")
+            
+            tmdb_api_key = get_setting('TMDB', 'api_key', '')
+            if not tmdb_api_key:
+                logging.warning("TMDB API key is missing. Cannot fetch enhanced metadata.")
+            else:
+                # Append ',videos' to get trailer information
+                tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&append_to_response=credits,images,videos"
+                try:
+                    tmdb_response = requests.get(tmdb_url, timeout=15)
+                    tmdb_response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                    
+                    tmdb_data = tmdb_response.json()
+                    logging.info(f"Successfully fetched TMDB data for {tmdb_id}")
+
+                    # --- Extract and add enhanced data --- 
+                    response_data['summary'] = tmdb_data.get('overview')
+                    response_data['tagline'] = tmdb_data.get('tagline')
+                    response_data['rating'] = tmdb_data.get('vote_average')
+                    response_data['originally_available_at'] = tmdb_data.get('release_date')
+
+                    if tmdb_data.get('genres'):
+                        response_data['genres'] = [genre['name'] for genre in tmdb_data['genres']]
+                        
+                    if tmdb_data.get('belongs_to_collection'):
+                         response_data['collection'] = tmdb_data['belongs_to_collection'].get('name')
+
+                    # Extract credits
+                    directors = []
+                    writers = []
+                    if tmdb_data.get('credits') and tmdb_data['credits'].get('crew'):
+                        for crew_member in tmdb_data['credits']['crew']:
+                            if crew_member.get('job') == 'Director':
+                                directors.append(crew_member['name'])
+                            # Combine multiple writing roles
+                            if crew_member.get('department') == 'Writing' and crew_member.get('name') not in writers:
+                                writers.append(crew_member['name'])
+                    response_data['directors'] = directors
+                    response_data['writers'] = writers
+                    
+                    # --- Extract Trailers (YouTube only) ---
+                    trailers = []
+                    if tmdb_data.get('videos') and tmdb_data['videos'].get('results'):
+                        for video in tmdb_data['videos']['results']:
+                            # Prioritize official trailers on YouTube
+                            if video.get('site') == 'YouTube' and video.get('type') == 'Trailer' and video.get('official') and video.get('key'):
+                                trailers.append({
+                                    'key': video['key'],
+                                    'site': video['site'], # Should be 'YouTube'
+                                    'type': video['type'], # Should be 'Trailer'
+                                    'name': video.get('name', 'Trailer') # Include name if available
+                                })
+                    # Add other types if no official trailer found (optional, keeping it simple for now)
+                    response_data['trailers'] = trailers
+                    logging.info(f"Extracted {len(trailers)} YouTube trailers.")
+                    # --- End Trailer Extraction ---
+
+                    # Extract images (file paths only)
+                    posters = []
+                    art = []
+                    if tmdb_data.get('images'):
+                        # Sort posters by vote_average desc, take English first if available
+                        sorted_posters = sorted(tmdb_data['images'].get('posters', []), key=lambda x: x.get('vote_average', 0), reverse=True)
+                        english_posters = [p['file_path'] for p in sorted_posters if p.get('iso_639_1') == 'en']
+                        other_posters = [p['file_path'] for p in sorted_posters if p.get('iso_639_1') != 'en']
+                        response_data['posters'] = english_posters + other_posters # Return list of file_paths
+
+                        # Sort backdrops similarly
+                        sorted_art = sorted(tmdb_data['images'].get('backdrops', []), key=lambda x: x.get('vote_average', 0), reverse=True)
+                        english_art = [a['file_path'] for a in sorted_art if a.get('iso_639_1') == 'en' or a.get('iso_639_1') is None or a.get('iso_639_1') == ''] # Include null/empty lang
+                        other_art = [a['file_path'] for a in sorted_art if a.get('iso_639_1') not in ['en', None, '']]
+                        response_data['art'] = english_art + other_art # Return list of file_paths
+                        
+                    logging.debug(f"Enhanced response data prepared: {response_data}")
+
+                except requests.exceptions.RequestException as e:
+                    logging.error(f"Error fetching TMDB data for {tmdb_id}: {e}")
+                except Exception as e:
+                     logging.error(f"Error processing TMDB data for {tmdb_id}: {e}", exc_info=True)
+                     
+        # For episodes, add basic season/episode info if available
+        elif response_data['type'] == 'episode':
+            response_data.update({
+                "season_number": media_item.get('season_number'),
+                "episode_number": media_item.get('episode_number'),
+                "show_title": media_item.get('show_title'), 
+                "show_year": media_item.get('show_year')
+            })
+            logging.info(f"Returning basic episode info for {filename}")
+            # TODO: Optionally fetch enhanced TV episode data from TMDB here if needed
+
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        logging.error(f"Error processing Plex scan webhook for file {filename}: {str(e)}", exc_info=True)
+        return jsonify({"status": "error", "message": f"Internal server error: {str(e)}"}), 500

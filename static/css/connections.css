@@ -238,11 +238,15 @@
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .connections-container {
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        grid-template-columns: 1fr;
     }
     
     .connection-card {
-        margin: 10px;
+        margin: 10px 0;
+    }
+
+    .connection-title {
+        max-width: 75%;
     }
     
     .failing-connections {
