@@ -548,6 +548,8 @@
 
             // Update notification display in modal
             function updateNotificationDisplay() {
+                const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+
                 if (notifications.length === 0) {
                     notificationsContainer.innerHTML = '<div class="no-notifications">No notifications</div>';
                     return;
@@ -555,8 +557,13 @@
 
                 notificationsContainer.innerHTML = notifications
                     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                    .map(notification => `
-                        <div class="notification ${notification.read ? 'read' : 'unread'}" data-id="${notification.id}">
+                    .map(notification => {
+                        // Determine read status based on toggle state
+                        const isEffectivelyRead = notificationsDisabled || notification.read;
+                        const readClass = isEffectivelyRead ? 'read' : 'unread';
+
+                        return `
+                        <div class="notification ${readClass}" data-id="${notification.id}">
                             <div class="notification-header">
                                 <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
                                 <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
@@ -565,23 +572,27 @@
                             <div class="notification-message">${notification.message}</div>
                             ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
                         </div>
-                    `).join('');
+                    `;
+                    }).join('');
 
-                // Add click handlers for marking as read
-                document.querySelectorAll('.notification.unread').forEach(notif => {
-                    notif.addEventListener('click', async () => {
-                        const id = notif.dataset.id;
-                        await markNotificationRead(id);
-                        notif.classList.remove('unread');
-                        notif.classList.add('read');
-                        updateNotificationIndicator();
+                // Add click handlers for marking as read ONLY IF notifications are NOT disabled
+                if (!notificationsDisabled) {
+                    document.querySelectorAll('.notification.unread').forEach(notif => {
+                        notif.addEventListener('click', async () => {
+                            const id = notif.dataset.id;
+                            await markNotificationRead(id);
+                            // Re-fetch and update display to ensure consistency
+                            await fetchNotifications(); 
+                        });
                     });
-                });
+                }
             }
 
             // Update the notification indicator (red dot)
             function updateNotificationIndicator() {
-                const hasUnread = notifications.some(n => !n.read);
+                const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+                // Indicator should only show if notifications are enabled AND there are unread ones
+                const hasUnread = !notificationsDisabled && notifications.some(n => !n.read);
                 notificationsBtn.classList.toggle('has-notifications', hasUnread);
             }
 
@@ -640,6 +651,38 @@
             
             // Refresh notifications periodically
             setInterval(fetchNotifications, 30000); // Every 30 seconds
+
+            // ---- Disable Notifications Toggle Logic ----
+            const disableNotificationsToggle = document.getElementById('disableNotificationsToggle');
+            const markAllAsReadBtn = document.getElementById('markAllAsReadBtn');
+            const notificationsDisabledKey = 'notificationsDisabled';
+
+            // Function to update UI based on toggle state
+            function updateNotificationDisabledState(isDisabled) {
+                document.body.setAttribute('data-notifications-disabled', isDisabled);
+                disableNotificationsToggle.checked = isDisabled;
+                if (markAllAsReadBtn) {
+                    markAllAsReadBtn.style.display = isDisabled ? 'none' : 'inline-block';
+                }
+                // Re-render notifications to apply read status if modal is open
+                if (notificationsModal.style.display === 'block') {
+                    updateNotificationDisplay();
+                }
+                // Update indicator immediately
+                updateNotificationIndicator(); 
+            }
+
+            // Load initial state from localStorage
+            const initialDisabledState = localStorage.getItem(notificationsDisabledKey) === 'true';
+            updateNotificationDisabledState(initialDisabledState);
+
+            // Add event listener to the toggle
+            disableNotificationsToggle.addEventListener('change', function() {
+                const isDisabled = this.checked;
+                localStorage.setItem(notificationsDisabledKey, isDisabled);
+                updateNotificationDisabledState(isDisabled);
+            });
+            // ---- End Disable Notifications Toggle Logic ----
 
             // Support Modal Logic
             const supportModal = document.getElementById('supportModal');
@@ -768,6 +811,20 @@
                     supportModal.style.display = 'none';
                 }
             });
+
+            // ---- Add Mark All Read Button Logic ----
+            if (markAllAsReadBtn) {
+                markAllAsReadBtn.addEventListener('click', async () => {
+                    try {
+                        await fetch('/base/api/notifications/mark-all-read', { method: 'POST' });
+                        // Refresh notifications after marking all as read
+                        await fetchNotifications(); 
+                    } catch (error) {
+                        console.error('Error marking all notifications as read:', error);
+                    }
+                });
+            }
+            // ---- End Mark All Read Button Logic ----
         });
     </script>
 </head>

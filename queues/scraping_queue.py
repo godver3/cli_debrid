@@ -6,7 +6,6 @@ import json
 from utilities.settings import get_setting
 from scraper.scraper import scrape
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
-from queues.wake_count_manager import wake_count_manager
 from cli_battery.app.direct_api import DirectAPI
 
 class ScrapingQueue:
@@ -460,8 +459,9 @@ class ScrapingQueue:
             # Default to a reasonable positive number if not set to avoid immediate blacklisting unless explicitly configured.
             max_wake_count = version_settings.get('max_wake_count', 5) 
 
-            # Get current wake count
-            current_wake_count = wake_count_manager.get_wake_count(item['id'])
+            # Get current wake count from DB
+            from database import get_wake_count
+            current_wake_count = get_wake_count(item['id'])
 
             if max_wake_count <= 0:
                 logging.info(f"Item {item_identifier} version '{item.get('version')}' has max_wake_count <= 0 ({max_wake_count}). Blacklisting immediately.")

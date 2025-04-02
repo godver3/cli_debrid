@@ -20,7 +20,6 @@ from queues.unreleased_queue import UnreleasedQueue
 from queues.blacklisted_queue import BlacklistedQueue
 from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
-from queues.wake_count_manager import wake_count_manager
 
 # Get the item tracker logger
 item_tracker_logger = logging.getLogger('item_tracker')
@@ -459,15 +458,13 @@ class QueueManager:
         logging.info(f"Moving item {item_identifier}{target_version_str} to Wanted queue from {from_queue}")
         
         # If moving from Sleeping, preserve wake count (though usually reset when entering Wanted)
-        wake_count = wake_count_manager.get_wake_count(item['id'])
+        from database import get_wake_count
+        wake_count = get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Wanted: {wake_count}")
         
         updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version, filled_by_title=None, filled_by_magnet=None)
         
         if updated_item:
-            # Reset wake count when item successfully enters Wanted queue
-            wake_count_manager.set_wake_count(updated_item['id'], 0)
-            logging.debug(f"Reset wake count for item {item_identifier} upon entering Wanted queue.")
             # No additional processing needed for Wanted queue itself
             pass
 
@@ -559,7 +556,8 @@ class QueueManager:
         item_identifier = self.generate_identifier(item)
         logging.info(f"Moving item {item_identifier} to Sleeping queue")
         
-        wake_count = wake_count_manager.get_wake_count(item['id'])
+        from database import get_wake_count
+        wake_count = get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
 
         updated_item = self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
@@ -651,7 +649,8 @@ class QueueManager:
         return self.queues["Scraping"].get_contents()
         
     def get_wake_count(self, item_id):
-        return wake_count_manager.get_wake_count(item_id)
+        from database import get_wake_count
+        return get_wake_count(item_id)
 
     def pause_queue(self, reason=None):
         if not self.paused:

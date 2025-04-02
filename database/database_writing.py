@@ -38,54 +38,53 @@ def update_year(item_id: int, year: int):
     finally:
         conn.close()
 
-def update_release_date_and_state(item_id, release_date, new_state, early_release=None, physical_release_date=None):
+def update_release_date_and_state(item_id, release_date, new_state, airtime=None, early_release=None, physical_release_date=None):
     """Update the release date and state of a media item.
     
     Args:
         item_id: The ID of the media item to update
         release_date: The new release date
         new_state: The new state
+        airtime: The new airtime (optional)
         early_release: Optional flag for early release
         physical_release_date: Optional physical release date for movies
     """
     conn = get_db_connection()
     try:
-        # First, fetch the current item data
-        cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
-        item = cursor.fetchone()
-        
-        if item:
-            update_query = '''
-                UPDATE media_items
-                SET release_date = ?, state = ?, last_updated = ?
-            '''
-            params = [release_date, new_state, datetime.now()]
-            
-            if early_release is not None:
-                update_query += ', early_release = ?'
-                params.append(early_release)
-                
-            if physical_release_date is not None:
-                update_query += ', physical_release_date = ?'
-                params.append(physical_release_date)
-                
-            update_query += ' WHERE id = ?'
-            params.append(item_id)
-            
-            conn.execute(update_query, params)
-            conn.commit()
-            
-            # Create item description based on the type of media
-            if item['type'] == 'episode':
-                item_description = f"{item['title']} S{item['season_number']:02d}E{item['episode_number']:02d}"
-            else:  # movie
-                item_description = f"{item['title']} ({item['year']})"
-            
-            logging.debug(f"Updated release date to {release_date} and state to {new_state} for {item_description}")
-        else:
-            logging.error(f"No item found with ID {item_id}")
+        update_query = """
+            UPDATE media_items
+            SET release_date = ?, state = ?, last_updated = ?
+        """
+        params = [release_date, new_state, datetime.now()]
+
+        if airtime is not None:
+            update_query += ", airtime = ?"
+            params.append(airtime)
+
+        if early_release is not None:
+            update_query += ", early_release = ?"
+            params.append(early_release)
+
+        if physical_release_date is not None:
+            update_query += ", physical_release_date = ?"
+            params.append(physical_release_date)
+
+        update_query += " WHERE id = ?"
+        params.append(item_id)
+
+        conn.execute(update_query, params)
+        conn.commit()
+
+        # Get the updated item details for post-processing
+        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        if updated_item:
+            item_dict = dict(updated_item)
+            if new_state in ['Collected', 'Upgrading']:
+                handle_state_change(item_dict)
+
+        logging.debug(f"Updated release date/state/airtime for item {item_id}")
     except Exception as e:
-        logging.error(f"Error updating release date and state for item ID {item_id}: {str(e)}")
+        logging.error(f"Error updating release date/state/airtime for item {item_id}: {str(e)}")
     finally:
         conn.close()
     
@@ -530,5 +529,58 @@ def update_media_item_torrent_id(item_id: int, new_torrent_id: str):
         logging.error(f"Database error updating torrent ID for item {item_id}: {e}")
         conn.rollback()
         return False
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def set_wake_count(item_id: int, wake_count: int):
+    """Set the wake count for a specific media item."""
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET wake_count = ?, last_updated = ?
+            WHERE id = ?
+        ''', (wake_count, datetime.now(), item_id))
+        conn.commit()
+        # logging.debug(f"Set wake_count to {wake_count} for item ID {item_id}")
+    except Exception as e:
+        logging.error(f"Error setting wake_count for item ID {item_id}: {str(e)}")
+        raise
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
+def increment_wake_count(item_id: int) -> int:
+    """Increment the wake count for a specific media item and return the new count."""
+    conn = get_db_connection()
+    new_wake_count = 0
+    try:
+        # Ensure atomicity
+        conn.execute('BEGIN IMMEDIATE TRANSACTION')
+        
+        # Get current count
+        cursor = conn.execute('SELECT wake_count FROM media_items WHERE id = ?', (item_id,))
+        result = cursor.fetchone()
+        current_wake_count = result['wake_count'] if result and result['wake_count'] is not None else 0
+        
+        # Increment
+        new_wake_count = current_wake_count + 1
+        
+        # Update
+        conn.execute('''
+            UPDATE media_items
+            SET wake_count = ?, last_updated = ?
+            WHERE id = ?
+        ''', (new_wake_count, datetime.now(), item_id))
+        
+        conn.commit()
+        # logging.debug(f"Incremented wake_count to {new_wake_count} for item ID {item_id}")
+        return new_wake_count
+    except Exception as e:
+        conn.rollback()
+        logging.error(f"Error incrementing wake_count for item ID {item_id}: {str(e)}")
+        # Return the last known count or 0 on error
+        return new_wake_count 
     finally:
         conn.close()

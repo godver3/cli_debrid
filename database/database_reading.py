@@ -441,6 +441,20 @@ def check_existing_media_item(item_details: Dict, target_version: str, target_st
     finally:
         conn.close()
 
+def get_wake_count(item_id: int) -> int:
+    """Get the current wake count for a media item."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('SELECT wake_count FROM media_items WHERE id = ?', (item_id,))
+        result = cursor.fetchone()
+        # Return the count, default to 0 if NULL or not found
+        return result['wake_count'] if result and result['wake_count'] is not None else 0 
+    except Exception as e:
+        logging.error(f"Error retrieving wake_count for item ID {item_id}: {str(e)}")
+        return 0 # Default to 0 on error
+    finally:
+        conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -460,5 +474,6 @@ __all__ = [
     'get_imdb_aliases',
     'get_media_items_by_ids_batch',
     'get_media_item_by_filename',
-    'check_existing_media_item'
+    'check_existing_media_item',
+    'get_wake_count'
 ]

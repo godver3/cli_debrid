@@ -386,6 +386,10 @@ SETTINGS_SCHEMA = {
                     "type": "number",
                     "default": 1.0
                 },
+                "year_match_weight": {
+                    "type": "number",
+                    "default": 3.0
+                },
                 "wake_count": {
                     "type": "integer",
                     "default": None,

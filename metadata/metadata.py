@@ -822,6 +822,10 @@ def refresh_release_dates():
                 metadata, _ = DirectAPI.get_show_metadata(imdb_id)
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
                 
+                # Fetch the latest airtime for the show
+                new_airtime = get_episode_airtime(imdb_id)
+                logging.info(f"New airtime from metadata: {new_airtime}")
+                
                 if not metadata or not isinstance(metadata, dict):
                     logging.warning(f"Invalid or missing metadata for show {imdb_id}")
                     new_release_date = 'Unknown'
@@ -893,19 +897,25 @@ def refresh_release_dates():
 
                 if (new_state != item_dict['state'] or 
                     new_release_date != item_dict['release_date'] or 
+                    new_airtime != item_dict.get('airtime') or
                     item_dict.get('early_release', False) != item_dict.get('early_release_original', False) or
                     (media_type == 'movie' and new_physical_release_date != item_dict.get('physical_release_date_original'))):
                     
-                    logging.info("Updating release date, state, physical release date, and early release flag in database")
+                    logging.info("Updating release date, state, airtime, physical release date, and early release flag in database")
                     update_release_date_and_state(
                         item_dict['id'], 
                         new_release_date, 
                         new_state, 
+                        airtime=new_airtime,
                         early_release=item_dict.get('early_release', False),
                         physical_release_date=new_physical_release_date if media_type == 'movie' else None
                     )
-                    logging.info(f"Updated: {title} has a release date of: {new_release_date}" + 
-                               (f" and physical release date of: {new_physical_release_date}" if media_type == 'movie' else ""))
+                    log_msg = f"Updated: {title} has a release date of: {new_release_date}"
+                    if media_type == 'movie':
+                         log_msg += f" and physical release date of: {new_physical_release_date}"
+                    if media_type == 'episode':
+                         log_msg += f" and airtime of: {new_airtime}"
+                    logging.info(log_msg)
                 else:
                     logging.info("No changes needed for this item")
 
@@ -1051,19 +1061,67 @@ def get_media_country_code(imdb_id: str, media_type: str) -> Optional[str]:
         return None
 
 def get_episode_airtime(imdb_id: str) -> Optional[str]:
-    metadata, _ = DirectAPI.get_show_metadata(imdb_id)
-    airs = metadata.get('airs', {})
-    airtime = airs.get('time')
-   
-    if airtime:
+    """Get the show's airtime converted to the user's local time."""
+    DEFAULT_AIRTIME = "19:00" # Default if conversion fails
+    try:
+        metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+        if not metadata or not isinstance(metadata, dict):
+            logging.warning(f"Could not retrieve valid metadata for show {imdb_id}")
+            return DEFAULT_AIRTIME
+
+        airs = metadata.get('airs')
+        if not airs or not isinstance(airs, dict):
+            logging.warning(f"No 'airs' data found in metadata for show {imdb_id}")
+            return DEFAULT_AIRTIME
+
+        time_str = airs.get('time')
+        timezone_str = airs.get('timezone')
+
+        if not time_str or not timezone_str:
+            logging.warning(f"Missing time ('{time_str}') or timezone ('{timezone_str}') in 'airs' data for show {imdb_id}")
+            return DEFAULT_AIRTIME
+
+        # Get the show's timezone
         try:
-            parsed_time = datetime.strptime(airtime, "%H:%M")
-            logging.info(f"Parsed airtime: {parsed_time} for {imdb_id}")
-            return parsed_time.strftime("%H:%M")
+            show_tz = ZoneInfo(timezone_str)
+        except ZoneInfoNotFoundError:
+            logging.error(f"Invalid timezone identifier '{timezone_str}' for show {imdb_id}. Falling back to default.")
+            return DEFAULT_AIRTIME
+        except Exception as e:
+             logging.error(f"Error creating ZoneInfo for '{timezone_str}': {e}. Falling back to default.")
+             return DEFAULT_AIRTIME
+
+        # Parse the airtime string
+        try:
+            air_time_obj = datetime.strptime(time_str, "%H:%M").time()
         except ValueError:
-            logging.warning(f"Invalid airtime format for {imdb_id}: {airtime}")
-    
-    return None
+            logging.error(f"Invalid airtime format '{time_str}' for show {imdb_id}. Falling back to default.")
+            return DEFAULT_AIRTIME
+
+        # Create a naive datetime object for today with the show's airtime
+        now_naive = datetime.now()
+        show_air_datetime_naive = datetime.combine(now_naive.date(), air_time_obj)
+
+        # Make the naive datetime aware using the show's timezone
+        show_air_datetime_aware = show_air_datetime_naive.replace(tzinfo=show_tz)
+
+        # Get the user's local timezone
+        local_tz = _get_local_timezone()
+        if not local_tz:
+             logging.error("Could not determine local timezone. Falling back to default airtime.")
+             return DEFAULT_AIRTIME
+
+        # Convert the show's airtime to the user's local timezone
+        local_air_datetime = show_air_datetime_aware.astimezone(local_tz)
+
+        # Format the time part
+        local_airtime_str = local_air_datetime.strftime("%H:%M")
+        logging.info(f"Converted airtime for {imdb_id}: {time_str} {timezone_str} -> {local_airtime_str} (local)")
+        return local_airtime_str
+
+    except Exception as e:
+        logging.error(f"Error calculating local airtime for {imdb_id}: {str(e)}", exc_info=True)
+        return DEFAULT_AIRTIME
 
 def main():
     print("Testing metadata routes:")

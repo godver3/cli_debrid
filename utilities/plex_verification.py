@@ -225,16 +225,50 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
     
     for file_data in unverified_files:
         total_processed += 1
-        
+        verification_id = file_data['verification_id'] # Get verification ID early
+
+        # Check if the associated media item still exists in the database
+        media_item_id = file_data.get('media_item_id')
+        if not media_item_id:
+            logger.error(f"Verification record {verification_id} missing media_item_id. Marking as failed.")
+            mark_file_as_permanently_failed(verification_id, "Missing media_item_id in verification record")
+            continue
+
+        from database import get_media_item_by_id
+        media_item = get_media_item_by_id(media_item_id)
+        if not media_item:
+            logger.warning(f"Media item ID {media_item_id} associated with verification ID {verification_id} not found in media_items table. Marking verification as failed.")
+            mark_file_as_permanently_failed(verification_id, "Associated media item record not found in database")
+            continue
+
+        # Check if the path in the verification record matches the current path in the media_items table
+        verification_path = file_data.get('full_path')
+        db_path = media_item.get('location_on_disk')
+
+        if not verification_path:
+             logger.error(f"Verification record {verification_id} (Media ID: {media_item_id}) missing 'full_path'. Marking as failed.")
+             mark_file_as_permanently_failed(verification_id, "Missing full_path in verification record")
+             continue
+
+        # Allow db_path to be None/empty for now, but log if verification_path is set
+        # It might be set later if the item is re-processed
+        if verification_path != db_path:
+            logger.warning(f"Path mismatch for verification ID {verification_id} (Media ID: {media_item_id}). Verification path: '{verification_path}', DB path: '{db_path}'. This verification record might be stale. Marking as failed.")
+            mark_file_as_permanently_failed(verification_id, f"Path mismatch: Verification record path ('{verification_path}') differs from current DB path ('{db_path}')")
+            continue
+            
+        # Paths match, proceed with verification
+        logger.debug(f"Media item {media_item_id} found and path '{verification_path}' matches DB. Proceeding with verification for ID {verification_id}.")
+
         # Check if max attempts exceeded
         if file_data.get('verification_attempts', 0) >= max_attempts:
-            logger.error(f"File exceeded maximum verification attempts ({max_attempts}): {file_data['full_path']}")
+            logger.error(f"File {file_data['full_path']} (Media ID: {media_item_id}) exceeded maximum verification attempts ({max_attempts})")
             
             # Check if file exists
             if not os.path.exists(file_data['full_path']):
                 logger.error(f"File does not exist on disk and has exceeded max attempts: {file_data['full_path']}")
                 mark_file_as_permanently_failed(
-                    file_data['verification_id'],
+                    verification_id,
                     f"File does not exist on disk after {max_attempts} verification attempts"
                 )
                 continue
@@ -245,7 +279,7 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
                 if not os.path.exists(target_path):
                     logger.error(f"Symlink target does not exist and has exceeded max attempts. Target: {target_path}, Symlink: {file_data['full_path']}")
                     mark_file_as_permanently_failed(
-                        file_data['verification_id'],
+                        verification_id,
                         f"Symlink target does not exist after {max_attempts} verification attempts. Target: {target_path}"
                     )
                     continue
@@ -258,11 +292,11 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
                     f"Permissions: {oct(stat_info.st_mode)}, Owner: {stat_info.st_uid}, Group: {stat_info.st_gid}"
                 )
                 logger.error(failure_reason)
-                mark_file_as_permanently_failed(file_data['verification_id'], failure_reason)
+                mark_file_as_permanently_failed(verification_id, failure_reason)
             except Exception as e:
                 logger.error(f"Error getting file stats: {str(e)}")
                 mark_file_as_permanently_failed(
-                    file_data['verification_id'],
+                    verification_id,
                     f"Error accessing file after {max_attempts} attempts: {str(e)}"
                 )
             
@@ -271,7 +305,7 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
         # Check if the file exists
         if not os.path.exists(file_data['full_path']):
             logger.warning(f"File does not exist: {file_data['full_path']}")
-            update_verification_attempt(file_data['verification_id'])
+            update_verification_attempt(verification_id)
             continue
         
         # Verify the file in Plex
@@ -279,11 +313,11 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
         
         if is_verified:
             # Mark as verified
-            if mark_file_as_verified(file_data['verification_id']):
+            if mark_file_as_verified(verification_id):
                 verified_count += 1
         else:
             # Update attempt count
-            update_verification_attempt(file_data['verification_id'])
+            update_verification_attempt(verification_id)
             
             # Try to update Plex for this item
             try:

@@ -3,7 +3,6 @@ from typing import Dict, Any
 from datetime import datetime, timedelta
 
 from utilities.settings import get_setting
-from queues.wake_count_manager import wake_count_manager
 from queues.config_manager import load_config
 
 class SleepingQueue:
@@ -12,22 +11,25 @@ class SleepingQueue:
         self.sleeping_queue_times = {}
 
     def update(self):
-        from database import get_all_media_items, get_media_item_by_id
+        from database import get_all_media_items, get_media_item_by_id, get_wake_count, increment_wake_count
         self.items = [dict(row) for row in get_all_media_items(state="Sleeping")]
-        # Initialize sleeping times for new items
+        # Initialize sleeping times for new items and fetch wake count from DB
         for item in self.items:
             if item['id'] not in self.sleeping_queue_times:
                 self.sleeping_queue_times[item['id']] = datetime.now()
-            item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
+            # Get wake_count from the database, default to 0 if not present (should exist now)
+            item['wake_count'] = get_wake_count(item['id']) 
 
     def get_contents(self):
         return self.items
 
     def add_item(self, item: Dict[str, Any]):
-        item['wake_count'] = wake_count_manager.get_wake_count(item['id'])
+        # Fetch wake count from DB when adding
+        from database import get_wake_count
+        item['wake_count'] = get_wake_count(item['id'])
         self.items.append(item)
         self.sleeping_queue_times[item['id']] = datetime.now()
-        logging.debug(f"Added item to Sleeping queue: {item['id']}")
+        logging.debug(f"Added item to Sleeping queue: {item['id']} (Wake count: {item['wake_count']})")
                 
         from routes.notifications import send_notifications
         from routes.settings_routes import get_enabled_notifications, get_enabled_notifications_for_category
@@ -90,7 +92,9 @@ class SleepingQueue:
             wake_limit = version_wake_count if version_wake_count and version_wake_count > 0 else default_wake_limit
 
             time_asleep = current_time - self.sleeping_queue_times[item_id]
-            wake_count = wake_count_manager.get_wake_count(item_id)
+            # Fetch current wake count from DB
+            from database import get_wake_count
+            wake_count = get_wake_count(item_id) 
             logging.debug(f"Item {item_identifier} has been asleep for {time_asleep}. Current wake count: {wake_count}/{wake_limit}")
 
             if time_asleep >= sleep_duration:
@@ -107,12 +111,15 @@ class SleepingQueue:
         for item in items:
             item_id = item['id']
             item_identifier = queue_manager.generate_identifier(item)
-            old_wake_count = wake_count_manager.get_wake_count(item_id)
+            # Get old count from DB for logging
+            from database import get_wake_count, increment_wake_count
+            old_wake_count = get_wake_count(item_id) 
             logging.debug(f"Waking item: {item_identifier} (Current wake count: {old_wake_count})")
 
-            new_wake_count = wake_count_manager.increment_wake_count(item_id)
+            # Increment wake count in DB
+            new_wake_count = increment_wake_count(item_id) 
             queue_manager.move_to_wanted(item, "Sleeping")
-            self.remove_item(item)
+            # self.remove_item(item) # remove_item is called within move_to_wanted
             logging.info(f"Moved item {item_identifier} from Sleeping to Wanted queue (Wake count: {old_wake_count} -> {new_wake_count})")
 
         logging.debug(f"Woke up {len(items)} items")
@@ -139,11 +146,11 @@ class SleepingQueue:
             if item_id not in [item['id'] for item in self.items]:
                 del self.sleeping_queue_times[item_id]
         
-        # Don't remove wake counts here, as we want to preserve them even when items leave the queue
-        # We'll log the wake counts for debugging purposes
-        for item_id, wake_count in wake_count_manager.wake_counts.items():
-            if item_id not in [item['id'] for item in self.items]:
-                logging.debug(f"Preserving wake count for item ID: {item_id}. Current wake count: {wake_count}")
+        # No need to manage wake counts here anymore, it's in the DB
+        # We can log the counts from the DB if needed for debugging
+        # for item_id, wake_count in wake_count_manager.wake_counts.items():
+        #     if item_id not in [item['id'] for item in self.items]:
+        #         logging.debug(f"Preserving wake count for item ID: {item_id}. Current wake count: {wake_count}")
 
     def is_item_old(self, item):
         if 'release_date' not in item or item['release_date'] == 'Unknown':
