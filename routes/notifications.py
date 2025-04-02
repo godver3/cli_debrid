@@ -14,6 +14,7 @@ from pathlib import Path
 import os
 import uuid
 import errno
+from utilities.settings import get_setting
 
 # Global notification buffer
 notification_buffer = []
@@ -368,85 +369,196 @@ def release_lock(lock_file_path):
         if e.errno != errno.ENOENT: # Ignore if file doesn't exist (already released)
             logging.error(f"Error releasing lock {lock_file_path}: {e}")
 
-def store_notification(title, message, notification_type='info', link=None):
-    """Store a notification in the JSON file"""
-    # Acquire lock
+def _read_notifications_file():
+    """Safely read the notifications file with locking."""
     if not acquire_lock(LOCK_FILE, LOCK_TIMEOUT):
-        logging.error("Failed to acquire lock for storing notification, skipping.")
-        return # Or raise an exception
+        logging.error("Failed to acquire lock for reading notifications.")
+        # Return a structure indicating failure to acquire lock
+        return None, "Failed to acquire lock"
 
+    notifications = {"notifications": []}
+    error_message = None
     try:
-        # Ensure directory exists
-        NOTIFICATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Initialize default structure
-        notifications = {"notifications": []}
-        
-        # Read existing notifications with proper error handling
-        if NOTIFICATION_FILE.exists():
+        if not NOTIFICATION_FILE.exists():
+            logging.info(f"Notifications file does not exist at {NOTIFICATION_FILE}")
+            # Return default empty structure, no error message needed here
+        else:
             try:
-                # Read the entire content first
                 with open(NOTIFICATION_FILE, 'r') as f:
                     content = f.read().strip()
+                    if not content:
+                        logging.info(f"Notifications file exists but is empty at {NOTIFICATION_FILE}")
+                    else:
+                        notifications_data = json.loads(content)
+                        # Basic structure validation
+                        if isinstance(notifications_data, dict) and "notifications" in notifications_data and isinstance(notifications_data["notifications"], list):
+                            notifications = notifications_data
+                        else:
+                            logging.error(f"Invalid notifications structure in {NOTIFICATION_FILE}. Content snippet: {content[:200]}...")
+                            error_message = "Invalid notification file structure"
+                            notifications = {"notifications": []} # Reset to default on structure error
 
-                # --- Start of locked read/write section ---
-                if content:  # Only try to parse if there's content
-                    try:
-                        notifications = json.loads(content)
-                        # Validate structure
-                        if not isinstance(notifications, dict) or "notifications" not in notifications:
-                            logging.warning("Invalid notifications structure, resetting to default")
-                            notifications = {"notifications": []}
-                    except json.JSONDecodeError as je:
-                        logging.warning(f"Invalid JSON in notifications file, resetting: {str(je)}")
-                        notifications = {"notifications": []}
+            except json.JSONDecodeError as je:
+                logging.error(f"JSON decode error in notifications file {NOTIFICATION_FILE}. Content snippet: {content[:200] if 'content' in locals() else 'N/A'}... Error: {str(je)}")
+                error_message = "Corrupted notification file"
+                notifications = {"notifications": []} # Reset to default on decode error
             except Exception as e:
-                logging.error(f"Error reading notifications file: {str(e)}")
-                notifications = {"notifications": []}
-        
-        # Create new notification
-        new_notification = {
-            "id": str(uuid.uuid4()),
-            "timestamp": datetime.now().isoformat(),
-            "title": title,
-            "message": message,
-            "type": notification_type,
-            "read": False
-        }
-        if link:
-            new_notification["link"] = link
-            
-        # Add new notification and keep only the most recent MAX_NOTIFICATIONS
-        notifications["notifications"].insert(0, new_notification)
-        notifications["notifications"] = notifications["notifications"][:MAX_NOTIFICATIONS]
-        
+                logging.error(f"Unexpected error reading notifications file {NOTIFICATION_FILE}: {str(e)}", exc_info=True)
+                error_message = "Failed to read notifications file"
+                notifications = {"notifications": []} # Reset on other read errors
+    finally:
+        release_lock(LOCK_FILE)
+
+    return notifications, error_message
+
+def _write_notifications_file(notifications_data):
+    """Safely write the notifications file with locking and atomic write."""
+    if not acquire_lock(LOCK_FILE, LOCK_TIMEOUT):
+        logging.error("Failed to acquire lock for writing notifications.")
+        return False, "Failed to acquire lock"
+
+    try:
+        # Validate structure before writing
+        if not isinstance(notifications_data, dict) or "notifications" not in notifications_data:
+             logging.error("Attempted to write invalid notification structure.")
+             return False, "Invalid data structure for writing"
+
         # Write to a temporary file first
         temp_file = NOTIFICATION_FILE.with_suffix('.tmp')
         try:
             with open(temp_file, 'w') as f:
-                json.dump(notifications, f, indent=2)
-            
-            # Atomic rename on Unix systems
+                json.dump(notifications_data, f, indent=2)
+
+            # Atomic rename/replace
             if os.name == 'posix':
                 os.replace(temp_file, NOTIFICATION_FILE)
             else:
                 # On Windows, try to remove the target file first if it exists
                 if NOTIFICATION_FILE.exists():
-                    NOTIFICATION_FILE.unlink(missing_ok=True) # Use missing_ok=True
+                    NOTIFICATION_FILE.unlink(missing_ok=True)
                 os.rename(temp_file, NOTIFICATION_FILE)
-                
+            return True, None # Success
+
         except Exception as e:
-            logging.error(f"Error writing notifications file: {str(e)}")
+            logging.error(f"Error writing notifications file: {str(e)}", exc_info=True)
             if temp_file.exists():
-                temp_file.unlink(missing_ok=True) # Use missing_ok=True
-            raise
+                temp_file.unlink(missing_ok=True)
+            return False, "Failed to write notifications file" # Indicate write failure
             
-    except Exception as e:
-        logging.error(f"Error storing notification: {str(e)}", exc_info=True)
     finally:
-        # --- End of locked section ---
-        # Always release lock
         release_lock(LOCK_FILE)
+
+def get_all_notifications():
+    """Get all notifications from the JSON file."""
+    notifications, error = _read_notifications_file()
+    if error:
+        # Return the error status if reading failed significantly
+        # The error is already logged, but the caller might need to know
+        return {"notifications": [], "error": error}, 500 if error != "Failed to acquire lock" else 503
+    
+    # Optional: Filter out expired notifications here if needed
+    # current_time = datetime.now().isoformat()
+    # if notifications and "notifications" in notifications:
+    #     valid_notifications = [
+    #         n for n in notifications.get("notifications", [])
+    #         if isinstance(n, dict) and ("expires" not in n or n.get("expires", "") > current_time)
+    #     ]
+    #     if len(valid_notifications) != len(notifications.get("notifications", [])):
+    #         logging.warning(f"Filtered out invalid or expired entries from {NOTIFICATION_FILE}")
+    #     notifications["notifications"] = valid_notifications
+        
+    return notifications, 200 # Return data and OK status
+
+def mark_single_notification_read(notification_id):
+    """Mark a single notification as read by its ID."""
+    notifications, error = _read_notifications_file()
+    if error:
+        return {"error": error}, 500 if error != "Failed to acquire lock" else 503
+    if not notifications: # Read succeeded but file was empty/missing/reset
+        return {"error": "No notifications found"}, 404
+
+    found = False
+    for notification in notifications.get("notifications", []):
+        if notification.get("id") == notification_id:
+            notification["read"] = True
+            found = True
+            break
+
+    if not found:
+        return {"error": "Notification not found"}, 404
+
+    # Write the updated data back
+    success, write_error = _write_notifications_file(notifications)
+    if not success:
+        return {"error": write_error or "Failed to save update"}, 500 if write_error != "Failed to acquire lock" else 503
+
+    return {"success": True}, 200
+
+def mark_all_notifications_read():
+    """Mark all notifications as read."""
+    notifications, error = _read_notifications_file()
+    if error:
+         return {"error": error}, 500 if error != "Failed to acquire lock" else 503
+    if not notifications: # Read succeeded but file was empty/missing/reset
+        notifications = {"notifications": []} # Ensure structure exists if file was missing
+
+    notification_count = 0
+    for notification in notifications.get("notifications", []):
+        if not notification.get("read", False):
+            notification["read"] = True
+            notification_count += 1
+
+    if notification_count == 0:
+         # No changes needed, return success without writing
+        return {"success": True, "message": "No unread notifications found"}, 200
+
+    # Write the updated data back
+    success, write_error = _write_notifications_file(notifications)
+    if not success:
+        return {"error": write_error or "Failed to save update"}, 500 if write_error != "Failed to acquire lock" else 503
+
+    return {"success": True, "message": f"Marked {notification_count} notifications as read"}, 200
+
+def store_notification(title, message, notification_type='info', link=None):
+    """Store a notification in the JSON file"""
+    # Acquire lock (already part of _read/_write)
+    notifications, error = _read_notifications_file()
+    # Even if read had minor issues (like reset), we attempt to proceed with adding
+    if error and error == "Failed to acquire lock": # Abort only if lock failed
+         logging.error("Failed to acquire lock for storing notification, skipping.")
+         return # Or raise an exception
+
+    if not notifications: # Handle case where read returned None or empty due to error/reset
+        notifications = {"notifications": []}
+
+    # Check if notifications are globally disabled
+    notifications_disabled = get_setting('Notifications', 'disable_all', False)
+
+    # Create new notification
+    new_notification = {
+        "id": str(uuid.uuid4()),
+        "timestamp": datetime.now().isoformat(),
+        "title": title,
+        "message": message,
+        "type": notification_type,
+        "read": notifications_disabled # Set read status based on setting
+    }
+    if link:
+        new_notification["link"] = link
+
+    # Add new notification and keep only the most recent MAX_NOTIFICATIONS
+    # Ensure the 'notifications' key exists and is a list
+    if "notifications" not in notifications or not isinstance(notifications["notifications"], list):
+        notifications["notifications"] = []
+        
+    notifications["notifications"].insert(0, new_notification)
+    notifications["notifications"] = notifications["notifications"][:MAX_NOTIFICATIONS]
+
+    # Write using the safe write function
+    success, write_error = _write_notifications_file(notifications)
+    if not success:
+        logging.error(f"Failed to store notification: {write_error}")
+        # Decide if we need to raise an exception or just log
 
 def _send_notifications(notifications, enabled_notifications, notification_category=None):
     successful = True  # Track if all notifications were sent successfully

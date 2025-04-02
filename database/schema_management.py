@@ -197,6 +197,9 @@ def migrate_schema():
         if 'plex_verified' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN plex_verified BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added plex_verified column to media_items table.")
+        if 'wake_count' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN wake_count INTEGER DEFAULT 0')
+            logging.info("Successfully added wake_count column to media_items table.")
         
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
@@ -291,6 +294,7 @@ def create_tables():
                 airtime TIMESTAMP,
                 last_updated TIMESTAMP,
                 metadata_updated TIMESTAMP,
+                wake_count INTEGER DEFAULT 0,
                 sleep_cycles INTEGER DEFAULT 0,
                 last_checked TIMESTAMP,
                 scrape_results TEXT,

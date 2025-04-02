@@ -19,13 +19,14 @@ def rank_result_key(
     torrent_season, torrent_episode = parsed_info.get('season'), parsed_info.get('episode')
 
     # Get user-defined weights
-    resolution_weight = int(version_settings.get('resolution_weight', 3))
-    hdr_weight = int(version_settings.get('hdr_weight', 3))
-    similarity_weight = int(version_settings.get('similarity_weight', 3))
-    size_weight = int(version_settings.get('size_weight', 3))
-    bitrate_weight = int(version_settings.get('bitrate_weight', 3))
-    country_weight = int(version_settings.get('country_weight', 3))
-    language_weight = int(version_settings.get('language_weight', 3))
+    resolution_weight = float(version_settings.get('resolution_weight', 3.0))
+    hdr_weight = float(version_settings.get('hdr_weight', 3.0))
+    similarity_weight = float(version_settings.get('similarity_weight', 3.0))
+    size_weight = float(version_settings.get('size_weight', 3.0))
+    bitrate_weight = float(version_settings.get('bitrate_weight', 3.0))
+    country_weight = float(version_settings.get('country_weight', 3.0))
+    language_weight = float(version_settings.get('language_weight', 3.0))
+    year_match_weight = float(version_settings.get('year_match_weight', 3.0)) # New weight
 
     # Calculate base scores
     title_similarity = similarity(extracted_title, query)
@@ -85,32 +86,39 @@ def rank_result_key(
                 country_reason = f"Non-US content - no country code in result (wanted {media_country})"
 
     # Handle the case where torrent_year might be a list
+    year_match = 0 # Base score for year match
+    year_reason = "Initialization"
     if query_year is None:
         year_match = 0  # No year match if query_year is None
         year_reason = "No query year provided"
     elif isinstance(torrent_year, list):
-        if query_year in torrent_year:
-            year_match = 10
-            year_reason = f"Exact year match found in list: {query_year} in {torrent_year}"
-        elif any(abs(query_year - y) <= 1 for y in torrent_year):
-            year_match = 5
-            year_reason = f"Year within 1 year difference in list: {query_year} near {torrent_year}"
+        # Ensure all elements in the list are integers before comparison
+        int_torrent_years = [y for y in torrent_year if isinstance(y, int)]
+        if not int_torrent_years:
+             year_match = 0
+             year_reason = f"No valid integer years found in list: {torrent_year}"
+        elif query_year in int_torrent_years:
+            year_match = 5 # Exact match score
+            year_reason = f"Exact year match found in list: {query_year} in {int_torrent_years}"
+        elif any(abs(query_year - y) <= 1 for y in int_torrent_years):
+            year_match = 2.5 # Near match score
+            year_reason = f"Year within 1 year difference in list: {query_year} near {int_torrent_years}"
         else:
-            year_match = -5
-            year_reason = f"Year mismatch penalty: {query_year} not near {torrent_year}"
-    else:
+            year_match = -5 # Mismatch penalty
+            year_reason = f"Year mismatch penalty: {query_year} not near {int_torrent_years}"
+    else: # Handles single int or None for torrent_year
         if query_year == torrent_year:
-            year_match = 10
+            year_match = 5 # Exact match score
             year_reason = f"Exact year match: {query_year}"
-        elif torrent_year and abs(query_year - (torrent_year or 0)) <= 1:
-            year_match = 5
+        elif torrent_year is not None and abs(query_year - torrent_year) <= 1:
+            year_match = 2.5 # Near match score
             year_reason = f"Year within 1 year difference: {query_year} vs {torrent_year}"
-        elif torrent_year:
-            year_match = -5
+        elif torrent_year is not None: # Mismatch but torrent has a year
+            year_match = -5 # Mismatch penalty
             year_reason = f"Year mismatch penalty: {query_year} vs {torrent_year}"
-        else:
+        else: # Torrent has no year (torrent_year is None)
             year_match = 0
-            year_reason = f"No year match: {query_year} vs {torrent_year}"
+            year_reason = f"No year match (torrent has no year): {query_year} vs None"
 
     scraper = result.get('scraper', '').lower()
 
@@ -127,13 +135,13 @@ def rank_result_key(
     size_percentile = percentile_rank(size, all_sizes)
     bitrate_percentile = percentile_rank(bitrate, all_bitrates)
 
-    # Normalize scores to a 0-10 range
+    # Normalize scores (most to 0-10 range, resolution uses its own scale)
     normalized_similarity = title_similarity * 10
-    normalized_resolution = min(resolution_score * 2.5, 10)  # Assuming max resolution score is 4
+    normalized_resolution = resolution_score * 5 # Higher multiplier emphasizes resolution
     normalized_hdr = hdr_score * 10
     normalized_size = size_percentile * 10
     normalized_bitrate = bitrate_percentile * 10
-    normalized_country = country_score  # Already in 0-10 range
+    normalized_country = country_score  # Already in +/-10 range
 
     # Calculate language score based on preferred language
     # Simplified logic: Score based ONLY on similarity to translated title
@@ -164,8 +172,11 @@ def rank_result_key(
     weighted_bitrate = normalized_bitrate * bitrate_weight
     weighted_country = normalized_country * country_weight
     weighted_language = normalized_language * language_weight
+    weighted_year_match = year_match * year_match_weight # Apply new weight to year score
 
     # Only apply season and episode matching for TV shows
+    season_match_score = 0
+    episode_match_score = 0
     if content_type.lower() == 'episode':
         # Check if this is an anime
         genres = result.get('genres', [])
@@ -175,16 +186,16 @@ def rank_result_key(
         
         if is_anime:
             # For anime, only match episode numbers, ignore season mismatch
-            episode_match = 5 if query_episode == torrent_episode else 0
-            season_match = 5  # Always give full season match score for anime
-            # logging.debug(f"Anime content - ignoring season mismatch. Episode match: {episode_match}")
+            episode_match_score = 5 if query_episode == torrent_episode else 0
+            season_match_score = 5  # Always give full season match score for anime
+            # logging.debug(f"Anime content - ignoring season mismatch. Episode match: {episode_match_score}")
         else:
             # Regular TV show matching
-            season_match = 5 if query_season == torrent_season else 0
-            episode_match = 5 if query_episode == torrent_episode else 0
+            season_match_score = 5 if query_season == torrent_season else 0
+            episode_match_score = 5 if query_episode == torrent_episode else 0
     else:
-        season_match = 0
-        episode_match = 0
+        season_match_score = 0
+        episode_match_score = 0
 
     # Multi-pack handling (only for TV shows)
     multi_pack_score = 0
@@ -239,9 +250,9 @@ def rank_result_key(
         weighted_bitrate +
         weighted_country +
         weighted_language +
-        (year_match * 5) +
-        (season_match * 5) +
-        (episode_match * 5) +
+        weighted_year_match + # Use weighted year score
+        (season_match_score * 5) + # Use base season score * multiplier
+        (episode_match_score * 5) + # Use base episode score * multiplier
         multi_pack_score +
         single_episode_score +
         preferred_filter_score
@@ -327,9 +338,9 @@ def rank_result_key(
         'bitrate_score': round(weighted_bitrate, 2),
         'country_score': round(weighted_country, 2),
         'language_score': round(weighted_language, 2),
-        'year_match': year_match * 5,
-        'season_match': season_match * 5,
-        'episode_match': episode_match * 5,
+        'year_match_score': round(weighted_year_match, 2), # Store weighted year score
+        'season_match_score': round(season_match_score * 5, 2), # Store calculated season score
+        'episode_match_score': round(episode_match_score * 5, 2), # Store calculated episode score
         'multi_pack_score': multi_pack_score,
         'single_episode_score': single_episode_score,
         'preferred_filter_score': preferred_filter_score,
@@ -355,7 +366,8 @@ def rank_result_key(
             'size': size_weight,
             'bitrate': bitrate_weight,
             'country': country_weight,
-            'language': language_weight
+            'language': language_weight,
+            'year': year_match_weight # Add year weight here
         },
         'min_size_gb': version_settings.get('min_size_gb', 0.01)
     }
@@ -372,10 +384,10 @@ def rank_result_key(
     # logging.debug(f"├─ Bitrate: {score_breakdown['bitrate_score']:.2f} (weight: {bitrate_weight})")
     # logging.debug(f"├─ Country: {score_breakdown['country_score']:.2f} (weight: {country_weight}, reason: {country_reason})")
     # logging.debug(f"├─ Language: {score_breakdown['language_score']:.2f} (weight: {language_weight}, reason: {language_reason})")
-    # logging.debug(f"├─ Year: {score_breakdown['year_match']:.2f} ({year_reason})")
+    # logging.debug(f"├─ Year Match: {score_breakdown['year_match_score']:.2f} (base: {year_match}, weight: {year_match_weight}, reason: {year_reason})")
     # if content_type.lower() == 'episode':
-    #     logging.debug(f"├─ Season Match: {score_breakdown['season_match']:.2f}")
-    #     logging.debug(f"├─ Episode Match: {score_breakdown['episode_match']:.2f}")
+    #     logging.debug(f"├─ Season Match: {score_breakdown['season_match_score']:.2f} (base: {season_match_score})")
+    #     logging.debug(f"├─ Episode Match: {score_breakdown['episode_match_score']:.2f} (base: {episode_match_score})")
     #     if score_breakdown['is_multi_pack']:
     #         logging.debug(f"├─ Multi-pack: {score_breakdown['multi_pack_score']:.2f} ({score_breakdown['num_items']} items)")
     #     if score_breakdown['single_episode_score']:
@@ -393,4 +405,5 @@ def rank_result_key(
     # logging.debug(f"└─ Total Score: {score_breakdown['total_score']:.2f}")
 
     # Return negative total_score to sort in descending order
-    return (-total_score, -year_match, -season_match, -episode_match)
+    # Year match raw score is used as a tie-breaker
+    return (-total_score, -year_match, -season_match_score, -episode_match_score)

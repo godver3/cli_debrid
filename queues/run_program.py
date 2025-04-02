@@ -1278,6 +1278,7 @@ class ProgramRunner:
 
     def task_check_plex_files(self):
         """Check for new files in Plex location and update libraries"""
+        updated_sections = set()  # Initialize here to prevent UnboundLocalError
         if not get_setting('Plex', 'update_plex_on_file_discovery') and not get_setting('Plex', 'disable_plex_library_checks'):
             logging.debug("Skipping Plex file check")
             return
@@ -1293,7 +1294,7 @@ class ProgramRunner:
         from database.core import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
-        items = cursor.execute('SELECT id, filled_by_title, filled_by_file FROM media_items WHERE state = "Checking"').fetchall()
+        items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file FROM media_items WHERE state = "Checking"').fetchall()
         conn.close()
         logging.info(f"Found {len(items)} media items in Checking state to verify")
 
@@ -1359,7 +1360,9 @@ class ProgramRunner:
                     cursor.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"', (now, item['id']))
                     if cursor.rowcount > 0: # Check if the update actually happened
                         conn.commit()
-                        logging.info(f"Updated item {item['id']} ({item.get('title', 'N/A')}) to Collected state.")
+                        # Use dictionary access for title, provide a default if None or empty
+                        item_title = item['title'] if item['title'] else 'N/A'
+                        logging.info(f"Updated item {item['id']} ({item_title}) to Collected state.")
 
                         # Add post-processing call after state update
                         updated_item_details = get_media_item_by_id(item['id']) # Fetch the updated details

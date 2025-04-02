@@ -13,94 +13,130 @@ import json
 from pathlib import Path
 import errno # Add errno for file locking checks
 
+# Import notification functions
+from .notifications import (
+    get_all_notifications as get_notifications_data,
+    mark_single_notification_read,
+    mark_all_notifications_read as mark_all_read
+)
+
 # Global cache storage
 _function_cache = {}
 _function_last_modified = {}
 _function_etags = {}
 
 def generate_etag(data):
-    """Generate an ETag for the given data"""
+    """Generate an ETag for the given data using MD5"""
+    # Use json.dumps with sort_keys=True for consistent hashing
     return hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 def clear_cache():
     """Clear the update check cache"""
     try:
-        # Get the check_for_update function and call its clear method
-        if hasattr(check_for_update, 'clear'):
+        # Check if check_for_update exists and has a clear method
+        if 'check_for_update' in globals() and hasattr(check_for_update, 'clear'):
             check_for_update.clear()
-            #logging.info("Successfully cleared update check cache")
+        # Check if get_notifications exists and has a clear method
+        if 'get_notifications' in globals() and hasattr(get_notifications, 'clear'):
+            get_notifications.clear()
+        #logging.info("Successfully cleared function caches")
+    except NameError:
+        # This might happen if the functions haven't been defined yet during import cycles
+        logging.warning("Could not clear cache for functions - likely an import timing issue.")
     except Exception as e:
         logging.error(f"Error clearing cache: {str(e)}", exc_info=True)
 
 def cache_for_seconds(seconds):
-    """Enhanced caching decorator with ETag support"""
+    """Enhanced caching decorator with ETag support, handles JSON data."""
     def decorator(func):
-        cache_key = func.__name__  # Use function name as the cache namespace
+        cache_key = func.__name__
         if cache_key not in _function_cache:
             _function_cache[cache_key] = {}
             _function_last_modified[cache_key] = {}
             _function_etags[cache_key] = {}
-        
-        # Add clear method to the decorated function
+
         def clear():
             if cache_key in _function_cache:
                 _function_cache[cache_key].clear()
                 _function_last_modified[cache_key].clear()
                 _function_etags[cache_key].clear()
-        
+                #logging.debug(f"Cache cleared for function: {cache_key}")
+
+
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Skip caching for streaming responses
             if func.__name__.endswith('_stream'):
                 return func(*args, **kwargs)
-                
+
             now = time.time()
-            key = (args, frozenset(kwargs.items()))
-            
-            #logging.debug(f"Cache request for {func.__name__} with key {key}")
-            
-            # Check if client sent If-None-Match header
+            # Create a hashable key from args and kwargs
+            key_tuple = (args, frozenset(kwargs.items()))
+            try:
+                # Most args/kwargs should be hashable
+                key = key_tuple
+            except TypeError:
+                 # Fallback for unhashable types: use stable repr
+                 key = repr(key_tuple)
+
+
+            # ETag check
             if_none_match = request.headers.get('If-None-Match')
-            if if_none_match and key in _function_etags[cache_key] and _function_etags[cache_key][key] == if_none_match:
+            cached_etag = _function_etags[cache_key].get(key)
+            if if_none_match and cached_etag and cached_etag == if_none_match:
                 #logging.debug(f"ETag match for {func.__name__}, returning 304")
                 return '', 304  # Not Modified
-            
-            # Check if we have a valid cached value
+
+            # Cache check
             if key in _function_cache[cache_key]:
-                result, timestamp = _function_cache[cache_key][key]
+                cached_data, timestamp = _function_cache[cache_key][key]
                 if now - timestamp < seconds:
-                    #logging.debug(f"Cache hit for {func.__name__}, returning cached value. Age: {now - timestamp:.1f}s")
-                    # Use duck typing to check if it's a Response-like object
-                    if hasattr(result, 'get_data') and hasattr(result, 'status_code'):
-                        return result
-                    response = make_response(jsonify(result))
-                    response.headers['ETag'] = _function_etags[cache_key].get(key, '')
-                    response.headers['Cache-Control'] = f'private, max-age={seconds}'
+                    #logging.debug(f"Cache hit for {func.__name__}. Age: {now - timestamp:.1f}s")
+                    response = make_response(jsonify(cached_data)) # Assume 200 OK for cached data
+                    # Use cached ETag if available, otherwise generate (should usually be cached)
+                    etag_to_use = cached_etag or generate_etag(cached_data)
+                    response.headers['ETag'] = etag_to_use
+                    # Calculate remaining cache time for Cache-Control
+                    remaining_time = max(0, int(seconds - (now - timestamp)))
+                    response.headers['Cache-Control'] = f'private, max-age={remaining_time}'
                     return response
-            
-            # If no valid cached value, call the function
+                # else: cache expired
+
+
+            # Call the function if no valid cache or expired
+            #logging.debug(f"Cache miss or expired for {func.__name__}. Calling function.")
             result = func(*args, **kwargs)
-            
-            # Use duck typing to check if it's a Response-like object
-            # Don't cache Response objects
-            if hasattr(result, 'get_data') and hasattr(result, 'status_code'):
-                #logging.debug(f"Not caching Response object for {func.__name__}")
-                return result
-                
-            _function_cache[cache_key][key] = (result, now)
+
+            # Check if the result indicates an error or is a direct Response
+            # These should not be cached.
+            is_response_like = hasattr(result, 'get_data') and hasattr(result, 'status_code')
+            is_response_tuple = (isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], int) and
+                                 hasattr(result[0], 'get_data') and hasattr(result[0], 'status_code'))
+
+            if is_response_like or is_response_tuple:
+                #logging.debug(f"Not caching error/direct response for {func.__name__}")
+                return result # Return the error/direct response without caching
+
+            # --- Cache the successful JSON data result ---
+            # Assume 'result' is JSON-serializable data if it wasn't an error/Response
+            data_to_cache = result
+            _function_cache[cache_key][key] = (data_to_cache, now)
             _function_last_modified[cache_key][key] = now
-            
-            # Generate new ETag
-            etag = str(hash((str(result), now)))
+
+            # Generate and store ETag for the fresh data
+            etag = generate_etag(data_to_cache)
             _function_etags[cache_key][key] = etag
-            
-            response = make_response(jsonify(result))
+            #logging.debug(f"Generated ETag for {func.__name__}: {etag}")
+
+
+            # Create the response for the fresh data
+            response = make_response(jsonify(data_to_cache)) # Assume 200 OK
             response.headers['ETag'] = etag
             response.headers['Cache-Control'] = f'private, max-age={seconds}'
-            
+            #logging.debug(f"Caching successful response for {func.__name__}")
             return response
-            
-        wrapper.clear = clear  # Attach clear method to the wrapper
+
+        wrapper.clear = clear # Attach clear method
         return wrapper
     return decorator
 
@@ -310,177 +346,30 @@ def check_for_update():
 @base_bp.route('/api/notifications')
 @cache_for_seconds(30)  # Cache for 30 seconds
 def get_notifications():
-    """Get notifications from the notification file"""
-    db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
-    notification_file = Path(db_content_dir) / 'notifications.json'
-    lock_file = notification_file.with_suffix('.lock') # Define lock file path
-    lock_timeout = 5 # seconds to wait for lock acquisition
-
-    # Define lock functions locally (or import if structured differently)
-    def acquire_lock(lock_file_path, timeout):
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < timeout:
-            try:
-                fd = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                os.close(fd)
-                #logging.debug(f"Acquired lock: {lock_file_path}")
-                return True
-            except OSError as e:
-                if e.errno == errno.EEXIST:
-                    time.sleep(0.1)
-                else:
-                    logging.error(f"Error acquiring lock {lock_file_path}: {e}")
-                    return False
-        logging.warning(f"Timeout acquiring lock: {lock_file_path}")
-        return False
-
-    def release_lock(lock_file_path):
-        try:
-            os.remove(lock_file_path)
-            #logging.debug(f"Released lock: {lock_file_path}")
-        except OSError as e:
-            if e.errno != errno.ENOENT:
-                logging.error(f"Error releasing lock {lock_file_path}: {e}")
-
-    # Acquire lock
-    if not acquire_lock(lock_file, lock_timeout):
-        logging.error("Failed to acquire lock for reading notifications, returning potentially stale data.")
-        # Depending on requirements, you might return an error or proceed without lock (riskier)
-        # For now, let's return a standard error structure, but cache might still serve old data.
-        return jsonify({"error": "Failed to acquire lock, cannot read notifications", "notifications": []}), 503 # Service Unavailable
-
-    try:
-        if not notification_file.exists():
-            # File doesn't exist, return empty list. No need to create it here.
-            logging.info(f"Notifications file does not exist at {notification_file}")
-            return jsonify({"notifications": []})
-
-        try:
-            # Read and parse JSON directly within the try block
-            with open(notification_file, 'r') as f:
-                # Read the whole content first
-                file_content = f.read().strip()
-
-                if not file_content:
-                    # File exists but is empty. Return empty list.
-                    logging.info(f"Notifications file exists but is empty at {notification_file}")
-                    return jsonify({"notifications": []})
-
-                # Try to parse the JSON
-                notifications = json.loads(file_content)
-
-            # Validate structure - Log error but DO NOT rewrite from reader
-            if not isinstance(notifications, dict) or "notifications" not in notifications:
-                logging.error(f"Invalid notifications structure in {notification_file}. Content snippet: {file_content[:200]}...")
-                # Return empty list instead of potentially corrupted data
-                return jsonify({"error": "Invalid notification file structure", "notifications": []}), 500
-
-        except json.JSONDecodeError as je:
-            # JSON decode error - Log error but DO NOT rewrite from reader
-            logging.error(f"JSON decode error in notifications file {notification_file}. Content snippet: {file_content[:200]}... Error: {str(je)}")
-            # Return empty list instead of corrupted data
-            return jsonify({"error": "Corrupted notification file", "notifications": []}), 500
-        except Exception as e:
-            # Catch other potential errors during file read/processing
-            logging.error(f"Unexpected error reading notifications file {notification_file}: {str(e)}", exc_info=True)
-            # Return error but DO NOT rewrite
-            return jsonify({"error": "Failed to read notifications file", "notifications": []}), 500
-
-        # Filter out expired notifications (Optional, keep if needed)
-        current_time = datetime.now().isoformat()
-        if "notifications" in notifications:
-            # Use get with default empty list for safer access
-            valid_notifications = [
-                n for n in notifications.get("notifications", [])
-                if isinstance(n, dict) and ("expires" not in n or n.get("expires", "") > current_time)
-            ]
-            # If filtering removed invalid entries, log a warning
-            if len(valid_notifications) != len(notifications.get("notifications", [])):
-                logging.warning(f"Filtered out invalid or expired entries from {notification_file}")
-            notifications["notifications"] = valid_notifications
-
-        return jsonify(notifications)
-
-    finally:
-        # Always release lock
-        release_lock(lock_file)
+    """Get notifications via the centralized notification handler."""
+    result_data, status_code = get_notifications_data()
+    if status_code != 200:
+        # If there was an error getting data, return the error response directly
+        # This will bypass the cache mechanism in the updated decorator.
+        return jsonify(result_data), status_code
+    # If successful, return just the data dictionary for caching.
+    return result_data
 
 @base_bp.route('/api/notifications/mark-read', methods=['POST'])
 def mark_notification_read():
-    """Mark a notification as read"""
-    try:
-        notification_id = request.json.get('id')
-        if not notification_id:
-            return jsonify({"error": "Notification ID required"}), 400
-            
-        db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
-        notification_file = Path(db_content_dir) / 'notifications.json'
-        
-        if not notification_file.exists():
-            return jsonify({"error": "No notifications found"}), 404
-            
-        with open(notification_file) as f:
-            notifications = json.load(f)
-            
-        # Mark the notification as read
-        found = False
-        for notification in notifications.get("notifications", []):
-            if notification["id"] == notification_id:
-                notification["read"] = True
-                found = True
-                break
-                
-        if not found:
-            return jsonify({"error": "Notification not found"}), 404
-            
-        # Write back to file
-        with open(notification_file, 'w') as f:
-            json.dump(notifications, f, indent=2)
-            
-        return jsonify({"success": True})
-    except Exception as e:
-        logging.error(f"Error marking notification as read: {str(e)}", exc_info=True)
-        return jsonify({"error": "Failed to mark notification as read"}), 500
+    """Mark a notification as read via the centralized handler."""
+    notification_id = request.json.get('id')
+    if not notification_id:
+        return jsonify({"error": "Notification ID required"}), 400
+    
+    result, status_code = mark_single_notification_read(notification_id)
+    return jsonify(result), status_code
 
 @base_bp.route('/api/notifications/mark-all-read', methods=['POST'])
 def mark_all_notifications_read():
-    """Mark all notifications as read"""
-    try:
-        db_content_dir = os.getenv('USER_DB_CONTENT', '/user/db_content')
-        notification_file = Path(db_content_dir) / 'notifications.json'
-        
-        if not notification_file.exists():
-            return jsonify({"error": "No notifications found"}), 404
-            
-        try:
-            with open(notification_file) as f:
-                content = f.read().strip()
-                if not content:  # Handle empty file
-                    notifications = {"notifications": []}
-                else:
-                    notifications = json.loads(content)
-        except json.JSONDecodeError:
-            # Handle corrupted file by resetting it
-            notifications = {"notifications": []}
-            
-        # Mark all notifications as read
-        notification_count = 0
-        for notification in notifications.get("notifications", []):
-            if not notification.get("read", False):
-                notification["read"] = True
-                notification_count += 1
-                
-        # Write back to file with proper locking
-        with open(notification_file, 'w') as f:
-            json.dump(notifications, f, indent=2)
-            
-        return jsonify({
-            "success": True, 
-            "message": f"Marked {notification_count} notifications as read"
-        })
-    except Exception as e:
-        logging.error(f"Error marking all notifications as read: {str(e)}", exc_info=True)
-        return jsonify({"error": "Failed to mark all notifications as read"}), 500
+    """Mark all notifications as read via the centralized handler."""
+    result, status_code = mark_all_read()
+    return jsonify(result), status_code
 
 @base_bp.route('/api/task-stream')
 def task_stream():

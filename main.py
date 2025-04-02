@@ -1176,6 +1176,30 @@ def main():
             logging.info("Successfully migrated content sources to include allow_specials setting")
     # --- End allow_specials migration ---
 
+    # --- Add migration for year_match_weight in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'year_match_weight' not in version_config:
+                version_config['year_match_weight'] = 3.0
+                versions_updated = True
+                logging.info(f"Adding default year_match_weight 3.0 to version {version_name}")
+            # Convert to float if it's an integer or string
+            elif not isinstance(version_config['year_match_weight'], float):
+                try:
+                    version_config['year_match_weight'] = float(version_config['year_match_weight'])
+                    versions_updated = True
+                    logging.info(f"Converting year_match_weight to float for version {version_name}")
+                except (ValueError, TypeError):
+                    version_config['year_match_weight'] = 3.0 # Reset to default if conversion fails
+                    versions_updated = True
+                    logging.warning(f"Invalid year_match_weight value in version {version_name}, resetting to 3.0")
+
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include year_match_weight")
+    # --- End year_match_weight migration ---
+
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
     if not str(threshold_value).strip():
