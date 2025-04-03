@@ -13,7 +13,7 @@
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
-                {% if key != 'tab' %}
+                {% if key != 'tab' and not (section == "UI Settings" and key == "enable_phalanx_db") %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}
@@ -257,6 +257,23 @@
     </div>
     {% endif %}
 {% endfor %}
+
+<!-- Phalanx DB Settings Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Phalanx DB Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="additional-enable_phalanx_db" class="settings-title">Enable Phalanx DB:</label>
+            <input type="checkbox" id="additional-enable_phalanx_db" name="Phalanx DB Settings.enable_phalanx_db"
+                   data-section="Phalanx DB Settings" data-key="enable_phalanx_db"
+                   {% if settings.get('Phalanx DB Settings', {}).get('enable_phalanx_db') %}checked{% endif %}>
+            <p class="settings-description">Enable the Phalanx database feature for enhanced content matching.</p>
+        </div>
+    </div>
+</div>
 
 <!-- Symlink Settings Section -->
 <div class="settings-section">

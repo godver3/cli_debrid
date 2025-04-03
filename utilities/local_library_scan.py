@@ -283,38 +283,6 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) 
         logging.error(f"Failed to create symlink {source_path} -> {dest_path}: {str(e)}")
         return False
 
-def find_file(filename: str, search_path: str) -> Optional[str]:
-    """Find a file by name using the find command (non-Windows) or os.walk (Windows)."""
-    try:
-        if sys.platform.startswith('win'):
-            # Windows-specific implementation using os.walk
-            logging.debug(f"Using os.walk to find '{filename}' in '{search_path}' (Windows)")
-            for root, dirs, files in os.walk(search_path):
-                if filename in files:
-                    found_path = os.path.join(root, filename)
-                    logging.debug(f"Found file using os.walk: {found_path}")
-                    return found_path
-            logging.debug(f"File '{filename}' not found using os.walk in '{search_path}'")
-            return None
-        else:
-            # Existing implementation for non-Windows systems
-            logging.debug(f"Using find command to find '{filename}' in '{search_path}' (non-Windows)")
-            import subprocess
-            result = subprocess.run(
-                ['find', search_path, '-name', filename, '-type', 'f', '-print', '-quit'],
-                capture_output=True, text=True
-            )
-            if result.stdout:
-                found_path = result.stdout.strip()
-                if found_path:
-                    logging.debug(f"Found file using find command: {found_path}")
-                    return found_path
-            logging.debug(f"File '{filename}' not found using find command in '{search_path}'")
-            return None
-    except Exception as e:
-        logging.error(f"Error finding file '{filename}' in '{search_path}': {str(e)}")
-        return None
-
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -378,16 +346,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                 # Only perform find command search if not downloading
                 if not is_downloading:
-                    logging.debug(f"Attempting broad search in: {original_path}")
-                    found_path = find_file(item['filled_by_file'], original_path)
-                    if found_path:
-                        source_file = found_path
-                        # Update the filled_by_title to match the actual folder structure
-                        item['filled_by_title'] = os.path.basename(os.path.dirname(found_path))
-                        logging.info(f"Found file using find command: {source_file}")
-                        found_file = True
-                    else:
-                        logging.debug(f"File not found after exhaustive search")
+                    logging.debug(f"Extended search enabled, but file not found in primary locations. Skipping broad search.")
 
             if not found_file:
                 if is_webhook and attempt < max_retries - 1:
@@ -863,19 +822,12 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
         
         # If no new target specified, try to find the file
         if not new_target_path:
-            original_path = get_setting('File Management', 'original_files_path')
-            filename = os.path.basename(symlink_path)
-            found_path = find_file(filename, original_path)
-            
-            if found_path:
-                new_target_path = found_path
-            else:
-                return {
-                    'success': False,
-                    'message': 'Could not find original file',
-                    'old_target': old_target,
-                    'new_target': None
-                }
+            return {
+                'success': False,
+                'message': 'Could not find original file (automatic search disabled)',
+                'old_target': old_target,
+                'new_target': None
+            }
         
         # Verify new target exists
         if not os.path.exists(new_target_path):

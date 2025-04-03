@@ -73,7 +73,8 @@ body {
 .debug-container select#task_select,
 .debug-container select#original_version,
 .debug-container select#propagated_version,
-.debug-container select#media_type {
+.debug-container select#media_type,
+.debug-container select#debug_mode {
     width: 100%;
     padding: 10px;
     background-color: #3a3a3a;

@@ -34,6 +34,7 @@ from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
     should_process_item, update_cache_for_item
 )
+from collections import deque # Import deque for efficient queue operations
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -57,6 +58,9 @@ class ProgramRunner:
         self.pause_reason = None  # Track why the queue is paused
         self.connectivity_failure_time = None  # Track when connectivity failed
         self.connectivity_retry_count = 0  # Track number of retries
+        
+        # Add a queue for pending rclone paths (using deque for efficiency)
+        self.pending_rclone_paths = deque() 
         
         from queues.queue_manager import QueueManager
         
@@ -96,7 +100,7 @@ class ProgramRunner:
             'task_send_notifications': 15,  # Run every 0.25 minutes (15 seconds)
             'task_sync_time': 3600,  # Run every hour
             'task_check_trakt_early_releases': 3600,  # Run every hour
-            'task_reconcile_queues': 300,  # Run every 5 minutes
+            'task_reconcile_queues': 3600,  # Run every 1 hour (was 5 minutes)
             'task_heartbeat': 120,  # Run every 2 minutes
             #'task_local_library_scan': 900,  # Run every 5 minutes
             'task_refresh_download_stats': 300,  # Run every 5 minutes
@@ -113,6 +117,7 @@ class ProgramRunner:
             'task_update_statistics_summary': 300,  # Run every 5 minutes
             'task_precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
             'task_generate_queue_timing_report': 1800,  # Generate queue timing report every 30 minutes
+            'task_process_pending_rclone_paths': 60, # Add new task: check pending rclone paths every 60 seconds
         }
         # Store original intervals for reference
         self.original_task_intervals = self.task_intervals.copy()
@@ -154,7 +159,8 @@ class ProgramRunner:
             'task_check_database_health',
             'task_update_statistics_summary',
             'task_precompute_airing_shows',
-            'task_generate_queue_timing_report'
+            'task_generate_queue_timing_report',
+            'task_process_pending_rclone_paths' # Enable the new task
         }
 
         # THEN populate content source intervals AND add enabled content source tasks
@@ -416,11 +422,11 @@ class ProgramRunner:
             
             # Only check task health and adjust intervals every 60 seconds
             if current_time - self._last_task_health_check >= 60:
-                stale_tasks_found = self.check_task_health()
+                stale_tasks_count = self.check_task_health()
                 # Determine queue state for adjustment
                 queues_are_empty = self.queue_manager.are_main_queues_empty() if hasattr(self, 'queue_manager') else True
                 # Call adjustment function
-                self.adjust_task_intervals_based_on_load(queues_are_empty, stale_tasks_found)
+                self.adjust_task_intervals_based_on_load(queues_are_empty, stale_tasks_count)
                 
                 self._last_task_health_check = current_time
             
@@ -463,17 +469,27 @@ class ProgramRunner:
                         self.currently_running_tasks.discard(task_name)
             
             # Process other enabled tasks
-            for task_name in self.enabled_tasks:
-                if (task_name not in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'] 
-                    and not task_name.endswith('_wanted')):
+            for task_name in list(self.enabled_tasks): # Use list to allow modification during iteration if needed
+                # Check if it's NOT a standard queue or a content source task
+                is_standard_queue = task_name in [
+                    'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
+                    'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'
+                ]
+                is_content_source = task_name.startswith('task_') and task_name.endswith('_wanted')
+                
+                if not is_standard_queue and not is_content_source:
                     if self.should_run_task(task_name):
+                        task_start_time = time.time()
                         try:
+                            logging.debug(f"Running task: {task_name}")
                             task_method = getattr(self, task_name)
                             task_method()
                         except Exception as e:
                             logging.error(f"Error running task {task_name}: {str(e)}")
                             logging.error(traceback.format_exc())
                         finally:
+                            task_duration = time.time() - task_start_time
+                            logging.debug(f"Task {task_name} finished in {task_duration:.2f}s")
                             self.currently_running_tasks.discard(task_name)
 
         except Exception as e:
@@ -532,6 +548,9 @@ class ProgramRunner:
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
+        # Add reconciliation call after full scan processing
+        logging.info("Triggering queue reconciliation after full Plex scan.")
+        self.task_reconcile_queues()
         
     def process_content_source(self, source, data):
         source_type = source.split('_')[0]
@@ -817,10 +836,10 @@ class ProgramRunner:
                     # Simplified sleep time logic
                     if all_queues_empty:
                         # Use a fixed longer sleep when main queues are idle
-                        sleep_time = 0.5 # 500ms sleep when idle
+                        sleep_time = 5.0 # 5000ms sleep when idle
                         # Log occasionally if queues remain empty
-                        if all_empty_count > 0 and all_empty_count % 60 == 0: # Log every 30 seconds (0.5s sleep * 60)
-                             logging.debug(f"All main queues empty for {all_empty_count} cycles, sleeping for {sleep_time:.2f}s (still checking Unreleased queue every {unreleased_check_interval/60:.1f} minutes)")
+                        if all_empty_count > 0 and all_empty_count % 12 == 0: # Log every 60 seconds (5s sleep * 12)
+                             logging.debug(f"All critical queues empty for {all_empty_count} cycles, sleeping for {sleep_time:.2f}s (still checking Unreleased queue every {unreleased_check_interval/60:.1f} minutes)")
                     else:
                         # Use a fixed short sleep when active
                         sleep_time = 0.1 # 100ms sleep when active
@@ -868,15 +887,15 @@ class ProgramRunner:
         except:
             logging.error("Failed to synchronize time with NTP server")
 
-    def adjust_task_intervals_based_on_load(self, queues_are_empty: bool, stale_tasks_found: bool):
+    def adjust_task_intervals_based_on_load(self, queues_are_empty: bool, delayed_tasks_count: int):
         """
         Dynamically adjust task intervals based on queue status and task health.
-        When main queues are empty and no tasks are stale, slightly increase intervals for long-running tasks.
+        When main queues are empty and few tasks are delayed, slightly increase intervals for long-running tasks.
         Otherwise, ensure intervals are reset to their defaults.
         
         Args:
             queues_are_empty: Whether the main processing queues are empty.
-            stale_tasks_found: Whether check_task_health detected stale tasks.
+            delayed_tasks_count: The number of tasks currently detected as potentially delayed.
         """
         if not hasattr(self, '_interval_adjustment_time'):
             self._interval_adjustment_time = 0
@@ -907,62 +926,95 @@ class ProgramRunner:
                  slowdown_candidates.add(task)
 
         idle_increase_seconds = 300 # Increase interval by 5 minutes when idle
+        DELAY_THRESHOLD = 3 # Number of allowed delayed tasks before considering the system busy
 
-        # Determine if system is truly idle (empty queues AND no task delays)
-        system_is_idle = queues_are_empty and not stale_tasks_found
+        # Determine if system is truly idle (empty queues AND few delayed tasks)
+        system_is_idle = queues_are_empty and (delayed_tasks_count < DELAY_THRESHOLD)
 
         if system_is_idle:
             if not hasattr(self, '_last_idle_adjustment_log') or current_time - self._last_idle_adjustment_log >= 600: # Log every 10 mins
-                 logging.info("System idle (main queues empty, no stale tasks) - slightly increasing non-critical task intervals.")
+                 logging.info(f"System idle (main queues empty, {delayed_tasks_count} delayed tasks < {DELAY_THRESHOLD}) - increasing non-critical task intervals.")
                  self._last_idle_adjustment_log = current_time
                  
             # Apply slight increase to candidate tasks
             for task in slowdown_candidates:
-                if task in self.original_task_intervals:
+                if task in self.original_task_intervals and task in self.task_intervals:
                     self.task_intervals[task] = self.original_task_intervals[task] + idle_increase_seconds
         else:
+            active_reason = []
             if not queues_are_empty:
-                 logging.debug("System active (main queues have items) - ensuring default task intervals.")
-            if stale_tasks_found:
-                 logging.info("System potentially busy (stale tasks detected) - ensuring default task intervals.")
+                 active_reason.append("main queues have items")
+            if delayed_tasks_count >= DELAY_THRESHOLD:
+                 active_reason.append(f"{delayed_tasks_count} potentially delayed tasks >= threshold {DELAY_THRESHOLD}")
                  
-            # Reset all intervals to original values
-            if self.task_intervals != self.original_task_intervals:
+            # Log only when state changes back to active or periodically if remaining active
+            if not hasattr(self, '_last_active_state_log'): self._last_active_state_log = 0
+            if not hasattr(self, '_was_idle_last_check'): self._was_idle_last_check = False
+            
+            log_now = False
+            if not system_is_idle and self._was_idle_last_check: # Changed from idle to active
+                log_now = True
+            elif not system_is_idle and current_time - self._last_active_state_log >= 600: # Still active, log every 10 mins
+                log_now = True
+                
+            if log_now:
+                logging.info(f"System active ({', '.join(active_reason)}) - ensuring default task intervals.")
+                self._last_active_state_log = current_time
+                 
+            # Reset all intervals to original values if they were changed
+            needs_reset = False
+            for task in slowdown_candidates:
+                 if task in self.original_task_intervals and task in self.task_intervals:
+                     if self.task_intervals[task] != self.original_task_intervals[task]:
+                         needs_reset = True
+                         break
+            
+            if needs_reset:
                  logging.info("Resetting task intervals to default values.")
+                 # Create a fresh copy to avoid modifying the original
                  self.task_intervals = self.original_task_intervals.copy()
+                 # Re-apply any custom intervals that might not be in slowdown_candidates (just in case)
+                 # Although this shouldn't be necessary if original_task_intervals is the true source
+                 # for task, interval in self.original_task_intervals.items():
+                 #     self.task_intervals[task] = interval
+            
+        # Update idle state tracking for next check
+        self._was_idle_last_check = system_is_idle
 
     def check_task_health(self):
-        """Check task health and reset any stale tasks, but only log actual issues"""
+        """Check task health, log potential delays, and return the count of delayed tasks."""
         current_time = time.time()
-        stale_tasks = []
+        delayed_tasks_info = []
         
-        # Track critical tasks that haven't run in too long
         for task, last_run_time in self.last_run_times.items():
-            # Skip tasks that aren't enabled
             if task not in self.enabled_tasks:
                 continue
                 
-            # Calculate time since last run
             time_since_last_run = current_time - last_run_time
-            # Check if the task is severely behind schedule (2x its interval)
-            if time_since_last_run > self.task_intervals[task] * 2:
-                stale_tasks.append((task, time_since_last_run, self.task_intervals[task]))
-                # Reset the last run time to force it to run soon
-                self.last_run_times[task] = current_time
-        
-        # Only log if there are stale tasks
-        if stale_tasks:
-            for task, time_since_run, interval in stale_tasks:
-                logging.info(f"Task {task} hasn't run in {time_since_run:.2f} seconds (should run every {interval} seconds)")
+            interval = self.task_intervals.get(task) # Use .get for safety
             
-            # If there are multiple stale tasks, this might indicate a system issue
-            if len(stale_tasks) >= 3:
-                logging.info(f"Multiple stale tasks detected ({len(stale_tasks)}), could be slower task processing but likely normal")
+            if interval is None:
+                logging.warning(f"Task {task} found in last_run_times but missing interval. Skipping health check.")
+                continue
+
+            # Check if the task is behind schedule by 1.5x its interval
+            if time_since_last_run > interval * 1.5:
+                delayed_tasks_info.append((task, time_since_last_run, interval))
+                # Don't reset the timer here anymore, just log the potential delay.
         
-        # Adjust task intervals based on system load - but don't apply slowdown for stale tasks
-        # self.adjust_task_intervals_based_on_load(stale_tasks_detected=False) # Removed call - will be handled elsewhere
+        delayed_count = len(delayed_tasks_info)
+
+        # Only log if there are potentially delayed tasks
+        if delayed_count > 0:
+            logging.info(f"Potential task delays detected ({delayed_count} tasks):")
+            for task, time_since_last_run, interval in delayed_tasks_info:
+                logging.info(f"  - Task '{task}' overdue: ran {time_since_last_run:.2f}s ago (interval: {interval}s)")
+            
+            # Log if multiple tasks are delayed
+            if delayed_count >= 3:
+                logging.info(f"Multiple ({delayed_count}) potentially delayed tasks detected. System might be busy or tasks taking longer.")
                 
-        return len(stale_tasks) > 0  # Return whether stale tasks were found
+        return delayed_count # Return the count of potentially delayed tasks
 
     def task_check_trakt_early_releases(self):
         check_trakt_early_releases()
@@ -1334,17 +1386,17 @@ class ProgramRunner:
                     actual_file_path = file_path_no_ext
                 else:
                     # Try to find the file anywhere under plex_file_location
-                    from utilities.local_library_scan import find_file
-                    found_path = find_file(filled_by_file, plex_file_location)
-                    if found_path:
-                        logging.info(f"Found file in alternate location: {found_path}")
-                        file_found_on_disk = True
-                        actual_file_path = found_path
-                        self.file_location_cache[cache_key] = 'exists' # Cache if found via find_file
-                    else:
-                        not_found_items += 1
-                        logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
-                        continue
+                    # from utilities.local_library_scan import find_file # REMOVED IMPORT
+                    # found_path = find_file(filled_by_file, plex_file_location) # REMOVED CALL
+                    # if found_path:
+                    #     logging.info(f"Found file in alternate location: {found_path}")
+                    #     file_found_on_disk = True
+                    #     actual_file_path = found_path
+                    #     self.file_location_cache[cache_key] = 'exists' # Cache if found via find_file
+                    # else:
+                    not_found_items += 1
+                    logging.debug(f"File not found on disk in primary locations:\n  {file_path}\n  {file_path_no_ext}")
+                    continue
 
                 if file_found_on_disk:
                     logging.info(f"Found file on disk: {actual_file_path}")
@@ -1470,8 +1522,7 @@ class ProgramRunner:
                 logging.info(f"  Locations:")
                 for location in section.locations:
                     logging.info(f"    - {location}")
-                    if not os.path.exists(location):
-                        logging.warning(f"    Warning: Location does not exist: {location}")
+            # <<< remove the 'if not os.path.exists...' check here
 
             updated_sections = set()  # Track which sections we've updated
             updated_items = 0
@@ -1492,21 +1543,18 @@ class ProgramRunner:
                 # Check if we've already found this file before
                 cache_key = f"{filled_by_title}:{filled_by_file}"
                 if cache_key in self.file_location_cache and self.file_location_cache[cache_key] == 'exists':
-                    logging.debug(f"Skipping previously verified file: {filled_by_title}")
                     continue
 
                 if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
                     # Try to find the file anywhere under plex_file_location
-                    from utilities.local_library_scan import find_file
-                    found_path = find_file(filled_by_file, plex_file_location)
-                    if found_path:
-                        logging.info(f"Found file in alternate location: {found_path}")
-                        actual_file_path = found_path
-                        self.file_location_cache[cache_key] = 'exists'
-                    else:
-                        not_found_items += 1
-                        logging.debug(f"File not found on disk in any location:\n  {file_path}\n  {file_path_no_ext}")
-                        continue
+                    # from utilities.local_library_scan import find_file # REMOVED IMPORT
+                    # found_path = find_file(filled_by_file, plex_file_location) # REMOVED CALL
+                    # if found_path:
+                    #     actual_file_path = found_path
+                    #     self.file_location_cache[cache_key] = 'exists'
+                    # else:
+                    not_found_items += 1
+                    continue
 
                 # Use the path that exists (prefer original if both exist)
                 actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
@@ -1532,7 +1580,6 @@ class ProgramRunner:
                         logging.error(f"Failed to update Plex section '{section.title}': {str(e)}", exc_info=True)
 
             # Log summary of operations
-            logging.info(f"Plex update summary: {updated_items} items updated, {not_found_items} items not found")
             if updated_sections:
                 logging.info("Updated Plex sections:")
                 for section in updated_sections:
@@ -1867,6 +1914,139 @@ class ProgramRunner:
             logging.error(f"Error generating queue timing report: {e}")
             import traceback
             logging.error(traceback.format_exc())
+
+    # Method to add path received from webhook
+    def add_pending_rclone_path(self, path: str):
+        """Adds a path received from the rclone webhook to the pending queue."""
+        if path not in self.pending_rclone_paths:
+            self.pending_rclone_paths.append(path)
+            logging.info(f"Added '{path}' to pending rclone queue. Size: {len(self.pending_rclone_paths)}")
+        else:
+            logging.debug(f"Path '{path}' is already in the pending rclone queue.")
+
+    # New task to process paths from the pending queue
+    def task_process_pending_rclone_paths(self):
+        """
+        Processes paths added by the rclone webhook, including retry logic for file availability.
+        """
+        if not self.pending_rclone_paths:
+            # logging.debug("No pending rclone paths to process.")
+            return
+
+        # Process one path per task run to avoid blocking the runner for too long
+        try:
+            relative_path = self.pending_rclone_paths.popleft() 
+            logging.info(f"Processing pending rclone path: {relative_path}. Remaining: {len(self.pending_rclone_paths)}")
+        except IndexError:
+            logging.debug("Pending rclone path queue was empty when trying to pop.")
+            return # Queue is empty
+
+        try:
+            # Import handle_rclone_file here if not already globally available
+            # Ensure it's imported correctly or defined in this scope/module.
+            from routes.webhook_routes import handle_rclone_file 
+
+            # Get the base path where original files are stored
+            original_files_path = get_setting('File Management', 'original_files_path')
+            if not original_files_path:
+                logging.error("Original files path setting is missing. Cannot process rclone path.")
+                # Re-add the path to try later? Or discard? Discarding for now.
+                # self.pending_rclone_paths.appendleft(relative_path) # Put back if needed
+                return
+
+            # The relative_path might be just the filename or folder/filename.
+            # We need the expected *directory* path for the retry logic.
+            # Assume the structure is original_path / relative_path_folder / relative_path_file
+            # Example: relative_path = "My Movie (2023)/My Movie (2023).mkv"
+            # We need to check for the existence of original_path / "My Movie (2023)"
+            
+            path_parts = relative_path.split('/')
+            if len(path_parts) > 1:
+                # Path includes a folder component
+                relative_dir = path_parts[0] # e.g., "My Movie (2023)"
+                filename = path_parts[-1]    # e.g., "My Movie (2023).mkv"
+                dir_to_check = os.path.join(original_files_path, relative_dir)
+            else:
+                # Path is likely just a filename, assume it's directly in original_files_path
+                # This case might need adjustment based on actual rclone behavior
+                filename = relative_path
+                relative_dir = "" # No relative directory component
+                dir_to_check = original_files_path # Check the base path itself? Or maybe log an error?
+                logging.warning(f"Received rclone path '{relative_path}' without directory structure. Assuming file is directly in '{original_files_path}'. Processing may fail if a subfolder is expected.")
+                # Let's assume we still need to check the base directory for the file directly
+                dir_to_check = original_files_path
+
+            logging.debug(f"Checking for directory existence: {dir_to_check}")
+
+            # --- Retry Logic (Runs in Background Task) ---
+            found = False
+            delays = [5, 30, 90] # Delays in seconds
+            attempt = 1
+
+            if os.path.exists(dir_to_check):
+                found = True
+                logging.info(f"Directory found on initial check (attempt 1): {dir_to_check}")
+            else:
+                logging.info(f"Directory '{dir_to_check}' not found on initial check, starting retries...")
+                for delay in delays:
+                    attempt += 1
+                    logging.info(f"Retrying attempt {attempt} for '{dir_to_check}' in {delay} seconds...")
+                    time.sleep(delay) # This sleep ONLY blocks the background task thread
+                    if os.path.exists(dir_to_check):
+                        found = True
+                        logging.info(f"Directory found on attempt {attempt}: {dir_to_check}")
+                        break
+                    else:
+                        logging.info(f"Directory still not found after attempt {attempt}.")
+
+            if not found:
+                logging.error(f"Directory '{dir_to_check}' not found after {attempt} attempts for relative path '{relative_path}'. Discarding path.")
+                # Path is already removed from deque, just return
+                return
+            # --- End Retry Logic ---
+
+            # --- Process Files (If Directory Found) ---
+            logging.info(f"Directory '{dir_to_check}' found. Looking for file '{filename}' within it.")
+            try:
+                dir_contents = os.listdir(dir_to_check)
+                logging.debug(f"Directory contents of '{dir_to_check}': {dir_contents}")
+
+                file_processed = False
+                for file_in_dir in dir_contents:
+                    # Check if this file matches the filename we expect from the webhook
+                    if file_in_dir == filename:
+                        # Construct the relative path expected by handle_rclone_file
+                        # This should be relative to original_files_path
+                        full_file_path = os.path.join(dir_to_check, file_in_dir)
+                        path_for_handler = os.path.relpath(full_file_path, original_files_path)
+                        
+                        logging.info(f"Found matching media file: {file_in_dir}. Processing with handler using path: {path_for_handler}")
+                        # Call the handler function (ensure it handles exceptions)
+                        result = handle_rclone_file(path_for_handler) 
+                        logging.info(f"Result of handling '{path_for_handler}': {result}")
+                        file_processed = True
+                        break # Stop after processing the target file
+                    else:
+                         #logging.debug(f"Skipping non-matching file in directory: {file_in_dir}")
+                         pass
+
+                if not file_processed:
+                     logging.warning(f"Target file '{filename}' was not found within directory '{dir_to_check}' after successful directory check. Contents: {dir_contents}")
+
+            except FileNotFoundError:
+                 logging.error(f"Directory '{dir_to_check}' disappeared after successful check but before listing contents.")
+            except Exception as e:
+                logging.error(f"Error listing/processing directory '{dir_to_check}' for path '{relative_path}': {str(e)}", exc_info=True)
+                # Decide if the path should be re-queued or discarded. Discarding for now.
+            # --- End File Processing ---
+
+        except ImportError:
+             logging.error("Failed to import handle_rclone_file from routes.webhook_routes. Cannot process pending rclone path.")
+             # Re-add the path to try again later, as this might be a temporary startup issue
+             self.pending_rclone_paths.appendleft(relative_path)
+        except Exception as e:
+            logging.error(f"Unexpected error processing pending rclone path '{relative_path}': {str(e)}", exc_info=True)
+            # Consider re-queuing based on error type? For now, discard to avoid loops.
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

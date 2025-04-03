@@ -24,13 +24,15 @@ DEFAULT_PORTS = {
         'main': 40000,
         'battery': 40001,
         'tunnel_main': 40000,
-        'tunnel_battery': 40001
+        'tunnel_battery': 40001,
+        'phalanx': 8888  # Added Phalanx default for Windows
     },
     'default': {
         'main': 5000,
         'battery': 5001,
         'tunnel_main': 5000,
-        'tunnel_battery': 5001
+        'tunnel_battery': 5001,
+        'phalanx': 8888  # Added Phalanx default for others
     }
 }
 
@@ -109,6 +111,9 @@ def setup_environment():
         os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(ports['tunnel_main'])
     if 'CLI_DEBRID_BATTERY_TUNNEL_PORT' not in os.environ:
         os.environ['CLI_DEBRID_BATTERY_TUNNEL_PORT'] = str(ports['tunnel_battery'])
+    # Set Phalanx port env var if not already set (command line args override later)
+    if 'CLI_DEBRID_PHALANX_PORT' not in os.environ:
+        os.environ['CLI_DEBRID_PHALANX_PORT'] = str(ports['phalanx'])
 
     if sys.platform.startswith('win'):
         app_name = "cli_debrid"
@@ -551,11 +556,17 @@ def run_phalanx_db():
 
         # Start the service
         try:
+            # Pass the port via environment variable (already set)
+            phalanx_env = dict(os.environ)
+            # Set the PORT environment variable specifically for the node script
+            phalanx_env['PORT'] = os.environ['CLI_DEBRID_PHALANX_PORT']
+            logging.info(f"Setting PORT={phalanx_env['PORT']} for phalanx_db_rest.js process")
+            
             subprocess.run(['node', 'phalanx_db_rest.js'], 
                          cwd=phalanx_dir, 
                          shell=True,
                          check=True,
-                         env=dict(os.environ))
+                         env=phalanx_env) # Pass environment
         except subprocess.CalledProcessError as e:
             logging.error(f"phalanx_db_hyperswarm service failed to start: {e.stderr if hasattr(e, 'stderr') else str(e)}")
         except Exception as e:
@@ -576,12 +587,31 @@ def run_main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', '--cli-port', type=int, help='Port for remote access to main service (tunnels to local service)')
     parser.add_argument('--battery-port', '--cli-battery-port', type=int, help='Port for remote access to battery service (tunnels to local service)')
+    parser.add_argument('--phalanx-port', type=int, help='Port for the Phalanx DB service')
+    parser.add_argument('--phalanx-url', type=str, help='Base URL for the Phalanx DB service (e.g., http://localhost)')
     parser.add_argument('--no-tunnel', action='store_true', help='Disable automatic tunneling')
     parser.add_argument('--enable-phalanx-db', action='store_true', help='Enable phalanx db integration')
     args = parser.parse_args()
     
-    # Set up environment first to ensure we can read settings
+    # Set up environment first to ensure we can read settings and apply args
     setup_environment()
+
+    # Override Phalanx port env var if provided via command line
+    if args.phalanx_port:
+        os.environ['CLI_DEBRID_PHALANX_PORT'] = str(args.phalanx_port)
+        logging.info(f"Using Phalanx DB port from command line: {args.phalanx_port}")
+    else:
+        logging.info(f"Using Phalanx DB port from environment/default: {os.environ['CLI_DEBRID_PHALANX_PORT']}")
+
+    # Override Phalanx URL env var if provided via command line
+    if args.phalanx_url:
+        os.environ['CLI_DEBRID_PHALANX_URL'] = args.phalanx_url
+        logging.info(f"Using Phalanx DB URL from command line: {args.phalanx_url}")
+    else:
+        # Use existing env var or default (which setup_environment should have handled, but double-check)
+        if 'CLI_DEBRID_PHALANX_URL' not in os.environ:
+            os.environ['CLI_DEBRID_PHALANX_URL'] = 'http://localhost' # Ensure default
+        logging.info(f"Using Phalanx DB URL from environment/default: {os.environ['CLI_DEBRID_PHALANX_URL']}")
 
     # Log the config path being used
     config_path_to_check = os.path.join(os.environ.get('USER_CONFIG', 'UNKNOWN_PATH'), 'config.json')

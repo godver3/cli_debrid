@@ -57,6 +57,13 @@ import threading
 import time
 import json
 from flask import Response, stream_with_context
+# Import Plex debug functions
+from utilities.plex_functions import (
+    debug_test_concurrency,
+    debug_test_page_size,
+    debug_test_specific_library,
+    debug_test_custom
+)
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -653,19 +660,27 @@ def plex_scan_progress(scan_id):
     def generate():
         while True:
             if scan_id not in scan_progress:
-                yield f"data: {json.dumps({'status': 'error', 'message': 'Scan not found'})}\n\n"
-                break
+                # Check if it's in analysis_progress as a fallback (might be analysis task)
+                if scan_id in analysis_progress:
+                     progress = analysis_progress[scan_id]
+                     yield f"data: {json.dumps(progress)}\\n\\n"
+                     if progress.get('complete', False):
+                         break
+                else:
+                    yield f"data: {json.dumps({'status': 'error', 'message': 'Scan or task not found'})}\\n\\n"
+                    break
                 
-            progress = scan_progress[scan_id]
-            
-            # Add error details to progress if any exist
-            if progress.get('errors'):
-                progress['error_details'] = progress['errors']
-            
-            yield f"data: {json.dumps(progress)}\n\n"
-            
-            if progress['complete']:
-                break
+            else: # Scan progress found
+                progress = scan_progress[scan_id]
+                
+                # Add error details to progress if any exist
+                if progress.get('errors'):
+                    progress['error_details'] = progress['errors']
+                
+                yield f"data: {json.dumps(progress)}\\n\\n"
+                
+                if progress.get('complete', False): # Use .get() for safety
+                    break
                 
             time.sleep(1)
     
@@ -1206,7 +1221,8 @@ def run_task():
         'wanted': queue_manager.process_wanted,
         'scraping': queue_manager.process_scraping,
         'adding': queue_manager.process_adding,
-        'checking': queue_manager.process_checking,
+        # Updated 'checking' to pass program_runner
+        'checking': lambda: queue_manager.process_checking(program_runner),
         'sleeping': queue_manager.process_sleeping,
         'unreleased': queue_manager.process_unreleased,
         'blacklisted': queue_manager.process_blacklisted,
@@ -2650,3 +2666,198 @@ def modify_symlink_paths():
         if conn:
             conn.close()
 # --- End Symlink Path Modification ---
+
+@debug_bp.route('/api/plex_debug_scan', methods=['POST'])
+@admin_required
+def plex_debug_scan():
+    """API endpoint to trigger Plex debug scans."""
+    try:
+        import uuid
+        
+        debug_mode = request.form.get('debug_mode')
+        concurrency_limit = request.form.get('concurrency_limit', type=int, default=None)
+        page_size_limit = request.form.get('page_size_limit', type=int, default=None)
+        library_key = request.form.get('library_key', default=None)
+
+        if not debug_mode:
+            return jsonify({'success': False, 'error': 'Debug mode is required'}), 400
+
+        scan_id = str(uuid.uuid4())
+        scan_progress[scan_id] = {
+            'status': 'starting',
+            'message': f'Initializing {debug_mode} scan...',
+            'complete': False,
+            'errors': []
+            # Initialize other relevant fields? Maybe depends on callback
+        }
+
+        def progress_callback(status_type, message, counts=None):
+            """Callback function to update progress for debug scans"""
+            update = {
+                'status': status_type,
+                'message': message,
+                'complete': status_type in ['complete', 'error']
+            }
+            if counts:
+                update.update(counts)
+            
+            # Ensure scan_id still exists before updating
+            if scan_id in scan_progress:
+                scan_progress[scan_id].update(update)
+                if status_type == 'error':
+                    # Use .setdefault to initialize errors list if it doesn't exist
+                    scan_progress[scan_id].setdefault('errors', []).append(message)
+            else:
+                 logging.warning(f"Scan ID {scan_id} not found during progress update.")
+
+
+        def run_scan_in_thread():
+            loop = None
+            # --- Import moved inside the thread function to avoid circular imports ---
+            from database.collected_items import add_collected_items 
+            # --- End import ---
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                scan_progress[scan_id]['status'] = 'running'
+                scan_progress[scan_id]['message'] = f'Running {debug_mode} scan...'
+
+                # Determine which debug function to call
+                if debug_mode == 'Concurrency Test':
+                    if concurrency_limit is None or concurrency_limit <= 0:
+                        raise ValueError("Concurrency limit must be a positive integer for this test.")
+                    result = loop.run_until_complete(
+                        debug_test_concurrency(concurrency_limit, progress_callback)
+                    )
+                elif debug_mode == 'Page Size Test':
+                    if page_size_limit is None or page_size_limit <= 0:
+                         raise ValueError("Page size limit must be a positive integer for this test.")
+                    result = loop.run_until_complete(
+                        debug_test_page_size(page_size_limit, progress_callback)
+                    )
+                elif debug_mode == 'Specific Library Test':
+                    if not library_key:
+                         raise ValueError("Library key must be provided for this test.")
+                    result = loop.run_until_complete(
+                        debug_test_specific_library(library_key, progress_callback)
+                    )
+                elif debug_mode == 'Custom Test':
+                    # Use provided values or defaults from the debug_test_custom function signature
+                    custom_page_size = page_size_limit if page_size_limit is not None and page_size_limit > 0 else 1000 # Default from function
+                    custom_concurrency = concurrency_limit if concurrency_limit is not None and concurrency_limit > 0 else 50 # Default from function
+                    custom_libraries = [library_key] if library_key else None # Pass as list if provided
+                    
+                    result = loop.run_until_complete(
+                        debug_test_custom(
+                            page_size=custom_page_size,
+                            max_concurrent_requests=custom_concurrency,
+                            library_keys=custom_libraries,
+                            progress_callback=progress_callback
+                        )
+                    )
+                else:
+                    raise ValueError(f"Invalid debug mode: {debug_mode}")
+
+                # --- Add collected items to DB ---
+                if result and scan_id in scan_progress and scan_progress[scan_id]['status'] != 'error':
+                    movies = result.get('movies', [])
+                    episodes = result.get('episodes', [])
+                    total_items = len(movies) + len(episodes)
+                    logging.info(f"Debug Scan {scan_id}: Retrieved {len(movies)} movies and {len(episodes)} episodes.")
+
+                    if total_items > 0:
+                         scan_progress[scan_id].update({
+                             'status': 'adding',
+                             'message': f'Adding {total_items} items to database...',
+                             'phase': 'database',
+                             'total_items': total_items,
+                             'processed_items': 0 # Initialize for potential future progress tracking in add_collected_items
+                         })
+                         try:
+                             add_collected_items(movies + episodes)
+                             logging.info(f"Debug Scan {scan_id}: Successfully added {total_items} items to database.")
+                             # Update final message later
+                         except Exception as db_e:
+                             db_error_msg = f"Error adding collected items from debug scan to database: {str(db_e)}"
+                             logging.error(db_error_msg, exc_info=True)
+                             # Update progress with DB error, but continue to final status update
+                             scan_progress[scan_id].update({
+                                 'status': 'error', # Keep status as error if DB fails
+                                 'message': db_error_msg,
+                                 'phase': 'database_error',
+                                 'errors': scan_progress[scan_id].get('errors', []) + [db_error_msg]
+                             })
+                             # Re-raise or handle differently? For now, let it proceed to final status.
+
+                    # Update final status based on scan AND db addition
+                    if scan_id in scan_progress:
+                        final_status = 'complete'
+                        final_success = True
+                        final_message = f'Debug scan {debug_mode} finished.'
+                        
+                        if scan_progress[scan_id].get('status') == 'error': # Check if scan itself or DB errored
+                            final_status = 'error'
+                            final_success = False
+                            final_message = scan_progress[scan_id].get('message', 'Debug scan failed.')
+                        elif total_items > 0:
+                             final_message += f" Added {total_items} items to database."
+                        else:
+                            final_message += " No items found to add."
+
+                        scan_progress[scan_id].update({
+                             'status': final_status,
+                             'message': final_message,
+                             'complete': True,
+                             'success': final_success 
+                         })
+
+                elif scan_id in scan_progress and scan_progress[scan_id]['status'] != 'error': 
+                     # Scan finished, no result or status already error
+                     scan_progress[scan_id].update({
+                         'status': 'complete',
+                         'message': f'Debug scan {debug_mode} finished. No results or scan failed prior to DB add.',
+                         'complete': True,
+                         'success': scan_progress[scan_id].get('status') != 'error' # Success if status wasn't error
+                     })
+                # --- End Add collected items ---
+                
+                # Old final status update removed as it's handled above now.
+                # # If the scan completed without raising an error in the callback
+                # if scan_id in scan_progress and scan_progress[scan_id]['status'] != 'error':
+                #      scan_progress[scan_id].update({
+                #          'status': 'complete',
+                #          'message': 'Debug scan finished successfully.',
+                #          'complete': True,
+                #          'success': True # Indicate overall success
+                #      })
+                #      # Optionally add result details if needed
+                #      # scan_progress[scan_id]['result_summary'] = f"Found {len(result.get('movies', []))} movies, {len(result.get('episodes', []))} episodes." if result else "No results."
+
+            except Exception as e:
+                error_msg = f"Error during {debug_mode} scan: {str(e)}"
+                logging.error(error_msg, exc_info=True)
+                if scan_id in scan_progress:
+                     scan_progress[scan_id].update({
+                         'status': 'error',
+                         'message': error_msg,
+                         'complete': True,
+                         'success': False, # Indicate overall failure
+                         'errors': scan_progress[scan_id].get('errors', []) + [error_msg]
+                     })
+            finally:
+                if loop and loop.is_running():
+                    loop.close()
+                # Clean up progress after 5 minutes
+                threading.Timer(300, lambda: scan_progress.pop(scan_id, None)).start()
+
+        # Start the scan in a background thread
+        thread = threading.Thread(target=run_scan_in_thread)
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({'success': True, 'scan_id': scan_id})
+
+    except Exception as e:
+        logging.error(f"Error initiating Plex debug scan: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)})

@@ -259,14 +259,7 @@ def check_phalanx_db_connection():
     """Check connection to phalanx_db service."""
     # Check if phalanx db is enabled
     if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
-        return {
-            'name': 'Phalanx DB',
-            'connected': False,
-            'error': 'Service is disabled in settings',
-            'details': {
-                'disabled': True
-            }
-        }
+        return None # Return None if the service is disabled
 
     # Try both localhost and phalanx_db hostname
     hosts = ['localhost', 'phalanx_db']
@@ -730,7 +723,7 @@ def index():
         failing_connections.append(plex_status)
     if mounted_files_status and not mounted_files_status['connected']:
         failing_connections.append(mounted_files_status)
-    if not phalanx_db_status['connected']:
+    if phalanx_db_status and not phalanx_db_status['connected']:
         failing_connections.append(phalanx_db_status)
     
     # Add any failing scraper connections

@@ -309,6 +309,37 @@
                 <div id="modify-symlink-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Plex Debug Scan</h3>
+            <p class="description">Run specific debug tests for Plex scanning (concurrency, page size, etc.).</p>
+            <form id="plex-debug-scan-form">
+                <div class="form-group">
+                    <label for="debug_mode">Debug Mode:</label>
+                    <select id="debug_mode" name="debug_mode">
+                        <option value="Concurrency Test">Concurrency Test</option>
+                        <option value="Page Size Test">Page Size Test</option>
+                        <option value="Specific Library Test">Specific Library Test</option>
+                        <option value="Custom Test">Custom Test</option>
+                    </select>
+                </div>
+                <div class="form-group" id="concurrency-group">
+                    <label for="concurrency_limit">Concurrency Limit:</label>
+                    <input type="number" id="concurrency_limit" name="concurrency_limit" placeholder="e.g., 50" min="1">
+                </div>
+                <div class="form-group" id="page-size-group">
+                    <label for="page_size_limit">Page Size Limit:</label>
+                    <input type="number" id="page_size_limit" name="page_size_limit" placeholder="e.g., 500" min="1">
+                </div>
+                <div class="form-group" id="library-key-group">
+                    <label for="library_key">Specific Library Key:</label>
+                    <input type="text" id="library_key" name="library_key" placeholder="e.g., 5">
+                </div>
+                <button type="submit">Run Plex Debug Scan</button>
+            </form>
+            <div id="plex-debug-scan-progress" class="results-area">
+                <!-- Progress updates will be shown here -->
+            </div>
+        </div>
     </div>
 </div>
 
@@ -1689,6 +1720,136 @@
             });
         }
         // --- End Symlink Path Modification Logic ---
+
+        // --- Plex Debug Scan Logic ---
+        const plexDebugScanForm = document.getElementById('plex-debug-scan-form');
+        const debugModeSelect = document.getElementById('debug_mode');
+        const concurrencyGroup = document.getElementById('concurrency-group');
+        const pageSizeGroup = document.getElementById('page-size-group');
+        const libraryKeyGroup = document.getElementById('library-key-group');
+        const progressDiv = document.getElementById('plex-debug-scan-progress');
+
+        function toggleDebugInputs() {
+            const mode = debugModeSelect.value;
+            concurrencyGroup.style.display = (mode === 'Concurrency Test' || mode === 'Custom Test') ? 'block' : 'none';
+            pageSizeGroup.style.display = (mode === 'Page Size Test' || mode === 'Custom Test') ? 'block' : 'none';
+            libraryKeyGroup.style.display = (mode === 'Specific Library Test' || mode === 'Custom Test') ? 'block' : 'none';
+            
+            // Reset progress area
+            progressDiv.innerHTML = ''; 
+        }
+
+        debugModeSelect.addEventListener('change', toggleDebugInputs);
+        toggleDebugInputs(); // Initial setup
+
+        if (plexDebugScanForm) {
+            plexDebugScanForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                progressDiv.innerHTML = ''; // Clear previous progress
+                Loading.show();
+
+                const formData = new FormData(plexDebugScanForm);
+                const mode = formData.get('debug_mode');
+                
+                // Validation based on mode
+                let valid = true;
+                if (mode === 'Concurrency Test' && !formData.get('concurrency_limit')) valid = false;
+                if (mode === 'Page Size Test' && !formData.get('page_size_limit')) valid = false;
+                if (mode === 'Specific Library Test' && !formData.get('library_key')) valid = false;
+                if (mode === 'Custom Test') {
+                    // Custom needs at least one optional field or defaults will be used
+                    // No specific validation needed here based on current backend logic
+                }
+
+                if (!valid) {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Please provide the required input for the selected debug mode.',
+                        title: 'Input Error'
+                    });
+                    return;
+                }
+
+                fetch('/debug/api/plex_debug_scan', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    Loading.hide();
+                    if (data.success && data.scan_id) {
+                        progressDiv.innerHTML = `<p>Scan started (ID: ${data.scan_id}). Monitoring progress...</p>`;
+                        monitorPlexScanProgress(data.scan_id, progressDiv);
+                    } else {
+                        throw new Error(data.error || 'Failed to start debug scan.');
+                    }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    console.error('Error starting Plex debug scan:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error'
+                    });
+                    progressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                });
+            });
+        }
+
+        function monitorPlexScanProgress(scanId, targetDiv) {
+            targetDiv.innerHTML = `<p>Connecting to progress stream for scan ${scanId}...</p>`;
+            const eventSource = new EventSource(`/debug/api/plex_scan_progress/${scanId}`);
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
+                    
+                    // Display specific counts if available
+                    if (data.total_shows !== undefined) {
+                        progressHtml += `<p>Shows: ${data.shows_processed || 0} / ${data.total_shows}</p>`;
+                    }
+                    if (data.total_movies !== undefined) {
+                         progressHtml += `<p>Movies: ${data.movies_processed || 0} / ${data.total_movies}</p>`;
+                    }
+                     if (data.episodes_found !== undefined) {
+                         progressHtml += `<p>Episodes Found: ${data.episodes_found}</p>`;
+                    }
+
+                    if (data.error_details && data.error_details.length > 0) {
+                        progressHtml += '<p class="error">Errors encountered:</p><ul>';
+                        data.error_details.forEach(err => { progressHtml += `<li>${err}</li>`; });
+                        progressHtml += '</ul>';
+                    }
+
+                    targetDiv.innerHTML = progressHtml;
+
+                    if (data.complete) {
+                        eventSource.close();
+                        console.log(`Progress stream closed for scan ${scanId}`);
+                        // Optionally show a final success/error popup
+                        showPopup({
+                             type: data.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
+                             message: data.message || (data.success ? 'Scan complete.' : 'Scan failed.'),
+                             title: data.success ? 'Scan Complete' : 'Scan Error'
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error parsing progress update:", e, "Raw data:", event.data);
+                    targetDiv.innerHTML = `<p class="error">Error receiving progress update.</p>`;
+                    eventSource.close(); // Close on parsing error
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error("EventSource failed:", error);
+                targetDiv.innerHTML = `<p class="error">Connection to progress stream lost.</p>`;
+                eventSource.close();
+            };
+        }
+        // --- End Plex Debug Scan Logic ---
     });
 </script>
 

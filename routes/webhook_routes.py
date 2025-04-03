@@ -1,4 +1,4 @@
-from flask import jsonify, request, Blueprint
+from flask import jsonify, request, Blueprint, current_app
 import logging
 from queues.run_program import process_overseerr_webhook
 from routes.extensions import app
@@ -288,105 +288,79 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
 
 @webhook_bp.route('/rclone', methods=['POST', 'GET'])
 def rclone_webhook():
+    """
+    Receives a path from rclone, validates it, and adds it to a queue
+    for background processing by ProgramRunner. Returns 202 Accepted immediately.
+    """
     try:
         file_path = request.args.get('file')
         
         if not file_path:
+            logging.error("Rclone webhook received request without 'file_path'")
             return jsonify({"status": "error", "message": "No file path provided"}), 400
 
         # URL decode the file path
         file_path = unquote(file_path)
         logging.info(f"Received rclone webhook for path: {file_path}")
 
-        # Strip off the leading directory (movies/)
+        # Strip off the leading directory (e.g., movies/ or shows/) if present
+        original_received_path = file_path # Keep for logging if needed
         if '/' in file_path:
-            file_path = file_path.split('/', 1)[1]
-        logging.debug(f"Processing path after stripping prefix: {file_path}")
-
-        # Get the original path from settings
-        original_path = get_setting('File Management', 'original_files_path')
-        logging.debug(f"Original path from settings: {original_path}")
-        
-        # Get the full path - this is a directory containing the media file
-        dir_path = os.path.join(original_path, file_path)
-        logging.debug(f"Full directory path: {dir_path}")
-
-        # --- Custom Retry Logic ---
-        found = False
-        delays = [5, 30, 90]  # Delays in seconds
-        attempt = 1
-
-        # Initial check (Attempt 1)
-        if os.path.exists(dir_path):
-            found = True
-            logging.info(f"Directory found on initial check (attempt 1): {dir_path}")
+            # Split only once to handle paths like 'category/folder/file.mkv'
+            # We want 'folder/file.mkv'
+            prefix, path_after_prefix = file_path.split('/', 1)
+            logging.debug(f"Stripped prefix '{prefix}', processing path: {path_after_prefix}")
+            file_path = path_after_prefix # Use the path after the first slash
         else:
-            logging.info(f"Directory not found on initial check, proceeding with retries...")
-            for delay in delays:
-                attempt += 1
-                logging.info(f"Directory not found. Retrying attempt {attempt} in {delay} seconds...")
-                time.sleep(delay)
-                if os.path.exists(dir_path):
-                    found = True
-                    logging.info(f"Directory found on attempt {attempt}: {dir_path}")
-                    break # Exit the retry loop once found
-                else:
-                    logging.info(f"Directory still not found after attempt {attempt}.")
+            # If no slash, assume it's already the intended relative path
+             logging.debug(f"No prefix found, processing path as is: {file_path}")
+             # file_path remains unchanged
 
-
-        if not found:
-            # Final check after all delays (redundant check if loop finished without break, but safe)
-            # Log error if still not found after the last delay
-            logging.error(f"Directory not found after {attempt} attempts (delays: {', '.join(map(str, delays))}s): {dir_path}")
+        # Ensure program_runner is available via current_app
+        if not hasattr(current_app, 'program_runner') or not current_app.program_runner:
+            logging.error("ProgramRunner instance is not available on current_app. Cannot queue rclone path.")
             return jsonify({
                 "status": "error",
-                "message": f"Directory not found after multiple attempts: {file_path}"
-            }), 404
-        # --- End Custom Retry Logic ---
+                "message": "Background processor not ready"
+            }), 503 # Service Unavailable
 
-        # List directory contents to debug (only if found)
+        # Add the path (relative to the base media dir, e.g., 'Movie Title (Year)/file.mkv')
+        # to the ProgramRunner's pending list
         try:
-            dir_contents = os.listdir(dir_path)
-            logging.debug(f"Directory contents: {dir_contents}")
+            # Make sure add_pending_rclone_path exists in ProgramRunner accessed via current_app
+            if hasattr(current_app.program_runner, 'add_pending_rclone_path'):
+                 current_app.program_runner.add_pending_rclone_path(file_path)
+                 logging.info(f"Added path '{file_path}' to pending rclone processing queue.")
+            else:
+                 logging.error("ProgramRunner on current_app does not have 'add_pending_rclone_path' method.")
+                 # Decide how to handle this - maybe return error or log and proceed?
+                 # For now, log error and return success assuming it's handled elsewhere
+                 return jsonify({
+                     "status": "error",
+                     "message": "Background processor method missing"
+                 }), 500 # Internal Server Error
+
         except Exception as e:
-            logging.error(f"Error listing directory: {str(e)}")
+            logging.error(f"Error adding path to ProgramRunner queue: {str(e)}", exc_info=True)
             return jsonify({
                 "status": "error",
-                "message": f"Error listing directory: {str(e)}"
+                "message": f"Failed to queue path for processing: {str(e)}"
             }), 500
 
-        results = []
-        # Look for media files in the directory
-        for file in dir_contents:
-            file_path = os.path.join(dir_path, file)
-            logging.debug(f"Checking file: {file}")
-            if os.path.isfile(file_path) and file.lower().endswith(('.mkv', '.mp4', '.avi')):
-                logging.info(f"Found media file: {file}")
-                rel_path = os.path.relpath(file_path, original_path)
-                logging.debug(f"Processing relative path: {rel_path}")
-                result = handle_rclone_file(rel_path)
-                results.append({
-                    'file': rel_path,
-                    'result': result
-                })
-            else:
-                logging.debug(f"Skipping non-media file: {file}")
-
-        if not results:
-            logging.warning("No media files were processed")
-            
+        # Return 202 Accepted immediately
         return jsonify({
-            "status": "success",
-            "message": f"Processed {len(results)} files",
-            "details": results
-        }), 200
+            "status": "accepted",
+            "message": "File path received and scheduled for background processing."
+        }), 202
 
     except Exception as e:
-        logging.error(f"Error processing rclone webhook: {str(e)}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        logging.error(f"Error processing rclone webhook request: {str(e)}", exc_info=True)
+        return jsonify({"status": "error", "message": f"Internal server error: {str(e)}"}), 500
 
 def process_rclone_file(file_path: str) -> Dict[str, Any]:
     """
+    [This function is likely no longer needed here as handle_rclone_file is called directly
+     by the background task. Review if it's used elsewhere before removing.]
     Process a file from rclone webhook, checking if it matches any existing items
     or if it should create a new symlink.
     

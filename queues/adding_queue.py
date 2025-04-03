@@ -364,15 +364,21 @@ class AddingQueue:
             return torrent_info, magnet
         except Exception as e:
             logging.error(f"Error processing results for {item_identifier}: {str(e)}")
-            from queues.queue_manager import QueueManager
-            queue_manager = QueueManager()
+            # --- Ensure queue_manager is available for handling failure ---
+            try:
+                from queues.queue_manager import QueueManager
+                queue_manager = QueueManager()
+            except Exception as qm_err:
+                logging.error(f"Failed to get QueueManager instance: {qm_err}")
+                # Cannot proceed with failure handling without queue_manager
+                return None, None
             self._handle_failed_item(item, f"Error checking cache status: {str(e)}", queue_manager)
             return None, None
 
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,
-        or to Sleeping/Blacklisted state for other failures
+        or to Sleeping/Blacklisted state for other failures, correctly handling upgrades.
         
         Args:
             item: The media item that failed
@@ -380,20 +386,80 @@ class AddingQueue:
             queue_manager: Global queue manager instance
         """
         from database import get_media_item_by_id, update_media_item
+        from queues.upgrading_queue import UpgradingQueue
+        from routes.notifications import send_upgrade_failed_notification
+
+        item_identifier = queue_manager.generate_identifier(item)
+        is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
+        upgrading_queue = None
+
         try:
+            # --- Handle Upgrade Failures Specifically ---
+            if is_upgrade:
+                logging.warning(f"Handling failed upgrade for {item_identifier}: {error}")
+                upgrading_queue = UpgradingQueue()
+
+                # Send notification
+                notification_data = {
+                    'title': item.get('title', 'Unknown Title'),
+                    'year': item.get('year', ''),
+                    'reason': f'Adding Queue Failure: {error}'
+                }
+                send_upgrade_failed_notification(notification_data)
+
+                # Log the failed attempt
+                upgrading_queue.log_failed_upgrade(
+                    item,
+                    item.get('filled_by_title', 'Unknown'), # Use the title it was trying to add
+                    f'Adding Queue Failure: {error}'
+                )
+
+                # Restore previous state
+                if upgrading_queue.restore_item_state(item):
+                    # Add the failed attempt to tracking
+                    failed_info = {
+                        'title': item.get('filled_by_title'),
+                        'magnet': item.get('filled_by_magnet'), # Might not be set yet
+                        'torrent_id': item.get('torrent_id'), # From media matching failure
+                        'reason': f'adding_queue_error: {error}'
+                    }
+                    # Get the actual magnet from the failed result if possible
+                    if item.get('scrape_results'):
+                        try:
+                            results = json.loads(item['scrape_results']) if isinstance(item['scrape_results'], str) else item['scrape_results']
+                            if results and isinstance(results, list) and results[0]:
+                                failed_info['magnet'] = results[0].get('magnet')
+                        except Exception:
+                            pass # Ignore errors parsing results here
+                    upgrading_queue.add_failed_upgrade(item['id'], failed_info)
+                    logging.info(f"Successfully reverted failed upgrade for {item_identifier}")
+                else:
+                    logging.error(f"Failed to restore previous state for {item_identifier} after adding queue failure")
+                    # What should the fallback be here? Keep in Adding? Move to error state?
+                    # For now, log error and remove from adding queue to prevent loops.
+                    self.remove_item(item)
+                return # Stop further processing for this failed upgrade
+
+            # --- Original Logic for Non-Upgrade Failures ---
+
+            # Handle media matching failure specifically (move to Wanted)
             if "No matching files found in torrent" in error:
                 logging.info(f"Media matching failed for {item.get('title')}, moving back to Wanted queue")
-                if 'torrent_id' in item:
+                if 'torrent_id' in item and item['torrent_id']:
                     self.remove_unwanted_torrent(item['torrent_id'])
                 queue_manager.move_to_wanted(item, "Adding")
+                self.remove_item(item) # Ensure removal from adding queue
                 return
 
+            # Try fallback to single scraper if enabled and not already tried
             fall_back_to_single_scraper = get_media_item_by_id(item['id']).get('fall_back_to_single_scraper')
-            if not fall_back_to_single_scraper:
+            if not fall_back_to_single_scraper and get_setting('Scraping', 'fallback_to_single_enabled', default=True):
                 logging.info(f"Falling back to single scraper for {item.get('title')}")
                 update_media_item(item['id'], fall_back_to_single_scraper=True)
                 
+                # Update related items if it's an episode (existing logic)
                 if item.get('type') == 'episode':
+                    # ... (keep existing related item update logic) ...
                     series_title = item.get('series_title', '') or item.get('title', '')
                     season = item.get('season') or item.get('season_number')
                     current_episode = item.get('episode') or item.get('episode_number')
@@ -401,9 +467,10 @@ class AddingQueue:
                     
                     if series_title and season is not None and current_episode is not None:
                         from database import get_all_media_items
-                        scraping_items = [dict(row) for row in get_all_media_items(state="Scraping")]
+                        # Use a broader query to catch items potentially stuck in other queues too
+                        all_items = [dict(row) for row in get_all_media_items(state=None)] 
                         matching_items = [
-                            i for i in scraping_items
+                            i for i in all_items
                             if ((i.get('series_title', '') or i.get('title', '')) == series_title and
                                 (i.get('season') or i.get('season_number')) == season and
                                 (i.get('episode') or i.get('episode_number', 0)) > current_episode and
@@ -411,58 +478,76 @@ class AddingQueue:
                         ]
                         
                         for match in matching_items:
-                            update_media_item(match['id'], fall_back_to_single_scraper=True)
-                
-                queue_manager.move_to_scraping(item, "Adding")
+                            if not match.get('fall_back_to_single_scraper'): # Avoid redundant updates
+                                update_media_item(match['id'], fall_back_to_single_scraper=True)
+                                logging.debug(f"Enabled single scraper fallback for related item: {match.get('title')}")
+
+                queue_manager.move_to_scraping(item, "Adding") # Move back to Scraping
+                self.remove_item(item) # Ensure removal from adding queue
                 return
 
+            # Handle potential blacklisting based on age if fallback didn't apply/already tried
             release_date_str = item.get('release_date')
-            if release_date_str:
+            if release_date_str and release_date_str != 'Unknown':
                 try:
                     release_date = datetime.strptime(release_date_str, '%Y-%m-%d')
-                    if release_date < datetime.now() - timedelta(days=7):
+                    # Use a longer blacklist threshold from Adding queue to be less aggressive
+                    if release_date < datetime.now() - timedelta(days=get_setting('Queue', 'adding_failure_blacklist_days', 30)):
                         blacklist_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        logging.warning(f"Blacklisting old item {item_identifier} due to adding failure: {error}")
                         update_media_item(
                             item['id'],
                             state='Blacklisted',
-                            blacklisted_date=blacklist_date
+                            blacklisted_date=blacklist_date,
+                            last_error=f"Adding Queue Blacklist: {error}"
                         )
-                        
+                        # Blacklist related season items (existing logic)
                         if item.get('type') == 'episode':
+                            # ... (keep existing related item blacklisting logic) ...
                             series_title = item.get('series_title', '') or item.get('title', '')
                             season = item.get('season') or item.get('season_number')
                             version = item.get('version')
                             
                             if series_title and season is not None and version:
-                                scraping_items = [dict(row) for row in get_all_media_items(state="Scraping")]
-                                if scraping_items:
+                                # Use broader query again
+                                all_items = [dict(row) for row in get_all_media_items(state=None)]
+                                if all_items:
                                     matching_items = [
-                                        i for i in scraping_items
+                                        i for i in all_items
                                         if ((i.get('series_title', '') or i.get('title', '')) == series_title and
                                             (i.get('season') or i.get('season_number')) == season and
-                                            i.get('version') == version)
+                                            i.get('version') == version and
+                                            i.get('state') != 'Blacklisted') # Avoid redundant updates
                                     ]
                                     
                                     for match in matching_items:
                                         update_media_item(
                                             match['id'],
                                             state='Blacklisted',
-                                            blacklisted_date=blacklist_date
+                                            blacklisted_date=blacklist_date,
+                                            last_error=f"Adding Queue Blacklist (related): {error}"
                                         )
                                         logging.info(f"Blacklisted related episode: {match.get('title')}")
+                        self.remove_item(item)
                         return
+                except ValueError:
+                    logging.error(f"Invalid release date format '{release_date_str}' for {item_identifier} during failure handling")
                 except Exception as e:
-                    logging.error(f"Error parsing release date: {e}")
+                    logging.error(f"Error during blacklist check for {item_identifier}: {e}")
             
-            logging.info(f"Moving item to Sleeping state: {item.get('title')} ({item.get('type')})")
+            # Default failure case: Move to Sleeping
+            logging.warning(f"Moving item to Sleeping state due to adding failure: {item_identifier} - {error}")
             update_media_item(
                 item['id'],
-                state='Sleeping'
+                state='Sleeping',
+                last_error=f"Adding Queue Failure: {error}"
             )
-            self.remove_item(item)
+            self.remove_item(item) # Ensure removal from adding queue
             
         except Exception as e:
-            logging.error(f"Error handling failed item: {str(e)}", exc_info=True)
+            logging.error(f"Critical error in _handle_failed_item for {item.get('id')}: {str(e)}", exc_info=True)
+            # Final fallback: try to remove from queue to prevent loops
+            self.remove_item(item)
     
     def get_new_item_values(self, item: Dict[str, Any]) -> Dict[str, Any]:
         from database import get_media_item_by_id

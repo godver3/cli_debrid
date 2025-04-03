@@ -89,6 +89,9 @@ def index():
             selected_columns = [col for col in default_columns if col in all_columns]
             if not selected_columns:
                 selected_columns = ['id']  # Fallback to ID if none of the default columns exist
+        else:
+            # Validate selected columns against actual table columns
+            selected_columns = [col for col in selected_columns if col in all_columns]
 
         # Ensure at least one column is selected
         if not selected_columns:

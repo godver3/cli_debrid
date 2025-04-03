@@ -14,6 +14,8 @@ from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from pathlib import Path
 import os
 from datetime import datetime
+from queues.upgrading_queue import UpgradingQueue
+from routes.notifications import send_upgrade_failed_notification
 
 class CheckingQueue:
     _instance = None
@@ -172,20 +174,69 @@ class CheckingQueue:
             except Exception as e:
                 logging.error(f"Failed to add magnet to not-wanted list: {str(e)}")
         
-        # Move items back to Wanted state
-        
+        # Move items back to Wanted state or handle failed upgrade
+        upgrading_queue = None # Initialize outside the loop
+
         for item in items:
             try:
                 item_id = item.get('id', 'unknown')
-                logging.info(f"Moving item {item_id} back to Wanted state")
-                queue_manager.move_to_wanted(item, "Checking")
-                
-                # Remove the item from the checking queue
-                if item in self.items:
-                    self.remove_item(item)
-                    logging.info(f"Removed item {item_id} from checking queue")
+                item_identifier = queue_manager.generate_identifier(item)
+                is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
+
+                if is_upgrade:
+                    logging.info(f"Detected failed upgrade for {item_identifier} due to missing torrent {torrent_id}")
+                    if upgrading_queue is None:
+                        upgrading_queue = UpgradingQueue()
+
+                    # Log the failed upgrade
+                    upgrading_queue.log_failed_upgrade(
+                        item,
+                        item.get('filled_by_title', 'Unknown'),
+                        'Torrent not found on Debrid (404)'
+                    )
+
+                    # Send failed upgrade notification
+                    notification_data = {
+                        'title': item.get('title', 'Unknown Title'),
+                        'year': item.get('year', ''),
+                        'reason': 'Torrent not found on Debrid (404)'
+                    }
+                    send_upgrade_failed_notification(notification_data)
+
+                    # Restore the previous state
+                    if upgrading_queue.restore_item_state(item):
+                        # Add the failed attempt to tracking
+                        upgrading_queue.add_failed_upgrade(
+                            item['id'],
+                            {
+                                'title': item.get('filled_by_title'),
+                                'magnet': item.get('filled_by_magnet'),
+                                'torrent_id': torrent_id,
+                                'reason': 'torrent_404'
+                            }
+                        )
+                        logging.info(f"Successfully reverted failed upgrade for {item_identifier}")
+                    else:
+                        logging.error(f"Failed to restore previous state for {item_identifier} after missing torrent detection")
+                        # Fallback: Maybe move to wanted or keep in checking? For now, just log.
+
+                    # Remove the item from the checking queue since state is restored
+                    if item in self.items:
+                        self.remove_item(item)
+                        logging.info(f"Removed reverted upgrade item {item_id} from checking queue")
+
+                else:
+                    # Original logic for non-upgrade items
+                    logging.info(f"Moving item {item_id} back to Wanted state")
+                    queue_manager.move_to_wanted(item, "Checking")
+
+                    # Remove the item from the checking queue
+                    if item in self.items:
+                        self.remove_item(item)
+                        logging.info(f"Removed item {item_id} from checking queue")
+
             except Exception as e:
-                logging.error(f"Failed to move item to Wanted state: {str(e)}")
+                logging.error(f"Failed to handle item {item.get('id', 'unknown')} for missing torrent {torrent_id}: {str(e)}")
 
     @timed_lru_cache(seconds=60)
     def get_torrent_progress(self, torrent_id: str) -> Optional[int]:
@@ -459,7 +510,7 @@ class CheckingQueue:
             logging.debug(f"Using static queue period: {base_period}s (Symlinked/Local file management)")
             return base_period
 
-    def process(self, queue_manager):
+    def process(self, queue_manager, program_runner):
         if self.items:
             item = self.items[0]
             item_identifier = queue_manager.generate_identifier(item)
@@ -630,7 +681,6 @@ class CheckingQueue:
                     if current_progress == last_progress:
                         logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Handling failed upgrade/download.")
                         try:
-                            # Remove the failed torrent from debrid service
                             self.debrid_provider.remove_torrent(
                                 torrent_id,
                                 removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
@@ -639,63 +689,71 @@ class CheckingQueue:
                         except Exception as e:
                             logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
 
+                        # Add upgrade check here
+                        upgrading_queue = None # Initialize for potential use
+
                         for item in items:
-                            # Check if this was an upgrade attempt
-                            if item.get('upgrading'):
-                                logging.info(f"Failed upgrade detected for {queue_manager.generate_identifier(item)}")
-                                # Get the UpgradingQueue instance to handle the reversion
-                                from queues.upgrading_queue import UpgradingQueue
-                                upgrading_queue = UpgradingQueue()
-                                
+                            item_identifier = queue_manager.generate_identifier(item)
+                            is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
+
+                            if is_upgrade:
+                                logging.info(f"Failed upgrade detected for {item_identifier} due to no progress")
+                                if upgrading_queue is None:
+                                    from queues.upgrading_queue import UpgradingQueue
+                                    from routes.notifications import send_upgrade_failed_notification
+                                    upgrading_queue = UpgradingQueue()
+
                                 # Send failed upgrade notification
-                                from routes.notifications import send_upgrade_failed_notification
                                 notification_data = {
                                     'title': item.get('title', 'Unknown Title'),
                                     'year': item.get('year', ''),
-                                    'reason': 'No download progress after 5 minutes'
+                                    'reason': f'No download progress after 5 minutes (stalled at {current_progress}%)'
                                 }
                                 send_upgrade_failed_notification(notification_data)
-                                
+
                                 # Log the failed upgrade
                                 upgrading_queue.log_failed_upgrade(
-                                    item, 
-                                    item.get('filled_by_title', 'Unknown'), 
-                                    'No download progress after 5 minutes'
+                                    item,
+                                    item.get('filled_by_title', 'Unknown'),
+                                    f'No download progress after 5 minutes (stalled at {current_progress}%)'
                                 )
-                                
-                                # First restore the previous state
+
+                                # Restore the previous state
                                 if upgrading_queue.restore_item_state(item):
                                     # Add the failed attempt to tracking
                                     upgrading_queue.add_failed_upgrade(
-                                        item['id'], 
+                                        item['id'],
                                         {
                                             'title': item.get('filled_by_title'),
                                             'magnet': item.get('filled_by_magnet'),
-                                            'torrent_id': torrent_id
+                                            'torrent_id': torrent_id,
+                                            'reason': 'no_progress'
                                         }
                                     )
-                                    logging.info(f"Successfully reverted failed upgrade for {queue_manager.generate_identifier(item)}")
+                                    logging.info(f"Successfully reverted failed upgrade for {item_identifier}")
                                 else:
-                                    logging.error(f"Failed to restore previous state for {queue_manager.generate_identifier(item)}, moving to Wanted")
+                                    logging.error(f"Failed to restore previous state for {item_identifier} after no progress detection")
+                                    # Fallback? Move to wanted?
                                     queue_manager.move_to_wanted(item, "Checking")
                             else:
-                                # Regular download failure, move to Wanted
+                                # Original logic for non-upgrade items
+                                logging.info(f"Moving non-upgrade item back to Wanted due to no progress: {item_identifier}")
                                 queue_manager.move_to_wanted(item, "Checking")
-                                logging.info(f"Moving item back to Wanted: {queue_manager.generate_identifier(item)}")
 
-                            # Add magnet to not wanted list
+                            # Add magnet to not wanted list (for both upgrade and non-upgrade failures)
                             magnet = item.get('filled_by_magnet')
                             if magnet:
                                 try:
+                                    hash_value = None
                                     if magnet.startswith('http'):
                                         hash_value = download_and_extract_hash(magnet)
-                                        add_to_not_wanted(hash_value)
+                                        if hash_value: add_to_not_wanted(hash_value)
                                         add_to_not_wanted_urls(magnet)
-                                        logging.info(f"Added hash {hash_value} and URL to not wanted lists")
+                                        logging.info(f"Added hash {hash_value} and URL to not wanted lists for {item_identifier}")
                                     else:
                                         hash_value = extract_hash_from_magnet(magnet)
-                                        add_to_not_wanted(hash_value)
-                                        logging.info(f"Added hash {hash_value} to not wanted list")
+                                        if hash_value: add_to_not_wanted(hash_value)
+                                        logging.info(f"Added hash {hash_value} to not wanted list for {item_identifier}")
                                 except Exception as e:
                                     logging.error(f"Failed to process magnet for not wanted: {str(e)}")
 
@@ -715,6 +773,9 @@ class CheckingQueue:
             # Only run Plex scan if we have any completed torrents
             if any(self.get_torrent_progress(torrent_id) == 100 for torrent_id in items_by_torrent.keys()):
                 get_and_add_recent_collected_from_plex()
+                # Add reconciliation call after recent scan processing
+                logging.info("Triggering queue reconciliation after recent Plex scan.")
+                program_runner.task_reconcile_queues()
 
         #logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
 
