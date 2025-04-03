@@ -523,7 +523,10 @@ class ProgramRunner:
                 return None
             
             try:
-                result = process_method()
+                if queue_name == "Checking":
+                    result = process_method(self) # Pass self as program_runner
+                else:
+                    result = process_method()
             except RateLimitError:
                 logging.warning("Rate limit exceeded on Debrid API")
                 self.handle_rate_limit()
@@ -2009,7 +2012,7 @@ class ProgramRunner:
             logging.info(f"Directory '{dir_to_check}' found. Looking for file '{filename}' within it.")
             try:
                 dir_contents = os.listdir(dir_to_check)
-                logging.debug(f"Directory contents of '{dir_to_check}': {dir_contents}")
+                # logging.debug(f"Directory contents of '{dir_to_check}': {dir_contents}")
 
                 file_processed = False
                 for file_in_dir in dir_contents:

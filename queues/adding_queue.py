@@ -498,8 +498,7 @@ class AddingQueue:
                         update_media_item(
                             item['id'],
                             state='Blacklisted',
-                            blacklisted_date=blacklist_date,
-                            last_error=f"Adding Queue Blacklist: {error}"
+                            blacklisted_date=blacklist_date
                         )
                         # Blacklist related season items (existing logic)
                         if item.get('type') == 'episode':
@@ -524,8 +523,7 @@ class AddingQueue:
                                         update_media_item(
                                             match['id'],
                                             state='Blacklisted',
-                                            blacklisted_date=blacklist_date,
-                                            last_error=f"Adding Queue Blacklist (related): {error}"
+                                            blacklisted_date=blacklist_date
                                         )
                                         logging.info(f"Blacklisted related episode: {match.get('title')}")
                         self.remove_item(item)
@@ -540,7 +538,6 @@ class AddingQueue:
             update_media_item(
                 item['id'],
                 state='Sleeping',
-                last_error=f"Adding Queue Failure: {error}"
             )
             self.remove_item(item) # Ensure removal from adding queue
             
