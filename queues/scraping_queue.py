@@ -507,8 +507,10 @@ class ScrapingQueue:
 
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
-            # Default to a reasonable positive number if not set to avoid immediate blacklisting unless explicitly configured.
-            max_wake_count = version_settings.get('max_wake_count', 5) 
+            # Fetch the global default wake limit, using 5 as an ultimate fallback
+            global_default_wake_limit = int(get_setting("Queue", "wake_limit", default=5)) 
+            # Use the version-specific limit if available, otherwise use the global default
+            max_wake_count = version_settings.get('max_wake_count', global_default_wake_limit) 
 
             # Get current wake count from DB
             from database import get_wake_count
