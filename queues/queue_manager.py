@@ -382,13 +382,26 @@ class QueueManager:
                 self.queues[queue_name].process(self)
                 return None
         except Exception as e:
-            logging.error(f"Error processing {queue_name} queue: {str(e)}")
+            logging.error(f"Error processing {queue_name} queue: {str(e)}", exc_info=True)
             return False if with_result else None
     
-    def process_checking(self):
-        result = self._process_queue_safely("Checking")
-        if not self.paused:
-            self.queues["Checking"].clean_up_checking_times()
+    def process_checking(self, program_runner):
+        """Process the Checking queue, requires ProgramRunner instance."""
+        if self.paused:
+            logging.debug("Skipping Checking queue processing: Queue is paused")
+            return
+
+        try:
+            # Call the CheckingQueue process method directly, passing QueueManager (self) and ProgramRunner
+            self.queues["Checking"].process(self, program_runner)
+            
+            # Clean up checking times after successful processing
+            if not self.paused:
+                self.queues["Checking"].clean_up_checking_times()
+
+        except Exception as e:
+            # Added exc_info=True for detailed traceback
+            logging.error(f"Error processing Checking queue: {str(e)}", exc_info=True)
 
     def process_wanted(self):
         self._process_queue_safely("Wanted")
@@ -675,19 +688,33 @@ class QueueManager:
         return self.paused
 
     def are_main_queues_empty(self):
-        """
-        Check if all main processing queues are empty.
-        This can be used to determine if the system can enter a more idle state.
-        Note: The Unreleased queue is intentionally NOT included here, as it needs
-        to be checked periodically regardless of other queue states.
+        """Check if the critical processing queues (Scraping, Adding, Checking) are empty."""
+        critical_queues = ['Scraping', 'Adding', 'Checking']
         
-        Returns:
-            bool: True if all main queues are empty, False otherwise
-        """
-        main_queues = ['Wanted', 'Scraping', 'Adding']
-        for queue_name in main_queues:
-            if queue_name in self.queues and self.queues[queue_name].get_contents():
-                return False
+        for queue_name in critical_queues:
+            if queue_name in self.queues:
+                # Use the length of the internal list directly if available and efficient
+                # Assuming each queue object has an efficient way to check emptiness
+                # For example, checking the length of an internal list `self.queues[queue_name].items`
+                # If not, fall back to get_contents(), but prefer direct length check.
+                # Placeholder: Let's assume a simple length check on a hypothetical 'items' attribute
+                # Replace with the actual way queues store items if different.
+                try:
+                    # Attempt to check the length of the internal list directly
+                    # This is a guess based on common queue implementations. Adjust if needed.
+                    if hasattr(self.queues[queue_name], 'items') and len(self.queues[queue_name].items) > 0:
+                        return False # Found items in a critical queue
+                    # Fallback if 'items' attribute doesn't exist or another method is used
+                    elif len(self.queues[queue_name].get_contents()) > 0:
+                         return False # Found items in a critical queue
+                except AttributeError:
+                    # Fallback if direct length check fails
+                    if len(self.queues[queue_name].get_contents()) > 0:
+                        return False # Found items in a critical queue
+            else:
+                 logging.warning(f"Critical queue '{queue_name}' not found in QueueManager. Assuming empty.")
+
+        # If we checked all critical queues and found no items
         return True
 
     def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, **additional_params):

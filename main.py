@@ -70,7 +70,6 @@ from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 
 # Global variables
-program_runner = None
 metadata_process = None
 metadata_lock = threading.Lock()
 
@@ -365,15 +364,18 @@ def setup_tray_icon():
         logging.info("Exit option selected from system tray")
         icon.stop()
         # Stop all processes
-        global program_runner, metadata_process
+        # Access ProgramRunner singleton directly
+        from queues.run_program import ProgramRunner 
+        program_runner_instance = ProgramRunner() # Get singleton instance
         print("\nStopping the program...")
 
-        # Stop the main program runner
-        if 'program_runner' in globals() and program_runner:
-            program_runner.stop()
+        # Stop the main program runner using the instance
+        if program_runner_instance and program_runner_instance.is_running():
+            program_runner_instance.stop()
             print("Main program stopped.")
 
         # Terminate the metadata battery process
+        global metadata_process # Keep metadata_process global for now
         with metadata_lock:
             if metadata_process and metadata_process.poll() is None:
                 print("Stopping metadata battery...")
@@ -429,8 +431,15 @@ def setup_tray_icon():
         if is_frozen():
             exe_name = os.path.basename(sys.executable)
         else:
-            exe_name = "cli_debrid-" + get_version() + ".exe"
-        subprocess.run(['taskkill', '/F', '/IM', exe_name], shell=True)
+            # Construct the expected executable name if not frozen (adjust if needed)
+            version = get_version() 
+            exe_name = f"cli_debrid-{version}.exe" # Or adjust based on actual name
+            # Fallback if version reading fails or name is different
+            if exe_name == "cli_debrid-0.0.0.exe": 
+                exe_name = "cli_debrid.exe" # Common fallback
+        
+        # Use shell=True carefully on Windows for taskkill
+        subprocess.run(['taskkill', '/F', '/IM', exe_name], shell=True, check=False) 
 
     # Create the menu
     menu = (
@@ -495,12 +504,16 @@ def check_localhost_binding(port=5000):
 
 # Modify the stop_program function
 def stop_program(from_signal=False):
-    global program_runner, metadata_process
+    # Access ProgramRunner singleton directly
+    from queues.run_program import ProgramRunner
+    program_runner_instance = ProgramRunner() # Get singleton instance
+    # Keep metadata_process global for now
+    global metadata_process 
     print("\nStopping the program...")
 
-    # Stop the main program runner
-    if 'program_runner' in globals() and program_runner:
-        program_runner.stop()
+    # Stop the main program runner using the instance
+    if program_runner_instance and program_runner_instance.is_running():
+        program_runner_instance.stop()
         print("Main program stopped.")
 
     # Terminate the metadata battery process
@@ -794,7 +807,8 @@ def verify_database_health():
     return True
 
 def main():
-    global program_runner, metadata_process
+    # Remove global program_runner from here as well
+    global metadata_process 
     metadata_process = None
 
     logging.info("Starting the program...")
@@ -1354,12 +1368,21 @@ if __name__ == "__main__":
             from routes.api_tracker import setup_api_logging
             setup_api_logging()
             from routes.web_server import start_server
+            from routes.extensions import app # Import the Flask app instance
+            from queues.run_program import ProgramRunner # Import ProgramRunner
             
             print_version()
             print("\ncli_debrid is initialized.")
+
+            # Instantiate ProgramRunner and attach to Flask app context
+            # This makes it available via current_app.program_runner in routes
+            program_runner_instance = ProgramRunner()
+            app.program_runner = program_runner_instance
+            # Note: program_runner_instance.start() is called within main() via run_program()
             
             def run_flask():
-                if not start_server():
+                # Pass the app instance to start_server if it needs it, or it uses the imported app
+                if not start_server(): 
                     return False
                 return True
 
@@ -1367,7 +1390,9 @@ if __name__ == "__main__":
                 stop_program()
                 sys.exit(1)
                 
-            print("The web UI is available at http://localhost:5000")
+            # Get port dynamically for the message
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            print(f"The web UI is available at http://localhost:{port}")
             main()
     except KeyboardInterrupt:
         stop_global_profiling()

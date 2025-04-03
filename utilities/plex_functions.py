@@ -93,17 +93,47 @@ async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str
     
     return {'MediaContainer': {'Metadata': []}}
 
-async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, library_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
-    url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
-    # Add pagination headers
-    request_headers = headers.copy()
-    request_headers['X-Plex-Container-Start'] = '0'
-    request_headers['X-Plex-Container-Size'] = '50000'  # Set a large size to get all items
+async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, library_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, page_size: int = 1000) -> List[Dict[str, Any]]:
+    """Fetches all metadata from a library section using pagination."""
+    all_metadata = []
+    start_index = 0
+    # Use the provided page_size, ensuring it's at least 1
+    effective_page_size = max(1, page_size)
 
-    data = await fetch_data(session, url, request_headers, semaphore)
-    metadata = data['MediaContainer']['Metadata'] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else []
-    logger.info(f"Retrieved {len(metadata)} items from library {library_key}")
-    return metadata
+    while True:
+        url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
+        request_headers = headers.copy()
+        request_headers['X-Plex-Container-Start'] = str(start_index)
+        request_headers['X-Plex-Container-Size'] = str(effective_page_size)
+
+        logger.debug(f"Fetching items from library {library_key}, start: {start_index}, size: {effective_page_size}")
+        data = await fetch_data(session, url, request_headers, semaphore)
+        
+        if 'MediaContainer' in data and 'Metadata' in data['MediaContainer']:
+            metadata = data['MediaContainer']['Metadata']
+            if metadata:
+                all_metadata.extend(metadata)
+                start_index += len(metadata)
+                
+                # Check if we've fetched all items (either totalSize is reached or last page had fewer items than requested)
+                total_size = data['MediaContainer'].get('totalSize')
+                if total_size is not None and start_index >= int(total_size):
+                    logger.info(f"Reached totalSize {total_size} for library {library_key}")
+                    break
+                if len(metadata) < effective_page_size:
+                    logger.info(f"Fetched last page (size {len(metadata)} < {effective_page_size}) for library {library_key}")
+                    break
+            else:
+                # No metadata returned, assume we're done or encountered an issue handled by fetch_data
+                logger.info(f"No more metadata found for library {library_key} at start index {start_index}")
+                break
+        else:
+            # Error or unexpected response structure handled by fetch_data, break the loop
+            logger.error(f"Failed to retrieve valid MediaContainer from library {library_key} at start index {start_index}")
+            break
+            
+    logger.info(f"Retrieved {len(all_metadata)} items in total from library {library_key}")
+    return all_metadata
 
 async def get_detailed_movie_metadata(session: aiohttp.ClientSession, plex_url: str, movie_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
     url = f"{plex_url}/library/metadata/{movie_key}?includeGuids=1"
@@ -351,10 +381,13 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
     return movie_entries
 
-async def get_collected_from_plex(request='all', progress_callback=None, bypass=False):
+async def get_collected_from_plex(request='all', progress_callback=None, bypass=False, 
+                                page_size: int = 1000, 
+                                max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS, 
+                                specific_library_keys: List[str] = None):
     try:
         start_time = time.time()
-        logger.info(f"Starting Plex content collection. Request type: {request}")
+        logger.info(f"Starting Plex content collection. Request type: {request}, Page Size: {page_size}, Concurrency: {max_concurrent_requests}, Specific Libraries: {specific_library_keys}")
 
         if progress_callback:
             logger.debug("Calling progress callback: Connecting to Plex server...")
@@ -367,7 +400,9 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             'Accept': 'application/json'
         }
 
-        semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+        # Use the provided concurrency limit, falling back to the constant
+        effective_concurrency = max_concurrent_requests if max_concurrent_requests > 0 else MAX_CONCURRENT_REQUESTS
+        semaphore = asyncio.Semaphore(effective_concurrency)
 
         async with aiohttp.ClientSession() as session:
             if progress_callback:
@@ -382,15 +417,28 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
             all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
             
-            if bypass:
-                # When bypass is true, gather all movie and show libraries
+            if specific_library_keys:
+                # Use only the specified libraries
                 movie_libraries = []
                 show_libraries = []
-                for library in libraries_data['MediaContainer']['Directory']:
-                    if library['type'] == 'movie':
-                        movie_libraries.append(str(library['key']))
-                    elif library['type'] == 'show':
-                        show_libraries.append(str(library['key']))
+                for key in specific_library_keys:
+                    key_str = str(key) # Ensure it's a string
+                    if key_str in libraries_by_key:
+                        # Determine type by checking the original library data
+                        lib_info = next((lib for lib in libraries_data['MediaContainer']['Directory'] if str(lib['key']) == key_str), None)
+                        if lib_info:
+                            if lib_info['type'] == 'movie':
+                                movie_libraries.append(key_str)
+                            elif lib_info['type'] == 'show':
+                                show_libraries.append(key_str)
+                        else:
+                            logger.warning(f"Specific library key {key_str} not found in Plex sections.")
+                    else:
+                         logger.warning(f"Specific library key {key_str} not found in Plex sections.")
+            elif bypass:
+                # When bypass is true, gather all movie and show libraries
+                movie_libraries = [str(lib['key']) for lib in libraries_data['MediaContainer']['Directory'] if lib['type'] == 'movie']
+                show_libraries = [str(lib['key']) for lib in libraries_data['MediaContainer']['Directory'] if lib['type'] == 'show']
             else:
                 # Process movie and show libraries from settings
                 movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
@@ -405,7 +453,8 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
 
             all_shows = []
             for library_key in show_libraries:
-                shows = await get_library_contents(session, plex_url, library_key, headers, semaphore)
+                # Pass the page_size to get_library_contents
+                shows = await get_library_contents(session, plex_url, library_key, headers, semaphore, page_size=page_size)
                 all_shows.extend(shows)
             
             if progress_callback:
@@ -413,12 +462,14 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
 
             all_movies = []
             for library_key in movie_libraries:
-                movies = await get_library_contents(session, plex_url, library_key, headers, semaphore)
+                 # Pass the page_size to get_library_contents
+                movies = await get_library_contents(session, plex_url, library_key, headers, semaphore, page_size=page_size)
                 all_movies.extend(movies)
 
             logger.info(f"Total shows found: {len(all_shows)}")
             logger.info(f"Total movies found: {len(all_movies)}")
             
+            # Pass the semaphore based on max_concurrent_requests to chunk processing
             if progress_callback:
                 progress_callback('scanning', f'Processing {len(all_shows)} shows...', {
                     'total_shows': len(all_shows),
@@ -451,6 +502,7 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             all_movies_processed = []
             for i in range(0, len(all_movies), CHUNK_SIZE):
                 chunk = all_movies[i:i+CHUNK_SIZE]
+                 # Pass the semaphore based on max_concurrent_requests to chunk processing
                 chunk_movies = await process_movies_chunk(session, plex_url, headers, semaphore, chunk)
                 all_movies_processed.extend(chunk_movies)
                 
@@ -495,14 +547,17 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             progress_callback('error', f'Error: {str(e)}')
         raise
 
-async def run_get_collected_from_plex(request='all', progress_callback=None, bypass=False):
-    logger.info("Starting run_get_collected_from_plex")
-    result = await get_collected_from_plex(request, progress_callback, bypass)
+async def run_get_collected_from_plex(request='all', progress_callback=None, bypass=False, **kwargs):
+    """Wrapper to run get_collected_from_plex with optional debug parameters."""
+    logger.info(f"Starting run_get_collected_from_plex with kwargs: {kwargs}")
+    result = await get_collected_from_plex(request, progress_callback, bypass, **kwargs)
     logger.info("Completed run_get_collected_from_plex")
     return result
 
-def sync_run_get_collected_from_plex(request='all', progress_callback=None):
-    return asyncio.run(run_get_collected_from_plex(request, progress_callback))
+def sync_run_get_collected_from_plex(request='all', progress_callback=None, bypass=False, **kwargs):
+    """Synchronous wrapper for run_get_collected_from_plex with optional debug parameters."""
+    logger.info(f"Starting sync_run_get_collected_from_plex with kwargs: {kwargs}")
+    return asyncio.run(run_get_collected_from_plex(request, progress_callback, bypass, **kwargs))
 
 async def get_recent_from_plex():
     try:
@@ -1114,3 +1169,33 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
     except Exception as e:
         logger.error(f"Error updating item in Plex: {str(e)}")
         return False
+
+# --- Debug Functions ---
+
+async def debug_test_concurrency(concurrency_limit: int, progress_callback=None):
+    """Runs Plex collection with a specific concurrency limit."""
+    logger.info(f"--- Starting Debug Run: Testing Concurrency Limit = {concurrency_limit} ---")
+    return await run_get_collected_from_plex(progress_callback=progress_callback, max_concurrent_requests=concurrency_limit)
+
+async def debug_test_page_size(page_size_limit: int, progress_callback=None):
+    """Runs Plex collection with a specific page size limit."""
+    logger.info(f"--- Starting Debug Run: Testing Page Size = {page_size_limit} ---")
+    # Note: get_library_contents needs to be adjusted to accept page_size parameter if not already done.
+    # Assuming get_library_contents was modified in the previous step.
+    # We need to modify get_collected_from_plex to accept and pass page_size.
+    return await run_get_collected_from_plex(progress_callback=progress_callback, page_size=page_size_limit)
+
+async def debug_test_specific_library(library_key: str, progress_callback=None):
+    """Runs Plex collection for only a specific library key."""
+    logger.info(f"--- Starting Debug Run: Testing Specific Library Key = {library_key} ---")
+    return await run_get_collected_from_plex(progress_callback=progress_callback, specific_library_keys=[library_key])
+
+async def debug_test_custom(page_size: int = 1000, max_concurrent_requests: int = 50, library_keys: List[str] = None, progress_callback=None):
+    """Runs Plex collection with custom page size, concurrency, and optional specific libraries."""
+    logger.info(f"--- Starting Debug Run: Custom - PageSize={page_size}, Concurrency={max_concurrent_requests}, Libraries={library_keys} ---")
+    return await run_get_collected_from_plex(progress_callback=progress_callback, 
+                                             page_size=page_size, 
+                                             max_concurrent_requests=max_concurrent_requests, 
+                                             specific_library_keys=library_keys)
+
+# --- End Debug Functions ---

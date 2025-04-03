@@ -7,6 +7,7 @@ from utilities.settings import get_setting
 from scraper.scraper import scrape
 from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 from cli_battery.app.direct_api import DirectAPI
+from routes.notifications import send_upgrade_failed_notification
 
 class ScrapingQueue:
     def __init__(self):
@@ -438,6 +439,56 @@ class ScrapingQueue:
      
     def handle_no_results(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
+        is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
+
+        # --- Handle Upgrade Failure --- 
+        if is_upgrade:
+            logging.warning(f"Handling failed upgrade for {item_identifier}: No suitable scrape results found.")
+            try:
+                from queues.upgrading_queue import UpgradingQueue
+                upgrading_queue = UpgradingQueue()
+                
+                # Send notification
+                notification_data = {
+                    'title': item.get('title', 'Unknown Title'),
+                    'year': item.get('year', ''),
+                    'reason': 'Scraping Queue Failure: No suitable results found'
+                }
+                send_upgrade_failed_notification(notification_data)
+
+                # Log the failed attempt
+                upgrading_queue.log_failed_upgrade(
+                    item,
+                    'No specific target' if not item.get('filled_by_title') else item.get('filled_by_title'), # Title it was trying to upgrade?
+                    'Scraping Queue Failure: No suitable results found'
+                )
+
+                # Restore previous state
+                if upgrading_queue.restore_item_state(item):
+                    # Add the failed attempt to tracking - less specific info here
+                    upgrading_queue.add_failed_upgrade(
+                        item['id'], 
+                        {
+                            'title': 'N/A - No scrape result',
+                            'magnet': 'N/A',
+                            'reason': 'scraping_queue_no_results'
+                        }
+                    )
+                    logging.info(f"Successfully reverted failed upgrade for {item_identifier} due to no scrape results.")
+                else:
+                    logging.error(f"Failed to restore previous state for {item_identifier} after scraping failure.")
+                    # Fallback? Keep in Scraping? Error state?
+                    # For now, remove from queue to avoid loops.
+                
+                self.reset_not_wanted_check(item['id'])
+                self.remove_item(item) # Remove from Scraping queue after handling
+            except Exception as e:
+                logging.error(f"Error handling failed upgrade in scraping queue for {item_identifier}: {e}", exc_info=True)
+                # Fallback: Remove from queue if error during handling
+                self.remove_item(item)
+            return # Stop processing for this failed upgrade
+
+        # --- Original Logic for Non-Upgrade Items ---
         if self.is_item_old(item):
             if item['type'] == 'episode':
                 logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")

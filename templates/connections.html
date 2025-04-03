@@ -51,7 +51,8 @@
         </div>
         {% endif %}
 
-        <!-- Phalanx DB Connection Card -->
+        <!-- Phalanx DB Connection Card (only shown if configured and enabled) -->
+        {% if phalanx_db_status %}
         <div class="connection-card" data-service="phalanx-db">
             <div class="connection-header">
                 <i class="fas fa-database"></i>
@@ -59,6 +60,7 @@
                 <div class="status-indicator {{ 'connected' if phalanx_db_status.connected else 'disconnected' }}"></div>
             </div>
         </div>
+        {% endif %}
 
     </div>
 

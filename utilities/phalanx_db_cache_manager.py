@@ -3,16 +3,36 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 import requests
 import json
+import os
 
 class PhalanxDBClassManager:
     """Manager class for handling cache status checks using Phalanx-DB service"""
     
-    def __init__(self, gun_service_url: str = "http://localhost:8888"):
-        """Initialize the Gun.js cache manager
+    def __init__(self, phalanx_base_url: str = None, phalanx_port: int = None):
+        """Initialize the Phalanx DB cache manager
         
         Args:
-            gun_service_url: URL of the Gun.js service. If not specified, will try both localhost and phalanx_db.
+            phalanx_base_url: Base URL of the Phalanx DB service (e.g., http://localhost). Overrides env var.
+            phalanx_port: Port number for the Phalanx DB service. Overrides env var.
         """
+        # Determine the port
+        if phalanx_port is None:
+            try:
+                phalanx_port = int(os.environ.get('CLI_DEBRID_PHALANX_PORT', 8888))
+            except ValueError:
+                logging.warning("Invalid CLI_DEBRID_PHALANX_PORT value, using default 8888.")
+                phalanx_port = 8888
+        self._port = phalanx_port
+        
+        # Determine the base URL
+        if phalanx_base_url is None:
+            phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
+        self._base_url = phalanx_base_url.rstrip('/')
+        
+        # Construct the single full URL
+        self._url = f"{self._base_url}:{self._port}"
+        logging.info(f"Using Phalanx DB URL: {self._url}")
+
         self._primary_url = None
         self._backup_url = None
         self._last_sync_time = None
@@ -25,22 +45,10 @@ class PhalanxDBClassManager:
         
         # Create a persistent session for connection pooling
         self._session = requests.Session()
-        
-        # Initialize URLs - prioritizing localhost
-        self._urls = [
-            "http://localhost:8888",
-            "http://phalanx_db:8888"
-        ]
-        if gun_service_url not in self._urls:
-            self._urls.insert(0, gun_service_url.rstrip('/'))
-            
-        # Try to set primary URL to localhost immediately if that's the preferred URL
-        if "localhost" in self._urls[0]:
-            self._primary_url = self._urls[0]
 
     def _try_urls(self, endpoint: str, method: str = 'GET', data: Optional[Dict] = None, 
                  params: Optional[Dict] = None) -> Tuple[Optional[Any], Optional[str], List[Tuple[str, str]]]:
-        """Try each URL in sequence until one works. Prioritizes cached primary URL.
+        """Try the single URL until it works.
         
         Args:
             endpoint: API endpoint to call
@@ -55,62 +63,57 @@ class PhalanxDBClassManager:
         expected_responses = []  # Track expected responses like 404 "Entry not found"
         
         # Use longer timeouts for /api/debug and /api/entries endpoints since they return larger datasets
-        for url in self._urls:
-            # Determine timeout based on endpoint and connection type
-            if endpoint in ['/api/debug', '/api/entries']:
-                timeout = 1.0 if 'localhost' in url else 1.0  # Longer timeouts for status endpoints
-            else:
-                timeout = 1.0 if 'localhost' in url else 1.0  # Default timeouts for other endpoints
+        # Determine timeout based on endpoint and connection type
+        if endpoint in ['/api/debug', '/api/entries']:
+            timeout = 1.0 if 'localhost' in self._url else 1.0  # Longer timeouts for status endpoints
+        else:
+            timeout = 1.0 if 'localhost' in self._url else 1.0  # Default timeouts for other endpoints
+            
+        try:
+            full_url = f"{self._url}{endpoint}"
+            
+            if method == 'GET':
+                response = self._session.get(full_url, headers=self.headers, params=params, timeout=timeout)
+                response_text = response.text
+                if response.status_code == 200:
+                    try:
+                        result = response.json()
+                        if result:  # Found data
+                            return result, self._url, errors
+                    except json.JSONDecodeError as je:
+                        logging.debug(f"Failed to parse JSON from URL {self._url}: {str(je)}")
+                        errors.append((self._url, f"JSON parse error: {str(je)}"))
+                elif response.status_code == 404 and response_text == '{"error":"Entry not found"}':
+                    expected_responses.append((self._url, f"HTTP {response.status_code}: {response_text}"))
+                    # Service responded correctly, but entry not found
+                    return None, None, expected_responses
+                else:
+                    errors.append((self._url, f"HTTP {response.status_code}: {response_text[:200]}"))
+            elif method == 'POST':
+                response = self._session.post(full_url, headers=self.headers, json=data, timeout=timeout)
+                response_text = response.text
+                if response.status_code in [200, 201]:  # Accept both 200 OK and 201 Created
+                    try:
+                        result = response.json()
+                        return result, self._url, errors
+                    except json.JSONDecodeError as je:
+                        # Still consider it successful even if we cannot parse JSON
+                        if response_text:
+                            return {"success": True}, self._url, errors
+                        errors.append((self._url, f"JSON parse error: {str(je)}"))
+                else:
+                    errors.append((self._url, f"HTTP {response.status_code}: {response_text[:200]}"))
+        except Exception as e:
+            errors.append((self._url, str(e)))
                 
-            try:
-                full_url = f"{url}{endpoint}"
-                
-                if method == 'GET':
-                    response = self._session.get(full_url, headers=self.headers, params=params, timeout=timeout)
-                    response_text = response.text
-                    if response.status_code == 200:
-                        try:
-                            result = response.json()
-                            if result:  # Found a working URL
-                                self._primary_url = url  # Cache this working URL
-                                return result, url, errors
-                        except json.JSONDecodeError as je:
-                            logging.debug(f"Failed to parse JSON from URL {url}: {str(je)}")
-                            errors.append((url, f"JSON parse error: {str(je)}"))
-                    elif response.status_code == 404 and response_text == '{"error":"Entry not found"}':
-                        expected_responses.append((url, f"HTTP {response.status_code}: {response_text}"))
-                        # Still set this as primary URL since the service is responding correctly
-                        self._primary_url = url
-                        return None, None, expected_responses
-                    else:
-                        errors.append((url, f"HTTP {response.status_code}: {response_text[:200]}"))
-                elif method == 'POST':
-                    response = self._session.post(full_url, headers=self.headers, json=data, timeout=timeout)
-                    response_text = response.text
-                    if response.status_code in [200, 201]:  # Accept both 200 OK and 201 Created
-                        try:
-                            result = response.json()
-                            self._primary_url = url  # Cache this working URL
-                            return result, url, errors
-                        except json.JSONDecodeError as je:
-                            # Still consider it successful even if we cannot parse JSON
-                            if response_text:
-                                self._primary_url = url
-                                return {"success": True}, url, errors
-                            errors.append((url, f"JSON parse error: {str(je)}"))
-                    else:
-                        errors.append((url, f"HTTP {response.status_code}: {response_text[:200]}"))
-            except Exception as e:
-                errors.append((url, str(e)))
-                continue
-                
-        # Only log error if all URLs failed with unexpected errors
+        # Log error if the single URL failed unexpectedly
         if errors and not expected_responses:
-            error_details = '; '.join([f"{url}: {err}" for url, err in errors])
-            logging.error(f"All PhalanxDB URLs failed - {error_details}")
+            error_details = f"{self._url}: {errors[0][1]}" # Get the first error
+            logging.error(f"PhalanxDB URL failed - {error_details}")
         elif expected_responses:
             # If we got expected responses (like 404 Entry not found), include them in the return
             return None, None, expected_responses
+            
         return None, None, errors
 
     def get_cache_status(self, hash_value: str) -> Optional[Dict[str, Any]]:
