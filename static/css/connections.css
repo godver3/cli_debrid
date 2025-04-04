@@ -53,6 +53,7 @@
     font-weight: 500;
     font-size: 1.1rem;
     color: #f4f4f4;
+    max-width: 75%;
 }
 
 .connection-status {

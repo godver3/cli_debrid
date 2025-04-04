@@ -122,18 +122,63 @@ def rank_result_key(
 
     scraper = result.get('scraper', '').lower()
 
-    size = float(result['size'])  # Extract the numeric value from the size string
-    bitrate = float(result['bitrate'])  # Extract the numeric value from the bitrate string
+    # --- Size and Bitrate Calculation ---
     
-    # Calculate percentile ranks for size and bitrate
-    all_sizes = [float(r['size']) for r in all_results]
-    all_bitrates = [float(r['bitrate']) for r in all_results]
+    # Determine if this result is a multi-episode pack
+    is_multi_pack = False
+    season_pack = 'N/A' # Default
+    num_items = 1 # Default
+    if content_type.lower() == 'episode':
+        season_pack = result.get('parsed_info', {}).get('season_episode_info', {}).get('season_pack', 'Unknown')
+        is_multi_pack = season_pack not in ['N/A', 'Unknown'] or len(result.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', [])) > 1
+        if is_multi_pack:
+            if season_pack == 'Complete':
+                # Use a fixed moderate value instead of huge count
+                num_items = 10 # Represents 'many' seasons
+            elif season_pack not in ['N/A', 'Unknown']:
+                 try:
+                    num_items = len([s for s in season_pack.split(',') if s.isdigit()])
+                 except:
+                    num_items = 1 # Fallback
+            else: # Unknown pack type (e.g., multiple episodes detected)
+                 num_items = len(result.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []))
+                 
+    # Get the appropriate size for comparison based on 'multi' flag
+    def get_comparison_size(r, is_multi_search):
+        size_val = r.get('size', 0.0) # Default to 'size' (total size usually)
+        sp_season = r.get('size_per_season')
+        r_is_pack = False
+        if r.get('media_type', content_type.lower()) == 'episode': # Check result type if available
+             r_season_pack = r.get('parsed_info', {}).get('season_episode_info', {}).get('season_pack', 'Unknown')
+             r_is_pack = r_season_pack not in ['N/A', 'Unknown'] or len(r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', [])) > 1
+             
+        if is_multi_search and r_is_pack and sp_season is not None:
+            # Use per-season size for packs when doing a multi search
+            return float(sp_season)
+        elif not is_multi_search and r_is_pack:
+             # Use total size for packs when doing a single search (packs are penalized later anyway)
+             return float(r.get('total_size_gb', size_val))
+        else:
+            # Use standard size for movies or single episodes
+             return float(r.get('total_size_gb', size_val)) # Prefer total_size_gb if available for consistency
+
+    comparison_size = get_comparison_size(result, multi)
+    bitrate = float(result.get('bitrate', 0)) # Use the already calculated overall bitrate
+
+    # Calculate percentile ranks using the appropriate size metric
+    all_comparison_sizes = [get_comparison_size(r, multi) for r in all_results]
+    all_bitrates = [float(r.get('bitrate', 0)) for r in all_results]
 
     def percentile_rank(value, all_values):
-        return sum(1 for v in all_values if v <= value) / len(all_values) if all_values else 0
+        # Filter out zero or invalid values before calculating percentile
+        valid_values = [v for v in all_values if v is not None and v > 0]
+        if not valid_values:
+            return 0 # Avoid division by zero if no valid values
+        return sum(1 for v in valid_values if v <= value) / len(valid_values) if value > 0 else 0
 
-    size_percentile = percentile_rank(size, all_sizes)
+    size_percentile = percentile_rank(comparison_size, all_comparison_sizes)
     bitrate_percentile = percentile_rank(bitrate, all_bitrates)
+    # --- End Size and Bitrate Calculation ---
 
     # Normalize scores (most to 0-10 range, resolution uses its own scale)
     normalized_similarity = title_similarity * 10
@@ -201,27 +246,25 @@ def rank_result_key(
     multi_pack_score = 0
     single_episode_score = 0
     if content_type.lower() == 'episode':
-        season_pack = result.get('season_pack', 'Unknown')
-        is_multi_pack = season_pack != 'N/A' and season_pack != 'Unknown'
+        # is_multi_pack and season_pack calculated earlier
         
+        # Check if the pack contains the queried season
+        is_queried_season_pack = False
         if is_multi_pack:
-            if season_pack == 'Complete':
-                num_items = 100  # Assign a high value for complete series
-            else:
-                num_items = len(season_pack.split(','))
-            
-            is_queried_season_pack = str(query_season) in season_pack.split(',')
-        else:
-            num_items = 1
-            is_queried_season_pack = False
+             if season_pack == 'Complete':
+                  # Assume complete pack contains the queried season
+                  is_queried_season_pack = True
+             elif season_pack not in ['N/A', 'Unknown']:
+                  is_queried_season_pack = str(query_season) in [s for s in season_pack.split(',') if s.isdigit()]
 
-        # Apply a bonus for multi-packs when requested, scaled by the number of items
-        MULTI_PACK_BONUS = 20  # Base bonus
-        multi_pack_score = (50 + (MULTI_PACK_BONUS * num_items)) if multi and is_queried_season_pack else 0
+        # Apply a FLAT bonus for multi-packs when requested and correct season found
+        FLAT_PACK_BONUS = 30 # Tunable flat bonus value
+        multi_pack_score = FLAT_PACK_BONUS if multi and is_multi_pack and is_queried_season_pack else 0
 
         # Penalize multi-packs when looking for single episodes
         SINGLE_EPISODE_PENALTY = -500
-        single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack and query_episode is not None else 0
+        # Apply penalty if not multi search AND it's a pack (use is_multi_pack flag)
+        single_episode_score = SINGLE_EPISODE_PENALTY if not multi and is_multi_pack else 0
 
     # Implement preferred filtering logic
     preferred_filter_score = 0

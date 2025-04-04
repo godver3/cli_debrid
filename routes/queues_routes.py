@@ -316,6 +316,9 @@ def queue_stream():
     def generate():
         while True:
             try:
+                # Get queue contents directly. The QueueManager updates in-memory lists
+                # during move operations, which should be reflected here.
+                # The main application loop handles periodic DB sync via queue.update().
                 queue_contents = queue_manager.get_queue_contents()
                 program_running = program_is_running()
                 program_initializing = program_is_initializing()
@@ -379,7 +382,7 @@ def queue_stream():
                 logging.error(f"Error in queue stream: {str(e)}")
                 yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
             
-            time.sleep(1)  # Check for updates every second
+            time.sleep(0.2)  # Check for updates every 0.2 seconds
     
     response = Response(generate(), mimetype='text/event-stream')
     response.headers.update({

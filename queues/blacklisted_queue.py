@@ -1,10 +1,11 @@
 import logging
 from typing import Dict, Any, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from utilities.settings import get_setting
 from config_manager import get_version_settings, load_config
 from database.database_reading import check_existing_media_item
+from database.database_writing import update_release_date_and_state
 
 class BlacklistedQueue:
     def __init__(self):
@@ -95,6 +96,60 @@ class BlacklistedQueue:
         item_id = item['id']
         item_identifier = queue_manager.generate_identifier(item)
         current_version = item.get('version')
+
+        # --- Handle failed early releases for unreleased items --- START ---
+        if item.get('early_release'):
+            release_date_str = item.get('release_date')
+            should_reset = False
+            
+            if release_date_str == 'Unknown':
+                should_reset = True
+                logging.info(f"Item {item_identifier} is early_release with Unknown release date.")
+            else:
+                try:
+                    release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                    if release_date_obj > date.today():
+                        should_reset = True
+                        logging.info(f"Item {item_identifier} is early_release with future release date {release_date_str}.")
+                except (ValueError, TypeError) as e:
+                    # If release date is invalid format, treat as Unknown for this purpose
+                    logging.warning(f"Item {item_identifier} has invalid release date format '{release_date_str}'. Treating as Unknown for early release reset check. Error: {e}")
+                    should_reset = True 
+
+            if should_reset:
+                logging.info(f"Intercepting blacklist for early_release item {item_identifier}. Setting state to Unreleased and flagging no_early_release.")
+                try:
+                    update_release_date_and_state(
+                        item_id,
+                        release_date=release_date_str, # Keep original release date
+                        state='Unreleased',          # Set state back to Unreleased
+                        airtime=item.get('airtime'),
+                        early_release=False,         # Reset the early_release flag (optional but good practice)
+                        physical_release_date=item.get('physical_release_date'),
+                        no_early_release=True        # Set the new flag
+                    )
+                    logging.info(f"Set state=Unreleased and no_early_release=True for {item_identifier}. It will be re-evaluated later without Trakt early check.")
+                except Exception as e:
+                    logging.error(f"Failed to update state/no_early_release flag for {item_identifier}: {e}")
+                    # If DB update fails, maybe proceed to blacklist? For now, return to avoid potential loop.
+                    return
+
+                # Remove the item from its current queue (e.g., Checking, Wanted)
+                current_queue_name = queue_manager.get_item_queue(item)
+                if current_queue_name and current_queue_name != 'Blacklisted':
+                    try:
+                        if hasattr(queue_manager, 'remove_item_from_specific_queue'):
+                             queue_manager.remove_item_from_specific_queue(item, current_queue_name)
+                        elif hasattr(queue_manager, 'remove_item'):
+                             queue_manager.remove_item(item)
+                        else:
+                             logging.warning(f"Could not find a suitable method on queue_manager to remove {item_identifier} from {current_queue_name}.")
+                        logging.info(f"Removed {item_identifier} from {current_queue_name} queue after failed early release handling.")
+                    except Exception as e:
+                        logging.error(f"Error removing {item_identifier} from {current_queue_name} queue after failed early release handling: {e}")
+                
+                return # Prevent standard blacklisting/fallback
+        # --- Handle failed early releases --- END ---
 
         # --- Fallback Logic Start ---
         if current_version:

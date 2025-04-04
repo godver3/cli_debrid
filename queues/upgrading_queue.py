@@ -737,10 +737,13 @@ class UpgradingQueue:
                 # Ensure the new version string is free of asterisks before storing
                 clean_version = new_values['version'].strip('*') if new_values.get('version') else None
 
+                # Store the current version before upgrading
+                upgrading_from_version = item.get('version')
+
                 # Update the item in the database with new values
                 conn.execute('''
                     UPDATE media_items
-                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?, upgrading_from_torrent_id = ?, upgraded = 1
+                    SET upgrading_from = ?, filled_by_file = ?, filled_by_magnet = ?, version = ?, last_updated = ?, state = ?, upgrading_from_torrent_id = ?, upgraded = 1, upgrading_from_version = ?
                     WHERE id = ?
                 ''', (
                     upgrading_from,
@@ -749,7 +752,8 @@ class UpgradingQueue:
                     clean_version, # Use the cleaned version
                     datetime.now(),
                     'Checking',
-                    item['filled_by_torrent_id'],
+                    item['filled_by_torrent_id'], # This is the OLD torrent ID being replaced
+                    upgrading_from_version, # Store the old version
                     item['id']
                 ))
 

@@ -463,8 +463,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         # Temporarily modify a copy of the item to represent the OLD file state for get_symlink_path
                         item_for_old_path = item.copy()
                         item_for_old_path['filled_by_file'] = old_filename
-                        # Note: We might need the *old* version string here if get_symlink_path uses it.
-                        # This assumes the version didn't change or isn't critical for the old path calculation.
+                        # Explicitly set the version to the one we are upgrading FROM
+                        old_version_str = item.get('upgrading_from_version')
+                        if old_version_str:
+                            item_for_old_path['version'] = old_version_str
+                            logging.info(f"[UPGRADE] Using old version '{old_version_str}' for old symlink path calculation.")
+                        else:
+                            logging.warning("[UPGRADE] 'upgrading_from_version' not found in item dict. Old symlink path might be incorrect if version changed.")
+                            # Keep the current version as a fallback if the old one isn't stored
 
                         old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path)
 
