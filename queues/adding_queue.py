@@ -223,6 +223,11 @@ class AddingQueue:
                 target_season = item.get('season_number')
                 target_episode = item.get('episode_number')
                 best_result_for_mapping = results[0] if results else None
+                scene_mapping_applied = False
+                primary_absolute_season = item.get('season_number')
+                primary_absolute_episode = item.get('episode_number')
+                primary_scene_season = None
+                primary_scene_episode = None
                 
                 if item.get('type') == 'episode' and best_result_for_mapping:
                     scene_mapping = best_result_for_mapping.get('xem_scene_mapping')
@@ -230,13 +235,14 @@ class AddingQueue:
                         mapped_season = scene_mapping.get('season')
                         mapped_episode = scene_mapping.get('episode')
                         if mapped_season is not None and mapped_episode is not None:
-                            logging.info(f"Using XEM mapping S{mapped_season}E{mapped_episode} for media matching (original S{item.get('season_number')}E{item.get('episode_number')}).")
+                            logging.info(f"Using XEM mapping S{mapped_season}E{mapped_episode} for primary media matching (original S{primary_absolute_season}E{primary_absolute_episode}).")
                             target_season = mapped_season
                             target_episode = mapped_episode
+                            scene_mapping_applied = True
+                            primary_scene_season = mapped_season
+                            primary_scene_episode = mapped_episode
                         else:
                             logging.warning("Found xem_scene_mapping in result, but season or episode was missing.")
-                    # else: No mapping found, target_season/episode remain original
-                # --- End XEM determination --- 
                 
                 # Create a copy of the item potentially updated with target S/E for matching
                 item_for_matching = item.copy()
@@ -293,25 +299,30 @@ class AddingQueue:
                     
                     for related in related_items:
                         related_identifier = f"{related.get('title')} S{related.get('season_number')}E{related.get('episode_number')}"
-                        # We need to pass the correct target S/E for matching related items too
-                        related_target_season = related.get('season_number')
-                        related_target_episode = related.get('episode_number')
                         
-                        # Check if the *original* torrent result had XEM mapping that might apply
-                        # (Assume related items from same torrent use same scene numbering)
-                        if best_result_for_mapping:
-                           scene_mapping = best_result_for_mapping.get('xem_scene_mapping')
-                           if scene_mapping:
-                               # Use the *scene* S/E from the mapping found for the primary item
-                               related_target_season = scene_mapping.get('season')
-                               related_target_episode = scene_mapping.get('episode')
-                               logging.debug(f"Using scene mapping S{related_target_season}E{related_target_episode} for matching related item {related_identifier}")
-                               
                         related_item_for_matching = related.copy()
-                        related_item_for_matching['season_number'] = related_target_season
-                        related_item_for_matching['episode_number'] = related_target_episode
                         
-                        # Use the modified related item for matching
+                        # --- Infer Scene Mapping for Related Items ---
+                        if scene_mapping_applied and primary_scene_season is not None and primary_scene_episode is not None:
+                            related_absolute_season = related.get('season_number')
+                            related_absolute_episode = related.get('episode_number')
+                            
+                            # Simple assumption: Offset applies within the same season
+                            if related_absolute_season == primary_absolute_season and related_absolute_episode is not None and primary_absolute_episode is not None:
+                                episode_offset = related_absolute_episode - primary_absolute_episode
+                                inferred_related_scene_episode = primary_scene_episode + episode_offset
+                                inferred_related_scene_season = primary_scene_season # Assume same scene season
+                                
+                                logging.debug(f"Inferred scene mapping S{inferred_related_scene_season}E{inferred_related_scene_episode} for related item {related_identifier} (original S{related_absolute_season}E{related_absolute_episode})")
+                                related_item_for_matching['season_number'] = inferred_related_scene_season
+                                related_item_for_matching['episode_number'] = inferred_related_scene_episode
+                            else:
+                                # Cannot infer mapping if seasons differ or episode numbers are missing
+                                # Fallback to using absolute numbers (might fail if filenames use scene numbers)
+                                logging.warning(f"Cannot infer scene mapping for related item {related_identifier} (season mismatch or missing episode). Using absolute S{related_absolute_season}E{related_absolute_episode}.")
+                        # --- End Scene Mapping Inference ---
+
+                        # Use the potentially modified related item for matching
                         related_matches = self.media_matcher.match_content(files, related_item_for_matching)
                         if related_matches:
                             # Pass resolution to related episodes

@@ -376,36 +376,64 @@ def filter_results(
                     # --- End Episode Check ---
             
             # Size calculation
-            size_gb = parse_size(result.get('size', 0))
-            if is_episode:
-                scraper = result.get('scraper', '').lower()
-                if scraper.startswith(('jackett', 'zilean')):
-                    season_pack = season_episode_info.get('season_pack', 'Unknown')
-                    if season_pack == 'N/A':
-                        size_per_episode_gb = size_gb
-                        # For single episodes, use the normal runtime
-                        total_runtime = runtime
-                    else:
-                        if season_pack == 'Complete':
-                            episode_count = total_episodes
-                        else:
-                            season_numbers = [int(s) for s in season_pack.split(',')]
-                            episode_count = sum(season_episode_counts.get(s, 0) for s in season_numbers)
-                        size_per_episode_gb = size_gb / episode_count if episode_count > 0 else size_gb
-                        # For season packs, calculate total runtime for all episodes
-                        total_runtime = runtime * episode_count if episode_count > 0 else runtime
-                    result['size'] = size_per_episode_gb
-                    # Use total runtime for the entire pack to calculate proper bitrate
-                    bitrate = calculate_bitrate(size_gb, total_runtime)
-                else:
-                    result['size'] = size_gb
-                    bitrate = calculate_bitrate(size_gb, runtime)
-            else:
-                result['size'] = size_gb
-                bitrate = calculate_bitrate(size_gb, runtime)
+            total_size_gb = parse_size(result.get('size', 0)) # Use a distinct variable for total size
+            size_gb = total_size_gb # Default size_gb to total size
+            size_per_season = None # Initialize
+            bitrate = 0 # Initialize bitrate
             
+            if is_episode:
+                season_episode_info = result.get('parsed_info', {}).get('season_episode_info', {})
+                season_pack = season_episode_info.get('season_pack', 'Unknown')
+                is_pack = season_pack not in ['N/A', 'Unknown'] or len(season_episode_info.get('episodes', [])) > 1
+                
+                # Determine episode count and runtime for bitrate calc based on pack type
+                if is_pack:
+                    pack_episode_count = 0
+                    if season_pack == 'Complete':
+                        # Use the pre-calculated total episodes across all known seasons
+                        pack_episode_count = total_episodes 
+                    elif season_pack not in ['N/A', 'Unknown']:
+                        # Sum episodes for the specific seasons in the pack
+                        try:
+                            season_numbers = [int(s) for s in season_pack.split(',') if s.isdigit()]
+                            pack_episode_count = sum(season_episode_counts.get(s, 0) for s in season_numbers)
+                            
+                            # --- Calculate size_per_season ---
+                            num_seasons = len(season_numbers)
+                            if num_seasons > 0:
+                                size_per_season = total_size_gb / num_seasons
+                            # --- End Calculate size_per_season ---
+                                
+                        except ValueError:
+                            logging.warning(f"Could not parse season numbers from season_pack '{season_pack}' for '{original_title}'")
+                            pack_episode_count = len(season_episode_info.get('episodes', [])) # Fallback
+                    else: # Unknown pack type, likely multiple episodes detected
+                         pack_episode_count = len(season_episode_info.get('episodes', []))
+
+                    # Use average runtime * number of episodes for bitrate
+                    total_pack_runtime = runtime * pack_episode_count if pack_episode_count > 0 else runtime
+                    bitrate = calculate_bitrate(total_size_gb, total_pack_runtime)
+                    
+                    # For filtering, still use total size
+                    size_gb = total_size_gb 
+
+                else: # Single episode
+                    size_gb = total_size_gb
+                    bitrate = calculate_bitrate(size_gb, runtime)
+
+                # Store the calculated values
+                result['size'] = size_gb # Store the size used for filtering (usually total size)
+                result['size_per_season'] = size_per_season # Store per-season size if applicable
+                result['total_size_gb'] = total_size_gb # Store original total size for reference
+
+            else: # Movie
+                size_gb = total_size_gb
+                bitrate = calculate_bitrate(size_gb, runtime)
+                result['size'] = size_gb # Store total size
+                result['total_size_gb'] = total_size_gb # Store original total size
+
             result['bitrate'] = bitrate
-            #logging.debug(f"Size: {result['size']:.2f}GB, Bitrate: {bitrate:.2f}Mbps")
+            #logging.debug(f"Size: {result['size']:.2f}GB (Total: {total_size_gb:.2f}GB, Per Season: {size_per_season}), Bitrate: {bitrate:.2f}Mbps")
             
             # Add to pre-size filtered results
             pre_size_filtered_results.append(result)

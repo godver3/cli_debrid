@@ -266,10 +266,10 @@
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
-            <label for="additional-enable_phalanx_db" class="settings-title">Enable Phalanx DB:</label>
-            <input type="checkbox" id="additional-enable_phalanx_db" name="Phalanx DB Settings.enable_phalanx_db"
-                   data-section="Phalanx DB Settings" data-key="enable_phalanx_db"
-                   {% if settings.get('Phalanx DB Settings', {}).get('enable_phalanx_db') %}checked{% endif %}>
+            <label for="phalanx-enable_phalanx_db" class="settings-title">Enable Phalanx DB:</label>
+            <input type="checkbox" id="phalanx-enable_phalanx_db" name="UI Settings.enable_phalanx_db"
+                   data-section="UI Settings" data-key="enable_phalanx_db"
+                   {% if settings.get('UI Settings', {}).get('enable_phalanx_db') %}checked{% endif %}>
             <p class="settings-description">Enable the Phalanx database feature for enhanced content matching.</p>
         </div>
     </div>

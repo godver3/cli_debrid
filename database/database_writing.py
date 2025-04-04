@@ -38,53 +38,73 @@ def update_year(item_id: int, year: int):
     finally:
         conn.close()
 
-def update_release_date_and_state(item_id, release_date, new_state, airtime=None, early_release=None, physical_release_date=None):
-    """Update the release date and state of a media item.
-    
-    Args:
-        item_id: The ID of the media item to update
-        release_date: The new release date
-        new_state: The new state
-        airtime: The new airtime (optional)
-        early_release: Optional flag for early release
-        physical_release_date: Optional physical release date for movies
-    """
+@retry_on_db_lock()
+def update_release_date_and_state(
+        item_id: int, 
+        release_date: str | None, 
+        state: str, 
+        airtime: str | None = None, 
+        early_release: bool | None = None, 
+        physical_release_date: str | None = None,
+        no_early_release: bool | None = None  # Add the new flag parameter
+    ):
+    """Update the release date, state, and potentially airtime, early_release, physical_release_date, and no_early_release flag for a media item."""
     conn = get_db_connection()
     try:
-        update_query = """
-            UPDATE media_items
-            SET release_date = ?, state = ?, last_updated = ?
-        """
-        params = [release_date, new_state, datetime.now()]
+        conn.execute('BEGIN TRANSACTION')
+
+        # Build the query dynamically
+        set_clauses = [
+            'release_date = ?', 
+            'state = ?',
+            'last_updated = ?'
+        ]
+        params = [release_date, state, datetime.now()]
 
         if airtime is not None:
-            update_query += ", airtime = ?"
+            set_clauses.append('airtime = ?')
             params.append(airtime)
-
+        
         if early_release is not None:
-            update_query += ", early_release = ?"
+            set_clauses.append('early_release = ?')
             params.append(early_release)
 
         if physical_release_date is not None:
-            update_query += ", physical_release_date = ?"
+            set_clauses.append('physical_release_date = ?')
             params.append(physical_release_date)
+            
+        if no_early_release is not None:
+            set_clauses.append('no_early_release = ?')
+            params.append(no_early_release)
 
-        update_query += " WHERE id = ?"
         params.append(item_id)
 
-        conn.execute(update_query, params)
+        query = f'''
+            UPDATE media_items
+            SET {', '.join(set_clauses)}
+            WHERE id = ?
+        '''
+        conn.execute(query, params)
+        
+        # Fetch the updated item to check its state
+        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+
         conn.commit()
 
-        # Get the updated item details for post-processing
-        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
         if updated_item:
             item_dict = dict(updated_item)
-            if new_state in ['Collected', 'Upgrading']:
-                handle_state_change(item_dict)
+            handle_state_change(item_dict) # Handle notifications etc based on the new state
 
-        logging.debug(f"Updated release date/state/airtime for item {item_id}")
+        logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
+        
+        # Return the updated item dictionary if found
+        return dict(updated_item) if updated_item else None
+
     except Exception as e:
-        logging.error(f"Error updating release date/state/airtime for item {item_id}: {str(e)}")
+        logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
+        conn.rollback()
+        # Return None on error
+        return None
     finally:
         conn.close()
     

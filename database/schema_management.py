@@ -200,7 +200,13 @@ def migrate_schema():
         if 'wake_count' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN wake_count INTEGER DEFAULT 0')
             logging.info("Successfully added wake_count column to media_items table.")
-        
+        if 'upgrading_from_version' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN upgrading_from_version TEXT')
+            logging.info("Successfully added upgrading_from_version column to media_items table.")
+        if 'no_early_release' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN no_early_release BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added no_early_release column to media_items table.")
+
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
         if not cursor.fetchone():
@@ -333,7 +339,9 @@ def create_tables():
                 title_aliases TEXT,
                 disable_not_wanted_check BOOLEAN DEFAULT FALSE,
                 physical_release_date DATE,
-                plex_verified BOOLEAN DEFAULT FALSE
+                plex_verified BOOLEAN DEFAULT FALSE,
+                upgrading_from_version TEXT,
+                no_early_release BOOLEAN DEFAULT FALSE
             )
         ''')
 

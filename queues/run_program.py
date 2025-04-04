@@ -116,8 +116,7 @@ class ProgramRunner:
             'task_verify_symlinked_files': 900,  # Run every 15 minutes
             'task_update_statistics_summary': 300,  # Run every 5 minutes
             'task_precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
-            'task_generate_queue_timing_report': 1800,  # Generate queue timing report every 30 minutes
-            'task_process_pending_rclone_paths': 60, # Add new task: check pending rclone paths every 60 seconds
+            'task_process_pending_rclone_paths': 10, # Add new task: check pending rclone paths every 10 seconds (was 60)
         }
         # Store original intervals for reference
         self.original_task_intervals = self.task_intervals.copy()
@@ -159,7 +158,6 @@ class ProgramRunner:
             'task_check_database_health',
             'task_update_statistics_summary',
             'task_precompute_airing_shows',
-            'task_generate_queue_timing_report',
             'task_process_pending_rclone_paths' # Enable the new task
         }
 
@@ -921,7 +919,7 @@ class ProgramRunner:
             'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
-            'task_precompute_airing_shows', 'task_generate_queue_timing_report'
+            'task_precompute_airing_shows', 'task_process_pending_rclone_paths'
         }
         # Also add content sources with intervals > 15 minutes (900 seconds)
         for task, interval in self.original_task_intervals.items():
@@ -1528,67 +1526,100 @@ class ProgramRunner:
             # <<< remove the 'if not os.path.exists...' check here
 
             updated_sections = set()  # Track which sections we've updated
-            updated_items = 0
+            updated_items = 0 # This counter seems unused in the original logic, removing its increment
             not_found_items = 0
+
+            # Ensure the tick count dictionary exists
+            if not hasattr(self, 'plex_scan_tick_counts'):
+                self.plex_scan_tick_counts = {}
 
             for item in items:
                 filled_by_title = item['filled_by_title']
                 filled_by_file = item['filled_by_file']
-                
+
                 if not filled_by_title or not filled_by_file:
                     continue
 
-                # Check if the file exists in the expected location
+                # Generate cache key and potential file paths
+                cache_key = f"{filled_by_title}:{filled_by_file}"
                 file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
                 title_without_ext = os.path.splitext(filled_by_title)[0]
                 file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
-                
-                # Check if we've already found this file before
-                cache_key = f"{filled_by_title}:{filled_by_file}"
-                if cache_key in self.file_location_cache and self.file_location_cache[cache_key] == 'exists':
-                    continue
 
-                if not os.path.exists(file_path) and not os.path.exists(file_path_no_ext):
-                    # Try to find the file anywhere under plex_file_location
-                    # from utilities.local_library_scan import find_file # REMOVED IMPORT
-                    # found_path = find_file(filled_by_file, plex_file_location) # REMOVED CALL
-                    # if found_path:
-                    #     actual_file_path = found_path
-                    #     self.file_location_cache[cache_key] = 'exists'
-                    # else:
+                # Check if the file exists on disk
+                file_found_on_disk = False
+                actual_file_path = None
+                if os.path.exists(file_path):
+                    file_found_on_disk = True
+                    actual_file_path = file_path
+                elif os.path.exists(file_path_no_ext):
+                    file_found_on_disk = True
+                    actual_file_path = file_path_no_ext
+
+                should_trigger_scan = False
+                if file_found_on_disk:
+                    # File exists, update cache and handle tick count
+                    logging.debug(f"Confirmed file exists on disk: {actual_file_path}")
+                    self.file_location_cache[cache_key] = 'exists'
+
+                    # Increment tick count
+                    current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
+                    self.plex_scan_tick_counts[cache_key] = current_tick
+
+                    # Determine if scan should be triggered (1st, 6th, 11th time, etc.)
+                    if current_tick % 5 == 1:
+                        should_trigger_scan = True
+                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Triggering Plex scan for all {len(sections)} sections.")
+                    else:
+                        should_trigger_scan = False
+                        logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger this cycle.")
+
+                else:
+                    # File not found
                     not_found_items += 1
-                    continue
+                    logging.debug(f"File not found on disk in primary locations for item {item['id']}:\n  {file_path}\n  {file_path_no_ext}")
+                    # Reset tick count if file is not found
+                    if cache_key in self.plex_scan_tick_counts:
+                        logging.debug(f"Resetting Plex scan tick count for missing file '{filled_by_file}'.")
+                        del self.plex_scan_tick_counts[cache_key]
+                    # No scan if file not found
+                    should_trigger_scan = False
+                    continue # Move to the next item
 
-                # Use the path that exists (prefer original if both exist)
-                actual_file_path = file_path if os.path.exists(file_path) else file_path_no_ext
-                logging.info(f"Found file on disk: {actual_file_path}")
-                self.file_location_cache[cache_key] = 'exists'
-                
-                # Update relevant Plex sections
-                for section in sections:
+                # Perform Plex scan only if the tick count condition is met
+                if should_trigger_scan:
+                    scan_triggered_for_item = False
+                    for section in sections:
+                        try:
+                            # Update each library location with the expected path structure
+                            for location in section.locations:
+                                # Calculate path relative to this specific library location
+                                expected_path = os.path.join(location, filled_by_title)
+                                logging.debug(f"Attempting Plex section '{section.title}' scan trigger:")
+                                logging.debug(f"  Location: {location}")
+                                logging.debug(f"  Scan Path: {expected_path}")
 
-                    try:
-                        # Update each library location with the expected path structure
-                        for location in section.locations:
-                            expected_path = os.path.join(location, filled_by_title)
-                            logging.debug(f"Updating Plex section '{section.title}' to scan:")
-                            logging.debug(f"  Location: {location}")
-                            logging.debug(f"  Expected path: {expected_path}")
-                            
-                            section.update(path=expected_path)
-                            updated_sections.add(section)
-                            break  # Only need to update each section once
-                            
-                    except Exception as e:
-                        logging.error(f"Failed to update Plex section '{section.title}': {str(e)}", exc_info=True)
+                                # Trigger update for this section using the calculated path
+                                section.update(path=expected_path)
+                                scan_triggered_for_item = True
+                                # Optimization: If a file path matches one location, we might not need
+                                # to trigger scans based on *other* locations in the same section for the *same* file.
+                                # However, the current logic triggers based on filled_by_title under *each* location.
+                                # We'll keep the original behavior of trying all locations per section.
+
+                        except Exception as e:
+                            # Construct expected_path for logging even if loop didn't run
+                            expected_path_for_log = f"location/{filled_by_title}" if not 'expected_path' in locals() else expected_path
+                            logging.error(f"Failed to trigger update scan for Plex section '{section.title}' with expected path like '{expected_path_for_log}': {str(e)}", exc_info=True)
+
+                    if scan_triggered_for_item:
+                        logging.info(f"Completed Plex scan trigger attempt in relevant sections for item {item['id']}.")
+                # No need for an else block here, skip message is logged above
 
             # Log summary of operations
-            if updated_sections:
-                logging.info("Updated Plex sections:")
-                for section in updated_sections:
-                    logging.info(f"  - {section.title}")
-            else:
-                logging.info("No Plex sections required updates")
+            processed_items_count = len(items) # Count items processed in this run
+            logging.info(f"Plex check summary: Processed {processed_items_count} items. {not_found_items} items not found on disk during this check.")
+            # Removed logging block for updated_sections as it wasn't used consistently
 
         except Exception as e:
             logging.error(f"Error during Plex library update: {str(e)}", exc_info=True)
@@ -1669,7 +1700,11 @@ class ProgramRunner:
             if task_name_lower == queue_task_lower:
                 try:
                     queue_method = getattr(self.queue_manager, queue_task)  # Use original queue task name
-                    queue_method()
+                    # Check if the method is process_checking and pass self if it is
+                    if queue_task == 'process_checking':
+                        queue_method(self) # Pass self (ProgramRunner instance)
+                    else:
+                        queue_method()
                     logging.info(f"Manually triggered queue task: {queue_task}")
                     return
                 except Exception as e:
@@ -1869,54 +1904,6 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error precomputing airing shows: {e}")
 
-    def task_generate_queue_timing_report(self):
-        """Generate and log a report of queue timing statistics"""
-        try:
-            from queues.queue_manager import QueueManager
-            queue_manager = QueueManager()
-            
-            # Generate the timing report
-            report = queue_manager.generate_queue_timing_report()
-            
-            # Log the timing statistics
-            for line in report.split('\n'):
-                logging.info(line)
-                
-            # Also generate a report of items currently in queues for a long time
-            current_items = queue_manager.get_current_queue_timing()
-            
-            # Log items that have been in a queue for more than 1 hour
-            long_waiting_items = []
-            
-            for queue_name, items in current_items.items():
-                for item in items:
-                    # Check if item has 'hours' in the time_in_queue string
-                    if 'hours' in item['time_in_queue'] or 'hour' in item['time_in_queue']:
-                        hours = float(item['time_in_queue'].split(' ')[0])
-                        if hours >= 1.0:
-                            long_waiting_items.append({
-                                'queue': queue_name, 
-                                'item_id': item['item_id'],
-                                'time': item['time_in_queue'],
-                                'entry_time': item['entry_time']
-                            })
-            
-            if long_waiting_items:
-                logging.warning(f"Found {len(long_waiting_items)} items waiting in queues for more than 1 hour:")
-                for item in long_waiting_items:
-                    # Get additional item details if possible
-                    from database.database_reading import get_media_item_by_id
-                    media_item = get_media_item_by_id(item['item_id'])
-                    item_identifier = "Unknown"
-                    if media_item:
-                        item_identifier = queue_manager.generate_identifier(media_item)
-                    
-                    logging.warning(f"  {item['queue']}: {item_identifier} (ID: {item['item_id']}) - {item['time']} since {item['entry_time']}")
-                    
-        except Exception as e:
-            logging.error(f"Error generating queue timing report: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
 
     # Method to add path received from webhook
     def add_pending_rclone_path(self, path: str):
@@ -1938,7 +1925,8 @@ class ProgramRunner:
 
         # Process one path per task run to avoid blocking the runner for too long
         try:
-            relative_path = self.pending_rclone_paths.popleft() 
+            # Peek at the path instead of removing it immediately
+            relative_path = self.pending_rclone_paths[0] 
             logging.info(f"Processing pending rclone path: {relative_path}. Remaining: {len(self.pending_rclone_paths)}")
         except IndexError:
             logging.debug("Pending rclone path queue was empty when trying to pop.")
@@ -1950,7 +1938,11 @@ class ProgramRunner:
             from routes.webhook_routes import handle_rclone_file 
 
             # Get the base path where original files are stored
-            original_files_path = get_setting('File Management', 'original_files_path')
+            if get_setting('File Management', 'file_collection_management') == 'Plex':
+                original_files_path = get_setting('Plex', 'mounted_file_location')
+            else:
+                original_files_path = get_setting('File Management', 'original_files_path')
+
             if not original_files_path:
                 logging.error("Original files path setting is missing. Cannot process rclone path.")
                 # Re-add the path to try later? Or discard? Discarding for now.
@@ -1983,7 +1975,7 @@ class ProgramRunner:
 
             # --- Retry Logic (Runs in Background Task) ---
             found = False
-            delays = [5, 30, 90] # Delays in seconds
+            delays = [1] # Delays in seconds
             attempt = 1
 
             if os.path.exists(dir_to_check):
@@ -2028,6 +2020,19 @@ class ProgramRunner:
                         result = handle_rclone_file(path_for_handler) 
                         logging.info(f"Result of handling '{path_for_handler}': {result}")
                         file_processed = True
+                        
+                        # --- Remove from queue ONLY after successful processing ---
+                        try:
+                            removed_path = self.pending_rclone_paths.popleft()
+                            if removed_path != relative_path:
+                                # This shouldn't happen if processing one at a time, but log if it does
+                                logging.warning(f"Removed path '{removed_path}' from queue, but expected '{relative_path}'. Queue state might be inconsistent.")
+                            else:
+                                logging.debug(f"Successfully processed and removed '{relative_path}' from queue.")
+                        except IndexError:
+                            logging.error("Tried to remove path from queue, but it was already empty.")
+                        # --- End removal ---
+                        
                         break # Stop after processing the target file
                     else:
                          #logging.debug(f"Skipping non-matching file in directory: {file_in_dir}")
@@ -2045,11 +2050,12 @@ class ProgramRunner:
 
         except ImportError:
              logging.error("Failed to import handle_rclone_file from routes.webhook_routes. Cannot process pending rclone path.")
-             # Re-add the path to try again later, as this might be a temporary startup issue
-             self.pending_rclone_paths.appendleft(relative_path)
+             # Item remains in the queue, just return
+             return
         except Exception as e:
             logging.error(f"Unexpected error processing pending rclone path '{relative_path}': {str(e)}", exc_info=True)
-            # Consider re-queuing based on error type? For now, discard to avoid loops.
+            # Item remains in the queue, just return
+            return
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

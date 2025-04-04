@@ -12,11 +12,53 @@ from routes.notifications import send_upgrade_failed_notification
 class ScrapingQueue:
     def __init__(self):
         self.items = []
+        # Use a set for efficient ID lookup of in-memory items
+        self._item_ids = set()
 
     def update(self):
+        """Synchronize the in-memory queue with the database state."""
         from database import get_all_media_items, get_media_item_by_id
-        self.items = [dict(row) for row in get_all_media_items(state="Scraping")]
         
+        # Fetch current items with 'Scraping' state from DB
+        db_items_raw = get_all_media_items(state="Scraping")
+        db_items_dict = {item['id']: dict(item) for item in db_items_raw}
+        db_item_ids = set(db_items_dict.keys())
+        
+        # Identify items to add (in DB but not in memory)
+        items_to_add_ids = db_item_ids - self._item_ids
+        
+        # Identify items to remove (in memory but not in DB 'Scraping' state anymore)
+        items_to_remove_ids = self._item_ids - db_item_ids
+        
+        # Remove items that are no longer in 'Scraping' state in DB
+        if items_to_remove_ids:
+            self.items = [item for item in self.items if item['id'] not in items_to_remove_ids]
+            self._item_ids -= items_to_remove_ids
+            logging.debug(f"Removed {len(items_to_remove_ids)} items from ScrapingQueue memory (state changed in DB).")
+
+        # Add items that are now in 'Scraping' state in DB but not yet in memory
+        if items_to_add_ids:
+            for item_id in items_to_add_ids:
+                # It's possible the item was added via add_item just before update ran.
+                # Double-check if it's already in memory before adding again.
+                if item_id not in self._item_ids:
+                    item_data = db_items_dict.get(item_id)
+                    if item_data:
+                        self.items.append(item_data)
+                        self._item_ids.add(item_id)
+                    else:
+                        # This case should be rare if db_items_dict is built correctly
+                        logging.warning(f"Item ID {item_id} was in db_item_ids but not found in db_items_dict during ScrapingQueue update.")
+            logging.debug(f"Added {len(items_to_add_ids)} items to ScrapingQueue memory (found in DB).")
+
+        # Optional: Update existing in-memory items with latest DB data (if needed)
+        # for i, item in enumerate(self.items):
+        #     if item['id'] in db_items_dict:
+        #         # Merge or replace with db_items_dict[item['id']] if necessary
+        #         # For now, assume items added via add_item are up-to-date enough
+        #         pass
+
+        # --- Sorting Logic (applied after synchronization) ---
         # Get the queue sort order setting
         sort_order = get_setting("Queue", "queue_sort_order", "None")
         
@@ -48,10 +90,24 @@ class ScrapingQueue:
         return self.items
 
     def add_item(self, item: Dict[str, Any]):
-        self.items.append(item)
+        """Add an item to the in-memory queue if not already present."""
+        item_id = item.get('id')
+        if item_id and item_id not in self._item_ids:
+            self.items.append(item)
+            self._item_ids.add(item_id)
+        elif not item_id:
+             logging.warning("Attempted to add item without ID to ScrapingQueue.")
+        # else: item already exists in memory
 
     def remove_item(self, item: Dict[str, Any]):
-        self.items = [i for i in self.items if i['id'] != item['id']]
+        """Remove an item from the in-memory queue."""
+        item_id = item.get('id')
+        if item_id and item_id in self._item_ids:
+            self.items = [i for i in self.items if i['id'] != item_id]
+            self._item_ids.remove(item_id)
+        elif not item_id:
+            logging.warning("Attempted to remove item without ID from ScrapingQueue.")
+        # else: item not found in memory
 
     def reset_not_wanted_check(self, item_id):
         """Reset the disable_not_wanted_check flag after scraping is complete"""
@@ -74,221 +130,264 @@ class ScrapingQueue:
         processed_count = 0
         had_error = False
         today = date.today()
-        
+        processed_an_item_this_cycle = False # Flag to indicate if we attempted processing
+
         if self.items:
-            item = self.items.pop(0)
-            item_identifier = queue_manager.generate_identifier(item)
+            # Peek at the first item instead of popping immediately
+            item_to_process = self.items[0]
+            item_id_being_processed = item_to_process['id'] # Store ID for later check
+            item_identifier = queue_manager.generate_identifier(item_to_process)
+            processed_successfully_or_moved = False # Flag to track if item was moved/handled
+
             try:
                 logging.info(f"Starting to process scraping results for {item_identifier}")
-                
+                processed_an_item_this_cycle = True # Mark that we started processing
+
                 # Check release date logic - skip for early release items
-                if not item.get('early_release', False):
-                    if item['release_date'] == 'Unknown':
+                # --- Use item_to_process instead of item throughout ---
+                if not item_to_process.get('early_release', False):
+                    if item_to_process['release_date'] == 'Unknown':
                         logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
-                        queue_manager.move_to_wanted(item, "Scraping")
+                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                        processed_successfully_or_moved = True # Handled by move
                         processed_count += 1
-                        return True  # Continue processing other items
+                        # No return here, let finally handle removal check if needed
+                    # Removed the early return True to ensure finally block runs
                 else:
                     logging.info(f"Processing early release item {item_identifier} regardless of release date")
-                    
-                try:
-                    # Only check release date for non-early release items
-                    if not item.get('early_release', False) and item['release_date'] != 'Unknown':
-                        release_date = datetime.strptime(item['release_date'], '%Y-%m-%d').date()
 
-                        # Check if version requires physical release
-                        scraping_versions = get_setting('Scraping', 'versions', {})
-                        version_settings = scraping_versions.get(item.get('version', ''), {})
-                        require_physical = version_settings.get('require_physical_release', False)
-                        physical_release_date = item.get('physical_release_date')
-                        
-                        # If physical release is required, use that date instead
-                        if require_physical and physical_release_date:
-                            try:
-                                physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
-                                if physical_date > today:
-                                    logging.info(f"Item {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
-                                    queue_manager.move_to_wanted(item, "Scraping")
-                                    processed_count += 1
-                                    return True
-                            except ValueError:
-                                logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
-                        # If physical release is required but no date available, move back to Wanted
-                        elif require_physical and not physical_release_date:
-                            logging.info(f"Item {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
-                            queue_manager.move_to_wanted(item, "Scraping")
-                            processed_count += 1
-                            return True
-                        # Otherwise check normal release timing with early_release flag
-                        elif not item.get('early_release', False) and release_date > today:
-                            logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
-                            queue_manager.move_to_wanted(item, "Scraping")
-                            processed_count += 1
-                            return True
-                except ValueError:
-                    logging.warning(f"Item {item_identifier} has an invalid release date format: {item['release_date']}. Moving back to Wanted queue.")
-                    queue_manager.move_to_wanted(item, "Scraping")
-                    processed_count += 1
-                    return True
+                # Proceed only if the item wasn't immediately moved back to Wanted
+                if not processed_successfully_or_moved:
+                    try:
+                        # Only check release date for non-early release items
+                        if not item_to_process.get('early_release', False) and item_to_process['release_date'] != 'Unknown':
+                            release_date = datetime.strptime(item_to_process['release_date'], '%Y-%m-%d').date()
 
-                # Multi-pack check logic
-                is_multi_pack = False
-                if item['type'] == 'episode':
-                    logging.info(f"Checking multi-pack eligibility for {item['title']} S{item['season_number']:02d}E{item['episode_number']:02d}")
-                    
-                    show_metadata, _ = DirectAPI.get_show_metadata(item['imdb_id'])
-                    
-                    if show_metadata and 'seasons' in show_metadata:
-                        season_str = str(item['season_number'])
-                        if season_str in show_metadata['seasons']:
-                            season_data = show_metadata['seasons'][season_str]
-                            if 'episodes' in season_data:
-                                # Check if this is the season finale
-                                total_episodes = len(season_data['episodes'])
-                                is_finale = item['episode_number'] == total_episodes
-                                if is_finale:
-                                    logging.info(f"Episode {item['episode_number']} is the season finale - skipping multi-pack search")
-                                    is_multi_pack = False
-                                else:
-                                    # First pass - log all episode dates
-                                    logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
-                                    sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
-                                    for ep_num, ep_data in sorted_episodes:
-                                        first_aired = ep_data.get('first_aired', 'unknown')
-                                        if first_aired and first_aired != 'unknown':
-                                            try:
-                                                # Parse ISO 8601 datetime and convert to date
-                                                air_date = datetime.strptime(first_aired.split('T')[0], '%Y-%m-%d').date()
-                                                status = "future" if air_date > today else "aired"
-                                                logging.info(f"  Episode {ep_num}: {air_date} ({status})")
-                                            except (ValueError, TypeError):
-                                                logging.info(f"  Episode {ep_num}: {first_aired} (invalid format)")
-                                        else:
-                                            logging.info(f"  Episode {ep_num}: unknown air date")
+                            # Check if version requires physical release
+                            scraping_versions = get_setting('Scraping', 'versions', {})
+                            version_settings = scraping_versions.get(item_to_process.get('version', ''), {})
+                            require_physical = version_settings.get('require_physical_release', False)
+                            physical_release_date = item_to_process.get('physical_release_date')
 
-                                    # Check for any unaired episodes
-                                    has_unaired_episodes = False
-                                    for ep_data in season_data['episodes'].values():
-                                        if 'first_aired' not in ep_data or not ep_data['first_aired']:
-                                            logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has unknown air date")
-                                            has_unaired_episodes = True
-                                            break
-                                        try:
-                                            air_date = datetime.strptime(ep_data['first_aired'].split('T')[0], '%Y-%m-%d').date()
-                                            if air_date > today:
-                                                has_unaired_episodes = True
-                                                logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} hasn't aired yet (releases {air_date})")
-                                                break
-                                        except (ValueError, TypeError):
-                                            logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has invalid air date format")
-                                            has_unaired_episodes = True
-                                            break
+                            # If physical release is required, use that date instead
+                            if require_physical and physical_release_date:
+                                try:
+                                    physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
+                                    if physical_date > today:
+                                        logging.info(f"Item {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
+                                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                        processed_successfully_or_moved = True
+                                        processed_count += 1
+                                        # Removed return
+                                except ValueError:
+                                    logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
+                            # If physical release is required but no date available, move back to Wanted
+                            elif require_physical and not physical_release_date:
+                                logging.info(f"Item {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
+                                queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                processed_successfully_or_moved = True
+                                processed_count += 1
+                                # Removed return
+                            # Otherwise check normal release timing with early_release flag
+                            elif not item_to_process.get('early_release', False) and release_date > today:
+                                logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
+                                queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                processed_successfully_or_moved = True
+                                processed_count += 1
+                                # Removed return
+                    except ValueError:
+                        logging.warning(f"Item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Moving back to Wanted queue.")
+                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                        processed_successfully_or_moved = True
+                        processed_count += 1
+                        # Removed return
 
-                                    # Enable multi-pack only if all episodes have aired
-                                    if not has_unaired_episodes:
-                                        is_multi_pack = True
-                                        logging.info("All episodes have aired - enabling multi-pack")
+                # Proceed only if the item wasn't moved back to Wanted due to release date
+                if not processed_successfully_or_moved:
+                    # Multi-pack check logic
+                    is_multi_pack = False
+                    if item_to_process['type'] == 'episode':
+                        logging.info(f"Checking multi-pack eligibility for {item_to_process['title']} S{item_to_process['season_number']:02d}E{item_to_process['episode_number']:02d}")
+
+                        show_metadata, _ = DirectAPI.get_show_metadata(item_to_process['imdb_id'])
+
+                        if show_metadata and 'seasons' in show_metadata:
+                            season_str = str(item_to_process['season_number'])
+                            if season_str in show_metadata['seasons']:
+                                season_data = show_metadata['seasons'][season_str]
+                                if 'episodes' in season_data:
+                                    # Check if this is the season finale
+                                    total_episodes = len(season_data['episodes'])
+                                    is_finale = item_to_process['episode_number'] == total_episodes
+                                    if is_finale:
+                                        logging.info(f"Episode {item_to_process['episode_number']} is the season finale - skipping multi-pack search")
+                                        is_multi_pack = False
                                     else:
-                                        logging.info("Some episodes haven't aired yet - skipping multi-pack")
+                                        # First pass - log all episode dates
+                                        logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
+                                        sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
+                                        for ep_num, ep_data in sorted_episodes:
+                                            first_aired = ep_data.get('first_aired', 'unknown')
+                                            if first_aired and first_aired != 'unknown':
+                                                try:
+                                                    # Parse ISO 8601 datetime and convert to date
+                                                    air_date = datetime.strptime(first_aired.split('T')[0], '%Y-%m-%d').date()
+                                                    status = "future" if air_date > today else "aired"
+                                                    logging.info(f"  Episode {ep_num}: {air_date} ({status})")
+                                                except (ValueError, TypeError):
+                                                    logging.info(f"  Episode {ep_num}: {first_aired} (invalid format)")
+                                            else:
+                                                logging.info(f"  Episode {ep_num}: unknown air date")
+
+                                        # Check for any unaired episodes
+                                        has_unaired_episodes = False
+                                        for ep_data in season_data['episodes'].values():
+                                            if 'first_aired' not in ep_data or not ep_data['first_aired']:
+                                                logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has unknown air date")
+                                                has_unaired_episodes = True
+                                                break
+                                            try:
+                                                air_date = datetime.strptime(ep_data['first_aired'].split('T')[0], '%Y-%m-%d').date()
+                                                if air_date > today:
+                                                    has_unaired_episodes = True
+                                                    logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} hasn't aired yet (releases {air_date})")
+                                                    break
+                                            except (ValueError, TypeError):
+                                                logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has invalid air date format")
+                                                has_unaired_episodes = True
+                                                break
+
+                                        # Enable multi-pack only if all episodes have aired
+                                        if not has_unaired_episodes:
+                                            is_multi_pack = True
+                                            logging.info("All episodes have aired - enabling multi-pack")
+                                        else:
+                                            logging.info("Some episodes haven't aired yet - skipping multi-pack")
+                                else:
+                                    logging.info("No episodes data found in season metadata")
                             else:
-                                logging.info("No episodes data found in season metadata")
+                                logging.info(f"Season {season_str} not found in show metadata")
                         else:
-                            logging.info(f"Season {season_str} not found in show metadata")
+                            logging.info("No seasons data found in show metadata")
+
+                    logging.info(f"Scraping for {item_identifier}")
+                    results, filtered_out_results = self.scrape_with_fallback(item_to_process, is_multi_pack, queue_manager)
+
+                    # Ensure both results and filtered_out_results are lists
+                    results = results if results is not None else []
+                    filtered_out_results = filtered_out_results if filtered_out_results is not None else []
+
+                    if not results:
+                        logging.warning(f"No results found for {item_identifier} after fallback.")
+                        self.handle_no_results(item_to_process, queue_manager) # Calls move internally
+                        processed_successfully_or_moved = True # Handled by handle_no_results
+                        processed_count += 1
+                        # Removed return
                     else:
-                        logging.info("No seasons data found in show metadata")
-
-                logging.info(f"Scraping for {item_identifier}")
-                results, filtered_out_results = self.scrape_with_fallback(item, is_multi_pack, queue_manager)
-                
-                # Ensure both results and filtered_out_results are lists
-                results = results if results is not None else []
-                filtered_out_results = filtered_out_results if filtered_out_results is not None else []
-                
-                if not results:
-                    logging.warning(f"No results found for {item_identifier} after fallback.")
-                    self.handle_no_results(item, queue_manager)
-                    processed_count += 1
-                    return True
-
-                # Filter and process results
-                filtered_results = []
-                for result in results:
-                    if not item.get('disable_not_wanted_check'):
-                        if is_magnet_not_wanted(result['magnet']):
-                            continue
-                        if is_url_not_wanted(result['magnet']):
-                            continue
-                    filtered_results.append(result)
-                
-                if not filtered_results:
-                    logging.warning(f"All results filtered out for {item_identifier}. Retrying individual scraping.")
-                    individual_results, individual_filtered_out = self.scrape_with_fallback(item, False, queue_manager)
-                    logging.info(f"Individual scraping returned {len(individual_results)} results")
-                    
-                    filtered_individual_results = []
-                    for result in individual_results:
-                        if not item.get('disable_not_wanted_check'):
-                            if is_magnet_not_wanted(result['magnet']):
-                                continue
-                            if is_url_not_wanted(result['magnet']):
-                                continue
-                        filtered_individual_results.append(result)
-                    
-                    if not filtered_individual_results and item['type'] == 'episode':
-                        # Final fallback - try multi-pack even if not all episodes have aired
-                        logging.info(f"No individual episode results, trying final multi-pack fallback for {item_identifier}")
-                        fallback_results, fallback_filtered_out = self.scrape_with_fallback(item, True, queue_manager)
-                        
-                        filtered_fallback_results = []
-                        for result in fallback_results:
-                            if not item.get('disable_not_wanted_check'):
+                        # Filter and process results
+                        filtered_results = []
+                        for result in results:
+                            if not item_to_process.get('disable_not_wanted_check'):
                                 if is_magnet_not_wanted(result['magnet']):
                                     continue
                                 if is_url_not_wanted(result['magnet']):
                                     continue
-                            filtered_fallback_results.append(result)
-                        
-                        if filtered_fallback_results:
-                            logging.info(f"Found {len(filtered_fallback_results)} results in multi-pack fallback")
-                            filtered_individual_results = filtered_fallback_results
-                    
-                    if not filtered_individual_results:
-                        logging.warning(f"No valid results after individual scraping for {item_identifier}. Moving to Sleeping.")
-                        queue_manager.move_to_sleeping(item, "Scraping")
-                        self.reset_not_wanted_check(item['id'])
-                        processed_count += 1
-                        return True
-                    filtered_results = filtered_individual_results
+                            filtered_results.append(result)
 
-                if filtered_results:
-                    best_result = filtered_results[0]
-                    logging.info(f"Best result for {item_identifier}: {best_result['title']}")
-                    
-                    if get_setting("Debug", "enable_reverse_order_scraping", default=False):
-                        filtered_results.reverse()
-                    
-                    logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
-                    try:
-                        queue_manager.move_to_adding(item, "Scraping", best_result['title'], filtered_results)
-                        self.reset_not_wanted_check(item['id'])
-                    except Exception as e:
-                        logging.error(f"Failed to move {item_identifier} to Adding queue: {str(e)}", exc_info=True)
-                        had_error = True
-                else:
-                    logging.info(f"No valid results for {item_identifier}, moving to Sleeping")
-                    queue_manager.move_to_sleeping(item, "Scraping")
-                    self.reset_not_wanted_check(item['id'])
-                
-                processed_count += 1
-                
+                        if not filtered_results:
+                            logging.warning(f"All results filtered out for {item_identifier}. Retrying individual scraping.")
+                            individual_results, individual_filtered_out = self.scrape_with_fallback(item_to_process, False, queue_manager)
+                            logging.info(f"Individual scraping returned {len(individual_results)} results")
+
+                            filtered_individual_results = []
+                            for result in individual_results:
+                                if not item_to_process.get('disable_not_wanted_check'):
+                                    if is_magnet_not_wanted(result['magnet']):
+                                        continue
+                                    if is_url_not_wanted(result['magnet']):
+                                        continue
+                                filtered_individual_results.append(result)
+
+                            if not filtered_individual_results and item_to_process['type'] == 'episode':
+                                # Final fallback - try multi-pack even if not all episodes have aired
+                                logging.info(f"No individual episode results, trying final multi-pack fallback for {item_identifier}")
+                                fallback_results, fallback_filtered_out = self.scrape_with_fallback(item_to_process, True, queue_manager)
+
+                                filtered_fallback_results = []
+                                for result in fallback_results:
+                                    if not item_to_process.get('disable_not_wanted_check'):
+                                        if is_magnet_not_wanted(result['magnet']):
+                                            continue
+                                        if is_url_not_wanted(result['magnet']):
+                                            continue
+                                    filtered_fallback_results.append(result)
+
+                                if filtered_fallback_results:
+                                    logging.info(f"Found {len(filtered_fallback_results)} results in multi-pack fallback")
+                                    filtered_individual_results = filtered_fallback_results
+
+                            if not filtered_individual_results:
+                                logging.warning(f"No valid results after individual scraping for {item_identifier}. Moving to Sleeping.")
+                                queue_manager.move_to_sleeping(item_to_process, "Scraping")
+                                self.reset_not_wanted_check(item_to_process['id'])
+                                processed_successfully_or_moved = True
+                                processed_count += 1
+                                # Removed return
+                            else:
+                                filtered_results = filtered_individual_results
+
+                        if filtered_results and not processed_successfully_or_moved: # Check flag again
+                            best_result = filtered_results[0]
+                            logging.info(f"Best result for {item_identifier}: {best_result['title']}")
+
+                            if get_setting("Debug", "enable_reverse_order_scraping", default=False):
+                                filtered_results.reverse()
+
+                            logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
+                            try:
+                                queue_manager.move_to_adding(item_to_process, "Scraping", best_result['title'], filtered_results)
+                                self.reset_not_wanted_check(item_to_process['id'])
+                                processed_successfully_or_moved = True
+                            except Exception as e:
+                                logging.error(f"Failed to move {item_identifier} to Adding queue: {str(e)}", exc_info=True)
+                                had_error = True # Keep track of errors
+                                # Don't set processed_successfully_or_moved = True on error
+                        elif not processed_successfully_or_moved: # If still not handled (e.g., filtered_results became empty)
+                            logging.info(f"No valid results for {item_identifier} after all checks, moving to Sleeping")
+                            queue_manager.move_to_sleeping(item_to_process, "Scraping")
+                            self.reset_not_wanted_check(item_to_process['id'])
+                            processed_successfully_or_moved = True
+
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
-                queue_manager.move_to_sleeping(item, "Scraping")
+                try:
+                    # Attempt to move to sleeping on error
+                    queue_manager.move_to_sleeping(item_to_process, "Scraping")
+                    processed_successfully_or_moved = True # Mark as handled (moved to sleeping)
+                except Exception as move_err:
+                    logging.error(f"Failed to move item {item_identifier} to sleeping after error: {move_err}")
+                    # If move fails, processed_successfully_or_moved remains False
                 had_error = True
-                processed_count += 1
+                # Don't increment processed_count here, let the main logic do it if needed
 
-        # Return True if there are more items to process or if we processed something
-        return len(self.items) > 0 or processed_count > 0
+            finally:
+                # Check if the item we processed is *still* at the front of the list.
+                # This means it wasn't successfully moved by any of the processing steps or error handling.
+                if not processed_successfully_or_moved:
+                    # Double check it's the same item we started with
+                    if self.items and self.items[0]['id'] == item_id_being_processed:
+                        logging.warning(f"Item {item_identifier} completed processing cycle in ScrapingQueue without being moved. Removing explicitly.")
+                        self.remove_item(item_to_process) # Remove the item we peeked at
+                    elif not self.items or self.items[0]['id'] != item_id_being_processed:
+                         logging.warning(f"Item {item_identifier} was expected at index 0 for removal but wasn't found (likely removed concurrently or list empty).")
+
+                # Increment processed count if we actually started processing this item
+                if processed_an_item_this_cycle:
+                    processed_count += 1
+
+        # Return True if there are more items potentially left to process in the queue
+        # Or if we actually processed an item in this call (even if it resulted in removal)
+        return len(self.items) > 0 or processed_an_item_this_cycle
 
     def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False):
         item_identifier = queue_manager.generate_identifier(item)

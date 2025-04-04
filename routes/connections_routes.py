@@ -200,10 +200,10 @@ def check_plex_connection():
 def check_mounted_files_connection():
     """Check if mounted files location is accessible."""
     # Try original_files_path first, then fall back to Plex mounted_file_location
-    mount_path = get_setting('File Management', 'original_files_path')
-    source = 'File Management'
-    
-    if not mount_path:
+    if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+        mount_path = get_setting('File Management', 'original_files_path')
+        source = 'File Management'
+    else:
         mount_path = get_setting('Plex', 'mounted_file_location')
         source = 'Plex'
     

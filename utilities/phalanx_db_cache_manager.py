@@ -65,7 +65,7 @@ class PhalanxDBClassManager:
         # Use longer timeouts for /api/debug and /api/entries endpoints since they return larger datasets
         # Determine timeout based on endpoint and connection type
         if endpoint in ['/api/debug', '/api/entries']:
-            timeout = 1.0 if 'localhost' in self._url else 1.0  # Longer timeouts for status endpoints
+            timeout = 5.0 if 'localhost' in self._url else 5.0  # Increased timeouts for status endpoints
         else:
             timeout = 1.0 if 'localhost' in self._url else 1.0  # Default timeouts for other endpoints
             

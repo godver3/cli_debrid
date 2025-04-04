@@ -370,17 +370,6 @@ export function updateSettings() {
         console.error('Scrapers tab not found!');
     }
 
-    // ---- Transpose Phalanx DB Setting ----
-    if (settingsData['Phalanx DB Settings'] && settingsData['Phalanx DB Settings'].hasOwnProperty('enable_phalanx_db')) {
-        if (!settingsData['UI Settings']) {
-            settingsData['UI Settings'] = {};
-        }
-        settingsData['UI Settings']['enable_phalanx_db'] = settingsData['Phalanx DB Settings']['enable_phalanx_db'];
-        delete settingsData['Phalanx DB Settings'];
-        console.log("Transposed enable_phalanx_db setting back to UI Settings.");
-    }
-    // ---- End Transpose ----
-
     // Remove any scrapers that are not actual scrapers
     const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
