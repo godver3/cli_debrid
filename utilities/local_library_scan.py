@@ -11,6 +11,7 @@ import time
 from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
+from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -25,6 +26,17 @@ def sanitize_filename(filename: str) -> str:
 def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     try:
+        # --- BEGIN Enhanced Logging ---
+        item_title_log = item.get('title', '[Unknown Title]')
+        item_type_log = item.get('type', '[Unknown Type]')
+        item_season_log = item.get('season_number', '[Unknown Season]')
+        item_episode_log = item.get('episode_number', '[Unknown Episode]')
+        item_version_log = item.get('version', '[Unknown Version]')
+        logging.info(f"[SymlinkPath] Generating path for: Title='{item_title_log}', Type={item_type_log}, S={item_season_log}, E={item_episode_log}, Version='{item_version_log}'")
+        logging.debug(f"[SymlinkPath] Full item data received: {item}")
+        logging.debug(f"[SymlinkPath] Original file received: {original_file}")
+        # --- END Enhanced Logging ---
+        
         logging.debug(f"get_symlink_path received item with filename_real_path: {item.get('filename_real_path')}")
         logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}")
         
@@ -160,12 +172,15 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
             # Check for anime in any genre
             is_anime = any('anime' in genre.lower() for genre in genres)
             
+            # --- BEGIN Logging for AniDB Call --- 
+            anidb_metadata_used = False
             if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime:
-                logging.debug(f"Checking for anime metadata for {item.get('title')}")
+                logging.info(f"[SymlinkPath] Anime detected and Jikan renaming enabled. Attempting to get Jikan metadata for '{item.get('title')}' S{episode_vars.get('season_number')}E{episode_vars.get('episode_number')}")
                 from utilities.anidb_functions import get_anidb_metadata_for_item
                 anime_metadata = get_anidb_metadata_for_item(item)
                 if anime_metadata:
-                    logging.debug(f"Using anime metadata for formatting: {anime_metadata}")
+                    logging.info(f"[SymlinkPath] Successfully got Jikan metadata: {anime_metadata}")
+                    anidb_metadata_used = True
                     # Update only the episode-specific variables with anime metadata
                     episode_vars.update({
                         'season_number': int(anime_metadata.get('season_number', episode_vars['season_number'])),
@@ -177,6 +192,11 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
                         template_vars['title'] = anime_metadata['title']
                     if anime_metadata.get('year'):
                         template_vars['year'] = anime_metadata['year']
+                else:
+                    logging.warning(f"[SymlinkPath] Failed to get Jikan metadata for '{item.get('title')}'. Using original item data.")
+            else:
+                logging.debug(f"[SymlinkPath] Jikan renaming not used. Is Anime: {is_anime}, Setting Enabled: {get_setting('Debug', 'anime_renaming_using_anidb', False)}")
+            # --- END Logging for AniDB Call ---
             
             template_vars.update(episode_vars)
             
@@ -188,6 +208,8 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         path_parts = template.split('/')
         
         # Format and sanitize each part of the path
+        logging.debug(f"[SymlinkPath] Using template: '{template}'")
+        logging.debug(f"[SymlinkPath] Using template variables: {template_vars}")
         for i, part in enumerate(path_parts):
             formatted_part = part.format(**template_vars)
             sanitized_part = sanitize_filename(formatted_part)
@@ -231,6 +253,8 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         base_path = os.path.join(dir_path, os.path.splitext(final_filename)[0])
         full_path = f"{base_path}{extension}"
         
+        logging.info(f"[SymlinkPath] Generated path: {full_path}") # Log the final generated path
+        
         # If the path exists, log it and return the path anyway
         if os.path.exists(full_path):
             logging.info(f"Symlink path already exists: {full_path}")
@@ -238,7 +262,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         return full_path
         
     except Exception as e:
-        logging.error(f"Error getting symlink path: {str(e)}")
+        logging.error(f"[SymlinkPath] Error generating symlink path for item {item.get('id', '')}: {str(e)}", exc_info=True)
         return None
 
 def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) -> bool:
@@ -272,7 +296,6 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) 
         # Add to verification queue if media_item_id is provided and library type is Symlinked/Local
         if media_item_id and get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
             try:
-                from database.symlink_verification import add_symlinked_file_for_verification
                 add_symlinked_file_for_verification(media_item_id, dest_path)
                 logging.info(f"Added file to verification queue: {dest_path}")
             except Exception as e:
@@ -478,6 +501,9 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             try:
                                 os.unlink(old_dest)
                                 logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+                                # Add the path to the removal verification queue with titles
+                                episode_title_for_removal = item.get('episode_title') if item.get('type') == 'episode' else None
+                                add_path_for_removal_verification(old_dest, item['title'], episode_title_for_removal)
                                 # Wait for media server to detect the removed symlink
                                 time.sleep(1)
 

@@ -496,6 +496,35 @@
         display: flex;
         justify-content: center;
     }
+
+    /* DB Status Pip Styles */
+    .poster-container {
+        position: relative; /* Ensure the container is positioned for the absolute pip */
+    }
+    
+    .db-status-pip {
+        position: absolute;
+        top: 8px; /* Adjust as needed */
+        right: 8px; /* Adjust as needed */
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1px solid rgba(0, 0, 0, 0.5); /* Optional border */
+        z-index: 10; /* Ensure it's above the poster image/overlay */
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .db-status-collected {
+        background-color: #4CAF50; /* Green */
+    }
+    
+    .db-status-blacklisted {
+        background-color: #f44336; /* Red */
+    }
+    
+    .db-status-processing {
+        background-color: #f39c12; /* Yellow/Orange */
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" onsubmit="return false;">

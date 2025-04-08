@@ -218,6 +218,11 @@ SETTINGS_SCHEMA = {
             "default": "None",
             "choices": ["None", "Movies First", "Episodes First"]
         },
+        "sort_by_release_date_desc": {
+            "type": "boolean",
+            "description": "Apply secondary sorting by release date (newest first) after primary sort (content source/type). Items with unknown dates appear last.",
+            "default": False
+        },
         "content_source_priority": {
             "type": "string",
             "description": "Priority order for content sources in the scraping queue (comma-separated list). Content sources not listed will be processed last.",
@@ -242,6 +247,23 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Number of days after which to automatically remove blacklisted items for a re-scrape",
             "default": "30"
+        },
+        "enable_pause_schedule": {
+            "type": "boolean",
+            "description": "Enable pausing the queue during a scheduled time frame",
+            "default": False
+        },
+        "pause_start_time": {
+            "type": "string",
+            "description": "Start time for scheduled queue pause (HH:MM format)",
+            "default": "00:00",
+            "validate": "time"  # Assuming a validation function for time exists or will be added
+        },
+        "pause_end_time": {
+            "type": "string",
+            "description": "End time for scheduled queue pause (HH:MM format)",
+            "default": "00:00",
+            "validate": "time"  # Assuming a validation function for time exists or will be added
         }
     },
     "Scraping": {

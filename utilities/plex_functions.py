@@ -3,14 +3,17 @@ import aiohttp
 import logging
 from utilities.settings import get_setting
 import time
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple, Optional
 import ast
 from metadata.metadata import get_metadata, get_release_date
 import plexapi.server
 import plexapi.exceptions
+import plexapi.library
 import os
+from pathlib import Path
 from cli_battery.app.direct_api import DirectAPI
 from plexapi.server import PlexServer
+from plexapi.library import LibrarySection
 from database.database_reading import get_media_item_by_id
 import requests
 
@@ -935,7 +938,7 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
 def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str = None) -> bool:
     """
     Remove a symlinked file from Plex without touching the symlink itself.
-    This function assumes the symlink has already been or will be handled elsewhere.
+    Verifies removal of the specific media part.
     
     Args:
         item_title (str): The title of the show or movie
@@ -943,12 +946,17 @@ def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str
         episode_title (str, optional): The episode title for TV shows
         
     Returns:
-        bool: True if successfully removed from Plex, False otherwise
+        bool: True if the specific media part was successfully removed from Plex, False otherwise
     """
     max_retries = 3
     retry_delay = 2  # seconds
     
     for attempt in range(max_retries):
+        target_media_id_to_remove = None
+        target_item_rating_key = None
+        target_item_type = None # 'movie' or 'episode'
+        plex = None # Initialize plex to None
+        
         try:
             if attempt > 0:
                 logger.info(f"Retry attempt {attempt + 1}/{max_retries} for {item_title} - {episode_title}")
@@ -970,157 +978,210 @@ def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str
             
             # Get all library sections
             sections = plex.library.sections()
-            file_deleted = False
+            item_found_in_plex = False
             
             for section in sections:
+                if item_found_in_plex: break # Optimization: Stop searching sections if found
                 try:
                     if section.type == 'show' and episode_title:
-                        # For TV shows, we need to find the specific episode
+                        # For TV shows, find the specific episode
                         shows = section.search(title=item_title)
-                        
                         for show in shows:
+                            if item_found_in_plex: break
                             episodes = show.episodes()
                             for episode in episodes:
+                                if item_found_in_plex: break
                                 if episode.title == episode_title:
-                                    logger.info(f"Found matching episode: {episode.title}")
-                                    logger.info(f"Episode rating key: {episode.ratingKey}")
-                                    
-                                    # Step 1: Unmatch the episode
-                                    try:
-                                        url = f"{plex_url}/library/metadata/{episode.ratingKey}/unmatch"
-                                        headers = {'X-Plex-Token': plex_token}
-                                        response = requests.put(url, headers=headers)
-                                        logger.info(f"Unmatch response: {response.status_code}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to unmatch episode: {str(e)}")
-                                    
-                                    # Step 2: Try to delete the media directly
+                                    logger.debug(f"Found matching episode: {episode.title}")
                                     if hasattr(episode, 'media'):
                                         for media in episode.media:
-                                            try:
-                                                url = f"{plex_url}/library/metadata/{episode.ratingKey}/media/{media.id}"
-                                                headers = {'X-Plex-Token': plex_token}
-                                                response = requests.delete(url, headers=headers)
-                                                logger.info(f"Delete media response: {response.status_code}")
-                                            except Exception as e:
-                                                logger.error(f"Failed to delete media: {str(e)}")
+                                            if item_found_in_plex: break
+                                            for part in media.parts:
+                                                # Compare basenames for robustness
+                                                if os.path.basename(part.file).lower() == os.path.basename(item_path).lower():
+                                                    logger.info(f"Found media part matching '{item_path}' for episode '{episode.title}' (Media ID: {media.id})")
+                                                    target_media_id_to_remove = media.id
+                                                    target_item_rating_key = episode.ratingKey
+                                                    target_item_type = 'episode'
+                                                    item_found_in_plex = True
+                                                    break # Found the part, stop checking parts/media/episodes/shows
                                     
-                                    # Step 3: Empty trash for the section
-                                    try:
-                                        url = f"{plex_url}/library/sections/{section.key}/emptyTrash"
-                                        headers = {'X-Plex-Token': plex_token}
-                                        response = requests.put(url, headers=headers)
-                                        logger.info(f"Empty trash response: {response.status_code}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to empty trash: {str(e)}")
-                                    
-                                    # Step 4: Analyze the section
-                                    try:
-                                        section.analyze()
-                                        logger.info(f"Triggered analysis on section: {section.title}")
-                                    except Exception as e:
-                                        logger.error(f"Failed to analyze section: {str(e)}")
-                                    
-                                    # Step 5: Refresh the show
-                                    try:
-                                        show.refresh()
-                                        logger.info(f"Triggered refresh on show: {show.title}")
-                                        
-                                        # Step 6: Verify if episode still exists
-                                        time.sleep(2)  # Give Plex a moment to process
-                                        try:
-                                            episode.reload()
-                                            # If we can still load the episode, continue to next retry
-                                            logger.warning("Episode still exists in Plex, will retry if attempts remain")
-                                            continue
-                                        except:
-                                            # If we can't load the episode, it was successfully removed
-                                            logger.info("Successfully removed episode from Plex")
-                                            return True
-                                            
-                                    except Exception as e:
-                                        logger.error(f"Failed to refresh show: {str(e)}")
-                                        continue
                     elif section.type == 'movie' and not episode_title:
                         # For movies
                         items = section.search(title=item_title)
-                        
                         for item in items:
-                            logger.info(f"Checking movie: {item.title}")
+                            if item_found_in_plex: break
+                            logger.debug(f"Checking movie: {item.title}")
                             if hasattr(item, 'media'):
                                 for media in item.media:
+                                    if item_found_in_plex: break
                                     for part in media.parts:
-                                        logger.info(f"Checking file: {part.file}")
+                                        # Compare basenames
                                         if os.path.basename(part.file).lower() == os.path.basename(item_path).lower():
-                                            logger.info(f"Found matching movie: {item.title}")
-                                            logger.info(f"Movie rating key: {item.ratingKey}")
+                                            logger.info(f"Found media part matching '{item_path}' for movie '{item.title}' (Media ID: {media.id})")
+                                            target_media_id_to_remove = media.id
+                                            target_item_rating_key = item.ratingKey
+                                            target_item_type = 'movie'
+                                            item_found_in_plex = True
+                                            break # Found the part, stop checking parts/media/items
                                             
-                                            # Step 1: Unmatch the movie
-                                            try:
-                                                url = f"{plex_url}/library/metadata/{item.ratingKey}/unmatch"
-                                                headers = {'X-Plex-Token': plex_token}
-                                                response = requests.put(url, headers=headers)
-                                                logger.info(f"Unmatch response: {response.status_code}")
-                                            except Exception as e:
-                                                logger.error(f"Failed to unmatch movie: {str(e)}")
-                                            
-                                            # Step 2: Try to delete the media directly
-                                            try:
-                                                url = f"{plex_url}/library/metadata/{item.ratingKey}/media/{media.id}"
-                                                headers = {'X-Plex-Token': plex_token}
-                                                response = requests.delete(url, headers=headers)
-                                                logger.info(f"Delete media response: {response.status_code}")
-                                            except Exception as e:
-                                                logger.error(f"Failed to delete media: {str(e)}")
-                                            
-                                            # Step 3: Empty trash for the section
-                                            try:
-                                                url = f"{plex_url}/library/sections/{section.key}/emptyTrash"
-                                                headers = {'X-Plex-Token': plex_token}
-                                                response = requests.put(url, headers=headers)
-                                                logger.info(f"Empty trash response: {response.status_code}")
-                                            except Exception as e:
-                                                logger.error(f"Failed to empty trash: {str(e)}")
-                                            
-                                            # Step 4: Analyze the section
-                                            try:
-                                                section.analyze()
-                                                logger.info(f"Triggered analysis on section: {section.title}")
-                                            except Exception as e:
-                                                logger.error(f"Failed to analyze section: {str(e)}")
-                                            
-                                            # Step 5: Verify if movie still exists
-                                            time.sleep(2)  # Give Plex a moment to process
-                                            try:
-                                                item.reload()
-                                                # If we can still load the movie, continue to next retry
-                                                logger.warning("Movie still exists in Plex, will retry if attempts remain")
-                                                continue
-                                            except:
-                                                # If we can't load the movie, it was successfully removed
-                                                logger.info("Successfully removed movie from Plex")
-                                                return True
-                                                
                 except Exception as e:
                     logger.error(f"Error processing section {section.title}: {str(e)}")
                     continue
             
-            if not file_deleted:
-                logger.warning(f"No matching {'episode' if episode_title else 'movie'} found in any Plex library section")
-                continue  # Try next attempt if available
+            # --- If the target media part was found, attempt removal --- 
+            if item_found_in_plex and target_media_id_to_remove and target_item_rating_key:
+                logger.info(f"Attempting removal steps for item key {target_item_rating_key}, media ID {target_media_id_to_remove}")
+                headers = {'X-Plex-Token': plex_token}
+                section_key = section.key # Use the section where the item was found
+                show_rating_key = show.ratingKey if target_item_type == 'episode' else None
+
+                # Step 1: Unmatch (Optional but can help)
+                try:
+                    unmatch_url = f"{plex_url}/library/metadata/{target_item_rating_key}/unmatch"
+                    response = requests.put(unmatch_url, headers=headers)
+                    logger.info(f"Unmatch response: {response.status_code}")
+                except Exception as e:
+                    logger.warning(f"Failed to unmatch item {target_item_rating_key}: {str(e)}")
+                
+                # Step 2: Try to delete the specific media object
+                try:
+                    delete_url = f"{plex_url}/library/metadata/{target_item_rating_key}/media/{target_media_id_to_remove}"
+                    response = requests.delete(delete_url, headers=headers)
+                    logger.info(f"Delete media response (Media ID: {target_media_id_to_remove}): {response.status_code}")
+                    # 200 OK is success, 404 might mean it was already gone
+                    if response.status_code not in [200, 404]:
+                        logger.warning(f"Unexpected status code {response.status_code} when deleting media ID {target_media_id_to_remove}")
+                except Exception as e:
+                    logger.error(f"Failed to request delete for media ID {target_media_id_to_remove}: {str(e)}")
+                
+                # Step 3: Empty trash for the section
+                try:
+                    trash_url = f"{plex_url}/library/sections/{section_key}/emptyTrash"
+                    response = requests.put(trash_url, headers=headers)
+                    logger.info(f"Empty trash response: {response.status_code}")
+                except Exception as e:
+                    logger.error(f"Failed to empty trash for section {section_key}: {str(e)}")
+                
+                # Step 4: Analyze the section (Optional but recommended)
+                try:
+                    section_obj = plex.library.sectionByID(section_key)
+                    if section_obj:
+                        section_obj.analyze()
+                        logger.info(f"Triggered analysis on section: {section_obj.title}")
+                    else:
+                        logger.warning(f"Could not find section object for key {section_key} to analyze")
+                except Exception as e:
+                    logger.error(f"Failed to analyze section {section_key}: {str(e)}")
+                
+                # Step 5: Refresh the parent item (Show or Movie)
+                try:
+                    if target_item_type == 'episode' and show_rating_key:
+                        parent_item = plex.fetchItem(show_rating_key)
+                        parent_item.refresh()
+                        logger.info(f"Triggered refresh on show: {parent_item.title}")
+                    elif target_item_type == 'movie':
+                        parent_item = plex.fetchItem(target_item_rating_key)
+                        parent_item.refresh()
+                        logger.info(f"Triggered refresh on movie: {parent_item.title}")
+                except Exception as e:
+                    logger.error(f"Failed to refresh parent item for {target_item_rating_key}: {str(e)}")
+                
+                # --- Verification Step --- 
+                time.sleep(5)  # Give Plex more time to process background tasks
+                try:
+                    # Fetch the item again (episode or movie)
+                    verify_item = plex.fetchItem(target_item_rating_key)
+                    verify_item.reload() # Ensure fresh data
+                    
+                    # Check if the specific media ID still exists
+                    media_still_exists = False
+                    if hasattr(verify_item, 'media'):
+                        for media in verify_item.media:
+                            if media.id == target_media_id_to_remove:
+                                media_still_exists = True
+                                break
+                                
+                    if not media_still_exists:
+                        logger.info(f"Successfully verified removal of media ID {target_media_id_to_remove} for item '{item_title}'.")
+                        return True # Success!
+                    else:
+                        logger.warning(f"Media ID {target_media_id_to_remove} still exists for item '{item_title}' after removal attempt {attempt + 1}. Will retry if attempts remain.")
+                        # Continue to the next retry attempt
+                        
+                except plexapi.exceptions.NotFound:
+                    logger.info(f"Item key {target_item_rating_key} ('{item_title}') no longer exists in Plex. Removal successful.")
+                    return True # Item deleted entirely, counts as success
+                except Exception as e:
+                    logger.error(f"Error during verification check for item key {target_item_rating_key}: {e}. Assuming removal failed for this attempt.")
+                    # Continue to the next retry attempt
+
+            else: # item_found_in_plex is False
+                logger.info(f"Path '{item_path}' not found associated with '{item_title}' in Plex during attempt {attempt + 1}. Assuming removal is successful or item never existed.")
+                return True # If not found, it's effectively removed or wasn't there
                 
         except plexapi.exceptions.Unauthorized:
             logger.error("Unauthorized: Please check your Plex token")
-            return False
-        except plexapi.exceptions.NotFound:
-            logger.error(f"Plex server not found at {plex_url}")
-            return False
+            return False # Fatal error, don't retry
+        except plexapi.exceptions.NotFound as e:
+            logger.error(f"Plex API NotFound error during attempt {attempt + 1}: {e}")
+            # Potentially retryable if it was temporary server issue
+            if attempt == max_retries - 1:
+                logger.error(f"Plex server or item not found after {max_retries} attempts.")
+                return False
+        except requests.exceptions.RequestException as e:
+             logger.error(f"Network error during Plex communication attempt {attempt + 1}: {e}")
+             # Retry network errors
+             if attempt == max_retries - 1:
+                 logger.error(f"Network error persisted after {max_retries} attempts.")
+                 return False
         except Exception as e:
-            logger.error(f"Unexpected error removing file from Plex: {str(e)}", exc_info=True)
-            continue  # Try next attempt if available
-    
-    logger.error(f"Failed to remove {'episode' if episode_title else 'movie'} after {max_retries} attempts")
+            logger.error(f"Unexpected error during removal attempt {attempt + 1}: {str(e)}", exc_info=True)
+            # Retry unexpected errors
+            if attempt == max_retries - 1:
+                logger.error(f"Unexpected error persisted after {max_retries} attempts.")
+                return False
+            
+    # If loop finishes without successful verification
+    logger.error(f"Failed to verify removal of media for '{item_title}' (Path: '{item_path}') after {max_retries} attempts")
     return False
+
+def get_section_type(section: LibrarySection) -> Optional[str]:
+    """Return the type of the Plex library section."""
+    try:
+        return section.type
+    except Exception as e:
+        logger.error(f"Error getting section type for section '{getattr(section, 'title', 'Unknown')}': {e}")
+        return None
+
+def find_plex_library_and_section(plex: PlexServer, item_path: str) -> Tuple[Optional[plexapi.library.Library], Optional[LibrarySection]]:
+    """Find the Plex library and section containing the given item path."""
+    try:
+        resolved_item_path = Path(item_path).resolve()
+        sections = plex.library.sections()
+        for section in sections:
+            for location in section.locations:
+                try:
+                    resolved_location = Path(location).resolve()
+                    # Check if the item path is within the library location
+                    if resolved_item_path.is_relative_to(resolved_location):
+                        logger.debug(f"Found path '{item_path}' in section '{section.title}' location '{location}'")
+                        return plex.library, section
+                except ValueError: # Can happen on Windows if paths are on different drives
+                    # Check if the paths are the same drive before comparison
+                    if resolved_item_path.drive == Path(location).drive:
+                         # If same drive, the ValueError is likely due to other reasons, log it
+                         logger.warning(f"ValueError comparing paths: {item_path} and {location}")
+                    # Otherwise, different drives, paths cannot be relative, so continue
+                    continue
+                except Exception as e:
+                    logger.warning(f"Error processing location '{location}' for section '{section.title}': {e}")
+                    continue
+        logger.warning(f"Could not find Plex section containing path: {item_path}")
+        return None, None
+    except Exception as e:
+        logger.error(f"Error finding Plex section for path '{item_path}': {e}", exc_info=True)
+        return None, None
 
 def plex_update_item(item: Dict[str, Any]) -> bool:
     try:

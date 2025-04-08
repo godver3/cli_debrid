@@ -208,6 +208,43 @@ document.addEventListener('DOMContentLoaded', function() {
         loadSeasonData();
     });
 
+    // --- Function to handle prefilling version --- (REVISED)
+    function prefillVersionIfNeeded() {
+        const prefillDataElement = document.getElementById('prefill-data');
+        if (!prefillDataElement) {
+            console.warn('Prefill data element not found.');
+            return;
+        }
+
+        // Read data attributes - use JSON.parse for boolean
+        const isPrefilled = JSON.parse(prefillDataElement.dataset.isPrefilled || 'false');
+        const prefillVersion = prefillDataElement.dataset.prefillVersion;
+
+        if (isPrefilled && prefillVersion) {
+            console.log(`Attempting to prefill version: ${prefillVersion}`);
+            // Find the version select dropdown within the (likely only) media card
+            const versionSelect = document.querySelector('.media-card .version-input select[name="version"]');
+
+            if (versionSelect) {
+                // Wait a very short moment to ensure options are populated by the fetch below
+                // This is a fallback in case the fetch completes *slightly* after this runs
+                setTimeout(() => {
+                    const optionExists = Array.from(versionSelect.options).some(opt => opt.value === prefillVersion);
+                    if (optionExists) {
+                        versionSelect.value = prefillVersion;
+                        console.log(`Successfully set version dropdown to: ${prefillVersion}`);
+                    } else {
+                        console.warn(`Prefill version "${prefillVersion}" not found in dropdown options.`);
+                    }
+                }, 100); // 100ms delay, adjust if needed
+
+            } else {
+                console.warn('Could not find the version select dropdown for prefilling.');
+            }
+        }
+    }
+    // --- End function ---
+
     // Load versions from API
     const versionsUrl = "{{ url_for('magnet.get_versions') }}";
     fetch(versionsUrl)
@@ -223,6 +260,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     select.appendChild(option);
                 });
             });
+            // Call prefill function AFTER versions are loaded and options populated
+            prefillVersionIfNeeded();
         })
         .catch(error => console.error('Error loading versions:', error));
 
@@ -303,6 +342,13 @@ document.addEventListener('DOMContentLoaded', function() {
 {% endblock %}
 
 {% block content %}
+{# --- ADD HIDDEN DIV FOR PREFILL DATA --- #}
+<div id="prefill-data"
+     data-is-prefilled="{{ is_prefilled|default(false)|tojson }}"
+     data-prefill-version="{{ prefill_version|default('') }}">
+</div>
+{# --- END HIDDEN DIV --- #}
+
 <div class="search-container">
     {% if step == 'search' or not step %}
     <div class="search-form">
@@ -393,8 +439,10 @@ document.addEventListener('DOMContentLoaded', function() {
                         {% endif %}
 
                         <div class="form-group magnet-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
-                            <input type="text" class="form-control" id="magnet_link_{{ result.id }}" 
-                                   name="magnet_link" required placeholder="Enter magnet link">
+                            <input type="text" class="form-control" id="magnet_link_{{ result.id }}"
+                                   name="magnet_link" required placeholder="Enter magnet link"
+                                   {% if is_prefilled and prefill_magnet %} value="{{ prefill_magnet }}" {% endif %}
+                                   >
                         </div>
                         <div class="form-group version-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
                             <select class="form-control" name="version" required>

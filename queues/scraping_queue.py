@@ -86,6 +86,23 @@ class ScrapingQueue:
             self.items.sort(key=lambda x: 0 if x['type'] == 'episode' else 1)
         # For "None", we keep the default order
 
+        # --- Secondary Sorting by Release Date ---
+        sort_by_release_date = get_setting("Queue", "sort_by_release_date_desc", False)
+        if sort_by_release_date:
+            def get_release_date_key(item):
+                release_date_str = item.get('release_date')
+                if release_date_str and release_date_str != 'Unknown':
+                    try:
+                        # Parse date and return it for sorting (newest first means reverse=True later)
+                        return datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                    except ValueError:
+                        pass # Invalid date format, treat as unknown
+                # Assign a very old date to unknown/invalid dates to sort them last
+                return date.min
+
+            # Sort by release date, newest first. Unknown dates are handled by date.min
+            self.items.sort(key=get_release_date_key, reverse=True)
+
     def get_contents(self):
         return self.items
 

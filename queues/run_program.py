@@ -3,18 +3,19 @@ import random
 import time
 import os
 import sqlite3
+import plexapi # Added import
 from queues.initialization import initialize
 from utilities.settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
-from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime
+from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime, _get_local_timezone
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time # Modified import
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
 from routes.notifications import send_notifications
@@ -35,9 +36,28 @@ from content_checkers.content_cache_management import (
     should_process_item, update_cache_for_item
 )
 from collections import deque # Import deque for efficient queue operations
+from database.symlink_verification import (
+    create_plex_removal_queue_table,
+    get_pending_removal_paths,
+    update_removal_status, # Renamed from update_removal_verification_status
+    cleanup_old_verified_removals, # Renamed from remove_verified_paths
+    increment_removal_attempt, # Renamed from increment_removal_attempt
+    migrate_plex_removal_database
+)
+from utilities.plex_functions import (
+    get_section_type, # Need this to determine search type
+    find_plex_library_and_section, # Added import
+    remove_symlink_from_plex, # Added import
+)
+from plexapi.exceptions import NotFound
+import pytz # Added import
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError # Keep this if needed elsewhere, or remove if only _get_local_timezone uses it
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
+
+# Database migration check at startup
+migrate_plex_removal_database()
 
 class ProgramRunner:
     _instance = None
@@ -114,6 +134,7 @@ class ProgramRunner:
             'task_check_database_health': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60,  # Run every twelve hours
             'task_verify_symlinked_files': 900,  # Run every 15 minutes
+            'task_verify_plex_removals': 900, # NEW: Run every 15 minutes
             'task_update_statistics_summary': 300,  # Run every 5 minutes
             'task_precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
             'task_process_pending_rclone_paths': 10, # Add new task: check pending rclone paths every 10 seconds (was 60)
@@ -165,6 +186,11 @@ class ProgramRunner:
         logging.info("Performing initial population of content source intervals and enabled tasks...")
         self.get_content_sources(force_refresh=True) # This call will now work as self.enabled_tasks exists
         logging.info("Initial content source interval/task population complete.")
+        
+        # Enable Plex removal task if symlink verification is enabled
+        if 'task_verify_symlinked_files' in self.enabled_tasks:
+            self.enabled_tasks.add('task_verify_plex_removals')
+            logging.info("Enabled Plex removal verification task as symlink verification is active.")
 
         # FINALLY load saved task toggle states from JSON file (AFTER intervals are populated)
         try:
@@ -218,6 +244,33 @@ class ProgramRunner:
         # *** Add this line to update the original intervals AFTER dynamic tasks are added ***
         self.original_task_intervals = self.task_intervals.copy()
         logging.info("Finalized original task intervals after content source and toggle loading.")
+
+    def _is_within_pause_schedule(self):
+        """Checks if the current time is within the configured pause schedule."""
+        if not get_setting('Queue', 'enable_pause_schedule', False):
+            return False # Schedule not enabled
+
+        start_time_str = get_setting('Queue', 'pause_start_time', '00:00')
+        end_time_str = get_setting('Queue', 'pause_end_time', '00:00')
+
+        try:
+            start_time = dt_time.fromisoformat(start_time_str)
+            end_time = dt_time.fromisoformat(end_time_str)
+        except ValueError:
+            logging.error(f"Invalid pause time format: start='{start_time_str}', end='{end_time_str}'. Must be HH:MM.")
+            return False # Treat invalid format as schedule not active
+
+        # Get current time in the configured timezone using the imported function
+        tz = _get_local_timezone() # Use the imported function directly
+        now = datetime.now(tz).time()
+
+        # Handle overnight schedules (e.g., start 22:00, end 06:00)
+        if start_time <= end_time:
+            # Normal schedule within the same day
+            return start_time <= now <= end_time
+        else:
+            # Overnight schedule
+            return now >= start_time or now <= end_time
 
     def task_heartbeat(self):
         random_number = random.randint(1, 100)
@@ -398,7 +451,22 @@ class ProgramRunner:
         try:
             # Check connectivity status if we're in a failure state
             self.check_connectivity_status()
-            
+
+            # Check scheduled pause
+            is_scheduled_pause = self._is_within_pause_schedule()
+            queue_manager = self.queue_manager # Get manager instance
+
+            if is_scheduled_pause and not queue_manager.is_paused():
+                pause_start = get_setting('Queue', 'pause_start_time', '00:00')
+                pause_end = get_setting('Queue', 'pause_end_time', '00:00')
+                self.pause_reason = f"Scheduled pause active ({pause_start} - {pause_end})"
+                self.pause_queue()
+                logging.info(f"Queue automatically paused due to schedule: {self.pause_reason}")
+            elif not is_scheduled_pause and queue_manager.is_paused() and self.pause_reason and "Scheduled pause active" in self.pause_reason:
+                 # Only resume if the current pause reason is the scheduled one
+                logging.info("Scheduled pause period ended. Resuming queue.")
+                self.resume_queue()
+
             # Get current time once for this cycle
             current_time = time.time()
             
@@ -447,14 +515,22 @@ class ProgramRunner:
                     self.queue_manager.queues['Unreleased'].update()  # Update queue contents
                     self._last_unreleased_update = current_time
             
-            # Process queue tasks
+            # Process queue tasks (check for pause *before* processing each queue)
             for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+                if self.queue_manager.is_paused(): # Check pause state again
+                    #logging.debug(f"Skipping queue {queue_name} due to pause state.")
+                    continue # Skip processing this queue if paused
+
                 should_run = self.should_run_task(queue_name)
                 if should_run:
                     self.safe_process_queue(queue_name)
 
-            # Process content source tasks
+            # Process content source tasks (check for pause *before* processing each source)
             for source, data in self.get_content_sources().items():
+                if self.queue_manager.is_paused(): # Check pause state again
+                    #logging.debug(f"Skipping content source {source} due to pause state.")
+                    continue # Skip processing this source if paused
+
                 task_name = f'task_{source}_wanted'
                 should_run = self.should_run_task(task_name)
                 if should_run:
@@ -465,9 +541,13 @@ class ProgramRunner:
                         logging.error(traceback.format_exc())
                     finally:
                         self.currently_running_tasks.discard(task_name)
-            
-            # Process other enabled tasks
+
+            # Process other enabled tasks (check for pause *before* processing each task)
             for task_name in list(self.enabled_tasks): # Use list to allow modification during iteration if needed
+                if self.queue_manager.is_paused(): # Check pause state again
+                    #logging.debug(f"Skipping task {task_name} due to pause state.")
+                    continue # Skip processing this task if paused
+
                 # Check if it's NOT a standard queue or a content source task
                 is_standard_queue = task_name in [
                     'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
@@ -1888,6 +1968,187 @@ class ProgramRunner:
                 
         except Exception as e:
             logging.error(f"Error verifying symlinked files: {e}")
+
+    def task_verify_plex_removals(self):
+        """Verify that files marked for removal are actually gone from Plex using title-based search."""
+        logging.info("[TASK] Running Plex removal verification task.")
+
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
+            plex_url = get_setting('Plex', 'url').rstrip('/')
+            plex_token = get_setting('Plex', 'token')
+        elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+            plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+        else:
+            logging.error("No Plex URL or token found in settings")
+            return False
+    
+        # Initialize Plex connection centrally if possible, or handle per task run
+        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        if not plex:
+            logging.error("[VERIFY] Failed to connect to Plex for removal verification.")
+            return
+
+        # Fetch pending items (now includes titles)
+        pending_items = get_pending_removal_paths()
+        if not pending_items:
+            logging.info("[VERIFY] No pending Plex removals to verify.")
+            return
+        logging.info(f"[VERIFY] Found {len(pending_items)} paths pending Plex removal verification.")
+
+        verified_count = 0
+        failed_verification_count = 0
+        # Fetch settings for max attempts and cleanup days
+        max_attempts = get_setting('File Management', 'plex_removal_max_attempts', 5)
+        cleanup_days = get_setting('File Management', 'plex_removal_cleanup_days', 30)
+
+        for item in pending_items:
+            item_id = item['id']
+            item_path = item['item_path']
+            item_title = item['item_title']
+            episode_title = item.get('episode_title') # Use .get for safety
+            attempts = item['attempts']
+            logging.debug(f"[VERIFY DEBUG] Processing Item: ID={item_id}, Path={item_path}, Title={item_title}, Episode={episode_title}, Attempts={attempts}")
+            logging.info(f"[VERIFY] Checking path: '{item_path}' (Attempt {attempts + 1}/{max_attempts}) Title: '{item_title}', Episode: '{episode_title}'")
+
+            if attempts >= max_attempts:
+                logging.warning(f"[VERIFY] Max attempts reached for path {item_path}. Marking as Failed.")
+                update_removal_status(item_id, 'Failed', failure_reason=f'Max attempts ({max_attempts}) reached.')
+                failed_verification_count += 1
+                continue
+
+            item_still_exists = False # Assume item is gone unless found
+            try:
+                logging.debug(f"[VERIFY DEBUG] Finding Plex section for path: {item_path}")
+                plex_library, plex_section = find_plex_library_and_section(plex, item_path)
+                if not plex_section:
+                    logging.warning(f"[VERIFY] Could not find Plex section for path: {item_path}. Skipping verification for now.")
+                    # Don't increment attempts if the section isn't found, might be temporary issue
+                    continue
+                logging.debug(f"[VERIFY DEBUG] Found section: {plex_section.title}")
+
+                section_type = get_section_type(plex_section) # 'movie' or 'show'
+                target_basename = os.path.basename(item_path)
+                logging.debug(f"[VERIFY DEBUG] Section type: {section_type}, Target basename: {target_basename}")
+
+                if not item_title:
+                     logging.error(f"[VERIFY] Item ID {item_id} is missing item_title. Cannot perform title-based search for path {item_path}. Incrementing attempt count.")
+                     increment_removal_attempt(item_id)
+                     failed_verification_count += 1
+                     continue
+
+                if section_type == 'movie':
+                    # Search for the movie by title
+                    logging.debug(f"[VERIFY DEBUG] Searching for MOVIE title: '{item_title}' in section '{plex_section.title}'")
+                    search_results = plex_section.search(title=item_title, libtype='movie')
+                    logging.debug(f"[VERIFY DEBUG] Movie search results count: {len(search_results)}")
+                    if not search_results:
+                         logging.info(f"[VERIFY] Movie title '{item_title}' not found in section '{plex_section.title}'. Verification check passed for this item (so far).")
+                    else:
+                        # Check if any media parts match the original filename
+                        for movie in search_results:
+                            logging.debug(f"[VERIFY DEBUG] Checking parts for movie: {movie.title} ({movie.key})")
+                            for part in movie.iterParts():
+                                 part_basename = os.path.basename(part.file)
+                                 logging.debug(f"[VERIFY DEBUG] Comparing target '{target_basename}' with part '{part_basename}' (from {part.file})")
+                                 if part_basename == target_basename:
+                                     logging.warning(f"[VERIFY] Path '{item_path}' still found associated with Movie '{item_title}' (Part: {part.file}). Verification FAILED.")
+                                     item_still_exists = True
+                                     break # Found a match, no need to check other parts of this movie
+                            if item_still_exists: break # Found a match, no need to check other movies with the same title
+
+                elif section_type == 'show':
+                     # Search for the show by title
+                    logging.debug(f"[VERIFY DEBUG] Searching for SHOW title: '{item_title}' in section '{plex_section.title}'")
+                    shows = plex_section.search(title=item_title, libtype='show')
+                    logging.debug(f"[VERIFY DEBUG] Show search results count: {len(shows)}")
+                    if not shows:
+                        logging.info(f"[VERIFY] Show title '{item_title}' not found in section '{plex_section.title}'. Verification check passed for this item (so far).")
+                    else:
+                        # Check all shows matching the title (rare, but possible)
+                        for show in shows:
+                            logging.debug(f"[VERIFY DEBUG] Found show: {show.title} ({show.key})")
+                            # If episode_title is provided, search for the specific episode
+                            if episode_title:
+                                logging.debug(f"[VERIFY DEBUG] Searching for EPISODE title: '{episode_title}' within show '{show.title}'")
+                                try:
+                                    # Use show.episode() which handles season/episode numbers or titles
+                                    episode = show.episode(title=episode_title)
+                                    logging.debug(f"[VERIFY DEBUG] Found episode: {episode.title} ({episode.key})")
+                                    for part in episode.iterParts():
+                                        part_basename = os.path.basename(part.file)
+                                        logging.debug(f"[VERIFY DEBUG] Comparing target '{target_basename}' with part '{part_basename}' (from {part.file})")
+                                        if part_basename == target_basename:
+                                            logging.warning(f"[VERIFY] Path '{item_path}' still found associated with Episode '{item_title} - {episode_title}' (Part: {part.file}). Verification FAILED.")
+                                            item_still_exists = True
+                                            break # Found match, stop checking parts
+                                except NotFound:
+                                    logging.info(f"[VERIFY] Episode '{episode_title}' not found for show '{show.title}'. Verification check passed for this episode (so far).")
+                                except Exception as e:
+                                     logging.error(f"[VERIFY] Error searching for episode '{episode_title}' in show '{show.title}': {e}")
+                                     # Treat error as potentially still existing to be safe
+                                     item_still_exists = True 
+                            else:
+                                # If no episode title, maybe it was a whole show removal? Check all episodes (less common case)
+                                logging.warning(f"[VERIFY DEBUG] No episode title provided for show '{item_title}' path '{item_path}'. Checking ALL episode parts (this might be slow).")
+                                for episode in show.episodes():
+                                     logging.debug(f"[VERIFY DEBUG] Checking parts for episode: {episode.title} ({episode.key})")
+                                     for part in episode.iterParts():
+                                         part_basename = os.path.basename(part.file)
+                                         logging.debug(f"[VERIFY DEBUG] Comparing target '{target_basename}' with part '{part_basename}' (from {part.file})")
+                                         if part_basename == target_basename:
+                                             logging.warning(f"[VERIFY] Path '{item_path}' still found associated with Show '{item_title}' (Episode: {episode.title}, Part: {part.file}). Verification FAILED.")
+                                             item_still_exists = True
+                                             break # Found match, stop checking parts
+                                     if item_still_exists: break # Stop checking episodes for this show
+                            # If match found in this show, no need to check other shows with same title
+                            if item_still_exists: break 
+
+                else:
+                    logging.warning(f"[VERIFY] Unknown section type '{section_type}' for section '{plex_section.title}'. Cannot verify path {item_path}.")
+                    # Don't increment attempts for unknown section types
+                
+                # Log the final decision logic before potential errors
+                logging.debug(f"[VERIFY DEBUG] Pre-update check for ID {item_id}: item_still_exists = {item_still_exists}")
+
+            except Exception as e:
+                logging.error(f"[VERIFY] Error during Plex verification processing for path {item_path} (ID: {item_id}): {e}", exc_info=True)
+                # Increment attempts on general errors during processing
+                increment_removal_attempt(item_id)
+                failed_verification_count +=1 # Treat errors as failed attempts for now
+                continue # Skip to next item
+
+            # Update status based on whether the item was found
+            try:
+                if not item_still_exists:
+                    logging.info(f"[VERIFY] Path '{item_path}' appears removed from Plex metadata based on title/part search. Marking as Verified.")
+                    update_removal_status(item_id, 'Verified')
+                    verified_count += 1
+                else:
+                    logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex based on title/part search. Attempting removal...")
+                    # Attempt removal again
+                    removal_successful = remove_symlink_from_plex(item_title, item_path, episode_title)
+                    if removal_successful:
+                        logging.info(f"[VERIFY] Successfully triggered removal for '{item_path}'. Will verify again later.")
+                    else:
+                        logging.error(f"[VERIFY] Failed to trigger removal again for '{item_path}'.")
+                    
+                    # Increment attempt count regardless of removal attempt success
+                    logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}'.")
+                    increment_removal_attempt(item_id)
+                    failed_verification_count += 1 
+            except Exception as db_update_err:
+                 logging.error(f"[VERIFY] Database error updating status/attempts for ID {item_id}: {db_update_err}", exc_info=True)
+
+        logging.info(f"[VERIFY] Plex removal verification task finished. Verified: {verified_count}, Failed/Pending: {failed_verification_count}.")
+
+        # Clean up verified entries older than a certain period (optional, good practice)
+        # cleanup_days is now defined above using get_setting
+        if cleanup_days > 0:
+            logging.info(f"[VERIFY] Cleaning up verified entries older than {cleanup_days} days.")
+            # Use remove_verified_paths (assuming it replaced cleanup_old_verified_removals)
+            removed_count = cleanup_old_verified_removals(days=cleanup_days) # Corrected function name and parameter
+            logging.info(f"[VERIFY] Removed {removed_count} old verified entries.")
 
     def task_precompute_airing_shows(self):
         """Precompute the recently aired and airing soon shows in a background task"""

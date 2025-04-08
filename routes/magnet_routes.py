@@ -111,8 +111,9 @@ def assign_magnet():
         if action == 'search':
             search_term = request.form.get('search_term')
             content_type = request.form.get('content_type', 'all')
-            season = request.form.get('season')
-            episode = request.form.get('episode')
+            # Remove season/episode from direct search form - handled in results view
+            # season = request.form.get('season') 
+            # episode = request.form.get('episode') 
             
             if not search_term:
                 flash('Please enter a search term', 'error')
@@ -124,14 +125,11 @@ def assign_magnet():
             
             # Filter results based on content type
             if content_type != 'all':
-                search_results = [result for result in search_results if result['mediaType'] == content_type]
+                # Handle 'tv' as well as 'show'
+                normalized_content_type = 'show' if content_type == 'tv' else content_type
+                search_results = [result for result in search_results if result['mediaType'] == normalized_content_type]
             
-            # Add season/episode info to results if provided
-            if season and content_type == 'show':
-                for result in search_results:
-                    result['selected_season'] = season
-                    if episode:
-                        result['selected_episode'] = episode
+            # Removed season/episode addition here
 
             return render_template('magnet_assign.html', 
                                 search_results=search_results,
@@ -143,8 +141,61 @@ def assign_magnet():
             flash('Invalid action performed.', 'warning') # Optional: inform user
             return redirect(url_for('magnet.assign_magnet')) # Redirect back to the GET route
         
-    # Handle GET request (this part is fine)
-    return render_template('magnet_assign.html', step='search')
+    # --- MODIFICATION: Handle GET request with prefill ---
+    elif request.method == 'GET':
+        prefill_id = request.args.get('prefill_id')
+        prefill_type = request.args.get('prefill_type')
+        prefill_title = request.args.get('prefill_title')
+        prefill_year = request.args.get('prefill_year')
+        prefill_magnet = request.args.get('prefill_magnet')
+        prefill_version = request.args.get('prefill_version')
+
+        if prefill_id and prefill_type and prefill_title and prefill_year:
+            logging.info(f"Attempting to prefill magnet assigner for TMDB ID: {prefill_id}, Type: {prefill_type}")
+            if prefill_magnet:
+                 logging.info(f"Prefill magnet link provided: {prefill_magnet[:60]}...")
+            if prefill_version:
+                 logging.info(f"Prefill version provided: {prefill_version}")
+            try:
+                # Fetch metadata directly using the provided ID and type
+                # Ensure prefill_type is compatible with get_metadata ('movie' or 'show')
+                lookup_type = 'show' if prefill_type == 'tv' else prefill_type
+                if lookup_type not in ['movie', 'show']:
+                    raise ValueError(f"Invalid prefill_type received: {prefill_type}")
+
+                metadata = get_metadata(tmdb_id=prefill_id, item_media_type=lookup_type)
+                
+                if metadata:
+                    # Format the single result to match search_results structure expected by template
+                    single_result = {
+                        'id': metadata.get('tmdb_id', prefill_id),
+                        'title': metadata.get('title', prefill_title),
+                        'year': metadata.get('year', prefill_year),
+                        'posterPath': metadata.get('poster'), # Use poster from metadata
+                        'mediaType': lookup_type # Use the normalized type
+                    }
+                    logging.info(f"Prefilled data: {single_result}, Version: {prefill_version}")
+                    return render_template('magnet_assign.html', 
+                                        search_results=[single_result], # Pass as a list
+                                        search_term=prefill_title, # Use the title as the "search term" display
+                                        content_type=lookup_type,
+                                        step='results',
+                                        is_prefilled=True,
+                                        prefill_magnet=prefill_magnet,
+                                        prefill_version=prefill_version) # <-- PASS VERSION
+                else:
+                    logging.warning(f"Could not fetch metadata for prefill ID: {prefill_id}, Type: {lookup_type}")
+                    flash(f'Could not find details for {prefill_title} ({prefill_year}). Please search manually.', 'warning')
+            except Exception as e:
+                logging.error(f"Error during prefill metadata fetch: {e}", exc_info=True)
+                flash('An error occurred while trying to prefill the item. Please search manually.', 'error')
+                
+            # Fallback to standard search page if prefill fails
+            return render_template('magnet_assign.html', step='search')
+        else:
+            # Standard GET request (no prefill)
+            return render_template('magnet_assign.html', step='search')
+    # --- END MODIFICATION ---
 
 @magnet_bp.route('/prepare_manual_assignment', methods=['POST'])
 @admin_required
