@@ -4,13 +4,12 @@ from debrid import get_debrid_provider
 from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from utilities.settings import get_setting, get_all_settings, load_config, save_config
-from database.database_reading import get_all_season_episode_counts
+from database.database_reading import get_all_season_episode_counts, get_media_item_presence
 from utilities.web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
 from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from utilities.web_scraper import search_trakt
-from database.database_reading import get_all_season_episode_counts
 from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
 from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
@@ -533,16 +532,45 @@ def add_torrent_to_debrid():
 @scraper_view_access_required
 def movies_trending():
     from utilities.web_scraper import get_available_versions
+    # --- Import database reading function ---
+    from database.database_reading import get_media_item_presence
+    # --- End import ---
 
     versions = get_available_versions()
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
     
     if request.method == 'GET':
-        trendingMovies = trending_movies()
-        if trendingMovies:
-            return jsonify(trendingMovies)
+        trendingMoviesData = trending_movies() # Rename original data
+        if trendingMoviesData and 'trendingMovies' in trendingMoviesData:
+            processed_movies = []
+            for item in trendingMoviesData['trendingMovies']:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                    except (ValueError, TypeError):
+                        db_state = 'Missing'
+
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]: 
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing' # Default if no ID
+                processed_movies.append(item)
+                
+            # Return processed data under the original key
+            return jsonify({'trendingMovies': processed_movies})
         else:
-            return jsonify({'error': 'Error retrieving trending movies'})
+            # Return original error structure or a default one
+            return jsonify(trendingMoviesData if trendingMoviesData else {'error': 'Error retrieving trending movies'})
+            
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/shows_trending', methods=['GET', 'POST'])
@@ -555,11 +583,37 @@ def shows_trending():
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
     
     if request.method == 'GET':
-        trendingShows = trending_shows()
-        if trendingShows:
-            return jsonify(trendingShows)
+        trendingShowsData = trending_shows() # Rename original data
+        if trendingShowsData and 'trendingShows' in trendingShowsData:
+            processed_shows = []
+            for item in trendingShowsData['trendingShows']:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                    except (ValueError, TypeError):
+                         db_state = 'Missing'
+                         
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]: 
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing' # Default if no ID
+                processed_shows.append(item)
+                
+            # Return processed data under the original key
+            return jsonify({'trendingShows': processed_shows})
         else:
-            return jsonify({'error': 'Error retrieving trending shows'})
+            # Return original error structure or a default one
+            return jsonify(trendingShowsData if trendingShowsData else {'error': 'Error retrieving trending shows'})
+            
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/', methods=['GET', 'POST'])
@@ -582,6 +636,36 @@ def index():
             
             # Allow requesters to search and see results
             results = web_scrape(search_term, version)
+            
+            # --- Add status check ---
+            if isinstance(results, list):
+                processed_results = []
+                for item in results:
+                    # Assuming 'id' is the TMDB ID in search results
+                    tmdb_id = item.get('id') 
+                    if tmdb_id:
+                        try:
+                            # Ensure tmdb_id is integer if needed by the function
+                            tmdb_id_int = int(tmdb_id) 
+                            db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                        except (ValueError, TypeError):
+                             db_state = 'Missing' # Handle cases where ID might not be numeric
+                        
+                        # Map state to frontend status
+                        if db_state == 'Collected':
+                            item['db_status'] = 'collected'
+                        elif db_state == 'Blacklisted':
+                            item['db_status'] = 'blacklisted'
+                        elif db_state not in ['Missing', 'Ignored', None]: 
+                            item['db_status'] = 'processing'
+                        else:
+                            item['db_status'] = 'missing'
+                    else:
+                        item['db_status'] = 'missing' # Default if no ID
+                    processed_results.append(item)
+                results = processed_results
+            # --- End status check ---
+                
             return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})

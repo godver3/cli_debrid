@@ -370,16 +370,17 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             table.style.width = '100%';
             table.style.borderCollapse = 'collapse';
 
-            // Create table header
+            // Create table header with corrected widths
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="color: rgb(191 191 190); width: 80%;">Name</th>
-                    <th style="color: rgb(191 191 190); width: 10%;">Size</th>
-                    <th style="color: rgb(191 191 190); width: 15%;">Source</th>
-                    <th style="color: rgb(191 191 190); width: 10%;">Score</th>
-                    <th style="color: rgb(191 191 190); width: 15%; text-align: center;">Cache</th>
-                    <th style="color: rgb(191 191 190); width: 15%; text-align: center;">Action</th>
+                    <th style="color: rgb(191 191 190); width: 45%;">Name</th>
+                    <th style="color: rgb(191 191 190); width: 5%; text-align: right;">Size</th>
+                    <th style="color: rgb(191 191 190); width: 10%;">Source</th>
+                    <th style="color: rgb(191 191 190); width: 10%%; text-align: right;">Score</th>
+                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
+                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Add</th>
+                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Assign</th>
                 </tr>
             `;
             table.appendChild(thead);
@@ -398,21 +399,35 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     torrent.magnet_link = torrent.magnet;
                 }
 
+                // --- Prepare data for Assign Magnet button ---
+                const currentVersion = document.getElementById('version-select').value; // <-- Get current version
+                const assignUrlParams = new URLSearchParams({
+                    prefill_id: mediaId,
+                    prefill_type: mediaType,
+                    prefill_title: title,
+                    prefill_year: year,
+                    prefill_magnet: torrent.magnet,
+                    prefill_version: currentVersion // <-- Add version
+                });
+                const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
+                // --- End Prepare data ---
+
                 const row = document.createElement('tr');
+                // --- MODIFIED row.innerHTML with adjusted column styles ---
                 row.innerHTML = `
-                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); max-width: 80%; word-wrap: break-word; white-space: normal; padding: 10px;">
+                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); max-width: 50%; word-wrap: break-word; white-space: normal; padding: 10px;">
                         <div style="display: block; line-height: 1.4; min-height: fit-content;">
                             ${torrent.title}
                         </div>
                     </td>
-                    <td style="color: rgb(191 191 190);">${(torrent.size).toFixed(1)} GB</td>
+                    <td style="color: rgb(191 191 190); text-align: right;">${(torrent.size).toFixed(1)} GB</td>
                     <td style="color: rgb(191 191 190);">${torrent.source}</td>
-                    <td style="color: rgb(191 191 190);">${torrent.score_breakdown.total_score}</td>
+                    <td style="color: rgb(191 191 190); text-align: right;">${torrent.score_breakdown.total_score}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        <button onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
+                        <button class="action-button add-button" onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
                             ...torrent,
                             year,
                             version: torrent.version || version,
@@ -423,6 +438,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             tmdb_id: torrent.tmdb_id || mediaId,
                             genres: genre_ids
                         }).replace(/"/g, '&quot;')})">Add</button>
+                    </td>
+                    <td style="color: rgb(191 191 190); text-align: center;">
+                         <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -1044,6 +1062,13 @@ function createMovieElement(data) {
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
     
+    // --- Create DB Status Pip HTML ---
+    let dbStatusPipHTML = '';
+    if (data.db_status && data.db_status !== 'missing') {
+        dbStatusPipHTML = `<div class="db-status-pip db-status-${data.db_status}" title="Status: ${data.db_status.charAt(0).toUpperCase() + data.db_status.slice(1)}"></div>`;
+    }
+    // --- End DB Status Pip HTML ---
+    
     // Always include the request icon HTML regardless of user type
     const requestIconHTML = `
         <div class="request-icon" title="Request this content">
@@ -1079,6 +1104,7 @@ function createMovieElement(data) {
                 </div>
                 ${requestIconHTML}
                 ${testerIconHTML}
+                ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
                 <h2>${data.title}</h2>
@@ -1160,6 +1186,13 @@ function createShowElement(data) {
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
     
+    // --- Create DB Status Pip HTML ---
+    let dbStatusPipHTML = '';
+    if (data.db_status && data.db_status !== 'missing') {
+        dbStatusPipHTML = `<div class="db-status-pip db-status-${data.db_status}" title="Status: ${data.db_status.charAt(0).toUpperCase() + data.db_status.slice(1)}"></div>`;
+    }
+    // --- End DB Status Pip HTML ---
+    
     // Always include the request icon HTML regardless of user type
     const requestIconHTML = `
         <div class="request-icon" title="Request this content">
@@ -1195,6 +1228,7 @@ function createShowElement(data) {
                 </div>
                 ${requestIconHTML}
                 ${testerIconHTML}
+                ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
             </div>
             <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
                 <h2>${data.title}</h2>
@@ -1452,6 +1486,21 @@ function displaySearchResults(results, version) {
         </div>
     `;
 
+    // --- NEW: Assign Magnet icon HTML ---
+    const assignMagnetIconHTML = `
+        <div class="assign-magnet-icon" title="Assign Magnet Link">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+                <path d="M15 8h2a1 1 0 0 1 1 1v2"></path> 
+                <path d="M9 8H7a1 1 0 0 0-1 1v2"></path> 
+                <path d="M12 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"></path> 
+            </svg>
+        </div>
+    `;
+    // --- END NEW ---
+
     results.forEach(item => {
         console.log('Creating element for item:', item);  // Debug log
         const searchResDiv = document.createElement('div');
@@ -1472,6 +1521,13 @@ function displaySearchResults(results, version) {
         }
         console.log('Final poster URL:', posterUrl);
         
+        // --- Create DB Status Pip HTML for search results ---
+        let dbStatusPipHTML = '';
+        if (item.db_status && item.db_status !== 'missing') {
+            dbStatusPipHTML = `<div class="db-status-pip db-status-${item.db_status}" title="Status: ${item.db_status.charAt(0).toUpperCase() + item.db_status.slice(1)}"></div>`;
+        }
+        // --- End DB Status Pip HTML ---
+        
         // Create the container with a relative position for the request icon
         searchResDiv.innerHTML = `
             <div class="media-poster">
@@ -1487,6 +1543,8 @@ function displaySearchResults(results, version) {
                         </div>
                         ${requestIconHTML}
                         ${testerIconHTML}
+                        ${assignMagnetIconHTML} {/* <-- Added new icon */}
+                        ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
                     </div>
                     <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
                         <h2 class="searchresult-item">${item.title}</h2>
@@ -1565,6 +1623,43 @@ function displaySearchResults(results, version) {
             };
         }
         
+        // --- NEW: Add click handler for the assign magnet icon ---
+        const assignMagnetIcon = searchResDiv.querySelector('.assign-magnet-icon');
+        if (assignMagnetIcon) {
+            // Store data on the icon element itself for easy access
+            assignMagnetIcon.dataset.id = item.id;
+            assignMagnetIcon.dataset.title = item.title;
+            assignMagnetIcon.dataset.year = item.year || (item.release_date ? new Date(item.release_date).getFullYear() : '');
+            assignMagnetIcon.dataset.mediaType = item.media_type === 'show' ? 'tv' : item.media_type; // Normalize to 'tv'
+
+            assignMagnetIcon.onclick = function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const id = this.dataset.id;
+                const title = encodeURIComponent(this.dataset.title);
+                const year = this.dataset.year;
+                const mediaType = this.dataset.mediaType;
+                const currentVersion = document.getElementById('version-select').value; // <-- Get current version
+
+                // Construct the URL for the magnet assigner page
+                const assignUrlParams = new URLSearchParams({ // <-- Create params object
+                    prefill_id: id,
+                    prefill_type: mediaType,
+                    prefill_title: title,
+                    prefill_year: year,
+                    prefill_version: currentVersion // <-- Add version
+                });
+                const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
+
+                // Redirect the user
+                window.location.href = assignUrl;
+
+                return false;
+            };
+        }
+        // --- END NEW ---
+
         resultsList.appendChild(searchResDiv);
     });
 }

@@ -233,6 +233,7 @@ form#search-form input:-ms-input-placeholder {
     display: flex;
     align-items: flex-end;
     justify-content: flex-start;
+    cursor: pointer;
 }
 
 /* Consistent poster overlay styling */
@@ -1390,4 +1391,28 @@ p.torresult-title {
 .overlay-content {
     padding-top: 0px !important;
 }
+
+/* Shared style for action buttons in table */
+.overlay-content td button.action-button {
+    width: calc(100% - 10px); /* Adjust width */
+    max-width: 100px; /* Limit max width */
+    margin: 2px 5px; /* Adjust margin */
+    padding: 4px 8px; /* Adjust padding */
+    font-size: 0.8em;
+}
+
+.overlay-content td button.add-button:hover {
+    background-color: var(--primary-hover); /* Darker green */
+}
+
+/* --- NEW: Style for Assign button --- */
+.overlay-content td button.assign-button {
+    background-color: #FFC107; /* Amber color */
+    color: #333; /* Darker text for better contrast on amber */
+}
+
+.overlay-content td button.assign-button:hover {
+    background-color: #FFA000; /* Darker amber */
+}
+/* --- END NEW --- */
 
