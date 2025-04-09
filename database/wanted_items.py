@@ -4,7 +4,6 @@ from database.manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
 from datetime import datetime, timezone, timedelta
-from metadata.metadata import get_tmdb_id_and_media_type
 import random
 import os
 from queues.config_manager import load_config
@@ -426,6 +425,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 continue
 
             if not item.get('tmdb_id'):
+                from metadata.metadata import get_tmdb_id_and_media_type
                 tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
                 if tmdb_id:
                     item['tmdb_id'] = str(tmdb_id)

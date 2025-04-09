@@ -16,7 +16,6 @@ from utilities.local_library_scan import get_symlink_path, create_symlink, check
 from utilities.plex_functions import plex_update_item
 from utilities.emby_functions import emby_update_item
 from utilities.reverse_parser import parse_filename_for_version
-from metadata.metadata import get_release_date, _get_local_timezone
 from utilities.post_processing import handle_state_change
 
 # Scraping/Metadata Imports (Careful with potential cycles here too)
@@ -327,6 +326,7 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
         metadata, source, filename, version, best_match, release_date.
     """
     try:
+        from metadata.metadata import get_release_date, _get_local_timezone # Added import here
         # Get just the filename for matching and parsing
         filename = os.path.basename(file_path)
         folder_name = os.path.basename(os.path.dirname(file_path)) # Get folder name too

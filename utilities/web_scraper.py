@@ -8,7 +8,6 @@ from queues.adding_queue import AddingQueue
 import re
 from fuzzywuzzy import fuzz
 from routes.poster_cache import get_cached_poster_url, cache_poster_url, get_cached_media_meta, cache_media_meta
-from metadata.metadata import get_metadata, get_imdb_id_if_missing, get_all_season_episode_counts, get_show_airtime_by_imdb_id
 import asyncio
 import aiohttp
 from database.poster_management import get_poster_url
@@ -438,6 +437,7 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
         return {}
 
 def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None, allow_specials: bool = False) -> Dict[str, Any]:
+    from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
     logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, allow_specials: {allow_specials}")
     
     trakt_client_id = get_setting('Trakt', 'client_id')
@@ -698,6 +698,7 @@ def trending_shows():
         return []
 
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = True, background_cache_check: bool = False) -> List[Dict[str, Any]]:
+    from metadata.metadata import get_metadata
     logging.info(f"Processing media selection with skip_cache_check={skip_cache_check}, background_cache_check={background_cache_check}")
 
     # Convert TMDB ID to IMDB ID using the metadata battery
@@ -946,6 +947,7 @@ def get_available_versions():
     return list(scraping_versions.keys())
 
 def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
+    from metadata.metadata import get_metadata, get_imdb_id_if_missing
     #logging.info(f"Fetching media details for ID: {media_id}, Type: {media_type}")
 
     # If media_id is a TMDB ID, convert it to IMDb ID
@@ -968,6 +970,7 @@ def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
     # Add additional details that might be needed
     metadata['media_type'] = media_type
     if media_type == 'tv':
+        from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
         metadata['seasons'] = get_all_season_episode_counts(imdb_id)
         metadata['airtime'] = get_show_airtime_by_imdb_id(imdb_id)
 

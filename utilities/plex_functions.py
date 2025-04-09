@@ -5,7 +5,6 @@ from utilities.settings import get_setting
 import time
 from typing import Dict, List, Any, Tuple, Optional
 import ast
-from metadata.metadata import get_metadata, get_release_date
 import plexapi.server
 import plexapi.exceptions
 import plexapi.library
@@ -223,6 +222,7 @@ async def process_show(session: aiohttp.ClientSession, plex_url: str, headers: D
     return all_episodes
 
 async def process_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show_genres: List[str], show_year: int = None) -> List[Dict[str, Any]]:
+    from metadata.metadata import get_metadata, get_release_date
     # Validate season_number
     if season_number is None:
         logger.error(f"Missing season number for episode {episode.get('title')} in show {show_title}")
@@ -328,6 +328,7 @@ async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, he
     return results
 
 async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
+    from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
     logging.info(f"Movie: {movie['title']}")
@@ -677,6 +678,7 @@ def filter_genres(genres):
     return filtered
 
 async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
+    from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
     logging.info(f"Movie: {movie['title']}")

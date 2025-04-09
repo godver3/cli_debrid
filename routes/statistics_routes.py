@@ -11,7 +11,6 @@ from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from routes.extensions import app_start_time
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
-from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
 from .program_operation_routes import program_is_running, program_is_initializing
 import json
 import math
@@ -148,6 +147,7 @@ def get_upcoming_releases():
 
 #@cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
 def get_recently_aired_and_airing_soon():
+    from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
     from database import get_db_connection
     conn = get_db_connection()
     try:
@@ -374,6 +374,7 @@ def root():
     stats = {}
     
     # Get timezone using our robust function
+    from metadata.metadata import _get_local_timezone
     local_tz = _get_local_timezone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
@@ -805,6 +806,7 @@ def format_datetime_preference(date_input, use_24hour_format):
         return ''
     try:
         # Get timezone using our robust function
+        from metadata.metadata import _get_local_timezone
         local_tz = _get_local_timezone()
         
         # Convert string to datetime if necessary
@@ -891,6 +893,7 @@ def index_api():
     stats = {}
     
     # Get timezone using our robust function
+    from metadata.metadata import _get_local_timezone
     local_tz = _get_local_timezone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)

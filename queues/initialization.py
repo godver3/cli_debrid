@@ -1,6 +1,5 @@
 import logging
 import time
-from metadata.metadata import refresh_release_dates
 from utilities.settings import get_all_settings, get_setting
 
 # Progress ranges for each phase
@@ -201,6 +200,7 @@ def get_all_wanted_from_enabled_sources():
 
 def initialize(skip_initial_plex_update=False):
     """Initialize the application state."""
+    from metadata.metadata import refresh_release_dates
     # Reset initialization status
     initialization_status['current_step'] = ''
     initialization_status['current_step_number'] = 0
@@ -252,20 +252,23 @@ def initialize(skip_initial_plex_update=False):
 
     # Now process sources based on the flags
     if should_process_sources:
-        start_phase('sources', 'Content Sources', 'Processing content sources')
+        # Content Sources Phase (2 minutes)
+        start_phase('sources', 'Content Sources', 'Starting source processing')
         get_all_wanted_from_enabled_sources()
         complete_phase('sources')
+        
+        # Refresh Release Dates Phase (30 seconds)
+        start_phase('release', 'Refresh Release Dates', 'Starting release date refresh')
+        refresh_release_dates()
+        complete_phase('release')
     else:
-         # This case should only happen if plex_collection_update ran and explicitly returned should_process_sources=False
-         update_initialization_step("Content Sources", "Skipping content source processing due to Plex update results.", is_substep=True)
-         logging.warning("Skipping content source processing due to Plex update results.")
-    
-    # Keep for now: Disable refresh_release_Dates
-    # # Release Dates Phase (30 seconds)
-    # start_phase('release', 'Release Dates', 'Updating metadata for all items')
-    # refresh_release_dates()
-    # complete_phase('release')
-    
+        logging.info("Skipping content sources and release date refresh due to Plex update status.")
+        # Manually set progress past these skipped phases
+        if 'sources' in PROGRESS_RANGES:
+            initialization_status['progress_value'] = PROGRESS_RANGES['sources'][1]
+        if 'release' in PROGRESS_RANGES:
+            initialization_status['progress_value'] = PROGRESS_RANGES['release'][1]
+
     # Keep for now: Disable database maintenance
     # from database.maintenance import update_show_ids, update_show_titles, update_movie_ids, update_movie_titles
 

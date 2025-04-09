@@ -1,7 +1,6 @@
 from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify, session
 from debrid import get_debrid_provider
 from database.database_writing import add_media_item, update_media_item_torrent_id
-from metadata.metadata import get_metadata, _get_local_timezone
 from .models import admin_required
 from queues.config_manager import load_config
 from queues.checking_queue import CheckingQueue
@@ -141,8 +140,8 @@ def assign_magnet():
             flash('Invalid action performed.', 'warning') # Optional: inform user
             return redirect(url_for('magnet.assign_magnet')) # Redirect back to the GET route
         
-    # --- MODIFICATION: Handle GET request with prefill ---
     elif request.method == 'GET':
+        from metadata.metadata import get_metadata # Added import here
         prefill_id = request.args.get('prefill_id')
         prefill_type = request.args.get('prefill_type')
         prefill_title = request.args.get('prefill_title')
@@ -195,7 +194,6 @@ def assign_magnet():
         else:
             # Standard GET request (no prefill)
             return render_template('magnet_assign.html', step='search')
-    # --- END MODIFICATION ---
 
 @magnet_bp.route('/prepare_manual_assignment', methods=['POST'])
 @admin_required
@@ -258,6 +256,7 @@ def prepare_manual_assignment():
         logging.info(f"Filtered down to {len(video_files)} video files.")
 
         # Get metadata
+        from metadata.metadata import get_metadata
         metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
         if not metadata:
             error_msg = 'Failed to get metadata for the selected item.'
@@ -624,6 +623,7 @@ def confirm_manual_assignment():
                 
                 # Re-fetch metadata (can be optimized by caching or passing more data)
                 media_type_lookup = 'movie' if item_type == 'movie' else 'show'
+                from metadata.metadata import get_metadata
                 metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type_lookup)
                 if not metadata:
                     logging.error(f"Could not re-fetch metadata for {item_key}")
