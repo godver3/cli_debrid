@@ -374,8 +374,8 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="color: rgb(191 191 190); width: 45%;">Name</th>
-                    <th style="color: rgb(191 191 190); width: 5%; text-align: right;">Size</th>
+                    <th style="color: rgb(191 191 190); width: 40%;">Name</th>
+                    <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Size</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Source</th>
                     <th style="color: rgb(191 191 190); width: 10%%; text-align: right;">Score</th>
                     <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
@@ -415,7 +415,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 const row = document.createElement('tr');
                 // --- MODIFIED row.innerHTML with adjusted column styles ---
                 row.innerHTML = `
-                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); max-width: 50%; word-wrap: break-word; white-space: normal; padding: 10px;">
+                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); word-wrap: break-word; white-space: normal; padding: 10px;">
                         <div style="display: block; line-height: 1.4; min-height: fit-content;">
                             ${torrent.title}
                         </div>

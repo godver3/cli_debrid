@@ -279,6 +279,8 @@ class QueueManager:
         return cls._instance
 
     def initialize(self):
+        if hasattr(self, '_initialized') and self._initialized:
+            return
         self.queues = {
             "Wanted": WantedQueue(),
             "Scraping": ScrapingQueue(),
@@ -297,9 +299,13 @@ class QueueManager:
         
         # Get the item tracker logger instance
         self.item_tracker = logging.getLogger('item_tracker')
+        
+        self.upgrade_process_locks = set()
+        self._initialized = True
 
     def reinitialize(self):
         """Force reinitialization of all queues to pick up new settings"""
+        self._initialized = False
         self.initialize()
         
     def reinitialize_queue(self, queue_name):

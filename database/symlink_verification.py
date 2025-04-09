@@ -957,3 +957,44 @@ def migrate_plex_removal_database() -> bool:
 # Run creation and migration for Plex removal queue on import
 create_plex_removal_queue_table()
 migrate_plex_removal_database()
+
+@retry_on_db_lock()
+def remove_verification_by_media_item_id(media_item_id: int) -> int:
+    """
+    Remove verification record(s) associated with a specific media item ID.
+    This is typically used when an item is being upgraded and the old symlink/verification is removed.
+
+    Args:
+        media_item_id: The ID of the media item whose verification record(s) should be removed.
+
+    Returns:
+        int: The number of verification records deleted.
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM symlinked_files_verification
+            WHERE media_item_id = ?
+            """,
+            (media_item_id,)
+        )
+        deleted_count = cursor.rowcount
+        conn.commit()
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} verification record(s) for media_item_id: {media_item_id}")
+        else:
+            logger.debug(f"No verification records found to delete for media_item_id: {media_item_id}")
+        return deleted_count
+    except sqlite3.Error as e:
+        conn.rollback()
+        logger.error(f"Database error removing verification for media_item_id {media_item_id}: {str(e)}")
+        return 0
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Unexpected error removing verification for media_item_id {media_item_id}: {str(e)}")
+        return 0
+    finally:
+        if conn:
+            conn.close()

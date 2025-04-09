@@ -17,6 +17,7 @@ from debrid.common import extract_hash_from_magnet, extract_hash_from_file
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
 from PTT import parse_title
 import re
+from scraper.functions.ptt_parser import parse_with_ptt
 
 class UpgradingQueue:
     def __init__(self):
@@ -432,25 +433,57 @@ class UpgradingQueue:
 
         update_media_item(item['id'], upgrading=True)
 
-        is_multi_pack = self.check_multi_pack(item)
-        is_multi_pack = False
+        # Determine if the current item is a multi-pack using PTT parser
+        is_multi_pack = False # Default to false
+        current_title_original = item.get('original_scraped_torrent_title')
+        current_title_fallback_file = item.get('filled_by_file')
+        current_title = None
+
+        if current_title_original:
+            current_title = current_title_original
+            logging.info(f"Using original_scraped_torrent_title for PTT check: {current_title}")
+        elif current_title_fallback_file:
+            current_title = current_title_fallback_file
+            logging.warning(f"No original_scraped_torrent_title found, using filled_by_file for PTT check: {current_title}")
+
+        if current_title:
+            # Use the original title string for PTT parsing for better accuracy
+            parsed_info = parse_with_ptt(current_title)
+            if parsed_info and not parsed_info.get('parsing_error'):
+                # Check if it's TV type and either multiple episodes or a season pack (seasons present, episodes absent)
+                if parsed_info.get('type') == 'episode':
+                    if len(parsed_info.get('episodes', [])) > 1:
+                        is_multi_pack = True
+                        logging.info(f"PTT indicates multi-episode pack (Episodes: {parsed_info.get('episodes')})")
+                    elif parsed_info.get('seasons') and not parsed_info.get('episodes'):
+                        is_multi_pack = True
+                        logging.info(f"PTT indicates season pack (Seasons: {parsed_info.get('seasons')})")
+                    else:
+                         logging.info(f"PTT indicates single episode (Seasons: {parsed_info.get('seasons', [])}, Episodes: {parsed_info.get('episodes', [])})")
+                else:
+                     logging.info(f"PTT indicates type '{parsed_info.get('type')}'")
+            else:
+                logging.warning(f"Could not parse current title '{current_title}' with PTT, assuming not multi-pack.")
+        else:
+             logging.error(f"No current title found for item {item_identifier}, cannot determine if multi-pack via PTT.")
+             # Cannot determine, proceed with default is_multi_pack = False
 
         # Get unfiltered results first to ensure we can find our current item
-        logging.info(f"[{item_identifier}] Calling scrape_with_fallback to get results")
-        results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self, skip_filter=True)
+        logging.info(f"[{item_identifier}] Calling scrape_with_fallback with is_multi_pack={is_multi_pack} to get results")
+        results, filtered_out = self.scraping_queue.scrape_with_fallback(item, is_multi_pack, queue_manager or self, skip_filter=True) # Pass determined is_multi_pack
 
         if results:
             # Find the position of the current item's 'filled_by_magnet' in the results
-            current_title_original = item.get('original_scraped_torrent_title')
-            current_title_fallback_file = item.get('filled_by_file')
-            current_title = None
+            # current_title_original = item.get('original_scraped_torrent_title') # Already fetched above
+            # current_title_fallback_file = item.get('filled_by_file') # Already fetched above
+            # current_title = None # Already fetched and set above
             normalized_current_title = ""
 
             if current_title_original:
-                current_title = current_title_original
+                # current_title = current_title_original # Already set
                 logging.info(f"Using original_scraped_torrent_title: {current_title}")
             elif current_title_fallback_file:
-                current_title = current_title_fallback_file
+                # current_title = current_title_fallback_file # Already set
                 logging.warning(f"No original_scraped_torrent_title found, using filled_by_file as fallback: {current_title}")
             else:
                 logging.error(f"No original_scraped_torrent_title or filled_by_file found for item {item_identifier}, skipping upgrade check")
@@ -551,13 +584,43 @@ class UpgradingQueue:
                 if 'score_breakdown' in result:
                     total_score = result['score_breakdown'].get('total_score', 0)
                     current_score = filtered_results[current_position]['score_breakdown'].get('total_score', 0)
-                    if current_score != 0:
-                        score_increase = (total_score - current_score) / current_score
-                    else:
-                        score_increase = float('inf')
-                    logging.info(f"  Score: {total_score:.2f} ({'+' if score_increase > 0 else ''}{score_increase:.2%} compared to current)")
-                    if score_increase > upgrading_percentage_threshold:
-                        logging.info(f"  ⬆ Above upgrade threshold ({upgrading_percentage_threshold:.2%})")
+                    score_diff = total_score - current_score
+                    
+                    # Improved logging for score comparison
+                    log_comparison = f"Score: {total_score:.2f} (Difference: {score_diff:+.2f} from current {current_score:.2f})"
+                    is_above_threshold = False
+                    
+                    if current_score > 0 and total_score > current_score:
+                        # Only calculate percentage if current score is positive
+                        score_increase_percent = score_diff / current_score
+                        log_comparison += f" ({score_increase_percent:+.2%})"
+                        if score_increase_percent > upgrading_percentage_threshold:
+                            is_above_threshold = True
+                    elif total_score > current_score:
+                        # If current score is 0 or negative, any increase is significant
+                        # We'll check against the threshold conceptually later
+                        log_comparison += " (Improvement from non-positive score)"
+                        # Consider it potentially above threshold if the new score itself is positive enough?
+                        # For now, just note it's an improvement. The filtering logic will handle the threshold application.
+                        # We might implicitly consider any jump from <=0 to >0 as meeting a threshold.
+                        # Or if both are negative, any increase counts.
+                        
+                    logging.info(f"  {log_comparison}")
+
+                    # Check if it meets the upgrade criteria based on the refined logic below
+                    meets_upgrade_criteria = False
+                    if total_score > current_score:
+                        if current_score <= 0:
+                             # Any increase from negative or zero is considered an upgrade for now
+                             # (Assuming the score itself reflects desirability)
+                            meets_upgrade_criteria = True
+                        elif (score_diff / current_score) > upgrading_percentage_threshold:
+                             # Standard percentage check for positive scores
+                            meets_upgrade_criteria = True
+
+                    if meets_upgrade_criteria:
+                        logging.info(f"  ⬆ Meets upgrade criteria (Threshold: {upgrading_percentage_threshold:.2%})")
+                        
                 logging.info("  ---")
 
             logging.info(f"Current item {item_identifier} is at position {current_position + 1} in the filtered results")
@@ -565,16 +628,25 @@ class UpgradingQueue:
             current_score = filtered_results[current_position]['score_breakdown'].get('total_score', 0)
             logging.info(f"Current item score: {current_score:.2f}")
             
-            # Only consider results that are in higher positions AND not too similar AND score increase > threshold
-            better_results = [
-                result for result in filtered_results[:current_position]
-                if (SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() < similarity_threshold and
-                    (result['score_breakdown'].get('total_score', 0) > current_score and
-                     ((result['score_breakdown'].get('total_score', 0) - current_score) / current_score if current_score != 0 else float('inf')) > upgrading_percentage_threshold))
-            ]
+            # Only consider results that are in higher positions AND not too similar AND meet upgrade criteria
+            better_results = []
+            for result in filtered_results[:current_position]:
+                # Check similarity first
+                if SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio() >= similarity_threshold:
+                    continue # Skip if too similar
+
+                # Check upgrade criteria (score must be higher AND meet threshold logic)
+                result_score = result['score_breakdown'].get('total_score', 0)
+                if result_score > current_score:
+                    # Check threshold condition:
+                    # Upgrade if current score is non-positive OR 
+                    # if current score is positive and percentage increase exceeds threshold
+                    if current_score <= 0 or \
+                       ((result_score - current_score) / current_score > upgrading_percentage_threshold):
+                        better_results.append(result)
 
             if better_results:
-                logging.info(f"Found {len(better_results)} potential upgrade(s) in higher positions after similarity filtering (threshold: {similarity_threshold:.2%})")
+                logging.info(f"Found {len(better_results)} potential upgrade(s) in higher positions meeting criteria (Similarity < {similarity_threshold:.2%}, Threshold: {upgrading_percentage_threshold:.2%})")
                 logging.info("Better results to try:")
                 for i, result in enumerate(better_results):
                     similarity = SequenceMatcher(None, current_title.lower(), result['title'].lower()).ratio()
@@ -606,8 +678,27 @@ class UpgradingQueue:
                 uncached_handling = get_setting('Scraping', 'uncached_content_handling', 'None').lower()
                 logging.info(f"[{item_identifier}] Adding item to adding queue for upgrade attempt")
                 adding_queue.add_item(updated_item)
-                logging.info(f"[{item_identifier}] Processing adding queue for upgrade attempt")
-                adding_queue.process(queue_manager)
+
+                # ---> EDIT: Add lock management around process call <---
+                lock_acquired = False
+                try:
+                    # Acquire lock
+                    if queue_manager and hasattr(queue_manager, 'upgrade_process_locks'):
+                        queue_manager.upgrade_process_locks.add(updated_item['id'])
+                        lock_acquired = True
+                        logging.debug(f"[{item_identifier}] Added lock for upgrade process: {updated_item['id']}")
+                    else:
+                         logging.warning(f"[{item_identifier}] Could not acquire upgrade lock - QueueManager or lock set missing.")
+
+                    logging.info(f"[{item_identifier}] Processing adding queue for upgrade attempt")
+                    # ---> EDIT: Pass ignore_upgrade_lock=True <---
+                    adding_queue.process(queue_manager, ignore_upgrade_lock=True) # This is the synchronous call
+                finally:
+                    # Release lock if acquired
+                    if lock_acquired and queue_manager and hasattr(queue_manager, 'upgrade_process_locks'):
+                         queue_manager.upgrade_process_locks.discard(updated_item['id'])
+                         logging.debug(f"[{item_identifier}] Removed lock for upgrade process: {updated_item['id']}")
+                # ---> END EDIT <---
 
                 # Check if the item was successfully moved to Checking queue
                 from database.core import get_db_connection

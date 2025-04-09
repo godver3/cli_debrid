@@ -36,6 +36,7 @@ def index():
         'operators': [
             {'value': 'contains', 'label': 'Contains'},
             {'value': 'equals', 'label': 'Equals'},
+            {'value': 'not_equals', 'label': 'Not Equals'},
             {'value': 'starts_with', 'label': 'Starts With'},
             {'value': 'ends_with', 'label': 'Ends With'},
             {'value': 'greater_than', 'label': 'Greater Than'},
@@ -131,32 +132,78 @@ def index():
         if filters:
             for filter_item in filters:
                 column = filter_item.get('column')
-                value = filter_item.get('value')
-                operator = filter_item.get('operator', 'contains')  # Default to contains
-                
-                if column and value and column in all_columns:
-                    if operator == 'contains':
-                        where_clauses.append(f"{column} LIKE ?")
-                        params.append(f"%{value}%")
-                    elif operator == 'equals':
-                        where_clauses.append(f"{column} = ?")
-                        params.append(value)
-                    elif operator == 'starts_with':
-                        where_clauses.append(f"{column} LIKE ?")
-                        params.append(f"{value}%")
-                    elif operator == 'ends_with':
-                        where_clauses.append(f"{column} LIKE ?")
-                        params.append(f"%{value}")
-                    elif operator == 'greater_than':
-                        where_clauses.append(f"{column} > ?")
-                        params.append(value)
-                    elif operator == 'less_than':
-                        where_clauses.append(f"{column} < ?")
-                        params.append(value)
+                # Get value, treat empty string from frontend as None for backend logic comparison,
+                # but keep literal "None" string as is.
+                raw_value = filter_item.get('value')
+                # Treat empty string passed from frontend as an actual empty string for filtering
+                value = raw_value # No conversion to None needed here
+
+                operator = filter_item.get('operator', 'contains')
+
+                if column and column in all_columns:
+                    # Handle explicit IS NULL / IS NOT NULL operators first
+                    if operator == 'is_null':
+                        where_clauses.append(f'"{column}" IS NULL')
+                    elif operator == 'is_not_null':
+                        where_clauses.append(f'"{column}" IS NOT NULL')
+
+                    # Special handling for "None" string with equals/not_equals
+                    # Now means NULL OR Empty String OR Literal "None"
+                    elif value == "None" and operator == 'equals':
+                         where_clauses.append(f'("{column}" IS NULL OR "{column}" = ? OR "{column}" = ?)')
+                         params.extend(['', 'None']) # Add parameters for empty string and literal "None"
+                    # Not Equals "None" should mean NOT NULL AND Not Empty String AND Not Literal "None"
+                    elif value == "None" and operator == 'not_equals':
+                         where_clauses.append(f'("{column}" IS NOT NULL AND "{column}" != ? AND "{column}" != ?)')
+                         params.extend(['', 'None']) # Add parameters for empty string and literal "None"
+
+                    # Handle operators requiring a non-"None" value
+                    elif value != "None":
+                         # Handle empty string search specifically for equals/not_equals
+                         if value == '' and operator == 'equals':
+                             where_clauses.append(f'"{column}" = ?')
+                             params.append('')
+                         elif value == '' and operator == 'not_equals':
+                              where_clauses.append(f'"{column}" != ?')
+                              params.append('')
+                         # Standard operators for non-empty, non-"None" values
+                         # Ensure value is not empty before proceeding with other operators that need a value
+                         elif value != '':
+                            if operator == 'contains':
+                                where_clauses.append(f'"{column}" LIKE ?')
+                                params.append(f"%{value}%")
+                            elif operator == 'equals': # value is not "None" or "" here
+                                where_clauses.append(f'"{column}" = ?')
+                                params.append(value)
+                            elif operator == 'not_equals': # value is not "None" or "" here
+                                where_clauses.append(f'"{column}" IS NOT ?') # Use IS NOT for NULL-safe inequality
+                                params.append(value)
+                            elif operator == 'starts_with':
+                                where_clauses.append(f'"{column}" LIKE ?')
+                                params.append(f"{value}%")
+                            elif operator == 'ends_with':
+                                where_clauses.append(f'"{column}" LIKE ?')
+                                params.append(f"%{value}%")
+                            elif operator == 'greater_than':
+                                try: # Numeric comparison
+                                    where_clauses.append(f'CAST("{column}" AS REAL) > ?')
+                                    params.append(float(value))
+                                except (ValueError, TypeError): # String comparison (catch TypeError for safety)
+                                    where_clauses.append(f'"{column}" > ?')
+                                    params.append(value)
+                            elif operator == 'less_than':
+                                try: # Numeric comparison
+                                    where_clauses.append(f'CAST("{column}" AS REAL) < ?')
+                                    params.append(float(value))
+                                except (ValueError, TypeError): # String comparison
+                                    where_clauses.append(f'"{column}" < ?')
+                                    params.append(value)
+                    # else: value is empty string and operator isn't equals/not_equals, or other unhandled cases - skip filter
             
-            # Reset content_type and current_letter when custom filters are applied
-            content_type = 'all'
-            current_letter = ''
+            # Reset content_type and current_letter only if filters were actually applied
+            if where_clauses: # Check if any valid filter clause was added
+                content_type = 'all'
+                current_letter = ''
         else:
             if content_type != 'all':
                 where_clauses.append("type = ?")
@@ -198,9 +245,12 @@ def index():
         # Get unique values for each column for filter dropdowns
         column_values = {}
         for column in all_columns:
-            if column in ['state', 'type', 'version']:  # Add more columns as needed
-                cursor.execute(f"SELECT DISTINCT {column} FROM media_items WHERE {column} IS NOT NULL ORDER BY {column}")
-                column_values[column] = [row[0] for row in cursor.fetchall()]
+            # Only fetch distinct values for specific columns to avoid large queries
+            if column in ['state', 'type', 'version']:
+                cursor.execute(f"SELECT DISTINCT {column} FROM media_items ORDER BY {column}")
+                # Convert Python None to string "None" for frontend representation
+                values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
+                column_values[column] = values
 
         # Update data dictionary instead of creating new one
         data.update({

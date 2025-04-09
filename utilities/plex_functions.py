@@ -752,7 +752,20 @@ async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], se
 async def process_recent_episode(episode: Dict[str, Any], show_title: str, season_number: int, show_imdb_id: str, show_tmdb_id: str, show: Dict[str, Any]) -> List[Dict[str, Any]]:
     show_genres = [genre['tag'] for genre in show.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(show_genres)
-    logging.info(f"Episode: {show_title} - {episode['title']}")
+    # Log with S##E## format
+    episode_number = episode.get('index')
+    # Ensure episode_number is treated as an integer for formatting, handle None
+    try:
+        log_episode_number = f"{int(episode_number):02d}" if episode_number is not None else "Unknown"
+    except (ValueError, TypeError):
+        log_episode_number = "Invalid" # Handle cases where index is not a valid number
+    # Ensure season_number is treated as an integer for formatting
+    try:
+        log_season_number = f"{int(season_number):02d}" if season_number is not None else "Unknown"
+    except (ValueError, TypeError):
+        log_season_number = "Invalid" # Handle cases where season_number is not valid
+
+    logging.info(f"Episode: {show_title} - S{log_season_number}E{log_episode_number} - {episode['title']}")
 
     episode_data = {
         'title': show_title,
@@ -834,7 +847,7 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         
         sections = plex.library.sections()
         file_deleted = False
-        max_retries = 3
+        max_retries = 1
         retry_delay = 1  # seconds
         
         for attempt in range(max_retries):

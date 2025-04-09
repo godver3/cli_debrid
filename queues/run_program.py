@@ -52,6 +52,9 @@ from utilities.plex_functions import (
 from plexapi.exceptions import NotFound
 import pytz # Added import
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError # Keep this if needed elsewhere, or remove if only _get_local_timezone uses it
+from database.core import get_db_connection # Add DB connection import
+from utilities.local_library_scan import check_local_file_for_item # Add local scan import
+from utilities.rclone_processing import handle_rclone_file # Add this import
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -105,7 +108,7 @@ class ProgramRunner:
             'Wanted': 5,       # Keep these responsive
             'Scraping': 5,     # Keep these responsive
             'Adding': 5,       # Keep these responsive
-            'Checking': 300,   # 5 minutes (was already good)
+            'Checking': 180,   # 3 minutes (was already good)
             'Sleeping': 1800,  # 30 minutes (increased from 15)
             'Unreleased': 300,  # 5 minutes (reduced from 1 hour to ensure regular checking)
             'Blacklisted': 7200,  # 2 hours (increased from 1)
@@ -181,6 +184,33 @@ class ProgramRunner:
             'task_precompute_airing_shows',
             'task_process_pending_rclone_paths' # Enable the new task
         }
+
+        # *** START EDIT ***
+        # Define the set of tasks eligible for dynamic interval adjustment
+        self.DYNAMIC_INTERVAL_TASKS = {
+            'task_refresh_release_dates',
+            'task_generate_airtime_report',
+            'task_check_trakt_early_releases',
+            'task_reconcile_queues',
+            'task_refresh_download_stats',
+            'task_check_plex_files',
+            'task_update_show_ids',
+            'task_update_show_titles',
+            'task_update_movie_ids',
+            'task_update_movie_titles',
+            'task_get_plex_watch_history',
+            'task_run_library_maintenance',
+            'task_verify_symlinked_files',
+            'task_verify_plex_removals',
+            'task_update_statistics_summary',
+            'task_precompute_airing_shows',
+            'task_plex_full_scan'
+        }
+        # Define a maximum multiplier for dynamic intervals (e.g., 16x original)
+        self.MAX_INTERVAL_MULTIPLIER = 16
+        # Define an absolute maximum interval (e.g., 24 hours in seconds)
+        self.ABSOLUTE_MAX_INTERVAL = 48 * 60 * 60
+        # *** END EDIT ***
 
         # THEN populate content source intervals AND add enabled content source tasks
         logging.info("Performing initial population of content source intervals and enabled tasks...")
@@ -557,7 +587,7 @@ class ProgramRunner:
                 
                 if not is_standard_queue and not is_content_source:
                     if self.should_run_task(task_name):
-                        task_start_time = time.time()
+                        task_start_time = time.time() # Start timer
                         try:
                             logging.debug(f"Running task: {task_name}")
                             task_method = getattr(self, task_name)
@@ -566,8 +596,11 @@ class ProgramRunner:
                             logging.error(f"Error running task {task_name}: {str(e)}")
                             logging.error(traceback.format_exc())
                         finally:
-                            task_duration = time.time() - task_start_time
+                            task_duration = time.time() - task_start_time # Calculate duration
                             logging.debug(f"Task {task_name} finished in {task_duration:.2f}s")
+                            # --- START EDIT: Apply dynamic interval logic ---
+                            self.apply_dynamic_interval_adjustment(task_name, task_duration)
+        # --- END EDIT ---
                             self.currently_running_tasks.discard(task_name)
 
         except Exception as e:
@@ -1295,11 +1328,9 @@ class ProgramRunner:
             for pair in reconciliation_pairs:
                 # Log the reconciliation
                 reconciliation_logger.info(
-                    f"Reconciliation Found:\n"
-                    f"  Checking Item: ID={pair['checking_id']}, Title={pair['checking_title']}, "
-                    f"Type={pair['checking_type']}, File={pair['filled_by_file']}\n"
-                    f"  Matching Item: ID={pair['matching_id']}, Title={pair['matching_title']}, "
-                    f"State={pair['matching_state']}, Type={pair['matching_type']}"
+                    f"Reconciliation Found based on shared file: '{pair['filled_by_file']}'\n"
+                    f"  - Keeping (was Checking): ID={pair['checking_id']}, Title='{pair['checking_title']}', Type={pair['checking_type']}, File={pair['filled_by_file']}\n"
+                    f"  - Deleting (Matching):    ID={pair['matching_id']}, Title='{pair['matching_title']}', State={pair['matching_state']}, Type={pair['matching_type']}, File={pair['filled_by_file']}"
                 )
                 items_to_update.append(pair['checking_id'])
                 items_to_delete.add(pair['matching_id'])
@@ -1310,8 +1341,9 @@ class ProgramRunner:
                 params = [now_str] + items_to_update
                 cursor.execute(update_sql, params)
                 reconciled_count = cursor.rowcount
-                reconciliation_logger.info(f"Updated {reconciled_count} checking items to Collected: IDs {items_to_update}")
-            
+                # Add criteria to update log
+                reconciliation_logger.info(f"Updated {reconciled_count} 'Checking' items to 'Collected' state due to matching file paths. IDs: {items_to_update}")
+
             if items_to_delete:
                 # Bulk delete the matching items
                 # Ensure items being updated aren't accidentally deleted if IDs overlap somehow (unlikely)
@@ -1320,14 +1352,16 @@ class ProgramRunner:
                     delete_sql = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(delete_ids))})"
                     cursor.execute(delete_sql, delete_ids)
                     deleted_count = cursor.rowcount
-                    reconciliation_logger.info(f"Deleted {deleted_count} matching items: IDs {delete_ids}")
+                     # Add criteria to delete log
+                    reconciliation_logger.info(f"Deleted {deleted_count} duplicate items (non-Checking state) that shared a file path with reconciled items. IDs: {delete_ids}")
 
             conn.commit()
             if reconciled_count > 0 or deleted_count > 0:
-                 logging.info(f"Queue reconciliation completed: {reconciled_count} items updated to Collected, {deleted_count} duplicate items deleted.")
+                 # Make this log more informative
+                 logging.info(f"Queue reconciliation completed: {reconciled_count} items updated to 'Collected', {deleted_count} duplicate items deleted based on shared file paths.")
             else:
                  logging.debug("Queue reconciliation found no items needing reconciliation.")
-            
+
         except sqlite3.Error as e:
             logging.error(f"Database error during queue reconciliation: {str(e)}")
 
@@ -1646,13 +1680,15 @@ class ProgramRunner:
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
 
-                    # Determine if scan should be triggered (1st, 6th, 11th time, etc.)
-                    if current_tick % 5 == 1:
+                    # Determine if scan should be triggered (first 5 times found)
+                    if current_tick <= 5: # Changed condition
                         should_trigger_scan = True
-                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Triggering Plex scan for all {len(sections)} sections.")
+                        # Updated log message
+                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Triggering Plex scan for all {len(sections)} sections (will trigger for first 5 ticks).")
                     else:
                         should_trigger_scan = False
-                        logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger this cycle.")
+                        # Updated log message
+                        logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
 
                 else:
                     # File not found
@@ -1666,7 +1702,7 @@ class ProgramRunner:
                     should_trigger_scan = False
                     continue # Move to the next item
 
-                # Perform Plex scan only if the tick count condition is met
+                # Perform Plex scan only if the file was found and it's within the first 5 ticks
                 if should_trigger_scan:
                     scan_triggered_for_item = False
                     for section in sections:
@@ -2178,145 +2214,184 @@ class ProgramRunner:
     # New task to process paths from the pending queue
     def task_process_pending_rclone_paths(self):
         """
-        Processes paths added by the rclone webhook, including retry logic for file availability.
+        Processes relative file paths (e.g., 'Folder/file.mkv') added by the
+        rclone webhook. Checks for the file's existence and calls
+        handle_rclone_file to process it. Includes retry logic.
         """
         if not self.pending_rclone_paths:
-            # logging.debug("No pending rclone paths to process.")
             return
 
-        # Process one path per task run to avoid blocking the runner for too long
+        relative_file_path = None # Initialize to handle potential errors before assignment
+        processing_result = {'success': False} # Default to failure
+
         try:
-            # Peek at the path instead of removing it immediately
-            relative_path = self.pending_rclone_paths[0] 
-            logging.info(f"Processing pending rclone path: {relative_path}. Remaining: {len(self.pending_rclone_paths)}")
+            # Peek at the path (e.g., 'Movie Title (Year)/Movie.Title.Year.mkv')
+            # This path includes folder and filename as queued by the webhook
+            relative_file_path = self.pending_rclone_paths[0]
+            logging.info(f"Processing pending rclone path: '{relative_file_path}'. Remaining: {len(self.pending_rclone_paths)}")
         except IndexError:
-            logging.debug("Pending rclone path queue was empty when trying to pop.")
-            return # Queue is empty
+            logging.debug("Pending rclone path queue was empty when trying to peek.")
+            return # Should not happen if initial check passed, but safety first
+
+        original_files_path = None
+        target_full_path = None
 
         try:
-            # Import handle_rclone_file here if not already globally available
-            # Ensure it's imported correctly or defined in this scope/module.
-            from routes.webhook_routes import handle_rclone_file 
-
-            # Get the base path where original files are stored
-            if get_setting('File Management', 'file_collection_management') == 'Plex':
+            # Determine base path based on mode (handle_rclone_file uses its own settings)
+            file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local')
+            if file_management_mode == 'Plex':
+                 # Use Plex mount path for existence check if mode is Plex
                 original_files_path = get_setting('Plex', 'mounted_file_location')
-            else:
+            else: # Symlinked/Local
                 original_files_path = get_setting('File Management', 'original_files_path')
 
             if not original_files_path:
-                logging.error("Original files path setting is missing. Cannot process rclone path.")
-                # Re-add the path to try later? Or discard? Discarding for now.
-                # self.pending_rclone_paths.appendleft(relative_path) # Put back if needed
+                logging.error(f"Source files path setting is missing for mode '{file_management_mode}'. Cannot process rclone path '{relative_file_path}'. Discarding.")
+                # Discard the path if config is bad
+                try: self.pending_rclone_paths.popleft()
+                except IndexError: pass
                 return
 
-            # The relative_path might be just the filename or folder/filename.
-            # We need the expected *directory* path for the retry logic.
-            # Assume the structure is original_path / relative_path_folder / relative_path_file
-            # Example: relative_path = "My Movie (2023)/My Movie (2023).mkv"
-            # We need to check for the existence of original_path / "My Movie (2023)"
-            
-            path_parts = relative_path.split('/')
-            if len(path_parts) > 1:
-                # Path includes a folder component
-                relative_dir = path_parts[0] # e.g., "My Movie (2023)"
-                filename = path_parts[-1]    # e.g., "My Movie (2023).mkv"
-                dir_to_check = os.path.join(original_files_path, relative_dir)
-            else:
-                # Path is likely just a filename, assume it's directly in original_files_path
-                # This case might need adjustment based on actual rclone behavior
-                filename = relative_path
-                relative_dir = "" # No relative directory component
-                dir_to_check = original_files_path # Check the base path itself? Or maybe log an error?
-                logging.warning(f"Received rclone path '{relative_path}' without directory structure. Assuming file is directly in '{original_files_path}'. Processing may fail if a subfolder is expected.")
-                # Let's assume we still need to check the base directory for the file directly
-                dir_to_check = original_files_path
+            # Construct the full path to the target file
+            target_full_path = os.path.join(original_files_path, relative_file_path)
+            logging.debug(f"Checking for file existence: {target_full_path}")
 
-            logging.debug(f"Checking for directory existence: {dir_to_check}")
-
-            # --- Retry Logic (Runs in Background Task) ---
+            # --- Retry Logic for File Existence ---
             found = False
-            delays = [1] # Delays in seconds
+            # Adjusted delays for slightly longer wait if needed
+            delays = [1, 2, 3] # Seconds - Total ~6s wait after initial check
             attempt = 1
 
-            if os.path.exists(dir_to_check):
+            if os.path.exists(target_full_path):
                 found = True
-                logging.info(f"Directory found on initial check (attempt 1): {dir_to_check}")
+                logging.info(f"File found on initial check (attempt 1): {target_full_path}")
             else:
-                logging.info(f"Directory '{dir_to_check}' not found on initial check, starting retries...")
+                logging.info(f"File '{target_full_path}' not found on initial check, starting retries...")
                 for delay in delays:
                     attempt += 1
-                    logging.info(f"Retrying attempt {attempt} for '{dir_to_check}' in {delay} seconds...")
-                    time.sleep(delay) # This sleep ONLY blocks the background task thread
-                    if os.path.exists(dir_to_check):
+                    logging.info(f"Retrying attempt {attempt} for file '{target_full_path}' in {delay} seconds...")
+                    time.sleep(delay)
+                    if os.path.exists(target_full_path):
                         found = True
-                        logging.info(f"Directory found on attempt {attempt}: {dir_to_check}")
+                        logging.info(f"File found on attempt {attempt}: {target_full_path}")
                         break
                     else:
-                        logging.info(f"Directory still not found after attempt {attempt}.")
+                        logging.info(f"File still not found after attempt {attempt}.")
 
             if not found:
-                logging.error(f"Directory '{dir_to_check}' not found after {attempt} attempts for relative path '{relative_path}'. Discarding path.")
-                # Path is already removed from deque, just return
-                return
-            # --- End Retry Logic ---
+                logging.error(f"File '{target_full_path}' not found or not accessible after {attempt} attempts for relative path '{relative_file_path}'. Path will be retried later.")
+                return # Keep in queue
 
-            # --- Process Files (If Directory Found) ---
-            logging.info(f"Directory '{dir_to_check}' found. Looking for file '{filename}' within it.")
+            # --- Call handle_rclone_file ---
+            logging.info(f"File '{target_full_path}' found. Calling handle_rclone_file with relative path: '{relative_file_path}'")
             try:
-                dir_contents = os.listdir(dir_to_check)
-                # logging.debug(f"Directory contents of '{dir_to_check}': {dir_contents}")
+                # Call the handler function and store its result
+                processing_result = handle_rclone_file(relative_file_path)
+                log_level = logging.INFO if processing_result.get('success') else logging.WARNING
+                logging.log(log_level, f"Result of handle_rclone_file for '{relative_file_path}': {processing_result}")
+                # The 'success' key in processing_result now determines if the path should be removed
 
-                file_processed = False
-                for file_in_dir in dir_contents:
-                    # Check if this file matches the filename we expect from the webhook
-                    if file_in_dir == filename:
-                        # Construct the relative path expected by handle_rclone_file
-                        # This should be relative to original_files_path
-                        full_file_path = os.path.join(dir_to_check, file_in_dir)
-                        path_for_handler = os.path.relpath(full_file_path, original_files_path)
-                        
-                        logging.info(f"Found matching media file: {file_in_dir}. Processing with handler using path: {path_for_handler}")
-                        # Call the handler function (ensure it handles exceptions)
-                        result = handle_rclone_file(path_for_handler) 
-                        logging.info(f"Result of handling '{path_for_handler}': {result}")
-                        file_processed = True
-                        
-                        # --- Remove from queue ONLY after successful processing ---
-                        try:
-                            removed_path = self.pending_rclone_paths.popleft()
-                            if removed_path != relative_path:
-                                # This shouldn't happen if processing one at a time, but log if it does
-                                logging.warning(f"Removed path '{removed_path}' from queue, but expected '{relative_path}'. Queue state might be inconsistent.")
-                            else:
-                                logging.debug(f"Successfully processed and removed '{relative_path}' from queue.")
-                        except IndexError:
-                            logging.error("Tried to remove path from queue, but it was already empty.")
-                        # --- End removal ---
-                        
-                        break # Stop after processing the target file
-                    else:
-                         #logging.debug(f"Skipping non-matching file in directory: {file_in_dir}")
-                         pass
+            except Exception as handle_err:
+                logging.error(f"Error calling handle_rclone_file for path '{relative_file_path}': {handle_err}", exc_info=True)
+                processing_result['success'] = False # Ensure success is false on exception
+                processing_result['message'] = f"Error in handle_rclone_file: {handle_err}"
+                # Keep path in queue if the handler itself fails
 
-                if not file_processed:
-                     logging.warning(f"Target file '{filename}' was not found within directory '{dir_to_check}' after successful directory check. Contents: {dir_contents}")
-
-            except FileNotFoundError:
-                 logging.error(f"Directory '{dir_to_check}' disappeared after successful check but before listing contents.")
-            except Exception as e:
-                logging.error(f"Error listing/processing directory '{dir_to_check}' for path '{relative_path}': {str(e)}", exc_info=True)
-                # Decide if the path should be re-queued or discarded. Discarding for now.
-            # --- End File Processing ---
-
-        except ImportError:
-             logging.error("Failed to import handle_rclone_file from routes.webhook_routes. Cannot process pending rclone path.")
-             # Item remains in the queue, just return
-             return
         except Exception as e:
-            logging.error(f"Unexpected error processing pending rclone path '{relative_path}': {str(e)}", exc_info=True)
-            # Item remains in the queue, just return
+            logging.error(f"Unexpected error processing pending rclone path '{relative_file_path}': {str(e)}", exc_info=True)
+            processing_result['success'] = False # Ensure success is false on general error
+            processing_result['message'] = f"Unexpected error: {e}"
+            # Keep path in queue on general error
+
+        finally:
+            # --- Remove from queue ONLY if handle_rclone_file indicated success ---
+            if processing_result.get('success'): # Check the success flag from the result dict
+                try:
+                    removed_path = self.pending_rclone_paths.popleft()
+                    # Verify the removed path is the one we intended to process
+                    if removed_path != relative_file_path:
+                        logging.warning(f"Removed path '{removed_path}' from queue, but expected '{relative_file_path}'. Queue state might be inconsistent.")
+                        # Potential issue: If another thread modified the queue between peek and pop.
+                        # Consider using locks if multi-threading is a concern here.
+                    else:
+                        logging.info(f"Successfully processed path '{relative_file_path}' (Result: {processing_result.get('message', 'OK')}) and removed it from queue.")
+                except IndexError:
+                    logging.error(f"Tried to remove path '{relative_file_path}' from queue after successful processing, but queue was empty.")
+            else:
+                 # Log why it's being kept (using message from processing_result)
+                logging.info(f"Processing failed or incomplete for '{relative_file_path}' (Reason: {processing_result.get('message', 'Unknown')}). Leaving it in queue for retry.")
+        # --- END EDIT ---
+
+    # --- EDIT: Add the remove_specific_pending_rclone_path method if it wasn't added before ---
+    def remove_specific_pending_rclone_path(self, relative_path_to_remove: str):
+        """
+        Removes a specific path from the pending_rclone_paths deque.
+        Intended to be used as a callback.
+        """
+        removed = False
+        try:
+            # Convert deque to list for safe iteration and removal
+            current_paths = list(self.pending_rclone_paths)
+            if relative_path_to_remove in current_paths:
+                 current_paths.remove(relative_path_to_remove)
+                 # Recreate the deque
+                 self.pending_rclone_paths = deque(current_paths)
+                 removed = True
+                 logging.info(f"Removed path '{relative_path_to_remove}' from pending rclone queue via callback.")
+            else:
+                 logging.warning(f"Attempted to remove path '{relative_path_to_remove}' via callback, but it was not found in the queue.")
+        except Exception as e:
+            logging.error(f"Error removing specific path '{relative_path_to_remove}' from rclone queue: {e}", exc_info=True)
+        return removed
+    # --- END EDIT ---
+
+    # --- START EDIT: New method for dynamic adjustment ---
+    def apply_dynamic_interval_adjustment(self, task_name: str, duration: float):
+        """
+        Adjusts the interval for a task based on its execution duration.
+        Increases interval if duration exceeds 10% of current interval.
+        Resets interval if duration is within threshold and interval was previously increased.
+        """
+        # Check if this task is eligible for dynamic adjustment
+        # Also include content source tasks in this logic
+        is_dynamic_eligible = task_name in self.DYNAMIC_INTERVAL_TASKS or \
+                              (task_name.startswith('task_') and task_name.endswith('_wanted'))
+
+        if not is_dynamic_eligible:
+            return # Not eligible for this adjustment type
+
+        current_interval = self.task_intervals.get(task_name)
+        original_interval = self.original_task_intervals.get(task_name)
+
+        if current_interval is None or original_interval is None:
+            logging.warning(f"Cannot apply dynamic interval adjustment for task '{task_name}': Missing interval data.")
             return
+
+        # Avoid division by zero or negative intervals
+        if current_interval <= 0:
+             return
+
+        threshold = current_interval * 0.10
+
+        if duration > threshold:
+            # Task took longer than 10% of its interval, increase the interval (double it)
+            new_interval = current_interval * 2
+
+            # Apply maximum caps
+            max_interval_by_multiplier = original_interval * self.MAX_INTERVAL_MULTIPLIER
+            capped_interval = min(new_interval, max_interval_by_multiplier, self.ABSOLUTE_MAX_INTERVAL)
+
+            if capped_interval > current_interval: # Only update if it actually increases
+                 self.task_intervals[task_name] = capped_interval
+                 logging.info(f"Task '{task_name}' took {duration:.2f}s (> {threshold:.2f}s threshold). Increasing interval to {capped_interval}s.")
+            elif new_interval > current_interval: # Log even if capped, indicating cap was hit
+                 logging.info(f"Task '{task_name}' took {duration:.2f}s (> {threshold:.2f}s threshold). Interval increase capped at {capped_interval}s.")
+
+        elif current_interval != original_interval:
+            # Task was fast enough and interval was previously increased, reset to default
+            self.task_intervals[task_name] = original_interval
+            logging.info(f"Task '{task_name}' took {duration:.2f}s (<= {threshold:.2f}s threshold). Resetting interval to default {original_interval}s.")
+    # --- END EDIT ---
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

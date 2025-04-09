@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Dict, Any, Optional
 from queues.run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
-from utilities.local_library_scan import check_local_file_for_item, local_library_scan
+from utilities.local_library_scan import check_local_file_for_item
 from utilities.plex_functions import plex_update_item
 from utilities.emby_functions import emby_update_item
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
@@ -46,6 +46,7 @@ class CheckingQueue:
         old_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
         
         self.items = [dict(row) for row in db_items]
+
         new_item_ids = {item['id'] for item in self.items}
         new_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
         
@@ -511,27 +512,31 @@ class CheckingQueue:
             return base_period
 
     def process(self, queue_manager, program_runner):
-        if self.items:
-            item = self.items[0]
-            item_identifier = queue_manager.generate_identifier(item)
-            logging.debug(f"Checking Queue - Processing item with resolution: {item.get('resolution', 'Not found')} for {item_identifier}")
-        #logging.debug(f"Starting to process checking queue with {len(self.items)} items")
+        """
+        Process items in the checking queue by checking torrent progress
+        and triggering local file checks for completed torrents in
+        Symlinked/Local mode.
+        """
         current_time = time.time()
-
-        adding_queue = AddingQueue()
-
-        # Group items by torrent ID
-        items_by_torrent = {}
+        # Initialize items_to_remove here, before the specific file block was removed
         items_to_remove = []
-        current_time = time.time()
 
-        # Create phalanx DB manager for cache status updates
+        # Remove the entire 'if specific_filename:' block that was added previously
+        # ... removed block handling specific_filename ...
+
+        # --- NORMAL PROCESSING LOGIC STARTS HERE ---
+        # Ensure these are initialized here if they were inside the removed block
+        adding_queue = AddingQueue()
         phalanx_db_manager = PhalanxDBClassManager()
-        
-        # Periodically check cache status of tracked torrents
+
+        # Periodically check cache status of tracked torrents (keep this)
         if self.uncached_torrents:
             logging.debug(f"Checking cache status for {len(self.uncached_torrents)} tracked torrents")
             self.check_uncached_torrents(phalanx_db_manager)
+
+        # Group items by torrent ID
+        items_by_torrent = {}
+        # current_time = time.time() # Already defined above
 
         # Group all items by their torrent ID and log the grouping
         for item in self.items:
@@ -601,51 +606,73 @@ class CheckingQueue:
                                 logging.error(f"Failed to update cache status: {str(e)}")
                 
                 if current_progress == 100:
-                    # Process collected content based on symlink setting
+                    # Process completed torrents in Symlinked/Local mode
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-                        # First check all items for local files directly
-                        items_to_scan = []
+                        items_to_scan = [] # Keep track of items not found yet
                         for item in items:
                             try:
                                 time_in_queue = current_time - self.checking_queue_times[item['id']]
                             except KeyError:
-                                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing with current time.")
+                                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing.")
                                 self.checking_queue_times[item['id']] = current_time
                                 time_in_queue = 0
-                            
-                            # Run extended search after 15 minutes and every 15 minutes thereafter
-                            # Use a wider 5-minute window to ensure we don't miss checks due to queue timing
-                            if time_in_queue > 900 and (time_in_queue % 900) < 300:  # Check within a 5-minute window every 15 minutes
-                                logging.info(f"Checking for local file for item {item['id']} with extended search")
-                                file_found = check_local_file_for_item(item, extended_search=True)
-                            else:
-                                logging.info(f"Checking for local file for item {item['id']} without extended search")
-                                file_found = check_local_file_for_item(item)
-                            if file_found:
-                                logging.info(f"Local file found and symlinked for item {item['id']}")
 
-                                # Check for Plex or Emby/Jellyfin configuration and update accordingly
+                            # Log item details just before calling check_local_file_for_item
+                            logging.debug(f"[CheckingQueue Process] Preparing to call check_local_file_for_item for Item ID {item.get('id')}")
+                            logging.debug(f"[CheckingQueue Process] Item Data: upgrading_from='{item.get('upgrading_from')}', state='{item.get('state')}', filled_by_file='{item.get('filled_by_file')}'")
+                            # Optional: Log the full item dict for very detailed debugging
+                            # logging.debug(f"[CheckingQueue Process] Full item data for {item.get('id')}: {item}")
+
+                            # --- EDIT: Modify call to pass callback and handle boolean result ---
+                            logging.info(f"Checking for local file for item {item['id']}...")
+                            use_extended_search = time_in_queue > 900 and (time_in_queue % 900) < 300
+                            logging.debug(f"Using extended search: {use_extended_search} (time in queue: {time_in_queue:.1f}s)")
+
+                            processing_successful = check_local_file_for_item(
+                                item,
+                                extended_search=use_extended_search,
+                                # Pass the program_runner's specific removal method as the callback
+                                on_success_callback=program_runner.remove_specific_pending_rclone_path
+                            )
+
+                            if processing_successful:
+                                # The callback was invoked inside check_local_file_for_item if successful
+                                logging.info(f"Local file found and symlinked for item {item['id']} by CheckingQueue. Callback invoked to attempt removal from rclone queue.")
+
+                                # Existing success logic (media server updates, state check, move_to_collected)
                                 if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                                    # Call Emby/Jellyfin update for the item if we have an Emby/Jellyfin URL
                                     emby_update_item(item)
                                 elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                                    # Call Plex update for the item if we have a Plex URL
                                     plex_update_item(item)
-                                    
-                                # Check if the item was marked for upgrading by check_local_file_for_item
+
+                                # Re-check state after processing, as check_local_file_for_item might change it
                                 from database.core import get_db_connection
                                 conn = get_db_connection()
                                 cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
-                                current_state = cursor.fetchone()['state']
+                                current_state_row = cursor.fetchone()
                                 conn.close()
 
+                                current_state = current_state_row['state'] if current_state_row else None
+
                                 if current_state == 'Upgrading':
-                                    logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state")
-                                else:
+                                    logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state after local check.")
+                                    # handle_state_change is called within check_local_file_for_item
+                                elif current_state == 'Collected':
+                                    logging.info(f"Item {item['id']} state confirmed as Collected after local check.")
+                                    # Ensure it's removed from the Python queue object
                                     queue_manager.move_to_collected(item, "Checking", skip_notification=True)
-                            else:
+                                elif current_state: # e.g., if it somehow reverted to 'Wanted' or stayed 'Checking' despite success?
+                                    logging.warning(f"Item {item['id']} processed locally but state is '{current_state}'. Moving to Collected.")
+                                    queue_manager.move_to_collected(item, "Checking", skip_notification=True)
+                                else:
+                                    logging.error(f"Item {item['id']} processed locally but seems missing from DB. Cannot confirm final state.")
+                                    items_to_remove.append(item) # Ensure removed from memory queue
+
+                            else: # check_local_file_for_item returned False
+                                logging.debug(f"Local file not found yet for item {item['id']}. It might appear later.")
                                 items_to_scan.append(item)
-                        
+                            # --- END EDIT ---
+
                         # If we have items that weren't found directly, do a full scan
                         if items_to_scan:
                             logging.info("Full library scan disabled for now")
@@ -670,7 +697,7 @@ class CheckingQueue:
                         # Move all items for this torrent back to Wanted
                         for item in items:
                             queue_manager.move_to_wanted(item, "Checking")
-                            items_to_remove.append(item)
+                        items_to_remove.extend(items)
                         continue
 
                 # Skip remaining checks if the torrent is completed
@@ -764,9 +791,12 @@ class CheckingQueue:
             except Exception as e:
                 logging.error(f"Error processing items for torrent {torrent_id} in checking queue: {e}", exc_info=True)
 
-        # Remove processed items from the Checking queue
+        # Remove processed items from the Checking queue (use items_to_remove accumulated during normal processing)
         for item in items_to_remove:
-            self.remove_item(item)
+            if self.contains_item_id(item['id']): # Double check item is still present before removing
+                 self.remove_item(item)
+            else:
+                 logging.debug(f"Item {item.get('id')} already removed from checking queue, skipping removal.")
 
         # After processing all torrents, check if we need to run Plex scan
         if not get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
@@ -776,8 +806,6 @@ class CheckingQueue:
                 # Add reconciliation call after recent scan processing
                 logging.info("Triggering queue reconciliation after recent Plex scan.")
                 program_runner.task_reconcile_queues()
-
-        #logging.debug(f"Finished processing checking queue. Remaining items: {len(self.items)}")
 
     def move_items_to_wanted(self, items, queue_manager, adding_queue=None, torrent_id=None):
         """

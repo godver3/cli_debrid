@@ -142,7 +142,6 @@ def add_collected_items(media_items_batch, recent=False):
                         
                         if existing_item['state'] not in ['Collected', 'Upgrading']:
                             if existing_item['release_date'] in ['Unknown', 'unknown', 'None', 'none', None, '']:
-                                # Treat unknown dates as new content
                                 days_since_release = 0
                                 logging.debug(f"Unknown release date for {item_identifier} - treating as new content")
                             else:
@@ -150,19 +149,27 @@ def add_collected_items(media_items_batch, recent=False):
                                     release_date = datetime.strptime(existing_item['release_date'], '%Y-%m-%d').date()
                                     days_since_release = (datetime.now().date() - release_date).days
                                 except ValueError:
-                                    # Handle invalid but non-empty release dates by treating them as new
                                     logging.debug(f"Invalid release date format: {existing_item['release_date']} - treating as new content")
                                     days_since_release = 0
 
-                            if days_since_release <= 7:
-                                if get_setting("Scraping", "enable_upgrading", default=False): 
-                                    new_state = 'Upgrading'
-                                else:
-                                    new_state = 'Collected'
+                            # Check if the DB item was manually assigned
+                            is_manually_assigned = existing_item.get('content_source') == 'Magnet_Assigner'
+
+                            # Determine the new state, preventing upgrade for manual assignments
+                            should_upgrade = (days_since_release <= 7 and
+                                              get_setting("Scraping", "enable_upgrading", default=False) and
+                                              not is_manually_assigned) # Check if NOT manually assigned
+
+                            if should_upgrade:
+                                new_state = 'Upgrading'
                             else:
                                 new_state = 'Collected'
 
-                            is_upgrade = existing_item.get('collected_at') is not None
+                            logging.info(f"[Collection] Setting state for item {item_id} ({existing_item['title']}) to {new_state} (manually_assigned={is_manually_assigned})") # Added log
+
+                            # Determine if this collection event represents an upgrade over a *previous* collection
+                            # This 'is_upgrade' flag is primarily for cleanup/notification logic, separate from setting the state
+                            is_upgrade = existing_item.get('collected_at') is not None 
 
                             if is_upgrade and get_setting("Scraping", "enable_upgrading_cleanup", default=False):
                                 upgrade_item = {

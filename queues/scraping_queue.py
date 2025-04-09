@@ -9,6 +9,7 @@ from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
 from cli_battery.app.direct_api import DirectAPI
 from routes.notifications import send_upgrade_failed_notification
 
+
 class ScrapingQueue:
     def __init__(self):
         self.items = []
@@ -144,6 +145,7 @@ class ScrapingQueue:
             conn.close()
 
     def process(self, queue_manager):
+        from database import get_all_media_items, get_media_item_by_id, get_db_connection, get_wake_count
         processed_count = 0
         had_error = False
         today = date.today()
@@ -221,12 +223,27 @@ class ScrapingQueue:
 
                 # Proceed only if the item wasn't moved back to Wanted due to release date
                 if not processed_successfully_or_moved:
-                    # Multi-pack check logic
-                    is_multi_pack = False
+                    # --- Multi-pack check logic ---
+                    is_multi_pack = False # Default to false
+                    can_attempt_multi_pack = False # Assume false unless it's a valid episode case
+
                     if item_to_process['type'] == 'episode':
                         logging.info(f"Checking multi-pack eligibility for {item_to_process['title']} S{item_to_process['season_number']:02d}E{item_to_process['episode_number']:02d}")
-
+                        can_attempt_multi_pack = True # Eligible for check if it's an episode
                         show_metadata, _ = DirectAPI.get_show_metadata(item_to_process['imdb_id'])
+
+                        # Calculate other pending episodes for the show *once*
+                        other_pending_episodes = []
+                        if show_metadata: # Only check if we have metadata
+                            all_items_for_show = get_all_media_items(imdb_id=item_to_process['imdb_id'])
+                            other_pending_episodes = [
+                                ep for ep in all_items_for_show
+                                if ep.get('type') == 'episode' # Ensure it's an episode
+                                and ep.get('id') != item_to_process['id'] # Exclude the current item
+                                and ep.get('state') in ["Wanted", "Scraping"]
+                            ]
+                            logging.info(f"Found {len(other_pending_episodes)} other pending episodes for this show in Wanted/Scraping state.")
+
 
                         if show_metadata and 'seasons' in show_metadata:
                             season_str = str(item_to_process['season_number'])
@@ -236,10 +253,19 @@ class ScrapingQueue:
                                     # Check if this is the season finale
                                     total_episodes = len(season_data['episodes'])
                                     is_finale = item_to_process['episode_number'] == total_episodes
+
                                     if is_finale:
-                                        logging.info(f"Episode {item_to_process['episode_number']} is the season finale - skipping multi-pack search")
-                                        is_multi_pack = False
-                                    else:
+                                        logging.info(f"Episode {item_to_process['episode_number']} is the season finale.")
+                                        # Use the pre-calculated list
+                                        if not other_pending_episodes:
+                                            logging.info("No other pending episodes found for this show. Disabling multi-pack search for this finale.")
+                                            can_attempt_multi_pack = False # Disable if finale and no others pending anywhere in the show
+                                        else:
+                                            logging.info(f"Other pending episodes exist. Multi-pack search remains possible for this finale.")
+                                            # can_attempt_multi_pack remains True
+
+                                    # Only check air dates if multi-pack is still a possibility
+                                    if can_attempt_multi_pack:
                                         # First pass - log all episode dates
                                         logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
                                         sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
@@ -255,6 +281,7 @@ class ScrapingQueue:
                                                     logging.info(f"  Episode {ep_num}: {first_aired} (invalid format)")
                                             else:
                                                 logging.info(f"  Episode {ep_num}: unknown air date")
+
 
                                         # Check for any unaired episodes
                                         has_unaired_episodes = False
@@ -274,20 +301,35 @@ class ScrapingQueue:
                                                 has_unaired_episodes = True
                                                 break
 
-                                        # Enable multi-pack only if all episodes have aired
+                                        # Enable multi-pack only if all episodes have aired AND it wasn't disabled by the finale check
+                                        # AND there are other pending episodes for the show.
                                         if not has_unaired_episodes:
-                                            is_multi_pack = True
-                                            logging.info("All episodes have aired - enabling multi-pack")
+                                            if other_pending_episodes:
+                                                is_multi_pack = True # Enable multi-pack
+                                                logging.info("All episodes have aired and other episodes are pending - enabling multi-pack")
+                                            else:
+                                                logging.info("All episodes have aired, but no other episodes are pending for this show - using single episode scrape")
+                                                # is_multi_pack remains False
                                         else:
                                             logging.info("Some episodes haven't aired yet - skipping multi-pack")
-                                else:
-                                    logging.info("No episodes data found in season metadata")
-                            else:
-                                logging.info(f"Season {season_str} not found in show metadata")
-                        else:
-                            logging.info("No seasons data found in show metadata")
+                                            # is_multi_pack remains False
+                                    # else: (can_attempt_multi_pack is False)
+                                        # is_multi_pack remains False - already logged reason above
 
-                    logging.info(f"Scraping for {item_identifier}")
+                                else: # No 'episodes' in season_data
+                                    logging.info("No episodes data found in season metadata - skipping multi-pack check")
+                                    # is_multi_pack remains False
+                            else: # Season not found
+                                logging.info(f"Season {season_str} not found in show metadata - skipping multi-pack check")
+                                # is_multi_pack remains False
+                        else: # No 'seasons' in show_metadata
+                            logging.info("No seasons data found in show metadata - skipping multi-pack check")
+                            # is_multi_pack remains False
+                    # else: Not an episode, is_multi_pack remains False
+
+                    # --- End of Multi-pack logic ---
+
+                    logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack})") # Log includes multi-pack status
                     results, filtered_out_results = self.scrape_with_fallback(item_to_process, is_multi_pack, queue_manager)
 
                     # Ensure both results and filtered_out_results are lists
@@ -557,13 +599,13 @@ class ScrapingQueue:
         item_identifier = queue_manager.generate_identifier(item)
         is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
 
-        # --- Handle Upgrade Failure --- 
+        # --- Handle Upgrade Failure ---
         if is_upgrade:
             logging.warning(f"Handling failed upgrade for {item_identifier}: No suitable scrape results found.")
             try:
                 from queues.upgrading_queue import UpgradingQueue
                 upgrading_queue = UpgradingQueue()
-                
+
                 # Send notification
                 notification_data = {
                     'title': item.get('title', 'Unknown Title'),
@@ -575,7 +617,7 @@ class ScrapingQueue:
                 # Log the failed attempt
                 upgrading_queue.log_failed_upgrade(
                     item,
-                    'No specific target' if not item.get('filled_by_title') else item.get('filled_by_title'), # Title it was trying to upgrade?
+                    'N/A - No scrape result' if not item.get('filled_by_title') else item.get('filled_by_title'), # More accurate placeholder
                     'Scraping Queue Failure: No suitable results found'
                 )
 
@@ -583,7 +625,7 @@ class ScrapingQueue:
                 if upgrading_queue.restore_item_state(item):
                     # Add the failed attempt to tracking - less specific info here
                     upgrading_queue.add_failed_upgrade(
-                        item['id'], 
+                        item['id'],
                         {
                             'title': 'N/A - No scrape result',
                             'magnet': 'N/A',
@@ -595,13 +637,15 @@ class ScrapingQueue:
                     logging.error(f"Failed to restore previous state for {item_identifier} after scraping failure.")
                     # Fallback? Keep in Scraping? Error state?
                     # For now, remove from queue to avoid loops.
-                
+
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from Scraping queue after handling
             except Exception as e:
                 logging.error(f"Error handling failed upgrade in scraping queue for {item_identifier}: {e}", exc_info=True)
                 # Fallback: Remove from queue if error during handling
-                self.remove_item(item)
+                # Check if item exists before removing, might have been removed by restore_item_state or other logic
+                if self.contains_item_id(item.get('id')):
+                    self.remove_item(item)
             return # Stop processing for this failed upgrade
 
         # --- Original Logic for Non-Upgrade Items ---
@@ -610,41 +654,53 @@ class ScrapingQueue:
                 logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
                 queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
                 self.reset_not_wanted_check(item['id'])
+                # Remove item from current queue explicitly after moving
+                self.remove_item(item)
             elif item['type'] == 'movie':
                 logging.info(f"No results found for old movie {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
                 self.reset_not_wanted_check(item['id'])
+                # Remove item from current queue explicitly after moving
+                self.remove_item(item)
             else:
                 logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
                 self.reset_not_wanted_check(item['id'])
+                 # Remove item from current queue explicitly after moving
+                self.remove_item(item)
         else:
             logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping.")
 
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
             # Fetch the global default wake limit, using 5 as an ultimate fallback
-            global_default_wake_limit = int(get_setting("Queue", "wake_limit", default=5)) 
+            global_default_wake_limit = int(get_setting("Queue", "wake_limit", default=5))
             # Use the version-specific limit if available, otherwise use the global default
-            max_wake_count = version_settings.get('max_wake_count', global_default_wake_limit) 
+            max_wake_count = version_settings.get('max_wake_count', global_default_wake_limit)
 
             # Get current wake count from DB
-            from database import get_wake_count
+            # from database import get_wake_count # Already imported at top
             current_wake_count = get_wake_count(item['id'])
 
+            moved = False # Flag to track if moved
             if max_wake_count <= 0:
                 logging.info(f"Item {item_identifier} version '{item.get('version')}' has max_wake_count <= 0 ({max_wake_count}). Blacklisting immediately.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
-                self.reset_not_wanted_check(item['id'])
+                moved = True
             elif current_wake_count >= max_wake_count:
                 logging.info(f"Item {item_identifier} reached max wake count ({current_wake_count}/{max_wake_count}). Blacklisting.")
                 queue_manager.move_to_blacklisted(item, "Scraping")
-                self.reset_not_wanted_check(item['id'])
+                moved = True
             else:
                 logging.info(f"Item {item_identifier} (Wake count: {current_wake_count}/{max_wake_count}) moving to Sleeping queue.")
                 queue_manager.move_to_sleeping(item, "Scraping") # This call handles wake count increment if needed
-                self.reset_not_wanted_check(item['id'])
-            
+                moved = True
+
+            self.reset_not_wanted_check(item['id'])
+             # Remove item from current queue explicitly only if it was successfully moved
+            if moved and self.contains_item_id(item.get('id')):
+                 self.remove_item(item)
+
     def is_item_old(self, item: Dict[str, Any]) -> bool:
         # If early release flag is set, it's never considered old for the purpose of immediate blacklisting
         if item.get('early_release', False):

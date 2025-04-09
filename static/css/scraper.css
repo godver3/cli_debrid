@@ -206,6 +206,7 @@ form#search-form input:-ms-input-placeholder {
     border-width: 0 0 40px 40px;
     border-color: transparent transparent var(--primary-color) transparent;
     background-color: transparent !important;
+    border-radius: 0 !important;
     transform-origin: bottom right;
     transform: none !important;
     display: flex;
