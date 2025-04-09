@@ -19,10 +19,11 @@ ENV PGID=0
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements-linux.txt .
 
+# Upgrade pip and install necessary build tools
+RUN pip install --upgrade pip setuptools wheel
+
 # Install the requirements
-RUN pip install --upgrade pip && \
-    pip install wheel && \
-    pip install --no-cache-dir -r requirements-linux.txt
+RUN pip install --no-cache-dir -r requirements-linux.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
