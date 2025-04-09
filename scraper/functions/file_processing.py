@@ -3,7 +3,6 @@ import re
 from typing import List, Dict, Any, Union
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count
 from fuzzywuzzy import fuzz
-from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
 from PTT import parse_title
 from babelfish import Language
 from scraper.functions import *
@@ -205,6 +204,7 @@ def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[
     return results[0]
 
 def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
     processed_items = []
 
     for item in media_items:

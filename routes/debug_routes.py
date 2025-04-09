@@ -13,14 +13,12 @@ from utilities.settings import get_all_settings, get_setting, set_setting
 from queues.config_manager import load_config
 import logging
 from routes import admin_required
-from metadata.metadata import process_metadata, get_metadata
 from cli_battery.app.direct_api import DirectAPI
 from database.torrent_tracking import get_recent_additions, get_torrent_history
 import os
 import glob
 from routes.api_tracker import api 
 import time
-from metadata.metadata import get_tmdb_id_and_media_type, refresh_release_dates
 from datetime import datetime
 from routes.notifications import send_notifications
 import requests
@@ -48,7 +46,6 @@ from content_checkers.content_source_detail import append_content_source_detail
 import re
 from pathlib import Path
 from utilities.settings import get_setting
-from metadata.metadata import get_metadata
 from datetime import datetime
 # Import reverse parser
 from utilities.reverse_parser import parse_filename_for_version
@@ -212,6 +209,7 @@ def bulk_delete_by_imdb():
 @debug_bp.route('/refresh_release_dates', methods=['POST'])
 @admin_required
 def refresh_release_dates_route():
+    from metadata.metadata import refresh_release_dates # Added import here
     refresh_release_dates()
     return jsonify({'success': True, 'message': 'Release dates refreshed successfully'})
 
@@ -716,6 +714,7 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
     from content_checkers.mdb_list import get_wanted_from_mdblists
     from content_checkers.content_source_detail import append_content_source_detail
+    from metadata.metadata import process_metadata
 
     content_sources = get_all_settings().get('Content Sources', {})
     source_data = content_sources.get(source_id) # Use .get for safety
@@ -952,6 +951,7 @@ def get_rate_limit_info():
 def rescrape_item():
     from database import get_media_item_by_id
     from utilities.plex_functions import remove_file_from_plex
+    from metadata.metadata import process_metadata
     item_id = request.json.get('item_id')
     if not item_id:
         return jsonify({'success': False, 'error': 'Item ID is required'}), 400
@@ -2338,6 +2338,7 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                                 try:
                                     # Pass the original parsed_data as original_item if needed by get_metadata internal logic
                                     metadata_args['original_item'] = parsed_data 
+                                    from metadata.metadata import get_metadata
                                     metadata = get_metadata(**metadata_args)
                                     if metadata:
                                         parsed_data['title'] = metadata.get('title')

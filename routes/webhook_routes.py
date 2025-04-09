@@ -22,7 +22,6 @@ from datetime import datetime, timezone
 from database.database_writing import update_media_item_state, add_media_item, update_release_date_and_state
 from database.database_reading import get_media_item_by_id, get_media_item_presence, get_media_item_by_filename
 import json
-from metadata.metadata import get_release_date
 import time
 import requests # Added for TMDB API calls
 

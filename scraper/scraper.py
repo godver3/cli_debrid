@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count, get_all_season_episode_counts
 from database.database_writing import update_anime_format, update_preferred_alias, get_preferred_alias
 from fuzzywuzzy import fuzz
-from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
 import os
 from utilities.plex_functions import filter_genres
 import pykakasi
@@ -62,6 +61,7 @@ def convert_anime_episode_format(season: int, episode: int, total_episodes: int)
     }
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
     logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}")
 
     # Store original season/episode and initialize scene numbers

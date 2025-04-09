@@ -10,7 +10,6 @@ from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from utilities.web_scraper import search_trakt
-from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
 from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
 from typing import Dict, Any, Tuple
@@ -36,6 +35,7 @@ _phalanx_cache_manager = PhalanxDBClassManager() if get_setting('UI Settings', '
 
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
+    from metadata.metadata import get_imdb_id_if_missing
     max_retries = 3
     base_delay = 1  # Base delay in seconds
     
@@ -160,6 +160,7 @@ def _download_and_get_hash(url: str) -> str:
 @user_required
 @scraper_permission_required
 def add_torrent_to_debrid():
+    from metadata.metadata import get_metadata, _get_local_timezone, get_release_date
     try:
         magnet_link = request.form.get('magnet_link')
         title = request.form.get('title')
@@ -768,6 +769,7 @@ def select_episode():
 @user_required
 @scraper_view_access_required  # Changed from scraper_permission_required to allow requesters to view but not scrape
 def select_media():
+    from metadata.metadata import get_metadata
     try:
         # Check if the user is a requester and block the scraping action if true
         is_requester = current_user.is_authenticated and current_user.role == 'requester'
@@ -903,6 +905,7 @@ def scraper_tester():
 
 @scraper_bp.route('/get_item_details', methods=['POST'])
 def get_item_details():
+    from metadata.metadata import get_metadata, get_release_date
     item = request.json
     details = get_details(item)
     
@@ -925,6 +928,7 @@ def get_item_details():
 @user_required
 @scraper_permission_required
 def run_scrape():
+    from metadata.metadata import get_metadata, get_release_date, _get_local_timezone, DirectAPI
     data = request.json
     try:
         imdb_id = data.get('imdb_id', '')
@@ -1087,9 +1091,12 @@ def remove_uncached_item():
 
 @scraper_bp.route('/get_tv_details/<tmdb_id>')
 def get_tv_details(tmdb_id):
+    from metadata.metadata import get_metadata
+    from cli_battery.app.direct_api import DirectAPI
+    api = DirectAPI()
     try:
         # First get the IMDb ID from TMDB ID
-        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show')
+        imdb_id, _ = api.tmdb_to_imdb(str(tmdb_id), media_type='show')
         if not imdb_id:
             return jsonify({'success': False, 'error': 'Could not find IMDb ID for the given TMDB ID'}), 404
 

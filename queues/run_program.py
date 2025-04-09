@@ -10,7 +10,6 @@ from content_checkers.overseerr import get_wanted_from_overseerr
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
 from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
-from metadata.metadata import process_metadata, refresh_release_dates, get_runtime, get_episode_airtime, _get_local_timezone
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
@@ -291,6 +290,7 @@ class ProgramRunner:
             return False # Treat invalid format as schedule not active
 
         # Get current time in the configured timezone using the imported function
+        from metadata.metadata import _get_local_timezone
         tz = _get_local_timezone() # Use the imported function directly
         now = datetime.now(tz).time()
 
@@ -773,6 +773,7 @@ class ProgramRunner:
                         cache_skipped += items_skipped
                         
                         if items_to_process:
+                            from metadata.metadata import process_metadata
                             processed_items = process_metadata(items_to_process)
                             if processed_items:
                                 all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
@@ -850,6 +851,7 @@ class ProgramRunner:
             # Don't re-raise - allow other content sources to continue processing
 
     def task_refresh_release_dates(self):
+        from metadata.metadata import refresh_release_dates # Added import here
         refresh_release_dates()
     
     def task_purge_not_wanted_magnets_file(self):
@@ -2426,6 +2428,7 @@ def process_overseerr_webhook(data):
 
     wanted_content = [wanted_item]
     logging.debug(f"Processing wanted content with item: {wanted_item}")
+    from metadata.metadata import process_metadata
     wanted_content_processed = process_metadata(wanted_content)
     if wanted_content_processed:
         # Get the versions for Overseerr from settings
@@ -2446,6 +2449,7 @@ def process_overseerr_webhook(data):
         logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
 
 def generate_airtime_report():
+    from metadata.metadata import _get_local_timezone # Added import here
     logging.info("Generating airtime report for wanted and unreleased items...")
 
     from database.core import get_db_connection
@@ -2505,6 +2509,7 @@ def generate_airtime_report():
     logging.info("Airtime Report:\n" + "\n".join(report))
 
 def append_runtime_airtime(items):
+    from metadata.metadata import get_runtime, get_episode_airtime # Added import here
     logging.info(f"Starting to append runtime and airtime for {len(items)} items")
     for index, item in enumerate(items, start=1):
         imdb_id = item.get('imdb_id')

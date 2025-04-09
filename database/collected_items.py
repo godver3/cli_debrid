@@ -1,5 +1,4 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
-from metadata.metadata import get_show_airtime_by_imdb_id
 import logging
 import os
 from datetime import datetime
@@ -15,6 +14,7 @@ def add_collected_items(media_items_batch, recent=False):
     from datetime import datetime, timedelta
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
+    from metadata.metadata import get_show_airtime_by_imdb_id
 
     # Check if Plex library checks are disabled
     if get_setting('Plex', 'disable_plex_library_checks', default=False):

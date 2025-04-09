@@ -3,7 +3,6 @@ from .models import user_required, onboarding_required
 from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
 from queues.config_manager import load_config
-from metadata.metadata import process_metadata, get_metadata
 from database.wanted_items import add_wanted_items
 import logging
 import re
@@ -53,6 +52,7 @@ def search():
 @user_required
 def request_content():
     """Handle content request."""
+    from metadata.metadata import process_metadata
     try:
         data = request.json
         if not data:
