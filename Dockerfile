@@ -20,7 +20,9 @@ ENV PGID=0
 COPY requirements-linux.txt .
 
 # Install the requirements
-RUN pip install --no-cache-dir -r requirements-linux.txt
+RUN pip install --upgrade pip && \
+    pip install wheel && \
+    pip install --no-cache-dir -r requirements-linux.txt
 
 # Copy the current directory contents into the container at /app
 COPY . .
