@@ -2,7 +2,7 @@ from .core import get_db_connection
 import logging
 import os
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Set
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -18,7 +18,7 @@ def search_tv_shows(search_term):
     conn.close()
     return items
 
-def get_all_media_items(state=None, media_type=None, tmdb_id=None):
+def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
     query = 'SELECT * FROM media_items WHERE 1=1'
     params = []
@@ -33,13 +33,22 @@ def get_all_media_items(state=None, media_type=None, tmdb_id=None):
     if media_type:
         query += ' AND type = ?'
         params.append(media_type)
+    if imdb_id:
+        query += ' AND imdb_id = ?'
+        params.append(imdb_id)
     if tmdb_id:
         query += ' AND tmdb_id = ?'
         params.append(tmdb_id)
-    cursor = conn.execute(query, params)
-    items = cursor.fetchall()
-    conn.close()
-    return items
+    try:
+        cursor = conn.execute(query, params)
+        items = cursor.fetchall()
+        return [dict(item) for item in items]
+    except Exception as e:
+        logging.error(f"Error executing get_all_media_items query: {e}")
+        logging.debug(f"Query: {query}, Params: {params}")
+        return []
+    finally:
+        conn.close()
 
 def get_media_item_presence(imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
@@ -455,6 +464,55 @@ def get_wake_count(item_id: int) -> int:
     finally:
         conn.close()
 
+def get_show_episode_identifiers_from_db(imdb_id: Optional[str] = None, tmdb_id: Optional[str] = None) -> Set[Tuple[int, int]]:
+    """
+    Efficiently retrieve a set of unique (season_number, episode_number) tuples
+    for a given show directly from the database. Prioritizes IMDb ID if both are provided.
+    """
+    if not imdb_id and not tmdb_id:
+        logging.warning("Cannot get episode identifiers without imdb_id or tmdb_id.")
+        return set()
+
+    conn = get_db_connection()
+    # Select only distinct season and episode numbers
+    query = '''
+        SELECT DISTINCT season_number, episode_number
+        FROM media_items
+        WHERE type = 'episode'
+    '''
+    params = []
+
+    # Build query based on available ID (prioritize imdb_id)
+    id_field, id_value = ('imdb_id', imdb_id) if imdb_id else ('tmdb_id', tmdb_id)
+    query += f' AND {id_field} = ?'
+    params.append(id_value)
+
+    # Add filtering for non-null season/episode numbers
+    query += ' AND season_number IS NOT NULL AND episode_number IS NOT NULL'
+
+    identifiers = set()
+    try:
+        cursor = conn.execute(query, params)
+        for row in cursor:
+             s_num, e_num = row['season_number'], row['episode_number']
+             # Basic check for None again, although IS NOT NULL should prevent it
+             if s_num is not None and e_num is not None:
+                 try:
+                     # Ensure they are integers before adding to the set
+                     identifiers.add((int(s_num), int(e_num)))
+                 except (ValueError, TypeError):
+                      logging.warning(f"Skipping invalid non-integer season/episode number pair ({s_num}, {e_num}) from DB for show {id_field}={id_value}")
+             # No need for else, IS NOT NULL handles it
+
+        logging.debug(f"Found {len(identifiers)} unique S/E pairs in DB for {id_field}={id_value}")
+        return identifiers
+    except Exception as e:
+        logging.error(f"Error retrieving episode identifiers for show {id_field}={id_value}: {str(e)}")
+        logging.debug(f"Query: {query}, Params: {params}")
+        return set() # Return empty set on error
+    finally:
+        conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -475,5 +533,6 @@ __all__ = [
     'get_media_items_by_ids_batch',
     'get_media_item_by_filename',
     'check_existing_media_item',
-    'get_wake_count'
+    'get_wake_count',
+    'get_show_episode_identifiers_from_db'
 ]

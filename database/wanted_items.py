@@ -3,11 +3,14 @@ from .core import get_db_connection, normalize_string, get_existing_airtime
 from database.manual_blacklist import is_blacklisted
 from typing import List, Dict, Any
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from metadata.metadata import get_tmdb_id_and_media_type
 import random
 import os
 from queues.config_manager import load_config
+from utilities.settings import get_setting
+from content_checkers.trakt import fetch_items_from_trakt
+import re
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
     from metadata.metadata import get_show_airtime_by_imdb_id
@@ -27,7 +30,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'blacklisted': 0,
             'already_watched': 0,
             'media_type_mismatch': 0,
-            'existing_blacklisted': 0  # Added for tracking skips due to existing blacklisted items
+            'existing_blacklisted': 0,  # Added for tracking skips due to existing blacklisted items
+            'trakt_error': 0 # Added for tracking Trakt API errors
         }
         airtime_cache = {}
 
@@ -440,13 +444,66 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     continue
 
                 if item_type == 'movie':
+                    early_release_flag = False # Initialize flag
+                    imdb_id = item.get('imdb_id')
+                    release_date_str = item.get('release_date')
+                    check_trakt = False
+
+                    # Check if we should even attempt the Trakt check
+                    trakt_early_releases_enabled = get_setting('Scraping', 'trakt_early_releases', False)
+                    if trakt_early_releases_enabled and imdb_id:
+                        if not release_date_str or release_date_str.lower() == 'unknown':
+                            check_trakt = True
+                            logging.debug(f"Release date unknown for {normalized_title}, checking Trakt early release.")
+                        else:
+                            try:
+                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                                today = datetime.now().date()
+                                if release_date >= today:
+                                    check_trakt = True
+                                    logging.debug(f"Release date {release_date_str} is today or future for {normalized_title}, checking Trakt early release.")
+                                else:
+                                     logging.debug(f"Release date {release_date_str} is in the past for {normalized_title}, skipping Trakt early release check.")
+                            except ValueError:
+                                logging.warning(f"Invalid release date format '{release_date_str}' for {normalized_title}, checking Trakt early release.")
+                                check_trakt = True
+
+                    # Perform Trakt check if conditions met
+                    if check_trakt:
+                        logging.info(f"Checking Trakt early release lists for movie: {normalized_title} ({imdb_id})")
+                        try:
+                            trakt_search_results = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+                            if trakt_search_results and isinstance(trakt_search_results, list) and len(trakt_search_results) > 0:
+                                if 'movie' in trakt_search_results[0] and trakt_search_results[0]['movie'].get('ids', {}).get('trakt'):
+                                    trakt_id = str(trakt_search_results[0]['movie']['ids']['trakt'])
+                                    logging.debug(f"Found Trakt movie ID {trakt_id} for {imdb_id}")
+                                    trakt_lists = fetch_items_from_trakt(f"/movies/{trakt_id}/lists/personal/popular")
+                                    if trakt_lists: # Check if lists were fetched successfully
+                                        for trakt_list in trakt_lists:
+                                            if re.search(r'(latest|new).*?(releases)', trakt_list.get('name', ''), re.IGNORECASE):
+                                                logging.info(f"Movie {normalized_title} ({imdb_id}) found in early release list: {trakt_list.get('name')}")
+                                                early_release_flag = True
+                                                break # Found in a list, no need to check others
+                                    else:
+                                         logging.warning(f"Failed to fetch Trakt lists for movie {trakt_id}")
+                                else:
+                                    logging.warning(f"Could not extract Trakt ID from search results for {imdb_id}")
+                            else:
+                                logging.info(f"No Trakt search results found for {imdb_id}")
+                        except Exception as e:
+                            logging.error(f"Error checking Trakt early release for {imdb_id}: {str(e)}")
+                            skip_stats['trakt_error'] += 1 # Track errors
+
+                    # Original INSERT statement modified
                     conn.execute('''
                         INSERT INTO media_items
-                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, early_release)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'), item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'), item.get('physical_release_date')
+                        item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'),
+                        item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'),
+                        item.get('physical_release_date'), early_release_flag # Pass the flag here
                     ))
                     items_added += 1
                 else:
@@ -534,6 +591,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             skip_report.append(f"- {skip_stats['already_watched']} items skipped due to watch history")
         if skip_stats['media_type_mismatch'] > 0:
             skip_report.append(f"- {skip_stats['media_type_mismatch']} items skipped due to media type mismatch")
+        if skip_stats['trakt_error'] > 0:
+            skip_report.append(f"- {skip_stats['trakt_error']} items skipped Trakt check due to API errors") # Report Trakt errors
         
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))

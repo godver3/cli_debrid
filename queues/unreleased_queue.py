@@ -67,18 +67,31 @@ class UnreleasedQueue:
                 physical_release_date_str = item.get('physical_release_date')
                 
                 if require_physical:
-                    if not physical_release_date_str:
-                        logging.info(f"Item {item_identifier} requires physical release date but none available. Keeping in Unreleased queue.")
-                        continue # Skip if physical required but date missing
+                    # Check if physical release date is missing, None, or the string "None" (case-insensitive)
+                    is_physical_date_invalid = not physical_release_date_str or \
+                                               (isinstance(physical_release_date_str, str) and physical_release_date_str.lower() == 'none')
+
+                    if is_physical_date_invalid:
+                        # Use the retrieved value in the log message for clarity
+                        logging.info(f"Item {item_identifier} requires physical release date but it is missing or invalid ('{physical_release_date_str}'). Keeping in Unreleased queue.")
+                        continue # Skip if physical required but date missing/invalid
                     else:
+                        # Physical date exists and seems valid
                         base_date_str = physical_release_date_str
                         is_physical = True
                 
                 # Parse the base date
                 try:
+                    # Ensure base_date_str is not None or 'unknown' before parsing
+                    # The checks on L60 and L71 should prevent this, but adding safety
+                    if not base_date_str or (isinstance(base_date_str, str) and base_date_str.lower() in ['unknown', 'none']):
+                         logging.warning(f"Skipping item {item_identifier} due to invalid base_date_str before parsing: {base_date_str}")
+                         continue
+
                     base_date = datetime.strptime(base_date_str, '%Y-%m-%d').date()
                 except ValueError:
-                    logging.warning(f"Invalid date format for item {item_identifier}: {base_date_str}")
+                    # This warning should ideally not be reached if the above checks are correct
+                    logging.warning(f"Invalid date format encountered for item {item_identifier} despite checks: {base_date_str}")
                     continue # Skip if date is invalid
 
                 # --- Calculate precise target scrape time (logic adapted from WantedQueue) ---

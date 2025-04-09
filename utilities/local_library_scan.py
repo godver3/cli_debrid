@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 import os
 import sys  # Import sys module
 from utilities.settings import get_setting
@@ -11,7 +11,7 @@ import time
 from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
-from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification
+from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -306,15 +306,20 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) 
         logging.error(f"Failed to create symlink {source_path} -> {dest_path}: {str(e)}")
         return False
 
-def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False) -> bool:
+def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
     When called from webhook endpoint, will retry up to 5 times with 1 second delay.
-    
+    Calls on_success_callback(relative_path) upon successful processing.
+
     Args:
         item: Dictionary containing item details
         is_webhook: If True, enables retry mechanism for webhook calls
         extended_search: If True, will perform an extended search for the file
+        on_success_callback: Optional function to call with the relative path upon success.
+
+    Returns:
+        True if successful, False otherwise.
     """
     max_retries = 10 if is_webhook else 1
     retry_delay = 3  # second
@@ -405,12 +410,16 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     logging.debug(f"[UPGRADE] Invalid release date format: {item.get('release_date')} - treating as new content")
                     days_since_release = 0
             
-            # If release is within last 7 days and upgrading is enabled, treat as potential upgrade
-            is_upgrade_candidate = days_since_release <= 7 and get_setting("Scraping", "enable_upgrading", default=False)
+            # Add check for content_source to prevent manual assignments from triggering upgrades
+            is_manually_assigned = item.get('content_source') == 'Magnet_Assigner'
+            is_upgrade_candidate = (days_since_release <= 7 and 
+                                    get_setting("Scraping", "enable_upgrading", default=False) and
+                                    not is_manually_assigned) # Check if NOT manually assigned
             
             # Log upgrade status
             logging.debug(f"[UPGRADE] Processing item: {item_identifier}")
             logging.debug(f"[UPGRADE] Days since release: {days_since_release}")
+            logging.debug(f"[UPGRADE] Is manually assigned (Magnet_Assigner): {is_manually_assigned}")
             logging.debug(f"[UPGRADE] Is upgrade candidate: {is_upgrade_candidate}")
             logging.debug(f"[UPGRADE] Current file: {item.get('filled_by_file')}")
             logging.debug(f"[UPGRADE] Upgrading from: {item.get('upgrading_from')}")
@@ -501,6 +510,18 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             try:
                                 os.unlink(old_dest)
                                 logging.info(f"[UPGRADE] Removed old symlink during upgrade: {old_dest}")
+
+                                # --- EDIT: Remove old verification entry ---
+                                try:
+                                    removed_count = remove_verification_by_media_item_id(item['id'])
+                                    if removed_count > 0:
+                                        logging.info(f"[UPGRADE] Removed {removed_count} old verification record(s) for media item ID {item['id']}")
+                                    else:
+                                        logging.debug(f"[UPGRADE] No existing verification record found to remove for media item ID {item['id']}")
+                                except Exception as db_remove_err:
+                                    logging.error(f"[UPGRADE] Failed to remove old verification record for media item ID {item['id']}: {db_remove_err}")
+                                # --- END EDIT ---
+
                                 # Add the path to the removal verification queue with titles
                                 episode_title_for_removal = item.get('episode_title') if item.get('type') == 'episode' else None
                                 add_path_for_removal_verification(old_dest, item['title'], episode_title_for_removal)
@@ -556,7 +577,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                 # Set state based on whether this is an upgrade candidate
                 new_state = 'Upgrading' if is_upgrade_candidate else 'Collected'
-                logging.info(f"[UPGRADE] Setting item state to: {new_state}")
+                logging.info(f"[UPGRADE] Setting item state to: {new_state} (is_manually_assigned={is_manually_assigned})")
                 
                 current_time = datetime.now()
                 
@@ -604,9 +625,26 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     notification_item['is_upgrade'] = True
                     notification_item['new_state'] = 'Upgraded'
                     add_to_collected_notifications(notification_item)
-            
-            return success
-            
+
+                # --- EDIT: Call the callback on success ---
+                # Construct the relative path format expected by the rclone queue
+                relative_path_to_remove = os.path.join(item.get('filled_by_title', ''), item['filled_by_file'])
+                if on_success_callback:
+                    try:
+                        logging.debug(f"Calling success callback for path: {relative_path_to_remove}")
+                        # Call the provided function with the path
+                        on_success_callback(relative_path_to_remove)
+                    except Exception as cb_err:
+                        logging.error(f"Error executing on_success_callback for {relative_path_to_remove}: {cb_err}")
+                # --- END EDIT ---
+
+                logging.debug(f"check_local_file_for_item succeeded.")
+                return True
+            else:
+                 # This path should ideally not be reached if success is False above, but included for safety
+                 logging.error("Reached end of check_local_file_for_item attempt without success.")
+                 return False
+
         except Exception as e:
             if is_webhook and attempt < max_retries - 1:
                 logging.warning(f"[UPGRADE] Attempt {attempt + 1}/{max_retries} failed: {str(e)}. Retrying in {retry_delay} second...")

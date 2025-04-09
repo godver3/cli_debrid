@@ -5,6 +5,9 @@ from typing import Dict, Any, List
 from utilities.settings import get_setting
 from database.manual_blacklist import is_blacklisted
 
+# Define constants for queue size limits
+SCRAPING_QUEUE_MAX_SIZE = 500
+
 class WantedQueue:
     def __init__(self):
         self.items = []
@@ -142,6 +145,21 @@ class WantedQueue:
             items_to_move_scraping = []
             items_to_move_unreleased = []
             
+            # Get current scraping queue size
+            # Use the internal list length for efficiency if possible
+            try:
+                scraping_queue = queue_manager.queues["Scraping"]
+                current_scraping_queue_size = len(scraping_queue.items) if hasattr(scraping_queue, 'items') else len(scraping_queue.get_contents())
+            except KeyError:
+                logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
+                current_scraping_queue_size = SCRAPING_QUEUE_MAX_SIZE # Prevent adding if queue is missing
+
+            allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
+            can_add_to_scraping = allowed_to_add_count > 0
+
+            if not can_add_to_scraping:
+                 logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is at or above the limit ({SCRAPING_QUEUE_MAX_SIZE}). Throttling additions from Wanted queue.")
+
             for item in self.items:
                 try:
                     # First check if this item already exists in Collected/Upgrading state
@@ -166,9 +184,13 @@ class WantedQueue:
 
                     # Handle early release items without release date
                     if item.get('early_release', False):
-                        logging.info(f"Early release item {item_identifier} - moving to Scraping queue regardless of release date")
-                        items_to_move_scraping.append(item)
-                        continue
+                        # Check throttle before adding early release items
+                        if can_add_to_scraping and len(items_to_move_scraping) < allowed_to_add_count:
+                            logging.info(f"Early release item {item_identifier} - moving to Scraping queue (within throttle limits)")
+                            items_to_move_scraping.append(item)
+                        else:
+                             logging.debug(f"Skipping early release item {item_identifier} due to scraping queue throttle.")
+                        continue # Process next item regardless
 
                     if not release_date_str or release_date_str is None or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown'):
                         logging.debug(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
@@ -220,26 +242,36 @@ class WantedQueue:
                         release_datetime += timedelta(hours=offset)
 
                         time_until_release = release_datetime - current_datetime
+                        item_is_ready = time_until_release <= timedelta()
 
-                        # If physical release is required, ignore early release flag
+                        # Determine if item should move to scraping based on release criteria
+                        should_move_to_scraping = False
                         if require_physical:
-                            if time_until_release <= timedelta():
-                                logging.debug(f"Item {item_identifier} has met its physical release requirement. Moving to Scraping queue.")
-                                items_to_move_scraping.append(item)
+                            if item_is_ready: # Physical date already parsed above and used for release_datetime
+                                should_move_to_scraping = True
                             elif time_until_release > timedelta(hours=24):
                                 logging.debug(f"Item {item_identifier} is more than 24 hours away from physical release. Moving to Unreleased queue.")
                                 items_to_move_unreleased.append(item)
-                        # If no physical release required, check early release flag
-                        elif item.get('early_release', False):
-                            logging.debug(f"Item {item_identifier} is an early release. Moving to Scraping queue.")
-                            items_to_move_scraping.append(item)
-                        # Otherwise check normal release timing
-                        elif time_until_release <= timedelta():
-                            logging.debug(f"Item {item_identifier} has met its airtime requirement. Moving to Scraping queue.")
-                            items_to_move_scraping.append(item)
+                                continue # Skip scraping check for this item
+                        elif item.get('early_release', False): # Already handled above, but keep logic path clear
+                             # This path shouldn't be reached due to 'continue' above, but included for robustness
+                             pass
+                        elif item_is_ready: # Normal release timing check
+                            should_move_to_scraping = True
                         elif time_until_release > timedelta(hours=24):
-                            logging.debug(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
-                            items_to_move_unreleased.append(item)
+                             logging.debug(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
+                             items_to_move_unreleased.append(item)
+                             continue # Skip scraping check for this item
+
+                        # Apply throttle check
+                        if should_move_to_scraping:
+                            if can_add_to_scraping and len(items_to_move_scraping) < allowed_to_add_count:
+                                logging.debug(f"Item {item_identifier} met release requirement. Moving to Scraping queue (within throttle limits).")
+                                items_to_move_scraping.append(item)
+                            else:
+                                # Item is ready but queue is full, leave it in Wanted for next cycle
+                                logging.debug(f"Item {item_identifier} is ready but scraping queue is full. Keeping in Wanted.")
+
                     except ValueError as e:
                         logging.error(f"Error processing item {item_identifier}: {str(e)}")
                         # Add to unreleased if there's an error parsing dates
@@ -251,12 +283,16 @@ class WantedQueue:
 
             # Move marked items to respective queues
             try:
+                if items_to_move_scraping:
+                    logging.info(f"Moving {len(items_to_move_scraping)} items from Wanted to Scraping queue.")
                 for item in items_to_move_scraping:
                     queue_manager.move_to_scraping(item, "Wanted")
             except Exception as e:
                 logging.error(f"Error moving items to Scraping queue: {str(e)}", exc_info=True)
             
             try:
+                if items_to_move_unreleased:
+                    logging.info(f"Moving {len(items_to_move_unreleased)} items from Wanted to Unreleased queue.")
                 for item in items_to_move_unreleased:
                     queue_manager.move_to_unreleased(item, "Wanted")
             except Exception as e:

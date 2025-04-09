@@ -1247,6 +1247,7 @@ def run_task():
         'task_run_library_maintenance': program_runner.task_run_library_maintenance,
         'task_verify_symlinked_files': program_runner.task_verify_symlinked_files,
         'task_verify_plex_removals': program_runner.task_verify_plex_removals,
+        'task_process_pending_rclone_paths': program_runner.task_process_pending_rclone_paths
     }
 
     if task_name not in tasks:
@@ -1314,7 +1315,8 @@ def get_available_tasks():
         {'id': 'task_update_movie_ids', 'display_name': 'Update Movie IDs'},
         {'id': 'task_update_movie_titles', 'display_name': 'Update Movie Titles'},
         {'id': 'task_verify_symlinked_files', 'display_name': 'Verify Symlinked Files'},
-        {'id': 'task_verify_plex_removals', 'display_name': 'Verify Plex Removals'}
+        {'id': 'task_verify_plex_removals', 'display_name': 'Verify Plex Removals'},
+        {'id': 'task_process_pending_rclone_paths', 'display_name': 'Process Pending Rclone Paths'}
     ]
     
     # Get content sources from program runner for content source tasks
