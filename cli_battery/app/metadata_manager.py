@@ -17,7 +17,7 @@ from collections import defaultdict
 from .settings import Settings
 from datetime import datetime, timezone
 import random
-from typing import Optional
+from typing import Optional, Dict, Any
 import logging
 from .xem_utils import fetch_xem_mapping
 
@@ -1209,3 +1209,61 @@ class MetadataManager:
             logger.error(f"Error in refresh_show_metadata for IMDb ID {imdb_id}: {str(e)}")
             return None, None
             
+    @staticmethod
+    def get_bulk_show_airs_info(imdb_ids: list[str]) -> dict[str, Optional[dict[str, Any]]]:
+        """
+        Gets the 'airs' metadata for a list of show IMDb IDs from the battery.
+        Focuses on bulk reading and does not trigger automatic refresh on stale.
+        Returns a dictionary mapping imdb_id to its 'airs' dict (or None if not found/error).
+        """
+        airs_info = {imdb_id: None for imdb_id in imdb_ids} # Initialize with None
+        if not imdb_ids:
+            return airs_info
+
+        with DbSession() as session:
+            try:
+                # Find item IDs corresponding to the imdb_ids
+                items = session.query(Item.id, Item.imdb_id).filter(
+                    Item.imdb_id.in_(imdb_ids),
+                    Item.type == 'show'
+                ).all()
+
+                item_id_to_imdb_id = {item.id: item.imdb_id for item in items}
+                item_ids = list(item_id_to_imdb_id.keys())
+
+                if not item_ids:
+                    logger.warning(f"No items found in battery for IMDb IDs: {imdb_ids}")
+                    return airs_info # Return dict with all Nones
+
+                # Fetch 'airs' metadata for these item IDs
+                airs_metadata_rows = session.query(Metadata).filter(
+                    Metadata.item_id.in_(item_ids),
+                    Metadata.key == 'airs'
+                ).all()
+
+                for metadata_row in airs_metadata_rows:
+                    imdb_id = item_id_to_imdb_id.get(metadata_row.item_id)
+                    if imdb_id:
+                        try:
+                            airs_value = json.loads(metadata_row.value)
+                            if isinstance(airs_value, dict):
+                                airs_info[imdb_id] = airs_value
+                            else:
+                                logger.warning(f"Airs metadata for {imdb_id} (item_id {metadata_row.item_id}) is not a dict: {type(airs_value)}")
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to decode 'airs' JSON for {imdb_id} (item_id {metadata_row.item_id}). Value: {metadata_row.value[:100]}...")
+                        except Exception as e:
+                             logger.error(f"Error processing airs metadata for {imdb_id}: {e}")
+
+                # Log which IDs were not found
+                found_ids = {imdb for imdb, airs in airs_info.items() if airs is not None}
+                not_found_ids = set(imdb_ids) - found_ids
+                if not_found_ids:
+                     logger.info(f"Did not find 'airs' metadata in battery for IMDb IDs: {list(not_found_ids)}")
+
+                return airs_info
+
+            except Exception as e:
+                logger.error(f"Error in get_bulk_show_airs_info: {e}")
+                # Return the initialized dict with Nones on error
+                return {imdb_id: None for imdb_id in imdb_ids}

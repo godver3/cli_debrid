@@ -171,6 +171,7 @@ class TorrentProcessor:
             Tuple of (magnet_link, temp_file_path) where:
                 - For magnet links: (magnet_link, None)
                 - For torrent files: (None, temp_file_path)
+                - For URLs resolving to magnets: (magnet_link, None)
                 - Returns (None, None) on error
         """
         try:
@@ -185,22 +186,52 @@ class TorrentProcessor:
                 return None, None
                 
             with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                temp_file_path = tmp.name # Store path early for cleanup
                 try:
                     response = requests.get(magnet_or_url, timeout=30)
                     response.raise_for_status()
+
+                    # Check if the response body starts with 'magnet:'
+                    # Decode safely, only need the first few bytes to check
+                    content_start = response.content[:10].decode('utf-8', errors='ignore').strip()
+                    if content_start.startswith('magnet:'):
+                        logging.info(f"URL {magnet_or_url} resolved to a magnet link.")
+                        # Clean up the temp file we created but won't use
+                        try:
+                            os.unlink(temp_file_path)
+                        except OSError as e:
+                            logging.warning(f"Could not delete temporary file {temp_file_path} after finding magnet link: {e}")
+                        # Return the full response text as the magnet link
+                        return response.text.strip(), None
+                    
+                    # If not a magnet link, assume it's torrent file content
                     tmp.write(response.content)
                     tmp.flush()
-                    return None, tmp.name
-                except Exception as e:
-                    logging.error(f"Failed to download torrent file: {str(e)}")
+                    return None, temp_file_path # Return None for magnet, path for file
+                except requests.exceptions.RequestException as e:
+                    # Catch specific requests errors for better logging
+                    logging.error(f"Failed request for URL {magnet_or_url}: {str(e)}")
                     try:
-                        os.unlink(tmp.name)
-                    except:
-                        pass
+                        os.unlink(temp_file_path)
+                    except OSError:
+                        pass # File might not exist or other issues
+                    return None, None
+                except Exception as e:
+                    logging.error(f"Failed to process content from URL {magnet_or_url}: {str(e)}")
+                    try:
+                        os.unlink(temp_file_path)
+                    except OSError:
+                        pass # File might not exist or other issues
                     return None, None
             
         except Exception as e:
-            logging.error(f"Error processing magnet/URL: {str(e)}", exc_info=True)
+            logging.error(f"Error processing magnet/URL {magnet_or_url}: {str(e)}", exc_info=True)
+            # Clean up temp file if it exists and path was assigned
+            if 'temp_file_path' in locals() and os.path.exists(temp_file_path):
+                 try:
+                     os.unlink(temp_file_path)
+                 except OSError:
+                     pass
             return None, None
             
     def check_cache_for_url(self, url: str, remove_cached: bool = False) -> Optional[bool]:

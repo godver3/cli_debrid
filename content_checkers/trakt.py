@@ -683,60 +683,109 @@ def check_trakt_early_releases():
     if skipped_count > 0:
         logging.debug(f"Skipped {skipped_count} episodes")
     
+def fetch_liked_trakt_lists_details() -> List[Dict[str, str]]:
+    """Fetches details (name, URL) of lists the authenticated user has liked."""
+    logging.debug("Fetching details of Trakt liked lists")
+    access_token = ensure_trakt_auth()
+    if access_token is None:
+        logging.error("Failed to obtain a valid Trakt access token for fetching liked lists")
+        return []
+
+    liked_lists_details = []
+    try:
+        liked_lists_endpoint = "/users/likes/lists?limit=1000" # Add limit just in case
+        liked_lists_response = make_trakt_request('get', liked_lists_endpoint)
+
+        if not liked_lists_response or liked_lists_response.status_code != 200:
+            logging.error(f"Failed to fetch liked lists details. Status: {liked_lists_response.status_code if liked_lists_response else 'N/A'}")
+            return []
+
+        liked_lists_data = liked_lists_response.json()
+        logging.info(f"Found {len(liked_lists_data)} liked lists to potentially import.")
+
+        for entry in liked_lists_data:
+            list_data = entry.get('list')
+            if not list_data:
+                logging.warning(f"Skipping liked list entry due to missing list data: {entry}")
+                continue
+
+            list_ids = list_data.get('ids')
+            list_user = list_data.get('user')
+            list_name = list_data.get('name', 'Unnamed List')
+
+            if not list_ids or not list_user or 'trakt' not in list_ids or 'username' not in list_user:
+                logging.warning(f"Skipping liked list '{list_name}' due to missing ID or user data.")
+                continue
+
+            username = list_user['username']
+            list_id = list_ids['trakt']
+            # Construct the standard Trakt list URL
+            list_url = f"https://trakt.tv/users/{username}/lists/{list_id}"
+
+            liked_lists_details.append({
+                'name': list_name,
+                'url': list_url,
+                'username': username, # Include for potential display name generation
+                'list_id': str(list_id) # Include for potential display name generation
+            })
+
+    except Exception as e:
+        logging.error(f"Error fetching liked lists details: {str(e)}", exc_info=True)
+
+    return liked_lists_details
+
 def get_wanted_from_trakt():
     """Get wanted items from all Trakt sources"""
-    # Get scraping versions
     config = get_all_settings()
     versions = config.get('Scraping', {}).get('versions', {})
-    
-    # Get all Trakt sources
     trakt_sources = get_trakt_sources()
-    
-    # Get wanted items from each source
-    wanted_items = []
-    
+    all_processed_items = {} 
+
     # Process main watchlist
     if trakt_sources['watchlist']:
-        watchlist_items = get_wanted_from_trakt_watchlist(versions)
-        wanted_items.extend(watchlist_items)
-    
+        logging.info("Processing Trakt Watchlist sources...")
+        watchlist_results = get_wanted_from_trakt_watchlist(versions)
+        for item in watchlist_results:
+            imdb_id = item[0][0]['imdb_id']
+            if imdb_id:
+                all_processed_items[imdb_id] = item
+
     # Process lists
-    for list_source in trakt_sources['lists']:
-        if list_source.get('enabled', False):
-            list_url = list_source.get('url', '')
-            if list_url:
+    if trakt_sources['lists']:
+        logging.info("Processing Trakt List sources...")
+        for list_source in trakt_sources['lists']:
+            if list_source.get('enabled', False):
+                list_url = list_source.get('url', '')
                 list_versions = {}
                 for version in list_source.get('versions', []):
                     if version in versions:
                         list_versions[version] = True
                 
-                list_items = get_wanted_from_trakt_lists(list_url, list_versions)
-                wanted_items.extend(list_items)
-    
+                list_results = get_wanted_from_trakt_lists(list_url, list_versions if list_versions else versions)
+                for item in list_results:
+                    imdb_id = item[0][0]['imdb_id']
+                    if imdb_id:
+                        all_processed_items[imdb_id] = item
+
     # Process friend watchlists
-    for friend_source in trakt_sources['friend_watchlist']:
-        if friend_source.get('enabled', False):
-            friend_versions = {}
-            for version in friend_source.get('versions', []):
-                if version in versions:
-                    friend_versions[version] = True
-            
-            friend_items = get_wanted_from_friend_trakt_watchlist(friend_source, friend_versions)
-            wanted_items.extend(friend_items)
-    
-    # Deduplicate items based on imdb_id
-    unique_items = {}
-    for item in wanted_items:
-        imdb_id = item.get('imdb_id')
-        if imdb_id and imdb_id not in unique_items:
-            unique_items[imdb_id] = item
-        elif imdb_id and imdb_id in unique_items:
-            # Merge versions
-            for version, enabled in item.get('versions', {}).items():
-                if enabled:
-                    unique_items[imdb_id]['versions'][version] = True
-    
-    return list(unique_items.values())
+    if trakt_sources['friend_watchlist']:
+        logging.info("Processing Friends Trakt Watchlist sources...")
+        for friend_source in trakt_sources['friend_watchlist']:
+            if friend_source.get('enabled', False):
+                friend_versions = {}
+                for version in friend_source.get('versions', []):
+                    if version in versions:
+                        friend_versions[version] = True
+                
+                friend_results = get_wanted_from_friend_trakt_watchlist(friend_source, friend_versions if friend_versions else versions)
+                for item in friend_results:
+                    imdb_id = item[0][0]['imdb_id']
+                    if imdb_id:
+                        all_processed_items[imdb_id] = item
+
+    final_wanted_list = list(all_processed_items.values())
+    logging.info(f"Total unique wanted items from all Trakt sources: {len(final_wanted_list)}")
+    return final_wanted_list
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

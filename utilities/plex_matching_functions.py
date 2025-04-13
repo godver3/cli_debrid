@@ -8,21 +8,26 @@ import requests
 import re
 import time  # Add time import for sleep
 import urllib.parse
+from difflib import SequenceMatcher # For comparing titles
 
-def force_match_with_tmdb(title: str, year: str, tmdb_id: str, plex_rating_key: Optional[str] = None) -> bool:
+def _similar(a, b):
+    """Helper function for string similarity"""
+    return SequenceMatcher(None, a, b).ratio()
+
+def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, plex_rating_key: Optional[str] = None) -> bool:
     """
-    Force matches a Plex item with a specific TMDB ID using the direct API endpoint.
+    Force matches a Plex item with a specific TMDB ID using the best available match result.
     If the item contains multiple movies (based on our database records), it will attempt to split them first.
-    
+
     Args:
-        title (str): The title of the item to match (this is actually the filename)
-        tmdb_id (str): The TMDB ID to match with
-        plex_rating_key (Optional[str]): The Plex rating key if we already know the item
-        
+        db_title (str): The correct title from our database.
+        db_year (Optional[str]): The correct year from our database.
+        tmdb_id (str): The TMDB ID to match with (used for verification post-match).
+        plex_rating_key (Optional[str]): The Plex rating key of the item to fix.
+
     Returns:
         bool: True if successful, False otherwise
     """
-    
     try:
         # Get Plex connection details from settings
         baseurl = get_setting("Plex", "url", default="http://localhost:32400")
@@ -33,16 +38,17 @@ def force_match_with_tmdb(title: str, year: str, tmdb_id: str, plex_rating_key: 
             return False
             
         if not plex_rating_key:
+            # Need rating key to identify the item in Plex
             logging.error("No Plex rating key provided for item")
             return False
             
-        logging.info(f"Attempting to match item with rating key: {plex_rating_key}")
+        logging.info(f"Attempting to match item with rating key: {plex_rating_key} to DB Title: '{db_title}', Year: {db_year}, Target TMDB ID: {tmdb_id}")
         
         # Clean up the base URL
         baseurl = baseurl.rstrip('/')
-        if ':' in baseurl and not baseurl.endswith('/'):
-            # If we have a port number, make sure we have a slash after it
-            baseurl = f"{baseurl}/"
+        # Ensure slash after port if present
+        if ':' in baseurl.split('/')[-1] and not baseurl.endswith('/'):
+             baseurl += '/'
             
         # Connect to Plex
         plex = PlexServer(baseurl, token)
@@ -54,7 +60,7 @@ def force_match_with_tmdb(title: str, year: str, tmdb_id: str, plex_rating_key: 
             logging.error(f"Failed to fetch item with rating key {plex_rating_key}: {str(e)}")
             return False
 
-        # Set up headers for all requests
+        # Set up headers for potential future direct API calls if needed
         headers = {
             'X-Plex-Token': token,
             'Accept': 'application/json'
@@ -69,227 +75,224 @@ def force_match_with_tmdb(title: str, year: str, tmdb_id: str, plex_rating_key: 
                     if hasattr(part, 'file'):
                         file_locations.append(part.file)
             
-            if len(file_locations) > 0:
-                logging.info(f"Found {len(file_locations)} file(s) in Plex item")
-                
-                # Check our database for each file
+            if len(file_locations) > 1: # Only split if more than one file
+                logging.info(f"Found {len(file_locations)} file(s) in Plex item, checking if split is needed.")
+
+                # Check our database for each file to see if they belong together
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                
+                target_file_for_split = None
+                other_files_for_split = []
+                found_mismatch = False
+
                 try:
-                    # First, check if any of these files should be matched with our target TMDB ID
-                    target_file = None
-                    other_files = []
-                    
+                    # Find which file should correspond to the target TMDB ID
+                    # Requires querying based on tmdb_id and filename
+                    # This logic might need refinement depending on how `filled_by_file` is stored
+                    # Assuming db_title/year/tmdb_id correspond to one of the files
+                    # A simpler check: If files belong to different TMDB IDs in DB, split needed.
+                    db_tmdb_ids = set()
                     for location in file_locations:
                         filename = os.path.basename(location)
+                        # Query DB for TMDB ID associated with this filename
                         cursor.execute('''
-                            SELECT DISTINCT tmdb_id, title, year 
-                            FROM media_items 
-                            WHERE filled_by_file LIKE ? 
-                            AND tmdb_id IS NOT NULL 
+                            SELECT DISTINCT tmdb_id
+                            FROM media_items
+                            WHERE filled_by_file LIKE ?
+                            AND tmdb_id IS NOT NULL
                             AND state IN ('Collected', 'Upgrading', 'Checking')
                         ''', (f'%{filename}%',))
-                        db_item = cursor.fetchone()
-                        
-                        if db_item and str(db_item['tmdb_id']) == str(tmdb_id):
-                            target_file = location
-                        else:
-                            other_files.append(location)
-                    
-                    if target_file and len(other_files) > 0:
-                        logging.info(f"Found target file and {len(other_files)} other files that need to be split")
-                        
+                        result = cursor.fetchone()
+                        if result and result['tmdb_id']:
+                            db_tmdb_ids.add(str(result['tmdb_id']))
+
+
+                    if len(db_tmdb_ids) > 1:
+                        logging.info(f"Files in item belong to different TMDB IDs ({db_tmdb_ids}). Initiating split.")
                         # Split the item
                         split_url = f"{baseurl}/library/metadata/{plex_rating_key}/split"
                         response = requests.put(split_url, headers=headers)
-                        
+
                         if response.status_code == 200:
-                            logging.info("Successfully initiated split operation")
-                            time.sleep(5)  # Give Plex time to process the split
-                            
-                            # Get all items in the library
-                            library_section = item.section()
-                            all_items = library_section.all()
-                            
-                            # Find our target item and other items
-                            target_item = None
-                            items_to_combine = []
-                            
-                            for plex_item in all_items:
-                                if hasattr(plex_item, 'media'):
-                                    for media in plex_item.media:
-                                        for part in media.parts:
-                                            if part.file == target_file:
-                                                target_item = plex_item
-                                                break
-                                            elif part.file in other_files:
-                                                items_to_combine.append(plex_item)
-                                                break
-                            
-                            # Combine the other items if needed
-                            if len(items_to_combine) > 1:
-                                base_item = items_to_combine[0]
-                                try:
-                                    # Get the rating keys of all items to merge (except the base item)
-                                    rating_keys = [item.ratingKey for item in items_to_combine[1:]]
-                                    logging.info(f"Attempting to merge items with rating keys {rating_keys} into {base_item.ratingKey}")
-                                    
-                                    # Use the PlexAPI merge function
-                                    base_item.merge(rating_keys)
-                                    logging.info(f"Successfully combined items")
-                                    time.sleep(2)  # Give Plex time to process
-                                except Exception as e:
-                                    logging.error(f"Error combining items: {str(e)}")
-                            
-                            if target_item:
-                                # Update our item reference to the split item we want to match
-                                item = target_item
-                            else:
-                                logging.error("Could not find target item after split")
-                                return False
+                            logging.info("Successfully initiated split operation. Waiting...")
+                            time.sleep(10) # Increase wait time for split
+
+                            # We need to re-find the correct item after split
+                            # This is complex: requires searching the library for the item
+                            # associated with the file corresponding to db_title/db_year/tmdb_id
+                            # For now, let's assume the split worked and we need to find the new rating key.
+                            # A robust solution would involve finding the file belonging to tmdb_id
+                            # and then finding the Plex item containing that file.
+                            logging.warning("Item split. Re-run needed to match the correct new item.")
+                            # We cannot reliably get the new item's rating key here easily.
+                            # The safest approach is to let the next run pick up the split items individually.
+                            return False # Indicate failure for this run, let next cycle handle split items
                         else:
-                            logging.warning(f"Failed to split item: HTTP {response.status_code}")
+                            logging.warning(f"Failed to split item: HTTP {response.status_code}. Proceeding without split.")
+                    else:
+                        logging.info("Files in item belong to the same TMDB ID or couldn't be verified in DB. No split needed.")
+
                 finally:
                     cursor.close()
                     conn.close()
-            
-        # Try direct match with TMDB ID without unmatching first
+            else:
+                logging.debug(f"Only {len(file_locations)} file(s) found, no split needed.")
+        # --- Split Logic End ---
+
+
+        # --- Matching Logic ---
         try:
             # Get the agent from the library section
             is_tv_show = bool(item.type == 'episode')
             library_section = item.section()
             agent = library_section.agent
             logging.info(f"Using agent {agent} from library section '{library_section.title}'")
-            
-            # For TV shows, we need to work with the series (grandparent) instead of the episode
+
+            # For TV shows, work with the series (grandparent)
             if is_tv_show:
                 if not hasattr(item, 'grandparentRatingKey'):
                     logging.error("Episode missing grandparentRatingKey")
                     return False
                 plex_rating_key = str(item.grandparentRatingKey)
-                item = plex.fetchItem(int(plex_rating_key))
+                item = plex.fetchItem(int(plex_rating_key)) # Get the show item
                 logging.info(f"Working with TV series '{item.title}' (rating key: {plex_rating_key})")
-            
-            # Check current TMDB ID if any
+
+            # Check current external IDs
             current_tmdb_id = None
-            for guid in getattr(item, 'guids', []):
-                guid_str = str(guid)
+            current_imdb_id = None
+            for guid_obj in getattr(item, 'guids', []):
+                guid_str = str(guid_obj)
                 if 'tmdb://' in guid_str:
                     match = re.search(r'tmdb://(?:tv/)?(\d+)', guid_str)
-                    if match:
-                        current_tmdb_id = match.group(1)
-                        break
-            
-            # Try direct match first unless disabled
-            guid = f'tmdb://{tmdb_id}' if not is_tv_show else f'tmdb://tv/{tmdb_id}'
-            
+                    if match: current_tmdb_id = match.group(1)
+                elif 'imdb://' in guid_str:
+                    match = re.search(r'imdb://(tt\d+)', guid_str)
+                    if match: current_imdb_id = match.group(1)
+
+            # If already matched correctly, return True
+            if current_tmdb_id and current_tmdb_id == str(tmdb_id):
+                 logging.info(f"Item '{item.title}' is already matched with the correct TMDB ID {tmdb_id}. Skipping fix.")
+                 return True
+            # Add check for IMDb ID if TMDB ID is missing but we have an IMDb ID in DB? (Requires passing IMDb ID)
+            # elif current_imdb_id and current_imdb_id == db_imdb_id: ...
+
+            logging.info(f"Item '{item.title}' (Current IDs: TMDB={current_tmdb_id}, IMDB={current_imdb_id}) needs matching to TMDB ID {tmdb_id}.")
+
+            # --- Find Match by Trial-and-Error ---
+            target_match_found = False
             try:
-                # Get available matches
-                matches = item.matches(title=title, year=year)
-                logging.info(f"Found {len(matches)} potential matches")
-                
-                # Log all matches for debugging
-                for idx, match in enumerate(matches, 1):
-                    logging.info(f"Match {idx}:")
-                    logging.info(f"  - Title: {getattr(match, 'title', 'N/A')}")
-                    logging.info(f"  - Year: {getattr(match, 'year', 'N/A')}")
-                    logging.info(f"  - GUID: {getattr(match, 'guid', 'N/A')}")
-                    logging.info(f"  - Score: {getattr(match, 'score', 'N/A')}")
-                    logging.info(f"  - Name: {getattr(match, 'name', 'N/A')}")
-                    # Log any additional useful attributes
-                    for attr in dir(match):
-                        if not attr.startswith('_') and attr not in ['title', 'year', 'guid', 'score', 'name']:
-                            value = getattr(match, attr, None)
-                            if value is not None:
-                                logging.info(f"  - {attr}: {value}")
-                
-                # Try to find an exact name/year match first
-                target_match = None
-                for match in matches:
-                    match_name = getattr(match, 'name', '')
-                    match_year = str(getattr(match, 'year', ''))
-                    
-                    logging.info(f"Comparing '{match_name}' ({match_year}) with '{title}' ({year})")
-                    
-                    # Check for exact name match and year match if provided
-                    if match_name and match_name.lower() == title.lower():
-                        if not year or match_year == year:
-                            target_match = match
-                            logging.info(f"Found exact name/year match: {match_name} ({match_year})")
-                            break
-                
-                # If no exact match found, take the first result that has a year
-                if not target_match and matches:
-                    # Filter for matches that have a year
-                    valid_matches = [m for m in matches if getattr(m, 'year', '')]
-                    if valid_matches:
-                        target_match = valid_matches[0]
-                        match_name = getattr(target_match, 'name', '')
-                        match_year = getattr(target_match, 'year', '')
-                        logging.info(f"No exact match found, using first result with year: {match_name} ({match_year})")
-                    else:
-                        logging.warning("No matches found with valid year information")
-                
-                # Apply the match if we found one
-                if target_match:
-                    logging.info(f"Applying match with: {getattr(target_match, 'name', 'N/A')} ({getattr(target_match, 'year', 'N/A')})")
-                    item.fixMatch(searchResult=target_match)
-                    time.sleep(2)
+                # --- Search using the CORRECT title/year from the database ---
+                search_title = db_title
+                search_year = db_year # db_year is already Optional[str]
+                logging.info(f"Searching matches using DB info: title='{search_title}', year='{search_year}', agent='{agent}'")
+                # Pass the correct db_title and db_year to the search
+                matches = item.matches(agent=agent, title=search_title, year=search_year)
+                logging.info(f"Found {len(matches)} potential matches. Will attempt each sequentially.")
+
+                # --- Add logging for the received match list order ---
+                if matches:
+                    logging.info("--- Received Match List Order ---")
+                    for i, res in enumerate(matches):
+                        res_name = getattr(res, 'name', 'N/A')
+                        res_year = getattr(res, 'year', 'N/A')
+                        res_guid = getattr(res, 'guid', 'N/A')
+                        logging.info(f"  {i+1}: Name='{res_name}', Year='{res_year}', GUID='{res_guid}'")
+                    logging.info("--- End of Received Match List ---")
                 else:
-                    logging.error("No matches found")
+                     logging.warning("No matches returned by item.matches()")
+                # --- End logging ---
+
+                if not matches:
+                    logging.error(f"No potential matches found for '{search_title}' ({search_year}). Cannot apply fix.")
                     return False
-                
-                # Verify the match
-                max_wait = 30  # Maximum seconds to wait
-                interval = 2   # Check every 2 seconds
-                start_time = time.time()
-                
-                while time.time() - start_time < max_wait:
-                    # Refresh the item to get updated metadata
-                    item.reload()
-                    guids = getattr(item, 'guids', [])
-                    
-                    # Log current metadata state
-                    logging.info(f"Metadata state at {int(time.time() - start_time)}s:")
-                    logging.info(f"  - Title: {item.title}")
-                    logging.info(f"  - Year: {getattr(item, 'year', 'N/A')}")
-                    logging.info(f"  - All GUIDs: {guids}")
-                    
-                    # Check if we have the correct TMDB ID
-                    matched_tmdb_id = None
-                    for guid_obj in guids:
-                        guid_str = str(guid_obj)
-                        if 'tmdb://' in guid_str:
-                            match = re.search(r'tmdb://(?:tv/)?(\d+)', guid_str)
-                            if match:
-                                matched_tmdb_id = match.group(1)
-                                break
-                    
-                    if matched_tmdb_id:
-                        if matched_tmdb_id == str(tmdb_id):
-                            logging.info(f"Successfully verified TMDB ID match: {matched_tmdb_id}")
-                            return True
+
+                # Loop through each result, try matching, verify, and unmatch if wrong
+                # This loop naturally processes from the top (index 0) of the 'matches' list
+                for idx, match_result in enumerate(matches, 1):
+                    result_name = getattr(match_result, 'name', 'N/A')
+                    result_year = getattr(match_result, 'year', 'N/A')
+                    result_guid = getattr(match_result, 'guid', 'N/A') # This is likely plex://
+                    logging.info(f"--- Attempting Match {idx}/{len(matches)}: Name='{result_name}', Year='{result_year}', ResultGUID='{result_guid}' ---")
+
+                    try:
+                        # Apply this match result
+                        item.fixMatch(searchResult=match_result)
+                        logging.info(f"Applied match {idx}. Waiting for Plex to process...")
+                        time.sleep(4) # Increased wait after applying match
+
+                        # Verify the result
+                        item.reload()
+                        guids = getattr(item, 'guids', [])
+                        logging.info(f"Verification: GUIDs after attempting match {idx}: {guids}")
+
+                        matched_tmdb_id = None
+                        for guid_obj in guids:
+                            guid_str = str(guid_obj)
+                            if 'tmdb://' in guid_str:
+                                tmdb_search = re.search(r'tmdb://(?:tv/)?(\d+)', guid_str)
+                                if tmdb_search:
+                                    matched_tmdb_id = tmdb_search.group(1)
+                                    break # Found TMDB ID
+
+                        # Check if this attempt resulted in the correct TMDB ID
+                        if matched_tmdb_id and matched_tmdb_id == str(tmdb_id):
+                            logging.info(f"SUCCESS: Match attempt {idx} resulted in correct TMDB ID: {matched_tmdb_id}")
+                            target_match_found = True
+                            break # Exit the loop, we are done
                         else:
-                            logging.warning(f"Incorrect TMDB ID match: got {matched_tmdb_id}, expected {tmdb_id}")
-                            if time.time() - start_time >= max_wait - interval:
-                                return False
-                    
-                    time.sleep(interval)
-                
-                logging.error("Failed to verify TMDB ID in metadata after waiting")
-                return False
-                
+                            logging.warning(f"Match attempt {idx} resulted in incorrect/missing TMDB ID (Found: {matched_tmdb_id}, Expected: {tmdb_id}). Unmatching...")
+                            try:
+                                item.unmatch()
+                                logging.info(f"Unmatch command sent after attempt {idx}. Waiting...")
+                                time.sleep(3) # Wait for unmatch to process
+                                item.reload() # Reload to confirm unmatch (optional check)
+                                logging.info(f"Item state after unmatch attempt {idx}: GUIDs={getattr(item, 'guids', [])}")
+                            except Exception as unmatch_e:
+                                logging.error(f"Failed to unmatch after incorrect match attempt {idx}: {str(unmatch_e)}")
+                                # Continue to next attempt despite unmatch error? Risky, could leave item wrongly matched.
+                                # Let's break the loop here to be safe, as state is uncertain.
+                                logging.error("Stopping further attempts due to unmatch error.")
+                                return False # Indicate failure due to unstable state
+
+
+                    except Exception as match_e:
+                        logging.error(f"Failed to apply or verify match for result {idx} (Name='{result_name}'): {str(match_e)}")
+                        # Attempt to unmatch if fixMatch failed mid-way
+                        try:
+                            logging.warning(f"Attempting to unmatch item after error during match attempt {idx}...")
+                            item.unmatch()
+                            time.sleep(3)
+                            logging.info(f"Item unmatched successfully after error during attempt {idx}.")
+                        except Exception as unmatch_e_after_error:
+                             logging.error(f"Failed to unmatch after error during fixMatch attempt {idx}: {str(unmatch_e_after_error)}")
+                             logging.error("Stopping further attempts due to unmatch error.")
+                             return False # Indicate failure due to unstable state
+                        # Continue to the next potential match in the outer loop
+
+                # After the loop finishes
+                if not target_match_found:
+                    logging.error(f"Iterated through all {len(matches)} match results, none resulted in the correct TMDB ID {tmdb_id}.")
+                    return False
+                else:
+                    # This part should only be reached if break happened due to success
+                    return True
+
             except Exception as e:
-                logging.error(f"Failed to match item: {str(e)}")
+                logging.error(f"Error during Plex match search or trial-and-error loop: {str(e)}")
+                import traceback
+                logging.error(traceback.format_exc())
                 return False
-            
+
         except Exception as e:
-            logging.error(f"Failed to fix match using API: {str(e)}")
+            logging.error(f"Error in force_match_with_tmdb outer logic: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
             return False
-            
+
     except Exception as e:
-        logging.error(f"Error force matching item in Plex: {str(e)}")
+        logging.error(f"Error setting up Plex connection or fetching item: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
         return False
 
 def is_item_matched(item: Dict[str, Any]) -> bool:
@@ -303,212 +306,279 @@ def is_item_matched(item: Dict[str, Any]) -> bool:
         bool: True if item has required metadata and is correctly matched, False otherwise
     """
     try:
-        # First check if item has minimum required metadata
-        has_id = bool(item.get('imdb_id') or item.get('tmdb_id'))
+        logging.debug(f"Checking match status for item dict: {item}") # Use debug for full dict maybe
+
+        plex_title = item.get('title', 'N/A')
+        plex_year = item.get('year')
+        plex_rating_key = item.get('ratingKey')
+        # Extract IDs directly from the dict provided by the caller (e.g., from get_all_content)
+        # These might be sparse depending on how get_all_content works
+        plex_guid_str = item.get('guid', '') # Assuming get_all_content provides guid string
+        plex_imdb_id = None
+        plex_tmdb_id = None
+
+        # Attempt to parse from GUID if available in the input dict
+        if 'imdb://' in plex_guid_str:
+            match = re.search(r'imdb://(tt\d+)', plex_guid_str)
+            if match: plex_imdb_id = match.group(1)
+        elif 'tmdb://' in plex_guid_str:
+             match = re.search(r'tmdb://(?:tv/)?(\d+)', plex_guid_str)
+             if match: plex_tmdb_id = match.group(1)
+
+        # Fallback to dedicated fields if they exist in the dict
+        if not plex_imdb_id: plex_imdb_id = item.get('imdb_id')
+        if not plex_tmdb_id: plex_tmdb_id = item.get('tmdb_id')
+
+        logging.info(f"Checking item from Plex Scan: Title='{plex_title}', Year={plex_year}, RatingKey={plex_rating_key}, Found IDs: IMDb={plex_imdb_id}, TMDB={plex_tmdb_id}")
+
+        # Check minimum required metadata
+        # Use the parsed/extracted IDs for the check
+        has_id = bool(plex_imdb_id or plex_tmdb_id)
         if not has_id:
-            logging.info(f"Item missing required ID metadata: {item.get('title')}")
+            logging.info(f"Item '{plex_title}' (RatingKey: {plex_rating_key}) missing required external ID (IMDb/TMDB) in scan results.")
+            # Cannot reliably check against DB without an ID from Plex
+            # Consider if this item should be flagged for a refresh/rematch attempt anyway?
+            # Returning True means we don't try to fix it here, False means we do.
+            # Let's return False to trigger a fix attempt where *might* find the ID.
             return False
-            
-        # For episodes, check additional required metadata
-        if item.get('type') == 'episode':
-            if not all(item.get(field) for field in ['season_number', 'episode_number']):
-                logging.info(f"Episode missing required season/episode metadata: {item.get('title')}")
-                return False
-                
-        # Get the location/filename from the Plex item
+
+        # Check against database
         location = item.get('location')
         if not location:
-            logging.info(f"Item has no location: {item.get('title')}")
-            return False
-            
-        # Get the basename for comparison
+            logging.warning(f"Item '{plex_title}' (RatingKey: {plex_rating_key}) has no location info in scan results.")
+            # Cannot reliably check against DB without location/filename
+            return True # Assume matched if no location? Or False to try fix? Needs decision. Let's assume True.
+
         plex_filename = os.path.basename(location)
-        
-        # Check against our database items in relevant states
         conn = get_db_connection()
         cursor = conn.execute('''
-            SELECT id, filled_by_file, imdb_id, tmdb_id, state
+            SELECT id, filled_by_file, imdb_id, tmdb_id, state, title as db_title, year as db_year
             FROM media_items
-            WHERE state IN ('Collected', 'Upgrading', 'Checking')
-            AND (
-                filled_by_file LIKE ? 
-                OR location_on_disk LIKE ?
-            )
-        ''', (f'%{plex_filename}', f'%{plex_filename}'))
-        
-        matching_items = cursor.fetchall()
+            WHERE (filled_by_file LIKE ? OR location_on_disk LIKE ?)
+            AND state IN ('Collected', 'Upgrading', 'Checking')
+        ''', (f'%{plex_filename}%', f'%{plex_filename}%')) # Ensure LIKE pattern is correct
+
+        matching_db_items = cursor.fetchall()
         conn.close()
-        
-        if not matching_items:
-            logging.info(f"No matching items found in database for file: {plex_filename}")
-            return True  # Item is matched but not in our database yet
-            
-        # Check if any matching items have matching IDs
-        for db_item in matching_items:
-            # Compare IMDb IDs if available
-            if item.get('imdb_id') and db_item['imdb_id']:
-                if item['imdb_id'] == db_item['imdb_id']:
-                    logging.info(f"Correct match found by IMDb ID for {plex_filename} (state: {db_item['state']})")
-                    return True
-                else:
-                    logging.warning(f"IMDb ID mismatch for {plex_filename} - Plex: {item['imdb_id']}, DB: {db_item['imdb_id']}")
-                    return False
-                    
-            # Compare TMDB IDs if available
-            if item.get('tmdb_id') and db_item['tmdb_id']:
-                if item['tmdb_id'] == db_item['tmdb_id']:
-                    logging.info(f"Correct match found by TMDB ID for {plex_filename} (state: {db_item['state']})")
-                    return True
-                else:
-                    logging.warning(f"TMDB ID mismatch for {plex_filename} - Plex: {item['tmdb_id']}, DB: {db_item['tmdb_id']}")
-                    return False
-                    
-        # If we found matching filenames but no matching IDs, it's incorrectly matched
-        logging.warning(f"Found file matches but no ID matches for {plex_filename}")
-        return False
-        
+
+        if not matching_db_items:
+            logging.info(f"No active items found in database for file: {plex_filename}")
+            # This file exists in Plex but not in our DB active states. Assume okay for now.
+            return True
+
+        # Check if *any* matching DB item corresponds to the Plex IDs
+        is_correctly_matched = False
+        for db_item in matching_db_items:
+            db_imdb = db_item['imdb_id']
+            db_tmdb = str(db_item['tmdb_id']) if db_item['tmdb_id'] else None
+            db_title = db_item['db_title']
+            db_year = db_item['db_year']
+
+            logging.debug(f"  Comparing Plex file '{plex_filename}' (Plex IDs: TMDB={plex_tmdb_id}, IMDb={plex_imdb_id}) against DB item ID {db_item['id']} (DB IDs: TMDB={db_tmdb}, IMDb={db_imdb}, Title='{db_title}', Year={db_year}, State={db_item['state']})")
+
+            # Prioritize TMDB ID match
+            if plex_tmdb_id and db_tmdb and plex_tmdb_id == db_tmdb:
+                logging.info(f"Correct match found for '{plex_filename}' based on TMDB ID ({plex_tmdb_id}) matching DB ID {db_item['id']} (State: {db_item['state']}).")
+                is_correctly_matched = True
+                break # Found a correct match
+
+            # Fallback to IMDb ID match
+            if plex_imdb_id and db_imdb and plex_imdb_id == db_imdb:
+                logging.info(f"Correct match found for '{plex_filename}' based on IMDb ID ({plex_imdb_id}) matching DB ID {db_item['id']} (State: {db_item['state']}).")
+                is_correctly_matched = True
+                break # Found a correct match
+
+        if is_correctly_matched:
+            return True
+        else:
+            # If we reached here, none of the DB items matching the filename had matching IDs with Plex
+            logging.warning(f"ID mismatch for file '{plex_filename}'. Plex IDs (TMDB={plex_tmdb_id}, IMDb={plex_imdb_id}) do not match any corresponding active DB item IDs.")
+            # Log the DB IDs found for this file for clarity
+            for db_item in matching_db_items:
+                 logging.warning(f"  -> Potential DB match: ID={db_item['id']}, TMDB={db_item['tmdb_id']}, IMDb={db_item['imdb_id']}, Title='{db_item['db_title']}', State={db_item['state']}")
+            return False # Item is considered incorrectly matched
+
     except Exception as e:
         logging.error(f"Error checking if item is matched: {str(e)}")
-        return False
+        import traceback
+        logging.error(traceback.format_exc())
+        return False # Treat errors as potentially unmatched
 
 def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
     """
     Check collected content for unmatched items and attempt to fix them.
-    
-    Args:
-        collected_content: Dictionary containing 'movies' and 'episodes' lists
-        
-    Returns:
-        Dict with matched content
     """
+    matched_movies = []
+    matched_episodes = []
+    processed_show_rating_keys = set() # Keep track of shows already processed
+
     try:
-        matched_movies = []
-        matched_episodes = []
-        
         # Process movies
-        for movie in collected_content.get('movies', []):
-            if not is_item_matched(movie):
-                # Get the actual filename from the Plex item
-                plex_filename = os.path.basename(movie.get('location', ''))
-                plex_title = movie.get('title', '')
-                logging.info(f"Found unmatched movie: {plex_title} (file: {plex_filename})")
-                
-                # Check if we have a TMDB ID from our database for this file
+        logging.info("--- Checking and Fixing Movie Matches ---")
+        for movie_data in collected_content.get('movies', []):
+            if not is_item_matched(movie_data):
+                plex_filename = os.path.basename(movie_data.get('location', ''))
+                plex_title = movie_data.get('title', '')
+                plex_rating_key = movie_data.get('ratingKey')
+                logging.warning(f"Found potentially unmatched movie: '{plex_title}' (File: {plex_filename}, RatingKey: {plex_rating_key})")
+
+                if not plex_rating_key or not plex_filename:
+                     logging.error("Movie data missing ratingKey or location, cannot fix match.")
+                     continue # Skip if essential info missing
+
+                # Find the corresponding DB item to get correct details
                 conn = get_db_connection()
                 cursor = conn.execute('''
-                    SELECT tmdb_id, year, title
-                    FROM media_items 
-                    WHERE filled_by_file LIKE ? 
-                    AND tmdb_id IS NOT NULL 
+                    SELECT tmdb_id, year, title, imdb_id
+                    FROM media_items
+                    WHERE (filled_by_file LIKE ? OR location_on_disk LIKE ?)
                     AND state IN ('Collected', 'Upgrading', 'Checking')
-                ''', (f'%{plex_filename}',))
+                    ORDER BY id DESC LIMIT 1
+                ''', (f'%{plex_filename}%', f'%{plex_filename}%'))
                 db_item = cursor.fetchone()
                 conn.close()
-                
+
                 if db_item and db_item['tmdb_id']:
-                    logging.info(f"Found TMDB ID {db_item['tmdb_id']} in database for {plex_filename}")
-                    # Get title from database or fallback to cleaned filename
-                    clean_title = db_item['title']
-                    if not clean_title:
-                        logging.info(f"No title in database for {plex_filename}, using cleaned filename")
-                        clean_title = os.path.splitext(plex_filename)[0]
-                        # Remove common suffixes and quality indicators
-                        clean_title = re.sub(r'\.(19|20)\d{2}.*$', '', clean_title)  # Remove year and everything after
-                        clean_title = re.sub(r'[._]', ' ', clean_title)  # Replace dots and underscores with spaces
-                        clean_title = re.sub(r'\s+', ' ', clean_title)  # Normalize spaces
-                        clean_title = clean_title.strip()
-                        
-                    if not clean_title:  # If we still don't have a title
-                        clean_title = plex_title if plex_title else plex_filename
-                        
-                    logging.info(f"Using title for match: '{clean_title}'")
-                    
-                    # Use year from database or extract from filename
-                    year = ''
-                    if db_item['year'] is not None:
-                        year = str(db_item['year'])
+                    db_title = db_item['title'] or plex_title # Use DB title or fallback
+                    db_year = str(db_item['year']) if db_item['year'] else None
+                    db_tmdb_id = str(db_item['tmdb_id'])
+                    logging.info(f"Attempting to fix match for '{plex_filename}' using DB info: Title='{db_title}', Year={db_year}, TMDB ID={db_tmdb_id}")
+                    if force_match_with_tmdb(db_title, db_year, db_tmdb_id, plex_rating_key):
+                        logging.info(f"Successfully fixed match for movie '{db_title}'.")
+                        # Assume fixed, add to matched (or re-query Plex state if needed)
+                        matched_movies.append(movie_data)
                     else:
-                        # Try to extract year from filename
-                        year_match = re.search(r'(19|20)\d{2}', plex_filename)
-                        if year_match:
-                            year = year_match.group(0)
-                    
-                    if force_match_with_tmdb(clean_title, year, str(db_item['tmdb_id']), movie.get('ratingKey')):
-                        matched_movies.append(movie)
-                        continue
-                # If we have a TMDB ID in the Plex item, use that
-                elif movie.get('tmdb_id'):
-                    year = str(movie.get('year', '')) if movie.get('year') else ''
-                    if force_match_with_tmdb(plex_title, year, str(movie['tmdb_id']), movie.get('ratingKey')):
-                        matched_movies.append(movie)
-                        continue
-                # If we have no TMDB ID at all, we need to trigger a match refresh
+                        logging.error(f"Failed to fix match for movie '{db_title}'.")
+                        # Decide whether to add to matched list anyway or exclude
+                        # Let's keep it in the list for now, maybe next run fixes it
+                        matched_movies.append(movie_data)
                 else:
-                    logging.info(f"No TMDB ID available for {plex_filename}, skipping item")
-                    continue  # Skip items without TMDB IDs since we can't match them
+                    logging.warning(f"No suitable DB entry found for movie file '{plex_filename}' to attempt fix.")
+                    matched_movies.append(movie_data) # Keep in list, cannot fix
             else:
-                matched_movies.append(movie)
-                
-        # Group episodes by show before processing
-        shows_to_process = {}  # Dict to store show info keyed by show title
-        for episode in collected_content.get('episodes', []):
-            if not is_item_matched(episode):
-                # Get TMDB ID from database for this episode
-                plex_filename = os.path.basename(episode.get('location', ''))
+                matched_movies.append(movie_data)
+
+        # Process episodes (group by show's grandparentRatingKey)
+        logging.info("--- Checking and Fixing TV Show Matches ---")
+        shows_to_fix = {} # Key: grandparentRatingKey, Value: { details }
+        for episode_data in collected_content.get('episodes', []):
+            # We need the show's rating key to fix the match at the show level
+            show_rating_key = episode_data.get('grandparentRatingKey')
+            if not show_rating_key:
+                logging.warning(f"Episode data missing grandparentRatingKey: {episode_data.get('title')}")
+                matched_episodes.append(episode_data) # Cannot fix without show key
+                continue
+
+            # Only check/process each show once
+            if show_rating_key in processed_show_rating_keys:
+                matched_episodes.append(episode_data) # Already handled or checked
+                continue
+
+            if not is_item_matched(episode_data):
+                plex_filename = os.path.basename(episode_data.get('location', ''))
+                plex_show_title = episode_data.get('grandparentTitle', episode_data.get('title', '')) # Use grandparent title if available
+                logging.warning(f"Found potentially unmatched episode from show '{plex_show_title}' (File: {plex_filename}, Show RatingKey: {show_rating_key})")
+
+                if not plex_filename:
+                     logging.error(f"Episode from show '{plex_show_title}' missing location, cannot reliably find DB info.")
+                     processed_show_rating_keys.add(show_rating_key)
+                     # Add this and related episodes ? For now, just mark processed.
+                     # Need a way to add all episodes for this show key if we skip fixing.
+                     matched_episodes.append(episode_data) # Keep episode, skip fix for show
+                     continue
+
+                # Find corresponding DB item for this *episode's file*
                 conn = get_db_connection()
                 cursor = conn.execute('''
-                    SELECT tmdb_id, year, title
-                    FROM media_items 
-                    WHERE filled_by_file LIKE ? 
-                    AND tmdb_id IS NOT NULL 
+                    SELECT tmdb_id, year, title, imdb_id
+                    FROM media_items
+                    WHERE (filled_by_file LIKE ? OR location_on_disk LIKE ?)
                     AND state IN ('Collected', 'Upgrading', 'Checking')
-                ''', (f'%{plex_filename}',))
+                    ORDER BY id DESC LIMIT 1
+                ''', (f'%{plex_filename}%', f'%{plex_filename}%'))
                 db_item = cursor.fetchone()
                 conn.close()
-                
-                if db_item:
-                    show_title = db_item['title']
-                    if not show_title:
-                        logging.info(f"No title in database for show {plex_filename}, using cleaned filename")
-                        show_title = os.path.splitext(plex_filename)[0]
-                        # Clean up the filename to get a reasonable show title
-                        show_title = re.sub(r'\.S\d+E\d+.*$', '', show_title)  # Remove season/episode info and everything after
-                        show_title = re.sub(r'\.(19|20)\d{2}.*$', '', show_title)  # Remove year and everything after
-                        show_title = re.sub(r'[._]', ' ', show_title)  # Replace dots and underscores with spaces
-                        show_title = re.sub(r'\s+', ' ', show_title)  # Normalize spaces
-                        show_title = show_title.strip()
-                        
-                    if not show_title:  # If we still don't have a title
-                        show_title = episode.get('grandparentTitle', plex_filename)
-                    
-                    logging.info(f"Using show title for match: '{show_title}'")
-                    
-                    if show_title not in shows_to_process:
-                        shows_to_process[show_title] = {
-                            'episodes': [],
-                            'tmdb_id': str(db_item['tmdb_id']),
-                            'year': db_item['year'],
-                            'title': show_title,
-                            'rating_key': episode.get('ratingKey')
-                        }
-                    shows_to_process[show_title]['episodes'].append(episode)
+
+                if db_item and db_item['tmdb_id']:
+                    # Use DB info for the fix attempt
+                    # IMPORTANT: We need the SHOW's title/year/tmdb_id from the DB,
+                    #            not the episode's. This query needs adjustment
+                    #            if media_items stores episode-level TMDB IDs.
+                    #            Assuming tmdb_id in media_items is the SHOW's TMDB ID for TV episodes.
+                    db_show_title = db_item['title'] or plex_show_title # Fallback needed
+                    db_show_year = str(db_item['year']) if db_item['year'] else None
+                    db_show_tmdb_id = str(db_item['tmdb_id'])
+
+                    # Store info to fix the show once
+                    shows_to_fix[show_rating_key] = {
+                        'db_title': db_show_title,
+                        'db_year': db_show_year,
+                        'db_tmdb_id': db_show_tmdb_id,
+                        'plex_show_title': plex_show_title # For logging
+                    }
+                    # Don't add episode to matched list yet, handle after show fix attempt
                 else:
-                    logging.warning(f"No database entry found for file: {plex_filename}")
+                     logging.warning(f"No suitable DB entry found for episode file '{plex_filename}' to identify show info for fix.")
+                     processed_show_rating_keys.add(show_rating_key)
+                     matched_episodes.append(episode_data) # Keep episode, cannot fix show
+
             else:
-                matched_episodes.append(episode)
-                
-        # Process each show once
-        for show_title, show_info in shows_to_process.items():
-            if show_info['tmdb_id'] and show_info['rating_key']:
-                logging.info(f"Processing show: {show_title} with TMDB ID {show_info['tmdb_id']}")
-                if force_match_with_tmdb(show_info['title'], str(show_info['year']) if show_info['year'] else '', show_info['tmdb_id'], show_info['rating_key']):
-                    matched_episodes.extend(show_info['episodes'])
-                    
+                # Episode is matched correctly, add it and mark show as processed
+                matched_episodes.append(episode_data)
+                processed_show_rating_keys.add(show_rating_key)
+
+        # Now, attempt to fix the shows identified
+        for show_rating_key, fix_info in shows_to_fix.items():
+             logging.info(f"Attempting to fix match for show '{fix_info['plex_show_title']}' (RatingKey: {show_rating_key}) using DB info: Title='{fix_info['db_title']}', Year={fix_info['db_year']}, TMDB ID={fix_info['db_tmdb_id']}")
+             success = force_match_with_tmdb(
+                 fix_info['db_title'],
+                 fix_info['db_year'],
+                 fix_info['db_tmdb_id'],
+                 str(show_rating_key) # Pass rating key as string
+             )
+             processed_show_rating_keys.add(show_rating_key) # Mark as processed regardless of outcome
+
+             if success:
+                 logging.info(f"Successfully fixed match for show '{fix_info['db_title']}'.")
+             else:
+                 logging.error(f"Failed to fix match for show '{fix_info['db_title']}'.")
+
+             # Now add all episodes belonging to this show (fixed or not) to the final list
+             for ep_data in collected_content.get('episodes', []):
+                 if ep_data.get('grandparentRatingKey') == show_rating_key:
+                     # Check if already added? Add only if not.
+                     # This logic needs care to avoid duplicates if an episode was added earlier.
+                     # Simplest: rebuild matched_episodes including these now.
+                     # Let's clear and rebuild based on processed_show_rating_keys might be safer.
+                     pass # See refinement below
+
+        # Refinement: Rebuild matched_episodes list to include episodes from fixed/attempted shows
+        final_matched_episodes = []
+        handled_keys = set()
+        for episode_data in collected_content.get('episodes', []):
+            show_key = episode_data.get('grandparentRatingKey')
+            # Add if the show was processed (fix attempted or initially matched)
+            # or if it had no key (and was added initially)
+            if not show_key or show_key in processed_show_rating_keys:
+                 # Avoid adding duplicates if show processed multiple episodes
+                 # Use episode rating key for uniqueness check
+                 episode_key = episode_data.get('ratingKey')
+                 if episode_key and episode_key not in handled_keys:
+                     final_matched_episodes.append(episode_data)
+                     handled_keys.add(episode_key)
+                 elif not episode_key: # Handle cases without episode key?
+                     final_matched_episodes.append(episode_data) # Add anyway
+
+
+        logging.info("--- Finished Checking and Fixing Matches ---")
         return {
             'movies': matched_movies,
-            'episodes': matched_episodes
+            'episodes': final_matched_episodes # Use the rebuilt list
         }
-        
+
     except Exception as e:
-        logging.error(f"Error checking and fixing unmatched items: {str(e)}")
+        logging.error(f"Error during check_and_fix_unmatched_items: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+        # Return original content on error to avoid data loss
         return collected_content 

@@ -59,9 +59,16 @@ def filter_results(
     
     for result in results:
         try:
-            result['filter_reason'] = "Passed all filters"  # Default reason
+            result['filter_reason'] = "Passed all filters"
             original_title = result.get('original_title', result.get('title', ''))
-            # logging.debug(f"Processing result: {original_title}")
+            parsed_info = result.get('parsed_info', {})
+            additional_metadata = result.get('additional_metadata', {}) # Get additional metadata
+            
+            # Extract potential fields from additional_metadata
+            filename = additional_metadata.get('filename')
+            binge_group = additional_metadata.get('bingeGroup')
+            
+            #logging.debug(f"Processing result: {original_title}")
             
             # Quick UFC check
             if "UFC" in original_title.upper():
@@ -70,7 +77,6 @@ def filter_results(
                 #logging.debug("UFC content detected, lowering similarity threshold")
             
             # Get parsed info from result (should be already parsed by PTT)
-            parsed_info = result.get('parsed_info', {})
             if not parsed_info:
                 result['filter_reason'] = "Missing parsed info"
                 logging.info(f"Rejected: Missing parsed info for '{original_title}'")
@@ -467,29 +473,52 @@ def filter_results(
             #logging.debug("✓ Passed bitrate checks")
             
             # Pattern matching
-            normalized_filter_title = normalize_title(original_title)
+            normalized_filter_title = normalize_title(original_title).lower()
+            normalized_filename = normalize_title(filename).lower() if filename else None
+            normalized_binge_group = normalize_title(binge_group).lower() if binge_group else None
+
+            # Function to check patterns against multiple fields
+            def check_patterns(patterns, fields_to_check):
+                matched = []
+                for pattern in patterns:
+                    for field_value in fields_to_check:
+                        if field_value and smart_search(pattern, field_value):
+                            matched.append(pattern)
+                            break # Stop checking fields for this pattern once matched
+                return matched
+
+            fields_to_check_patterns = [normalized_filter_title, normalized_filename, normalized_binge_group]
             
+            # Filter Out Check
             if filter_out_patterns:
-                matched_patterns = [pattern for pattern in filter_out_patterns if smart_search(pattern, normalized_filter_title)]
-                if matched_patterns:
-                    result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_patterns)}"
-                    logging.info(f"Rejected: Matched filter_out patterns '{matched_patterns}' for '{original_title}'")
+                matched_out_patterns = check_patterns(filter_out_patterns, fields_to_check_patterns)
+                if matched_out_patterns:
+                    result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_out_patterns)}"
+                    logging.info(f"Rejected: Matched filter_out patterns '{matched_out_patterns}' for '{original_title}'")
                     continue
             
-            if filter_in_patterns and not any(smart_search(pattern, normalized_filter_title) for pattern in filter_in_patterns):
-                result['filter_reason'] = "Not matching any filter_in patterns"
-                logging.info(f"Rejected: No matching filter_in patterns for '{original_title}'")
-                continue
-            #logging.debug("✓ Passed pattern checks")
-            
-            # Adult content check
-            if adult_pattern and adult_pattern.search(original_title):
+            # Filter In Check
+            if filter_in_patterns:
+                matched_in_patterns = check_patterns(filter_in_patterns, fields_to_check_patterns)
+                if not matched_in_patterns: # Reject if NO patterns matched ANY field
+                    result['filter_reason'] = "Not matching any filter_in patterns"
+                    logging.info(f"Rejected: No matching filter_in patterns for '{original_title}'")
+                    continue
+            # logging.debug("✓ Passed pattern checks")
+            # --- End Pattern Matching Update ---
+
+            # --- Adult Content Check (Updated to check additional fields) ---
+            fields_to_check_adult = [original_title] # Start with original title
+            if filename: fields_to_check_adult.append(filename)
+            # Don't check bingeGroup for adult terms, too prone to false positives
+
+            if adult_pattern and any(adult_pattern.search(field) for field in fields_to_check_adult if field):
                 result['filter_reason'] = "Adult content filtered"
                 logging.info(f"Rejected: Adult content detected for '{original_title}'")
                 continue
-            #logging.debug("✓ Passed adult content check")
+            # logging.debug("✓ Passed adult content check")
+            # --- End Adult Content Check Update ---
             
-            # If we made it here, add to filtered results
             filtered_results.append(result)
             logging.info(f"Accepted: '{original_title}'")
             

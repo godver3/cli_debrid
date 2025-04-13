@@ -680,6 +680,7 @@ class ScrapingQueue:
 
             # Get current wake count from DB
             # from database import get_wake_count # Already imported at top
+            from database import get_wake_count
             current_wake_count = get_wake_count(item['id'])
 
             moved = False # Flag to track if moved

@@ -14,7 +14,11 @@ def rank_result_key(
 ) -> Tuple:
     torrent_title = result.get('title', '')
     parsed_info = result.get('parsed_info', {})
+    additional_metadata = result.get('additional_metadata', {}) # Get additional metadata
+
     extracted_title = parsed_info.get('title', torrent_title)
+    filename = additional_metadata.get('filename') # Get filename
+    binge_group = additional_metadata.get('bingeGroup') # Get bingeGroup
     torrent_year = parsed_info.get('year')
     torrent_season, torrent_episode = parsed_info.get('season'), parsed_info.get('episode')
 
@@ -29,7 +33,15 @@ def rank_result_key(
     year_match_weight = float(version_settings.get('year_match_weight', 3.0)) # New weight
 
     # Calculate base scores
-    title_similarity = similarity(extracted_title, query)
+    normalized_query = normalize_title(query).lower()
+    normalized_extracted_title = normalize_title(extracted_title).lower()
+    normalized_filename = normalize_title(filename).lower() if filename else None
+    # Exclude bingeGroup from fuzzy matching unless format is reliable
+
+    sim_extracted = fuzz.ratio(normalized_extracted_title, normalized_query) / 100.0
+    sim_filename = fuzz.ratio(normalized_filename, normalized_query) / 100.0 if normalized_filename else 0.0
+
+    title_similarity = max(sim_extracted, sim_filename) # Take the best similarity score
     
     # Handle resolution scoring with unknown resolution support
     resolution_score = parsed_info.get('resolution_rank', 0)
@@ -269,20 +281,36 @@ def rank_result_key(
     # Implement preferred filtering logic
     preferred_filter_score = 0
     torrent_title_lower = torrent_title.lower()
+    filename_lower = filename.lower() if filename else None
+    binge_group_lower = binge_group.lower() if binge_group else None
+    fields_to_check_pref = [torrent_title_lower, filename_lower, binge_group_lower]
+
+    # Function to check preferred patterns against multiple fields
+    def check_preferred(patterns_weights, fields, is_bonus):
+        score_change = 0
+        breakdown = {}
+        for pattern, weight in patterns_weights:
+            pattern_matched = False
+            for field_value in fields:
+                if field_value and smart_search(pattern, field_value):
+                    score_change += weight if is_bonus else -weight
+                    breakdown[pattern] = weight if is_bonus else -weight
+                    pattern_matched = True
+                    break # Apply weight only once per pattern
+            # if pattern_matched: # Log which pattern matched which field (optional)
+            #      logging.debug(f"Pref Filter {'Bonus' if is_bonus else 'Penalty'}: Pattern '{pattern}' matched.")
+
+        return score_change, breakdown
 
     # Apply preferred_filter_in bonus
-    preferred_filter_in_breakdown = {}
-    for pattern, weight in version_settings.get('preferred_filter_in', []):
-        if smart_search(pattern, torrent_title):
-            preferred_filter_score += weight
-            preferred_filter_in_breakdown[pattern] = weight
+    in_score, in_breakdown = check_preferred(version_settings.get('preferred_filter_in', []), fields_to_check_pref, is_bonus=True)
+    preferred_filter_score += in_score
+    preferred_filter_in_breakdown = in_breakdown
 
     # Apply preferred_filter_out penalty
-    preferred_filter_out_breakdown = {}
-    for pattern, weight in version_settings.get('preferred_filter_out', []):
-        if smart_search(pattern, torrent_title):
-            preferred_filter_score -= weight
-            preferred_filter_out_breakdown[pattern] = -weight
+    out_score, out_breakdown = check_preferred(version_settings.get('preferred_filter_out', []), fields_to_check_pref, is_bonus=False)
+    preferred_filter_score += out_score # Remember out_score is already negative if matched
+    preferred_filter_out_breakdown = out_breakdown
 
     # Combine scores
     total_score = (

@@ -7,6 +7,8 @@ from database.manual_blacklist import is_blacklisted
 
 # Define constants for queue size limits
 SCRAPING_QUEUE_MAX_SIZE = 500
+# New threshold to pause Wanted processing entirely
+WANTED_THROTTLE_SCRAPING_SIZE = 100
 
 class WantedQueue:
     def __init__(self):
@@ -140,25 +142,36 @@ class WantedQueue:
 
     def process(self, queue_manager):
         try:
+            # --- START EDIT: Add aggressive throttle check at the beginning ---
+            try:
+                scraping_queue = queue_manager.queues["Scraping"]
+                # Use the internal list length for efficiency if possible
+                current_scraping_queue_size = len(scraping_queue.items) if hasattr(scraping_queue, 'items') else len(scraping_queue.get_contents())
+            except KeyError:
+                logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
+                # If scraping queue is missing, we probably shouldn't proceed anyway.
+                return False 
+
+            if current_scraping_queue_size >= WANTED_THROTTLE_SCRAPING_SIZE:
+                logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is >= throttle limit ({WANTED_THROTTLE_SCRAPING_SIZE}). Skipping Wanted queue processing cycle entirely.")
+                return True # Return True indicating successful (but skipped) processing for this cycle
+            # --- END EDIT ---
+
             # logging.debug("Processing wanted queue")
             current_datetime = datetime.now()
             items_to_move_scraping = []
             items_to_move_unreleased = []
             
-            # Get current scraping queue size
-            # Use the internal list length for efficiency if possible
-            try:
-                scraping_queue = queue_manager.queues["Scraping"]
-                current_scraping_queue_size = len(scraping_queue.items) if hasattr(scraping_queue, 'items') else len(scraping_queue.get_contents())
-            except KeyError:
-                logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
-                current_scraping_queue_size = SCRAPING_QUEUE_MAX_SIZE # Prevent adding if queue is missing
-
+            # Get current scraping queue size (needed for the 500 limit check during moves)
+            # This re-fetch is slightly redundant but harmless and keeps the move logic contained
             allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
+            # We know we can add *some* because the check above passed (size < 100),
+            # but we still need allowed_to_add_count to respect the 500 hard limit.
             can_add_to_scraping = allowed_to_add_count > 0
 
-            if not can_add_to_scraping:
-                 logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is at or above the limit ({SCRAPING_QUEUE_MAX_SIZE}). Throttling additions from Wanted queue.")
+            # This log is less relevant now but kept for context during item processing
+            # if not can_add_to_scraping:
+            #      logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is at or above the limit ({SCRAPING_QUEUE_MAX_SIZE}). Throttling additions from Wanted queue.")
 
             for item in self.items:
                 try:
@@ -263,14 +276,14 @@ class WantedQueue:
                              items_to_move_unreleased.append(item)
                              continue # Skip scraping check for this item
 
-                        # Apply throttle check
+                        # Apply throttle check (respecting the 500 limit for actual moves)
                         if should_move_to_scraping:
                             if can_add_to_scraping and len(items_to_move_scraping) < allowed_to_add_count:
-                                logging.debug(f"Item {item_identifier} met release requirement. Moving to Scraping queue (within throttle limits).")
+                                logging.debug(f"Item {item_identifier} met release requirement. Adding to list for Scraping queue (within 500 limit).")
                                 items_to_move_scraping.append(item)
                             else:
-                                # Item is ready but queue is full, leave it in Wanted for next cycle
-                                logging.debug(f"Item {item_identifier} is ready but scraping queue is full. Keeping in Wanted.")
+                                # Item is ready but queue is full (hit 500 limit during this cycle), leave it in Wanted for next cycle
+                                logging.debug(f"Item {item_identifier} is ready but scraping queue hit 500 limit during this cycle. Keeping in Wanted.")
 
                     except ValueError as e:
                         logging.error(f"Error processing item {item_identifier}: {str(e)}")

@@ -170,6 +170,7 @@ def add_torrent_to_debrid():
         episode = request.form.get('episode')
         version = request.form.get('version')
         tmdb_id = request.form.get('tmdb_id')
+        original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
 
@@ -424,6 +425,7 @@ def add_torrent_to_debrid():
                     'filled_by_torrent_id': torrent_id,
                     'filled_by_title': filled_by_title,
                     'filled_by_file': filled_by_file,
+                    'original_scraped_torrent_title': original_scraped_torrent_title,
                     'release_date': release_date,
                     'genres': json.dumps(genres)  # JSON encode the genres list
                 }

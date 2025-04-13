@@ -8,6 +8,7 @@ from utilities.reverse_parser import parser_approximation
 from utilities.settings import get_setting
 from typing import Dict, Any, List
 from utilities.post_processing import handle_state_change
+from cli_battery.app.direct_api import DirectAPI
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
@@ -51,7 +52,7 @@ def add_collected_items(media_items_batch, recent=False):
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
                     SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
-                           filled_by_file, collected_at, release_date, upgrading_from
+                           filled_by_file, collected_at, release_date, upgrading_from, content_source
                     FROM media_items
                     WHERE filled_by_file IN ({placeholders})
                        OR upgrading_from IN ({placeholders})
@@ -105,6 +106,87 @@ def add_collected_items(media_items_batch, recent=False):
         all_valid_filenames = set()
         airtime_cache = {}
         
+        # --- Pre-fetch Airtime Logic ---
+        new_episode_show_ids = set()
+
+        # Identify unique show IMDb IDs for *new* episodes in the filtered batch
+        for item in filtered_media_items_batch:
+            if item.get('type') == 'episode' and item.get('imdb_id'):
+                locations = item.get('location', [])
+                if isinstance(locations, str): locations = [locations]
+                is_new = True
+                for loc in locations:
+                    fname = os.path.basename(loc)
+                    # Check against the map of known files (more accurate than just collected files)
+                    if fname in existing_file_map:
+                        is_new = False
+                        break
+                if is_new:
+                    new_episode_show_ids.add(item['imdb_id'])
+
+        if new_episode_show_ids:
+            logging.info(f"Found {len(new_episode_show_ids)} unique show IDs potentially requiring airtime check for new episodes.")
+
+            # 1. Bulk check media_items DB for existing airtimes
+            ids_to_check_list = list(new_episode_show_ids)
+            batch_size_db = 900 # SQLite parameter limit / 2
+            try:
+                for i in range(0, len(ids_to_check_list), batch_size_db):
+                    batch_ids = ids_to_check_list[i:i+batch_size_db]
+                    if not batch_ids: continue # Skip empty batch
+                    placeholders = ','.join('?' * len(batch_ids))
+                    query = f"SELECT imdb_id, airtime FROM media_items WHERE imdb_id IN ({placeholders}) AND airtime IS NOT NULL GROUP BY imdb_id"
+                    cursor = conn.execute(query, batch_ids)
+                    for row in cursor:
+                        if row['imdb_id'] and row['airtime']:
+                            airtime_cache[row['imdb_id']] = row['airtime']
+                    cursor.close()
+            except Exception as db_err:
+                 logging.error(f"Error querying existing airtimes from media_items: {db_err}")
+
+            logging.info(f"Found {len(airtime_cache)} existing airtimes in media_items DB.")
+
+            # 2. Identify shows still needing airtime check via battery metadata
+            ids_needing_metadata_check = list(new_episode_show_ids - set(airtime_cache.keys()))
+
+            if ids_needing_metadata_check:
+                logging.info(f"Checking battery metadata for 'airs' info for {len(ids_needing_metadata_check)} show IDs.")
+                try:
+                    # Bulk query battery for 'airs' info
+                    bulk_airs_info = DirectAPI.get_bulk_show_airs(ids_needing_metadata_check)
+
+                    # Populate cache from the bulk result
+                    for imdb_id, airs_data in bulk_airs_info.items():
+                        # Ensure we don't overwrite if already found in media_items
+                        if imdb_id not in airtime_cache:
+                            if airs_data and isinstance(airs_data, dict) and 'time' in airs_data:
+                                airtime_value = airs_data['time']
+                                # Basic format check (HH:MM or HH:MM:SS) and ensure not None/empty
+                                if isinstance(airtime_value, str) and airtime_value and ':' in airtime_value:
+                                    airtime_cache[imdb_id] = airtime_value[:5] # Store as HH:MM
+                                else:
+                                    logging.warning(f"Invalid or missing airtime format ('{airtime_value}') in metadata for {imdb_id}. Using default.")
+                                    airtime_cache[imdb_id] = '19:00' # Default if format invalid
+                            else:
+                                # If airs data not found in battery, use default
+                                logging.info(f"No valid 'airs' metadata found in battery for {imdb_id}. Using default airtime.")
+                                airtime_cache[imdb_id] = '19:00' # Default if no airs info
+                except Exception as bulk_err:
+                    logging.error(f"Error during bulk airs metadata check: {bulk_err}. Using default airtime for remaining shows.")
+                    # Assign default to remaining IDs on error only if not already cached
+                    for imdb_id in ids_needing_metadata_check:
+                        if imdb_id not in airtime_cache:
+                            airtime_cache[imdb_id] = '19:00'
+
+            # Ensure all initially identified IDs have *some* value in the cache (assign default if missed)
+            for imdb_id in new_episode_show_ids:
+                if imdb_id not in airtime_cache:
+                     logging.warning(f"Show ID {imdb_id} missed airtime assignment, assigning default '19:00'.")
+                     airtime_cache[imdb_id] = '19:00'
+            logging.info(f"Airtime cache populated for {len(airtime_cache)} shows.")
+
+        # --- End Pre-fetch Airtime Logic ---
+
         for item in filtered_media_items_batch:
             item_identifier = generate_identifier(item)
             try:

@@ -25,6 +25,7 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('version', torrent.version || '');
             formData.append('tmdb_id', torrent.tmdb_id || '');
             formData.append('genres', torrent.genres || '');
+            formData.append('original_scraped_torrent_title', torrent.original_title || ''); // Add the original torrent title
 
             fetch('/scraper/add_to_debrid', {
                 method: 'POST',
@@ -428,10 +429,10 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <button class="action-button add-button" onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
-                            ...torrent,
+                            ...torrent, // Ensure original_title is included here if present
                             year,
                             version: torrent.version || version,
-                            title,
+                            title, // Media title
                             media_type: mediaType,
                             season: season || null,
                             episode: episode || null,

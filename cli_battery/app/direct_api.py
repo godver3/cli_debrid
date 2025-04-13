@@ -131,3 +131,12 @@ class DirectAPI:
 
 
         return translated_title, source
+
+    @staticmethod
+    def get_bulk_show_airs(imdb_ids: list[str]) -> dict[str, Optional[dict[str, Any]]]:
+        """Gets the 'airs' metadata dictionary for multiple shows from the battery."""
+        logger.info(f"DirectAPI.get_bulk_show_airs called for {len(imdb_ids)} IDs.")
+        result = MetadataManager.get_bulk_show_airs_info(imdb_ids)
+        found_count = sum(1 for airs in result.values() if airs is not None)
+        logger.info(f"DirectAPI.get_bulk_show_airs returning airs info for {found_count} of {len(imdb_ids)} requested IDs.")
+        return result
