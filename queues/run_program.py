@@ -180,8 +180,8 @@ class ProgramRunner:
             'task_refresh_plex_tokens',
             'task_check_database_health',
             'task_update_statistics_summary',
-            'task_precompute_airing_shows',
-            'task_process_pending_rclone_paths' # Enable the new task
+            'task_precompute_airing_shows'
+            #'task_process_pending_rclone_paths' # Enable the new task
         }
 
         # *** START EDIT ***
@@ -225,20 +225,27 @@ class ProgramRunner:
         try:
             import os
             import json
-            
+
             # Get the user_db_content directory from environment variable
             db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
             toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-            
+
             # Check if file exists
             if os.path.exists(toggles_file_path):
                 # Load from JSON file
                 with open(toggles_file_path, 'r') as f:
                     saved_states = json.load(f)
-                
+
                 # Apply saved states
                 for task_name, enabled in saved_states.items():
                     normalized_name = self._normalize_task_name(task_name)
+                    # --- START EDIT ---
+                    # Check if the task from the JSON file actually exists in our defined intervals
+                    if normalized_name not in self.task_intervals:
+                        logging.warning(f"Task '{normalized_name}' found in task_toggles.json but not defined in task_intervals. Skipping toggle.")
+                        continue # Skip this task if it's not defined in the code
+                    # --- END EDIT ---
+
                     if enabled and normalized_name not in self.enabled_tasks:
                         self.enabled_tasks.add(normalized_name)
                         logging.info(f"Enabled task from saved settings: {normalized_name}")

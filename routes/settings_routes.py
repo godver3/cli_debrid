@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, render_template, Response, current_app
-from utilities.settings import load_config, validate_url
+from utilities.settings import load_config, validate_url, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
 from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
@@ -18,6 +18,7 @@ from routes.notifications import (
 )
 import re
 import time
+from content_checkers.trakt import fetch_liked_trakt_lists_details
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -33,9 +34,10 @@ def content_sources_content():
 @settings_bp.route('/content-sources/types')
 def content_sources_types():
     config = load_config()
-    source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+    source_types_from_schema = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+         
     return jsonify({
-        'source_types': source_types,
+        'source_types': source_types_from_schema, 
         'settings': SETTINGS_SCHEMA['Content Sources']['schema']
     })
 
@@ -89,13 +91,16 @@ def add_content_source_route():
         source_type = source_config.pop('type', None)
         if not source_type:
             return jsonify({'success': False, 'error': 'No source type provided'}), 400
-        
-        # Ensure versions is a list
+
+        # Ensure versions is a dictionary (new standard)
         if 'versions' in source_config:
-            if isinstance(source_config['versions'], bool):
-                source_config['versions'] = []
-            elif isinstance(source_config['versions'], str):
-                source_config['versions'] = [source_config['versions']]
+            # Convert list to dict if necessary (handle old format)
+            if isinstance(source_config['versions'], list):
+                 source_config['versions'] = {v: True for v in source_config['versions']}
+            # Ensure it's a dict, otherwise default to empty dict
+            elif not isinstance(source_config['versions'], dict):
+                 logging.warning(f"Invalid 'versions' format for {source_type}: {source_config['versions']}. Resetting to empty dict.")
+                 source_config['versions'] = {}
         
         new_source_id = add_content_source(source_type, source_config)
         
@@ -378,23 +383,51 @@ def notifications_content():
 def index():
     try:
         config = load_config()
-        config = clean_notifications(config)  # Clean notifications before rendering
-        scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
-        source_types = list(SETTINGS_SCHEMA["Content Sources"]["schema"].keys())        
-        scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
-
-        # Check if platform is Windows
-        is_windows = platform.system() == 'Windows'
-
-        # Fetch content source settings
-        content_source_settings_response = get_content_source_settings_route()
-        if isinstance(content_source_settings_response, Response):
-            content_source_settings = content_source_settings_response.get_json()
-        else:
-            content_source_settings = content_source_settings_response        
+        config = clean_notifications(config)
+        
+        # --- BEGIN Auto-fix for missing Content Source type ---
+        if 'Content Sources' in config and isinstance(config['Content Sources'], dict):
+            content_sources = config['Content Sources']
+            valid_source_types = SETTINGS_SCHEMA.get('Content Sources', {}).get('schema', {}).keys()
+            fixed_count = 0
             
-        # Fetch scraping versions (Use the logic from scraping_content route)
-        scraping_versions = list(config.get('Scraping', {}).get('versions', {}).keys()) 
+            for source_id, source_config in list(content_sources.items()): # Use list() for safe iteration if modifying
+                if isinstance(source_config, dict):
+                    # Check if type is missing or empty
+                    if not source_config.get('type'): 
+                        # Try to infer type from source_id (e.g., "Overseerr_1")
+                        parts = source_id.split('_')
+                        if parts:
+                            potential_type = parts[0]
+                            # Check if the inferred type is valid according to the schema
+                            if potential_type in valid_source_types:
+                                source_config['type'] = potential_type
+                                fixed_count += 1
+                                logging.warning(f"Auto-fixed missing 'type' for Content Source '{source_id}'. Set type to '{potential_type}'.")
+                            else:
+                                logging.error(f"Could not auto-fix Content Source '{source_id}': Inferred type '{potential_type}' is not valid.")
+                        else:
+                            logging.error(f"Could not auto-fix Content Source '{source_id}': Cannot infer type from ID format.")
+                else:
+                     # Handle cases where the source config itself isn't a dictionary (less common)
+                     logging.error(f"Invalid configuration for Content Source '{source_id}': Expected a dictionary, found {type(source_config)}. Please check settings file.")
+                     # Optionally remove the invalid entry: del content_sources[source_id]
+            
+            if fixed_count > 0:
+                 logging.info(f"Automatically corrected the 'type' field for {fixed_count} Content Source(s) for rendering.")
+                 # Decide whether to save the fixes automatically:
+                 # save_config(config) # Uncomment this line to persist the fixes immediately
+                 # Keeping it commented means fixes are only for this page load, 
+                 # user needs to save settings via UI to persist.
+                 
+        # --- END Auto-fix ---
+
+        scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
+        source_types_from_schema = list(SETTINGS_SCHEMA["Content Sources"]["schema"].keys())
+        scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
+        is_windows = platform.system() == 'Windows'
+        content_source_settings_response = get_content_source_settings_route()
+        scraping_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
         logging.debug(f"[index route] Extracted scraping versions: {scraping_versions}")
 
         # Ensure 'Scrapers' exists in the config
@@ -429,7 +462,9 @@ def index():
         # Ensure each content source is a dictionary
         for source, source_config in config['Content Sources'].items():
             if not isinstance(source_config, dict):
-                config['Content Sources'][source] = {}
+                # Log again or handle as needed if auto-fix didn't remove it
+                logging.warning(f"Content source '{source}' is not a dictionary after potential auto-fix attempt.")
+                config['Content Sources'][source] = {} # Replace with empty dict to prevent template errors
 
         # Initialize notification_settings
         if 'Notifications' not in config:
@@ -451,12 +486,19 @@ def index():
         # Determine if Windows symlinks are allowed
         allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
 
+        # --- Add logging before rendering ---
+        overseer_source_check_route = config.get('Content Sources', {}).get('Overseerr_1', 'Overseerr_1 not found')
+        logging.debug(f"[Route /] State of 'Overseerr_1' before passing to template: {json.dumps(overseer_source_check_route, indent=2)}")
+        # ------------------------------------
+
+        content_source_settings = content_source_settings_response.get_json() if isinstance(content_source_settings_response, Response) else content_source_settings_response
+
         return render_template('settings_base.html', 
                                settings=config, 
                                notification_settings=config['Notifications'],
                                scraper_types=scraper_types, 
                                scraper_settings=scraper_settings,
-                               source_types=source_types,
+                               source_types=source_types_from_schema,
                                content_source_settings=content_source_settings,
                                version_names=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA,
@@ -1649,3 +1691,21 @@ def check_version_usage(version_id):
     except Exception as e:
         logging.error(f"Error checking version usage for {version_id}: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/trakt/import_liked_lists', methods=['POST'])
+@admin_required
+def get_liked_trakt_lists_for_import():
+    """Fetches liked lists details from Trakt to be used by the frontend."""
+    try:
+        liked_lists = fetch_liked_trakt_lists_details()
+        if not liked_lists:
+            # Return success but indicate no lists found
+            return jsonify({'success': True, 'lists': []}) 
+
+        # Just return the fetched list details
+        return jsonify({'success': True, 'lists': liked_lists})
+
+    except Exception as e:
+        logging.error(f"Error fetching liked Trakt lists details: {str(e)}", exc_info=True)
+        # Return failure if there was an error during fetch
+        return jsonify({'success': False, 'error': f'Failed to fetch liked lists details: {str(e)}'}), 500

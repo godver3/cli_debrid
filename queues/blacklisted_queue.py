@@ -3,7 +3,7 @@ from typing import Dict, Any, List
 from datetime import datetime, timedelta, date
 
 from utilities.settings import get_setting
-from config_manager import get_version_settings, load_config
+from queues.config_manager import get_version_settings, load_config
 from database.database_reading import check_existing_media_item
 from database.database_writing import update_release_date_and_state
 

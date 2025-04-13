@@ -31,6 +31,12 @@
     function initializeContentSourcesFunctionality() {
         initializeAddSourceButton();
         initializeSourceButtons();
+
+        const settingsContainer = document.querySelector('.settings-container');
+        if (settingsContainer) {
+            settingsContainer.removeEventListener('click', handleImportLikedClick);
+            settingsContainer.addEventListener('click', handleImportLikedClick);
+        }
     }
 
     function initializeAddSourceButton() {
@@ -73,18 +79,28 @@
                     onConfirm: (selectedType) => {
                         if (selectedType === 'Friends Trakt Watchlist') {
                             showTraktFriendsDropdown();
+                        } else if (selectedType === 'Trakt Lists') {
+                            addContentSource({
+                                type: 'Trakt Lists',
+                                url: '',
+                                enabled: true,
+                                versions: {},
+                                media_type: 'All'
+                            });
                         } else {
-                            addContentSource({ type: selectedType });
+                            addContentSource({
+                                type: selectedType,
+                                display_name: selectedType,
+                                enabled: true,
+                                versions: {}
+                            });
                         }
                     }
                 });
             })
             .catch(error => {
                 console.error('Error fetching content source types:', error);
-                window.showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    message: 'Error fetching content source types. Please try again.'
-                });
+                window.showPopup({ type: POPUP_TYPES.ERROR, message: 'Error fetching types.' });
             });
     }
 
@@ -129,12 +145,10 @@
     }
 
     function showTraktFriendOptions(friend) {
-        // Fetch available versions from the backend
         fetch('/settings/get_scraping_versions')
             .then(response => response.json())
             .then(data => {
                 if (data.versions && Array.isArray(data.versions)) {
-                    // Create custom form HTML with versions from backend
                     const formHtml = `
                         <form id="friendTraktForm">
                             <div class="form-group">
@@ -171,16 +185,13 @@
                         confirmText: 'Add Source',
                         cancelText: 'Cancel',
                         onConfirm: (formData) => {
-                            // Process versions from checkboxes
                             let versions = [];
-                            // Check each version checkbox individually
                             for (const version of data.versions) {
                                 if (formData[`version_${version}`]) {
                                     versions.push(version);
                                 }
                             }
 
-                            // Add the content source
                             addContentSource({
                                 type: 'Friends Trakt Watchlist',
                                 display_name: formData.display_name,
@@ -194,19 +205,16 @@
                     });
                 } else {
                     console.error('Failed to fetch versions or invalid response format');
-                    // Fallback to a simple text input if versions can't be fetched
                     showFallbackTraktFriendOptions(friend);
                 }
             })
             .catch(error => {
                 console.error('Error fetching versions:', error);
-                // Fallback to a simple text input if there's an error
                 showFallbackTraktFriendOptions(friend);
             });
     }
 
     function showFallbackTraktFriendOptions(friend) {
-        // Fallback function when versions can't be fetched from the backend
         const formHtml = `
             <form id="friendTraktForm">
                 <div class="form-group">
@@ -236,13 +244,11 @@
             confirmText: 'Add Source',
             cancelText: 'Cancel',
             onConfirm: (formData) => {
-                // Process versions from comma-separated string
                 let versions = [];
                 if (formData.versions) {
                     versions = formData.versions.split(',').map(v => v.trim()).filter(v => v);
                 }
 
-                // Add the content source
                 addContentSource({
                     type: 'Friends Trakt Watchlist',
                     display_name: formData.display_name,
@@ -269,7 +275,7 @@
             if (data.success) {
                 window.reloadTabContent('content-sources', () => {
                     window.initializeExpandCollapse();
-                    initializeContentSourcesFunctionality(); // Add this line
+                    initializeContentSourcesFunctionality();
                     window.showPopup({
                         type: POPUP_TYPES.SUCCESS,
                         message: 'Content source added successfully',
@@ -318,7 +324,7 @@
                     if (data.success) {
                         window.reloadTabContent('content-sources', () => {
                             window.initializeExpandCollapse();
-                            initializeContentSourcesFunctionality(); // Add this line
+                            initializeContentSourcesFunctionality();
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
                                 message: 'Content source deleted successfully',
@@ -337,6 +343,72 @@
                 });
             }
         });
+    }
+
+    function handleImportLikedClick(event) {
+        if (!event.target.matches('.import-liked-to-source-btn')) {
+            return;
+        }
+
+        const button = event.target;
+        const sourceId = button.getAttribute('data-source-id');
+        const urlInput = document.getElementById(`content-sources-${sourceId}-trakt_lists`);
+
+        if (!sourceId || !urlInput) {
+            console.error('Could not find source ID or URL/trakt_lists input for import button.');
+            window.showPopup({ type: POPUP_TYPES.ERROR, message: 'Internal error: Could not find associated elements.' });
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = 'Importing...';
+
+        fetch('/settings/trakt/import_liked_lists', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.lists) {
+                    const likedListUrls = data.lists.map(list => list.url);
+                    
+                    if (likedListUrls.length === 0) {
+                         window.showPopup({ type: POPUP_TYPES.INFO, title: 'Import Liked Lists', message: 'No new liked lists found to import.' });
+                         return;
+                    }
+
+                    const currentUrlsRaw = urlInput.value.split(',').map(url => url.trim()).filter(url => url);
+                    const currentUrlsSet = new Set(currentUrlsRaw);
+
+                    const newUrlsToAdd = likedListUrls.filter(url => !currentUrlsSet.has(url));
+
+                    if (newUrlsToAdd.length === 0) {
+                         window.showPopup({ type: POPUP_TYPES.INFO, title: 'Import Liked Lists', message: 'All liked lists are already present in this source.' });
+                         return;
+                    }
+                    
+                    const combinedUrls = currentUrlsRaw.concat(newUrlsToAdd);
+                    const newUrlString = combinedUrls.join(', ');
+
+                    urlInput.value = newUrlString;
+
+                    urlInput.dispatchEvent(new Event('change', { bubbles: true })); 
+
+                    window.showPopup({ 
+                        type: POPUP_TYPES.SUCCESS, 
+                        title: 'Import Complete',
+                        message: `Added ${newUrlsToAdd.length} new liked list URLs to this source. Please save your settings.`
+                    });
+
+                } else {
+                    throw new Error(data.error || 'Failed to fetch liked lists from server.');
+                }
+            })
+            .catch(error => {
+                console.error('Error importing liked lists to source:', error);
+                window.showPopup({ type: POPUP_TYPES.ERROR, message: 'Error importing liked lists: ' + error.message });
+            })
+            .finally(() => {
+                 button.disabled = false;
+                 button.textContent = 'Import Liked Lists to this Source';
+            });
     }
 </script>
 
@@ -367,102 +439,150 @@
 
 {% if settings['Content Sources'] is defined and settings['Content Sources'] is mapping %}
     {% for source_id, config in settings['Content Sources'].items() %}
-    <div class="settings-section" data-source-id="{{ source_id }}">
-        <div class="settings-section-header">
-            <span class="settings-toggle-icon">+</span>
-            <h4>
-                {% if config.display_name %}
-                    {{ config.display_name }} [{{ source_id.split('_')[0] }}]
-                {% else %}
-                    {{ source_id }}
-                {% endif %}
-            </h4>
-            <div class="source-buttons">
-                <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
-            </div>
-        </div>
-        <div class="settings-section-content" style="display: none;">
-            {% for key, value in config.items() %}
-            {% if key != 'type' and key != 'allow_specials' %}
-            <div class="settings-form-group">
-                {% if key == 'versions' %}
-                    <label class="settings-title">Versions:</label>
-                    <div class="version-checkboxes">
-                        {% for version in settings.Scraping.versions.keys() %}
-                        <label>
-                            <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version }}"
-                                data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version }}"
-                                {% if version in value %}checked{% endif %}>
-                            {{ version }}
-                        </label>
-                        {% endfor %}
+        {# --- TEMPORARY DEBUG COMMENT --- #}
+        <!-- Debug for {{ source_id }}: Type is '{{ config.type if config is mapping and 'type' in config else 'N/A or Not Mapping' }}' -->
+        {# ----------------------------- #}
+        
+        {% if config is mapping and 'type' in config and config.type %}
+            <div class="settings-section" data-source-id="{{ source_id }}">
+                <div class="settings-section-header">
+                    <span class="settings-toggle-icon">+</span>
+                    <h4>
+                        {% if config.display_name %}
+                            {{ config.display_name }} [{{ config.type }}]
+                        {% else %}
+                            {{ source_id }} [{{ config.type }}]
+                        {% endif %}
+                    </h4>
+                    <div class="source-buttons">
+                        <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
                     </div>
-                {% elif key == 'enabled' %}
-                    <label class="settings-title">
-                        <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}" 
-                               name="Content Sources.{{ source_id }}.{{ key }}" 
-                               data-section="Content Sources" 
-                               data-key="{{ source_id }}.{{ key }}"
-                               {% if value %}checked{% endif %}>
-                        {{ key|replace('_', ' ')|title }}
-                    </label>
-                {% elif key == 'media_type' %}
-                    <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Media Type:</label>
-                    <select id="content-sources-{{ source_id }}-{{ key }}" 
-                            name="Content Sources.{{ source_id }}.{{ key }}" 
-                            class="settings-input"
-                            data-section="Content Sources" 
-                            data-key="{{ source_id }}.{{ key }}">
-                        {% for option in ['All', 'Movies', 'Shows'] %}
-                            <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                    {% if value is iterable and (value is not string) %}
-                    <select id="content-sources-{{ source_id }}-{{ key }}" 
-                            name="Content Sources.{{ source_id }}.{{ key }}" 
-                            multiple class="settings-input"
-                            data-section="Content Sources" 
-                            data-key="{{ source_id }}.{{ key }}">
-                        {% for option in value %}
-                        <option value="{{ option }}" selected>{{ option }}</option>
-                        {% endfor %}
-                    </select>
-                    {% else %}
-                    <input type="text" id="content-sources-{{ source_id }}-{{ key }}" 
-                           name="Content Sources.{{ source_id }}.{{ key }}" 
-                           value="{{ value }}" 
-                           class="settings-input"
-                           data-section="Content Sources" 
-                           data-key="{{ source_id }}.{{ key }}">
+                </div>
+                <div class="settings-section-content" style="display: none;">
+                    {% for key, value in config.items() %}
+                    {% if key != 'type' and key != 'allow_specials' %}
+                    <div class="settings-form-group">
+                        {% if key == 'versions' %}
+                            <label class="settings-title">Versions:</label>
+                            <div class="version-checkboxes">
+                                {% set scraping_versions = settings.get('Scraping', {}).get('versions', {}) %}
+                                {% for version in scraping_versions.keys() %}
+                                <label>
+                                    <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version }}"
+                                        data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version }}"
+                                        {% if value is iterable and not value is string and version in value %}checked{% endif %}>
+                                    {{ version }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                        {% elif key == 'enabled' %}
+                            <label class="settings-title">
+                                <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}"
+                                       {% if value %}checked{% endif %}>
+                                {{ key|replace('_', ' ')|title }}
+                            </label>
+                        {% elif key == 'media_type' %}
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Media Type:</label>
+                            <select id="content-sources-{{ source_id }}-{{ key }}"
+                                    name="Content Sources.{{ source_id }}.{{ key }}"
+                                    class="settings-input"
+                                    data-section="Content Sources"
+                                    data-key="{{ source_id }}.{{ key }}">
+                                {% for option in ['All', 'Movies', 'Shows'] %}
+                                    <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                        {% elif key == 'trakt_lists' and config.type == 'Trakt Lists' %}
+                            <label for="content-sources-{{ source_id }}-trakt_lists" class="settings-title">Trakt List URL(s):</label>
+                            <textarea id="content-sources-{{ source_id }}-trakt_lists"
+                                      name="Content Sources.{{ source_id }}.trakt_lists"
+                                      class="settings-input"
+                                      data-section="Content Sources"
+                                      data-key="{{ source_id }}.trakt_lists"
+                                      rows="3"
+                                      placeholder="Enter comma-separated Trakt List URLs">{{ value }}</textarea>
+                            <button type="button"
+                                    class="import-liked-to-source-btn popup-button"
+                                    data-source-id="{{ source_id }}"
+                                    style="margin-top: 5px;">
+                                Import Liked Lists to this Source
+                            </button>
+                            {% if settings_schema['Content Sources'].schema is defined and
+                                  config.type in settings_schema['Content Sources'].schema and
+                                  key in settings_schema['Content Sources'].schema[config.type] and
+                                  settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                <p class="settings-description" style="margin-top: 8px;">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                            {% endif %}
+                        {% else %}
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                            {% if value is iterable and (value is not string) %}
+                                <select id="content-sources-{{ source_id }}-{{ key }}"
+                                        name="Content Sources.{{ source_id }}.{{ key }}"
+                                        multiple class="settings-input"
+                                        data-section="Content Sources"
+                                        data-key="{{ source_id }}.{{ key }}">
+                                    {% for option in value %}
+                                    <option value="{{ option }}" selected>{{ option }}</option>
+                                    {% endfor %}
+                                </select>
+                            {% else %}
+                                <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       value="{{ value }}"
+                                       class="settings-input"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}">
+                            {% endif %}
+                            {% if settings_schema['Content Sources'].schema is defined and
+                                  config.type in settings_schema['Content Sources'].schema and
+                                  key in settings_schema['Content Sources'].schema[config.type] and
+                                  settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                            {% endif %}
+                        {% endif %}
+                    </div>
                     {% endif %}
-                {% endif %}
-                {% if settings_schema['Content Sources'] is defined and settings_schema['Content Sources'].schema is defined and settings_schema['Content Sources'].schema[config.type] is defined and settings_schema['Content Sources'].schema[config.type][key] is defined and settings_schema['Content Sources'].schema[config.type][key].description is defined %}
-                <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
-                {% endif %}
+                    {% endfor %}
+
+                    {% set source_type = config.type %}
+                    {% if settings_schema['Content Sources'].schema is defined and
+                          source_type in settings_schema['Content Sources'].schema and
+                          'allow_specials' in settings_schema['Content Sources'].schema[source_type] %}
+                    <div class="settings-form-group">
+                        <label class="settings-title">
+                            <input type="checkbox" id="content-sources-{{ source_id }}-allow_specials"
+                                   name="Content Sources.{{ source_id }}.allow_specials"
+                                   data-section="Content Sources"
+                                   data-key="{{ source_id }}.allow_specials"
+                                   {% if config.allow_specials %}checked{% endif %}>
+                            Allow Specials
+                        </label>
+                        {% if settings_schema['Content Sources'].schema[source_type]['allow_specials'].description is defined %}
+                            <p class="settings-description">{{ settings_schema['Content Sources'].schema[source_type]['allow_specials'].description }}</p>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+
+                </div>
             </div>
-            {% endif %}
-            {% endfor %}
-
-            {# Add the allow_specials checkbox here #}
-            {% set source_type = config.type %}
-            {% if source_type in settings_schema['Content Sources'].schema and 'allow_specials' in settings_schema['Content Sources'].schema[source_type] %}
-            <!-- <div class="settings-form-group">
-                <label class="settings-title">
-                    <input type="checkbox" id="content-sources-{{ source_id }}-allow_specials"
-                           name="Content Sources.{{ source_id }}.allow_specials"
-                           data-section="Content Sources"
-                           data-key="{{ source_id }}.allow_specials"
-                           {% if config.allow_specials %}checked{% endif %}>
-                    Allow Specials
-                </label>
-                <p class="settings-description">{{ settings_schema['Content Sources'].schema[source_type]['allow_specials'].description }}</p>
-            </div> -->
-            {% endif %}
-
-        </div>
-    </div>
+        {% else %}
+            <div class="settings-section settings-section-invalid" data-source-id="{{ source_id }}">
+                <div class="settings-section-header">
+                    <span class="settings-toggle-icon" style="color: red;">!</span>
+                    <h4>Invalid Source: {{ source_id }}</h4>
+                    <div class="source-buttons">
+                        <button type="button" class="delete-source-btn" data-source-id="{{ source_id }}">Delete Source</button>
+                    </div>
+                </div>
+                <div class="settings-section-content" style="display: none; color: #aaa;">
+                    <p>This content source configuration is incomplete or invalid (missing 'type'). Please delete it or correct it manually in your settings file.</p>
+                    <pre>{{ config | tojson(indent=2) }}</pre>
+                </div>
+            </div>
+        {% endif %}
     {% endfor %}
 {% else %}
     <p>No Content Sources configured or invalid configuration.</p>

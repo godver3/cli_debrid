@@ -150,59 +150,98 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
     filtered_no_seeders = 0
     
     for item in data:
+        parsed_info = {} # Dictionary to hold extra details
         title = item.get('Title', 'N/A')
-        if item.get('MagnetUri'):
-            magnet = item['MagnetUri']
-            is_torrent_url = False
-        elif item.get('Link'):
-            magnet = item['Link']
-            # Check if this is likely a torrent URL rather than a magnet link
-            is_torrent_url = not magnet.startswith('magnet:')
+        
+        # Determine the primary link (MagnetUri first, then Link)
+        magnet = item.get('MagnetUri')
+        link = item.get('Link')
+        is_torrent_url = False
+
+        if magnet:
+             primary_link = magnet
+        elif link:
+             primary_link = link
+             # Check if the Link is actually a magnet link
+             if not primary_link.startswith('magnet:'):
+                 is_torrent_url = True
         else:
             filtered_no_magnet += 1
-            #logging.debug(f"Skipping result '{title}' - No magnet or link found")
+            logging.debug(f"Skipping result '{title}' - No magnet or link found")
             continue
 
         seeders = item.get('Seeders', 0)
         if seeders_only and seeders == 0:
             filtered_no_seeders += 1
-            #logging.debug(f"Filtered out '{title}' due to no seeders")
+            logging.debug(f"Filtered out '{title}' due to no seeders (seeders_only=True)")
             continue
-
-        if item.get('Tracker') and item.get('Size'):
-            result = {
-                'title': title,
-                'size': item.get('Size', 0) / (1024 * 1024 * 1024),  # Convert to GB
-                'source': f"{ins_name} - {item.get('Tracker', 'N/A')}",
-                'magnet': magnet,
-                'seeders': seeders,
-                'hash': item.get('InfoHash', '')
-            }
             
-            # Set the appropriate property for cache checking
-            if is_torrent_url:
-                result['torrent_url'] = magnet
-            else:
-                result['magnet_link'] = magnet
-                
-                # Try to extract hash for standard magnet links
-                if magnet.startswith('magnet:'):
-                    try:
-                        from urllib.parse import parse_qs
-                        params = parse_qs(magnet.split('?', 1)[1])
-                        xt_params = params.get('xt', [])
-                        for xt in xt_params:
-                            if xt.startswith('urn:btih:'):
-                                result['hash'] = xt.split(':')[2].lower()
-                                break
-                    except Exception as e:
-                        logging.error(f"Error extracting hash from magnet link: {e}")
-                
+        # Extract basic info
+        tracker = item.get('Tracker', 'N/A')
+        size_bytes = item.get('Size', 0)
+        size_gb = round(size_bytes / (1024 * 1024 * 1024), 2) if size_bytes else 0.0
 
-            results.append(result)
-            #logging.debug(f"Added result: {title} ({result['size']:.2f}GB, {seeders} seeders)")
+        # Extract additional details into parsed_info
+        parsed_info['tracker_id'] = item.get('TrackerId')
+        parsed_info['tracker_type'] = item.get('TrackerType')
+        parsed_info['category_desc'] = item.get('CategoryDesc')
+        parsed_info['publish_date'] = item.get('PublishDate')
+        parsed_info['peers'] = item.get('Peers') # Seeders + Leechers
+        parsed_info['grabs'] = item.get('Grabs')
+        parsed_info['imdb_id'] = item.get('Imdb')
+        parsed_info['genres'] = item.get('Genres')
+        parsed_info['description'] = item.get('Description')
+        parsed_info['guid'] = item.get('Guid') # Link to torrent details page or .torrent file
+        # Store tracker specific info if needed
+        parsed_info['minimum_ratio'] = item.get('MinimumRatio')
+        parsed_info['minimum_seed_time'] = item.get('MinimumSeedTime')
+        parsed_info['download_volume_factor'] = item.get('DownloadVolumeFactor')
+        parsed_info['upload_volume_factor'] = item.get('UploadVolumeFactor')
+        
+        # Initialize hash
+        info_hash = item.get('InfoHash', '')
 
-    #logging.info(f"Parsing complete - {len(results)} valid results, {filtered_no_magnet} filtered for no magnet, {filtered_no_seeders} filtered for no seeders")
+        result = {
+            'title': title,
+            'size': size_gb,
+            'source': f"{ins_name} - {tracker}",
+            'magnet': primary_link, # Use the determined primary link
+            'seeders': seeders,
+            'hash': info_hash, # Start with InfoHash field if present
+            'parsed_info': parsed_info # Store all extra details
+        }
+            
+        # Set the appropriate property based on link type
+        if is_torrent_url:
+            result['torrent_url'] = primary_link
+        else:
+            # If it's a magnet link, ensure hash is extracted
+            result['magnet_link'] = primary_link
+            if not info_hash and primary_link.startswith('magnet:'): # Only try extracting if hash wasn't in the main field
+                try:
+                    # Use regex for more robust hash extraction from magnet
+                    hash_match = re.search(r'urn:btih:([a-fA-F0-9]{40})', primary_link)
+                    if hash_match:
+                         result['hash'] = hash_match.group(1).lower()
+                         logging.debug(f"Extracted hash {result['hash']} from magnet link for '{title}'")
+                except Exception as e:
+                    logging.error(f"Error extracting hash from magnet link '{primary_link}': {e}")
+        
+        # Update main hash field if extracted successfully
+        if result['hash'] and not info_hash:
+             item['InfoHash'] = result['hash'] # Update the source item for consistency if needed later
+
+        results.append(result)
+        #logging.debug(f"Added result: {title} ({result['size']:.2f}GB, {seeders} seeders)")
+
+    # Log summary (optional)
+    # if filtered_no_magnet > 0 or filtered_no_seeders > 0:
+    #     logging.debug(f"Jackett parsing summary for {ins_name}:")
+    #     logging.debug(f"- Total items processed: {len(data)}")
+    #     logging.debug(f"- Successfully parsed: {len(results)}")
+    #     logging.debug(f"- Filtered (no link): {filtered_no_magnet}")
+    #     logging.debug(f"- Filtered (no seeders): {filtered_no_seeders}")
+
     return results
 
 def construct_url(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, jackett_filter: str = "!status:failing,test:passed", multi: bool = False) -> str:

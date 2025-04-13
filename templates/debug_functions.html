@@ -310,35 +310,11 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Plex Debug Scan</h3>
-            <p class="description">Run specific debug tests for Plex scanning (concurrency, page size, etc.).</p>
-            <form id="plex-debug-scan-form">
-                <div class="form-group">
-                    <label for="debug_mode">Debug Mode:</label>
-                    <select id="debug_mode" name="debug_mode">
-                        <option value="Concurrency Test">Concurrency Test</option>
-                        <option value="Page Size Test">Page Size Test</option>
-                        <option value="Specific Library Test">Specific Library Test</option>
-                        <option value="Custom Test">Custom Test</option>
-                    </select>
-                </div>
-                <div class="form-group" id="concurrency-group">
-                    <label for="concurrency_limit">Concurrency Limit:</label>
-                    <input type="number" id="concurrency_limit" name="concurrency_limit" placeholder="e.g., 50" min="1">
-                </div>
-                <div class="form-group" id="page-size-group">
-                    <label for="page_size_limit">Page Size Limit:</label>
-                    <input type="number" id="page_size_limit" name="page_size_limit" placeholder="e.g., 500" min="1">
-                </div>
-                <div class="form-group" id="library-key-group">
-                    <label for="library_key">Specific Library Key:</label>
-                    <input type="text" id="library_key" name="library_key" placeholder="e.g., 5">
-                </div>
-                <button type="submit">Run Plex Debug Scan</button>
+            <h3>Delete Battery Database Files</h3>
+            <p class="description">Deletes the cli_battery.db, cli_battery.db-shm, and cli_battery.db-wal files from the db_content directory.</p>
+            <form id="delete-battery-db-form" action="{{ url_for('debug.delete_battery_db_files') }}" method="POST">
+                <button type="submit" class="btn btn-danger">Delete Battery DB Files</button>
             </form>
-            <div id="plex-debug-scan-progress" class="results-area">
-                <!-- Progress updates will be shown here -->
-            </div>
         </div>
     </div>
 </div>
@@ -1850,6 +1826,27 @@
             };
         }
         // --- End Plex Debug Scan Logic ---
+
+        // --- Handler for Delete Battery DB Form ---
+        const deleteBatteryDbForm = document.getElementById('delete-battery-db-form');
+        if (deleteBatteryDbForm) {
+            deleteBatteryDbForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const url = this.action;
+                const method = this.method;
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: 'Are you sure you want to delete the battery database files (cli_battery.db, -shm, -wal)? This might resolve certain issues but will reset some internal states.',
+                    title: 'Confirm Deletion',
+                    onConfirm: () => {
+                        Loading.show();
+                        submitForm(url, method, new FormData(this)); // Use the generic submitForm
+                    }
+                });
+            });
+        }
+        // --- End Handler for Delete Battery DB Form ---
     });
 </script>
 

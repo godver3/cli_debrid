@@ -5,7 +5,7 @@ import uuid
 import os
 import sys
 import shutil
-from datetime import datetime
+from datetime import datetime, date
 from debrid import reset_provider
 from utilities.file_lock import FileLock
 import importlib
@@ -48,12 +48,64 @@ def release_lock(lock_file_handle):
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
+        logging.info(f"Config file not found at {CONFIG_FILE}, returning empty dict.")
+        return {}
+
+    try:
+        with open(CONFIG_FILE, 'r') as file:
+            config = json.load(file)
+            if not isinstance(config, dict): # Handle case where file content is not a JSON object
+                logging.error(f"Config file {CONFIG_FILE} does not contain a valid JSON object. Returning empty dict.")
+                return {}
+    except json.JSONDecodeError as e:
+        logging.error(f"Error decoding JSON from {CONFIG_FILE}: {e}. Returning empty dict.")
+        return {}
+    except Exception as e:
+        logging.error(f"Error reading config file {CONFIG_FILE}: {e}. Returning empty dict.")
         return {}
         
-    with open(CONFIG_FILE, 'r') as file:
-        config = json.load(file)
+    # --- BEGIN Auto-fix for missing Content Source type ---
+    needs_saving = False
+    if 'Content Sources' in config and isinstance(config['Content Sources'], dict):
+        content_sources = config['Content Sources']
+        valid_source_types = SETTINGS_SCHEMA.get('Content Sources', {}).get('schema', {}).keys()
+        fixed_count = 0
         
-    # Merge defaults from schema
+        # Create a copy of keys to iterate over, allowing modification of original dict
+        source_ids_to_check = list(content_sources.keys()) 
+        
+        for source_id in source_ids_to_check:
+            source_config = content_sources.get(source_id) # Use .get for safety
+            
+            if isinstance(source_config, dict):
+                # Check if type is missing or empty
+                if not source_config.get('type'): 
+                    parts = source_id.split('_')
+                    if parts:
+                        potential_type = parts[0]
+                        if potential_type in valid_source_types:
+                            # Apply the fix to the actual config dict
+                            config['Content Sources'][source_id]['type'] = potential_type
+                            fixed_count += 1
+                            needs_saving = True # Mark that we need to save
+                            logging.warning(f"[Config Load] Auto-fixed missing 'type' for Content Source '{source_id}'. Set type to '{potential_type}'.")
+                        else:
+                            logging.error(f"[Config Load] Cannot auto-fix Content Source '{source_id}': Inferred type '{potential_type}' is not valid. Remove or fix manually.")
+                            # Optionally remove invalid source: del config['Content Sources'][source_id]; needs_saving = True
+                    else:
+                        logging.error(f"[Config Load] Cannot auto-fix Content Source '{source_id}': Cannot infer type from ID format. Remove or fix manually.")
+                        # Optionally remove invalid source: del config['Content Sources'][source_id]; needs_saving = True
+            else:
+                 # Handle cases where the source config itself isn't a dictionary
+                 logging.error(f"[Config Load] Invalid configuration for Content Source '{source_id}': Expected a dictionary, found {type(source_config)}. Please fix or remove manually.")
+                 # Optionally remove the invalid entry: del config['Content Sources'][source_id]; needs_saving = True
+        
+        if fixed_count > 0:
+             logging.info(f"[Config Load] Automatically corrected the 'type' field for {fixed_count} Content Source(s).")
+             
+    # --- END Auto-fix ---
+
+    # --- BEGIN Merge Defaults ---
     def merge_defaults(config_section, schema_section):
         # If schema_section isn't a dict, return config_section as is
         if not isinstance(schema_section, dict):
@@ -79,9 +131,9 @@ def load_config():
                 if key not in result and 'default' in schema_value:
                     result[key] = schema_value['default']
                 elif isinstance(schema_value, dict) and 'schema' in schema_value:
-                    if key not in result:
-                        result[key] = {}
-                    result[key] = merge_defaults(result.get(key, {}), schema_value)
+                    # Ensure the key exists before attempting merge
+                    current_val = result.get(key, {})
+                    result[key] = merge_defaults(current_val, schema_value)
         else:
             # Handle regular sections
             for key, schema_value in schema_section.items():
@@ -89,15 +141,36 @@ def load_config():
                     if 'default' in schema_value and key not in result:
                         result[key] = schema_value['default']
                     elif key in result:
-                        result[key] = merge_defaults(result[key], schema_value)
+                        # Ensure the key exists before attempting merge
+                        current_val = result.get(key, {})
+                        result[key] = merge_defaults(current_val, schema_value)
+                # If schema_value is not a dict, we don't merge defaults here unless the key is missing
+                elif key not in result and 'default' in schema_value:
+                    result[key] = schema_value['default']
         
         return result
 
     # Merge defaults for each section in the schema
     for section, schema in SETTINGS_SCHEMA.items():
-        if section not in config:
-            config[section] = {}
-        config[section] = merge_defaults(config[section], schema)
+        # If section doesn't exist in config, initialize it before merging
+        current_section_config = config.get(section, {}) 
+        merged_section = merge_defaults(current_section_config, schema)
+        # Only update if the merged result is different or the section was missing
+        if merged_section != current_section_config or section not in config:
+             config[section] = merged_section
+             # Optionally mark needs_saving = True here if defaults being added is considered a saveable change
+             # logging.debug(f"Defaults merged/added for section: {section}")
+
+    # --- END Merge Defaults ---
+
+    # --- Save if fixes were made ---
+    if needs_saving:
+        try:
+            logging.info("[Config Load] Saving configuration file after applying auto-fixes or merging defaults.")
+            save_config(config) 
+        except Exception as e:
+            logging.error(f"[Config Load] Failed to save config after processing: {e}")
+
 
     return config
 
@@ -158,33 +231,58 @@ def sync_plex_settings(config):
     return config
 
 def save_config(config):
-    # Load previous config to check for TMDB API key changes
-    previous_config = load_config()
-    previous_tmdb_key = previous_config.get('TMDB', {}).get('api_key')
-    new_tmdb_key = config.get('TMDB', {}).get('api_key')
-
-    # Sync Plex settings between sections
-    config = sync_plex_settings(config)
-
-    # Check if TMDB API key has changed
-    if previous_tmdb_key != new_tmdb_key:
-        # Delete poster cache if it exists
-        if os.path.exists(CACHE_FILE):
-            try:
-                os.remove(CACHE_FILE)
-                logging.info("Deleted poster cache due to TMDB API key change")
-            except Exception as e:
-                logging.error(f"Failed to delete poster cache: {e}")
-
-    # Save the new config
-    with open(CONFIG_FILE, 'w') as file:
-        json.dump(config, file, indent=4, default=json_serializer)
+    lock_handle = None
     try:
-        from routes.base_routes import clear_cache
-        clear_cache()  # Clear the update check cache when settings are saved
-        #logging.debug("Cleared update check cache after saving settings")
+        # Acquire lock
+        lock_handle = acquire_lock()
+        
+        # Load previous config *after acquiring lock* to check for TMDB API key changes accurately
+        previous_config = {}
+        if os.path.exists(CONFIG_FILE):
+             try:
+                 # Read the file content directly without using load_config to avoid recursion/re-fixing
+                 with open(CONFIG_FILE, 'r') as pf:
+                      previous_config = json.load(pf)
+             except Exception as e:
+                 logging.warning(f"Could not load previous config for comparison during save: {e}")
+
+
+        previous_tmdb_key = previous_config.get('TMDB', {}).get('api_key')
+        new_tmdb_key = config.get('TMDB', {}).get('api_key')
+
+        # Sync Plex settings between sections
+        config = sync_plex_settings(config)
+
+        # Check if TMDB API key has changed
+        if previous_tmdb_key != new_tmdb_key and new_tmdb_key: # Only clear if new key is set
+            if os.path.exists(CACHE_FILE):
+                try:
+                    os.remove(CACHE_FILE)
+                    logging.info("Deleted poster cache due to TMDB API key change")
+                except Exception as e:
+                    logging.error(f"Failed to delete poster cache: {e}")
+
+        # Save the new config
+        with open(CONFIG_FILE, 'w') as file:
+            # Move file pointer to beginning and truncate before writing
+            file.seek(0) 
+            file.truncate()
+            json.dump(config, file, indent=4, default=json_serializer)
+            
+        # Clear update cache
+        try:
+            from routes.base_routes import clear_cache
+            clear_cache()
+        except Exception as e:
+            logging.error(f"Error clearing update check cache: {str(e)}")
+
     except Exception as e:
-        logging.error(f"Error clearing update check cache: {str(e)}")
+        logging.error(f"Error during save_config: {e}", exc_info=True)
+        # Re-raise the exception maybe? Or just log it.
+    finally:
+        # Ensure lock is released
+        if lock_handle:
+            release_lock(lock_handle)
 
 def add_content_source(source_type, source_config):
     process_id = str(uuid.uuid4())[:8]
@@ -255,16 +353,6 @@ def json_serializer(obj):
     if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
-
-def fix_content_sources(config):
-    if 'Content Sources' in config:
-        for source_id, source_config in config['Content Sources'].items():
-            if isinstance(source_config, str):
-                try:
-                    config['Content Sources'][source_id] = json.loads(source_config)
-                except json.JSONDecodeError:
-                    logging.warning(f"Invalid JSON in Content Sources for key {source_id}")
-    return config
 
 def delete_content_source(source_id):
     process_id = str(uuid.uuid4())[:8]

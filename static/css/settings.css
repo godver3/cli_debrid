@@ -147,7 +147,37 @@ button.delete-scraper-btn:disabled,
     display: none !important;
 }
 
-/* Rest of your existing styles... */ 
+/* Add specific styling for the Import Liked Lists button */
+.import-liked-to-source-btn {
+    background-color: #2196F3; /* Blue background */
+    color: white;
+    border: none !important;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease; /* Smooth transition */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px; /* Match delete button height */
+    margin: 5px 0; /* Adjust margin as needed */
+    font-size: 0.9em; /* Match delete button font size */
+    font-weight: 500;
+    text-align: center;
+    line-height: normal; /* Ensure text aligns well */
+}
+
+.import-liked-to-source-btn:hover:not(:disabled) {
+    background-color: #1976D2; /* Darker blue on hover */
+}
+
+/* Disabled state for the import button */
+.import-liked-to-source-btn:disabled {
+    background-color: #6c757d !important; /* Grey background when disabled */
+    color: #ccc !important;
+    cursor: not-allowed !important;
+    opacity: 0.65 !important;
+}
 
 /* Responsive styles for settings */
 @media screen and (max-width: 1245px) {

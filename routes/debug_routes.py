@@ -55,12 +55,6 @@ import time
 import json
 from flask import Response, stream_with_context
 # Import Plex debug functions
-from utilities.plex_functions import (
-    debug_test_concurrency,
-    debug_test_page_size,
-    debug_test_specific_library,
-    debug_test_custom
-)
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -2866,3 +2860,43 @@ def plex_debug_scan():
     except Exception as e:
         logging.error(f"Error initiating Plex debug scan: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)})
+
+@debug_bp.route('/api/delete_battery_db', methods=['POST'])
+@admin_required
+def delete_battery_db_files():
+    """Deletes the cli_battery.db and associated journal/WAL files."""
+    db_content_dir = os.environ.get('USER_DB_CONTENT')
+    if not db_content_dir:
+        logging.error("USER_DB_CONTENT environment variable not set.")
+        return jsonify({'success': False, 'error': 'USER_DB_CONTENT environment variable not set'}), 500
+
+    base_db_path = os.path.join(db_content_dir, 'cli_battery.db')
+    files_to_delete = [
+        base_db_path,
+        base_db_path + '-shm',
+        base_db_path + '-wal'
+    ]
+
+    deleted_files = []
+    errors = []
+
+    for file_path in files_to_delete:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                deleted_files.append(os.path.basename(file_path))
+                logging.info(f"Deleted battery DB file: {file_path}")
+            else:
+                logging.info(f"Battery DB file not found, skipping: {file_path}")
+        except Exception as e:
+            error_msg = f"Error deleting file {os.path.basename(file_path)}: {str(e)}"
+            logging.error(error_msg)
+            errors.append(error_msg)
+
+    if errors:
+        message = f'Errors occurred during deletion. Deleted: {", ".join(deleted_files) if deleted_files else "None"}. Errors: {"; ".join(errors)}'
+        return jsonify({'success': False, 'error': message}), 500
+    elif not deleted_files:
+         return jsonify({'success': True, 'message': 'No battery DB files found to delete.'}), 200
+    else:
+        return jsonify({'success': True, 'message': f'Successfully deleted files: {", ".join(deleted_files)}'}), 200

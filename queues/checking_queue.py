@@ -636,14 +636,22 @@ class CheckingQueue:
                             )
 
                             if processing_successful:
-                                # The callback was invoked inside check_local_file_for_item if successful
                                 logging.info(f"Local file found and symlinked for item {item['id']} by CheckingQueue. Callback invoked to attempt removal from rclone queue.")
 
-                                # Existing success logic (media server updates, state check, move_to_collected)
-                                if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                                    emby_update_item(item)
-                                elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                                    plex_update_item(item)
+                                # --- EDIT: Fetch updated item data ---
+                                from database import get_media_item_by_id # Ensure import is available
+                                updated_item_data = get_media_item_by_id(item['id'])
+                                if not updated_item_data:
+                                     logging.error(f"Failed to fetch updated data for item {item['id']} after successful local check. Skipping media server update.")
+                                     # Decide how to handle this - maybe continue to state check?
+                                else:
+                                     # Use the fresh data for media server updates
+                                     logging.debug(f"Fetched updated data for item {item['id']} before media server update.")
+                                     if get_setting('Debug', 'emby_jellyfin_url', default=False):
+                                         emby_update_item(dict(updated_item_data)) # Pass updated data
+                                     elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+                                         plex_update_item(dict(updated_item_data)) # Pass updated data
+                                # --- END EDIT ---
 
                                 # Re-check state after processing, as check_local_file_for_item might change it
                                 from database.core import get_db_connection

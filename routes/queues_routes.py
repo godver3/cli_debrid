@@ -382,7 +382,7 @@ def queue_stream():
                 logging.error(f"Error in queue stream: {str(e)}")
                 yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
             
-            time.sleep(0.2)  # Check for updates every 0.2 seconds
+            time.sleep(2.5)  # Check for updates every 2.5 seconds
     
     response = Response(generate(), mimetype='text/event-stream')
     response.headers.update({

@@ -109,8 +109,6 @@ class BackgroundJobManager:
                                             refreshed_count += 1
                                             # Re-query the item to ensure it's still bound to the session
                                             item = session.query(Item).get(item.id)
-                                            # Add delay between items to avoid rate limiting
-                                            time.sleep(1)  # 1 second delay between items
                                             break  # Success, exit retry loop
                                         except requests.exceptions.HTTPError as e:
                                             if e.response is not None and e.response.status_code == 429:
