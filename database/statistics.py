@@ -1,5 +1,5 @@
 import logging
-from .core import get_db_connection
+from .core import get_db_connection, retry_on_db_lock
 import asyncio
 import aiohttp
 from .poster_management import get_poster_url
@@ -648,6 +648,7 @@ async def get_recently_upgraded_items(upgraded_limit=5):
 statistics_update_lock = threading.Lock()
 last_update_time = 0
 
+@retry_on_db_lock()
 def update_statistics_summary(force=False):
     """Update the statistics summary table with the latest data.
     This should be called periodically from the background task manager."""
