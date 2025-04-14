@@ -17,7 +17,7 @@ from collections import defaultdict
 from .settings import Settings
 from datetime import datetime, timezone
 import random
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
 from .xem_utils import fetch_xem_mapping
 
@@ -1265,5 +1265,186 @@ class MetadataManager:
 
             except Exception as e:
                 logger.error(f"Error in get_bulk_show_airs_info: {e}")
+                # Return the initialized dict with Nones on error
+                return {imdb_id: None for imdb_id in imdb_ids}
+
+    @staticmethod
+    def get_bulk_movie_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """
+        Gets metadata for a list of movie IMDb IDs from the battery.
+        Does not automatically refresh stale data in this bulk version.
+        Returns a dictionary mapping imdb_id to its metadata dict (or None if not found).
+        """
+        metadata_map = {imdb_id: None for imdb_id in imdb_ids}
+        if not imdb_ids:
+            return metadata_map
+
+        with DbSession() as session:
+            try:
+                items = session.query(Item).options(
+                    selectinload(Item.item_metadata) # Use selectinload for efficiency
+                ).filter(
+                    Item.imdb_id.in_(imdb_ids),
+                    Item.type == 'movie'
+                ).all()
+
+                if not items:
+                    logger.warning(f"No movie items found in battery for IMDb IDs: {imdb_ids}")
+                    return metadata_map
+
+                for item in items:
+                    item_metadata = {}
+                    for m in item.item_metadata:
+                        try:
+                            # Always try to parse as JSON first, fall back to string if it fails
+                            try:
+                                item_metadata[m.key] = json.loads(m.value)
+                            except json.JSONDecodeError:
+                                item_metadata[m.key] = m.value
+                        except Exception as e:
+                            logger.error(f"Error processing metadata for key {m.key} in movie {item.imdb_id}: {str(e)}")
+                            item_metadata[m.key] = m.value # Store raw value on error
+                    metadata_map[item.imdb_id] = item_metadata
+
+                # Log which IDs were not found
+                found_ids = {item.imdb_id for item in items}
+                not_found_ids = set(imdb_ids) - found_ids
+                if not_found_ids:
+                    logger.info(f"Did not find movie metadata in battery for IMDb IDs: {list(not_found_ids)}")
+
+                return metadata_map
+
+            except Exception as e:
+                logger.error(f"Error in get_bulk_movie_metadata: {e}")
+                # Return the initialized dict with Nones on error
+                return {imdb_id: None for imdb_id in imdb_ids}
+
+    @staticmethod
+    def get_bulk_show_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """
+        Gets metadata for a list of show IMDb IDs from the battery.
+        Does not automatically refresh stale data in this bulk version.
+        Includes check for missing XEM mapping similar to single get_show_metadata.
+        Returns a dictionary mapping imdb_id to its metadata dict (or None if not found).
+        """
+        metadata_map = {imdb_id: None for imdb_id in imdb_ids}
+        if not imdb_ids:
+            return metadata_map
+
+        with DbSession() as session:
+            try:
+                items = session.query(Item).options(
+                    selectinload(Item.item_metadata) # Use selectinload for efficiency
+                ).filter(
+                    Item.imdb_id.in_(imdb_ids),
+                    Item.type == 'show'
+                ).all()
+
+                if not items:
+                    logger.warning(f"No show items found in battery for IMDb IDs: {imdb_ids}")
+                    return metadata_map
+                
+                items_missing_xem = {} # Store items that need XEM check {item_id: imdb_id}
+                tvdb_ids_to_fetch_xem = {} # Store {tvdb_id: item_id} for fetching
+                item_ids_to_save_empty_xem = [] # Store item_ids where TVDB ID was missing
+
+                for item in items:
+                    item_metadata = {}
+                    has_xem = False
+                    tvdb_id = None
+                    for m in item.item_metadata:
+                        try:
+                            # Always try to parse as JSON first, fall back to string if it fails
+                            try:
+                                value = json.loads(m.value)
+                                item_metadata[m.key] = value
+                                if m.key == 'ids' and isinstance(value, dict):
+                                    tvdb_id = value.get('tvdb')
+                                if m.key == 'xem_mapping':
+                                    has_xem = True # Mark if xem_mapping key exists
+                            except json.JSONDecodeError:
+                                item_metadata[m.key] = m.value
+                        except Exception as e:
+                            logger.error(f"Error processing metadata for key {m.key} in show {item.imdb_id}: {str(e)}")
+                            item_metadata[m.key] = m.value # Store raw value on error
+                    
+                    metadata_map[item.imdb_id] = item_metadata # Store processed metadata
+
+                    # Check if XEM mapping needs fetching
+                    if not has_xem:
+                        items_missing_xem[item.id] = item.imdb_id
+                        if tvdb_id:
+                             # Only add to fetch list if we have a TVDB ID
+                             tvdb_ids_to_fetch_xem[tvdb_id] = item.id
+                        else:
+                            logger.warning(f"Cannot fetch XEM mapping for {item.imdb_id}: TVDB ID not found in existing metadata. Will store empty mapping.")
+                            item_ids_to_save_empty_xem.append(item.id)
+
+
+                # --- Bulk Fetch XEM Mapping ---
+                fetched_xem_mappings = {} # Store {item_id: xem_data}
+                if tvdb_ids_to_fetch_xem:
+                    tvdb_ids = list(tvdb_ids_to_fetch_xem.keys())
+                    logger.info(f"Bulk fetching XEM mappings for {len(tvdb_ids)} TVDB IDs...")
+                    # Assuming fetch_xem_mapping can handle a list or we adapt it.
+                    # For now, iterate, but ideally batch this if possible.
+                    for tvdb_id in tvdb_ids:
+                        item_id = tvdb_ids_to_fetch_xem[tvdb_id]
+                        imdb_id = items_missing_xem[item_id]
+                        try:
+                            xem_data = fetch_xem_mapping(tvdb_id)
+                            fetched_xem_mappings[item_id] = xem_data if xem_data else {} # Store empty dict if None
+                            logger.info(f"{'Found' if xem_data else 'No'} XEM mapping for TVDB {tvdb_id} (IMDb: {imdb_id})")
+                        except Exception as e:
+                            logger.error(f"Error fetching XEM for TVDB {tvdb_id} (IMDb: {imdb_id}): {e}")
+                            fetched_xem_mappings[item_id] = {} # Store empty on error
+
+
+                # --- Add fetched/empty XEM mappings to results and prepare DB save ---
+                metadata_to_save = []
+                from metadata.metadata import _get_local_timezone
+                current_time = datetime.now(_get_local_timezone())
+
+                for item_id, imdb_id in items_missing_xem.items():
+                    xem_data_to_add = fetched_xem_mappings.get(item_id, {}) # Default to empty if fetch failed or TVDB ID missing
+
+                    # Add to the response dictionary
+                    if metadata_map.get(imdb_id): # Check if metadata dict exists
+                        metadata_map[imdb_id]['xem_mapping'] = xem_data_to_add
+                    else:
+                        logger.warning(f"Metadata map entry missing for {imdb_id} when trying to add XEM mapping.")
+
+                    # Prepare for database update/insert
+                    metadata_to_save.append(
+                        Metadata(
+                            item_id=item_id,
+                            key='xem_mapping',
+                            value=json.dumps(xem_data_to_add),
+                            provider='xem',
+                            last_updated=current_time
+                        )
+                    )
+
+                # --- Save new XEM mappings to DB ---
+                if metadata_to_save:
+                    try:
+                        logger.info(f"Saving {len(metadata_to_save)} new XEM mappings to the database.")
+                        session.bulk_save_objects(metadata_to_save)
+                        session.commit()
+                        logger.info("Successfully saved new XEM mappings.")
+                    except Exception as db_err:
+                        logger.error(f"Error saving XEM mappings to database: {db_err}")
+                        session.rollback()
+
+                # Log which original IDs were not found in the DB query
+                found_ids = {item.imdb_id for item in items}
+                not_found_ids = set(imdb_ids) - found_ids
+                if not_found_ids:
+                    logger.info(f"Did not find show metadata in battery for IMDb IDs: {list(not_found_ids)}")
+
+                return metadata_map
+
+            except Exception as e:
+                logger.error(f"Error in get_bulk_show_metadata: {e}")
                 # Return the initialized dict with Nones on error
                 return {imdb_id: None for imdb_id in imdb_ids}

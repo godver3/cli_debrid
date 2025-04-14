@@ -2,7 +2,7 @@ from .core import get_db_connection
 import logging
 import os
 import json
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple, Set, Any
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -513,6 +513,90 @@ def get_show_episode_identifiers_from_db(imdb_id: Optional[str] = None, tmdb_id:
     finally:
         conn.close()
 
+def get_media_item_ids(imdb_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Efficiently retrieves state and episode identifiers for a list of IMDb IDs.
+
+    Args:
+        imdb_ids: A list of IMDb IDs to query.
+
+    Returns:
+        A dictionary where keys are the input IMDb IDs and values are dictionaries
+        containing:
+        - 'movie_state': State of the movie item ('Collected', 'Wanted', etc.), or None if no movie found.
+        - 'episode_identifiers': A set of (season_number, episode_number) tuples for existing episodes.
+        - 'has_requested': Boolean indicating if any episode for this show has requested_season=TRUE.
+    """
+    if not imdb_ids:
+        return {}
+
+    conn = get_db_connection()
+    results = {
+        imdb_id: {
+            "movie_state": None,
+            "episode_identifiers": set(),
+            "has_requested": False
+        }
+        for imdb_id in imdb_ids
+    }
+
+    try:
+        placeholders = ','.join('?' * len(imdb_ids))
+        query = f'''
+            SELECT
+                imdb_id,
+                type,
+                state,
+                season_number,
+                episode_number,
+                requested_season
+            FROM media_items
+            WHERE imdb_id IN ({placeholders})
+        '''
+        
+        cursor = conn.execute(query, imdb_ids)
+        rows = cursor.fetchall()
+
+        for row in rows:
+            imdb_id_from_row = row['imdb_id']
+            # Ensure the imdb_id from the row is one we requested
+            if imdb_id_from_row in results:
+                item_type = row['type']
+                state = row['state']
+                
+                if item_type == 'movie':
+                    # Store the movie state (last one wins if multiple movie rows exist for same ID, though unlikely)
+                    results[imdb_id_from_row]['movie_state'] = state
+                elif item_type == 'episode':
+                    season_num = row['season_number']
+                    episode_num = row['episode_number']
+                    requested = row['requested_season']
+                    
+                    # Add episode identifier if valid
+                    if season_num is not None and episode_num is not None:
+                        try:
+                            results[imdb_id_from_row]['episode_identifiers'].add(
+                                (int(season_num), int(episode_num))
+                            )
+                        except (ValueError, TypeError):
+                            logging.warning(f"Skipping invalid non-integer season/episode number pair ({season_num}, {episode_num}) from DB for IMDb {imdb_id_from_row}")
+                    
+                    # Update has_requested flag if True
+                    if requested: # SQLite stores BOOLEAN as 0 or 1
+                         results[imdb_id_from_row]['has_requested'] = True
+
+        logging.info(f"Retrieved DB states/identifiers for {len(rows)} rows corresponding to {len(imdb_ids)} requested IMDb IDs.")
+        return results
+
+    except Exception as e:
+        logging.error(f"Error in get_media_item_ids: {str(e)}")
+        logging.debug(f"Query: {query}, Params: {imdb_ids}")
+        # Return the initialized dict, possibly partially filled or empty on error
+        return results
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -534,5 +618,6 @@ __all__ = [
     'get_media_item_by_filename',
     'check_existing_media_item',
     'get_wake_count',
-    'get_show_episode_identifiers_from_db'
+    'get_show_episode_identifiers_from_db',
+    'get_media_item_ids'
 ]

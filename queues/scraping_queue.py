@@ -162,24 +162,31 @@ class ScrapingQueue:
                 logging.info(f"Starting to process scraping results for {item_identifier}")
                 processed_an_item_this_cycle = True # Mark that we started processing
 
-                # Check release date logic - skip for early release items
+                # --- START EDIT: Add content source check ---
+                is_magnet_assigned = item_to_process.get('content_source') == 'Magnet_Assigner'
+                # --- END EDIT ---
+
+                # Check release date logic - skip for early release items AND magnet assigned items
                 # --- Use item_to_process instead of item throughout ---
-                if not item_to_process.get('early_release', False):
+                if not item_to_process.get('early_release', False) and not is_magnet_assigned: # <-- Added is_magnet_assigned check
                     if item_to_process['release_date'] == 'Unknown':
                         logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
                         queue_manager.move_to_wanted(item_to_process, "Scraping")
                         processed_successfully_or_moved = True # Handled by move
                         processed_count += 1
                         # No return here, let finally handle removal check if needed
-                    # Removed the early return True to ensure finally block runs
-                else:
+                # --- START EDIT: Add logging for skipped date check ---
+                elif is_magnet_assigned:
+                    logging.info(f"Processing Magnet Assigned item {item_identifier} regardless of release date")
+                # --- END EDIT ---
+                elif item_to_process.get('early_release', False): # Existing early release logic
                     logging.info(f"Processing early release item {item_identifier} regardless of release date")
 
                 # Proceed only if the item wasn't immediately moved back to Wanted
                 if not processed_successfully_or_moved:
                     try:
-                        # Only check release date for non-early release items
-                        if not item_to_process.get('early_release', False) and item_to_process['release_date'] != 'Unknown':
+                        # Only check release date for non-early release AND non-magnet-assigned items
+                        if not item_to_process.get('early_release', False) and not is_magnet_assigned and item_to_process['release_date'] != 'Unknown': # <-- Added is_magnet_assigned check
                             release_date = datetime.strptime(item_to_process['release_date'], '%Y-%m-%d').date()
 
                             # Check if version requires physical release
@@ -207,18 +214,25 @@ class ScrapingQueue:
                                 processed_successfully_or_moved = True
                                 processed_count += 1
                                 # Removed return
-                            # Otherwise check normal release timing with early_release flag
-                            elif not item_to_process.get('early_release', False) and release_date > today:
+                            # Otherwise check normal release timing (this path is now only reached if not early_release and not magnet_assigned)
+                            elif release_date > today: # <-- Removed the early_release check here as it's handled above
                                 logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
                                 processed_count += 1
                                 # Removed return
                     except ValueError:
-                        logging.warning(f"Item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Moving back to Wanted queue.")
-                        queue_manager.move_to_wanted(item_to_process, "Scraping")
-                        processed_successfully_or_moved = True
-                        processed_count += 1
+                         # --- START EDIT: Add content source check ---
+                        # Only move back if not magnet assigned and date is bad
+                        if not is_magnet_assigned:
+                             logging.warning(f"Item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Moving back to Wanted queue.")
+                             queue_manager.move_to_wanted(item_to_process, "Scraping")
+                             processed_successfully_or_moved = True
+                             processed_count += 1
+                        else:
+                             # Log but allow Magnet Assigned items to proceed
+                             logging.warning(f"Magnet Assigned item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Proceeding anyway.")
+                        # --- END EDIT ---
                         # Removed return
 
                 # Proceed only if the item wasn't moved back to Wanted due to release date

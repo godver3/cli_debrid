@@ -10,6 +10,7 @@ import pytz
 import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
+from collections import defaultdict
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,7 +18,7 @@ from utilities.settings import get_setting
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.database import DatabaseManager
-from database.database_reading import get_media_item_presence, get_all_media_items, get_show_episode_identifiers_from_db
+from database.database_reading import get_media_item_presence, get_all_media_items, get_show_episode_identifiers_from_db, get_media_item_ids
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
@@ -543,277 +544,363 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     from database.core import get_db_connection
     from database.wanted_items import add_wanted_items
     from queues.run_program import program_runner
-    from database.database_reading import get_media_item_presence, get_show_episode_identifiers_from_db # Ensure imports
+    from database.database_reading import get_media_item_ids # Added get_media_item_ids
 
     processed_items = {'movies': [], 'episodes': []}
     global trakt_metadata_instance
+    global direct_api # Ensure direct_api is accessible
 
-    for index, item in enumerate(media_items, 1):
-        try:
-            logging.debug(f"Processing item {index}: Type={item.get('media_type')}, IMDb={item.get('imdb_id')}, TMDB={item.get('tmdb_id')}, Detail={item.get('content_source_detail')}")
-            
-            # Check Trakt rate limit before fetching metadata
-            if not trakt_metadata_instance._check_rate_limit():
-                logging.warning("Trakt rate limit reached. Waiting for 5 minutes before continuing.")
-                time.sleep(300)  # Wait for 5 minutes
+    movie_imdb_ids_to_fetch = set()
+    show_imdb_ids_to_fetch = set()
+    items_by_imdb_id = defaultdict(list) # Store original items keyed by potential IMDb ID
+    items_by_tmdb_id_only = defaultdict(list) # Store items that only have TMDB ID after conversion attempt
 
-            # Fetch metadata first
-            metadata = get_metadata(
-                imdb_id=item.get('imdb_id'),
-                tmdb_id=item.get('tmdb_id'),
-                item_media_type=item.get('media_type'),
-                original_item=item
-            )
-            if not metadata:
-                logging.warning(f"Could not fetch metadata for item: {item}. Skipping.")
-                continue
+    # --- Step 1: Collect IMDb IDs and organize items ---
+    logging.info(f"Starting metadata processing for {len(media_items)} items. Collecting IDs...")
+    for item in media_items:
+        imdb_id = item.get('imdb_id')
+        tmdb_id = item.get('tmdb_id')
+        media_type = item.get('media_type', '').lower()
+        original_item_copy = item.copy() # Keep a copy of the original item data
 
-            item_media_type_lower = item.get('media_type', '').lower()
-            show_imdb_id = metadata.get('imdb_id')
-            show_tmdb_id = metadata.get('tmdb_id')
-
-            # --- Skip Logic ---
-            if item_media_type_lower == 'movie':
-                # Movie skip logic remains the same
-                presence_state = get_media_item_presence(imdb_id=show_imdb_id, tmdb_id=show_tmdb_id)
-                if presence_state == "Collected":
-                    logging.info(f"Skipping collected movie: {metadata.get('title')} (IMDb: {show_imdb_id}, TMDB: {show_tmdb_id})")
-                    continue
-            elif item_media_type_lower in ['tv', 'show']:
-                # Attempt to skip ended shows where all known episodes are already in the DB
-
-                # 1. Ensure we have an IMDb ID for the status check
-                if not show_imdb_id and show_tmdb_id:
-                     logging.info(f"Attempting to convert TMDB ID {show_tmdb_id} to IMDb ID for status check.")
-                     converted_imdb_id, _ = DirectAPI.tmdb_to_imdb(str(show_tmdb_id), media_type='show')
+        # Try to ensure we have an IMDb ID
+        resolved_imdb = False
+        if not imdb_id and tmdb_id:
+            try:
+                conversion_media_type = 'show' if media_type in ['tv', 'show'] else 'movie'
+                if media_type != 'episode': # Skip conversion for episodes? Or should we convert show? Assume show
+                     if media_type == 'episode': conversion_media_type = 'show'
+                     
+                     converted_imdb_id, _ = direct_api.tmdb_to_imdb(str(tmdb_id), media_type=conversion_media_type)
                      if converted_imdb_id:
-                         show_imdb_id = converted_imdb_id
-                         logging.info(f"Successfully converted TMDB:{show_tmdb_id} to IMDb:{show_imdb_id}")
+                         imdb_id = converted_imdb_id
+                         item['imdb_id'] = imdb_id # Add back to item for later use
+                         logging.debug(f"Converted TMDB {tmdb_id} to IMDb {imdb_id} for {media_type}")
+                         resolved_imdb = True
                      else:
-                         logging.warning(f"Could not convert TMDB ID {show_tmdb_id} to IMDb ID. Cannot perform 'ended' status check for skip logic.")
-                
-                # 2. Check Trakt status *first* if IMDb ID is available
-                if show_imdb_id:
-                    show_status = get_show_status(show_imdb_id)
-                    
-                    # 3. Only if status is 'ended', proceed to check episode presence
-                    if show_status == 'ended':
-                        logging.info(f"Show '{metadata.get('title')}' (IMDb: {show_imdb_id}) has status 'ended'. Checking if all episodes are present in DB.")
-                        
-                        seasons_metadata = metadata.get('seasons')
-                        # Ensure we have seasons data and an ID (IMDb or TMDB) for the DB check
-                        if seasons_metadata and isinstance(seasons_metadata, dict) and (show_imdb_id or show_tmdb_id):
-                            try:
-                                # Use the optimized function to get existing S/E tuples
-                                existing_episodes_in_db = get_show_episode_identifiers_from_db(imdb_id=show_imdb_id, tmdb_id=show_tmdb_id)
+                         # Handle UFC/Jackett case etc.
+                         logging.warning(f"Could not convert TMDB ID {tmdb_id} to IMDb ID.")
+                         # Store item by TMDB ID if conversion fails
+                         items_by_tmdb_id_only[tmdb_id].append(original_item_copy)
+                         continue # Skip adding to IMDb based processing
+                else: # For episodes, associate with potential show IMDb if available later
+                    logging.debug(f"Episode item {item.get('title')} - deferring IMDb association")
+                    # Keep track of items that might need show's IMDb ID
+                    # For now, rely on the loop logic to handle this.
+                    pass # Let it fall through to IMDb check
+            except Exception as e:
+                logging.error(f"Error during TMDB to IMDb conversion for TMDB ID {tmdb_id}: {e}")
+                items_by_tmdb_id_only[tmdb_id].append(original_item_copy)
+                continue # Skip adding to IMDb based processing
 
-                                all_metadata_episodes_found_in_db = True
-                                total_metadata_episodes = 0
-                                # Iterate through metadata to check if all episodes exist in DB set
-                                for season_num_str, season_data in seasons_metadata.items():
-                                    if not isinstance(season_data, dict) or 'episodes' not in season_data or not isinstance(season_data['episodes'], dict): continue
-                                    try: season_num_int = int(season_num_str)
-                                    except ValueError: continue
-
-                                    for episode_num_str in season_data['episodes'].keys():
-                                        total_metadata_episodes += 1
-                                        try: episode_num_int = int(episode_num_str)
-                                        except ValueError: continue
-
-                                        if (season_num_int, episode_num_int) not in existing_episodes_in_db:
-                                            all_metadata_episodes_found_in_db = False
-                                            break
-                                    if not all_metadata_episodes_found_in_db: break
-                                
-                                logging.debug(f"Checked {total_metadata_episodes} episodes from metadata. All found in DB: {all_metadata_episodes_found_in_db}")
-
-                                # 4. If show is ended AND all episodes found, skip
-                                if all_metadata_episodes_found_in_db and total_metadata_episodes > 0:
-                                    logging.info(f"Skipping ended show '{metadata.get('title')}' (IMDb: {show_imdb_id}) as all {total_metadata_episodes} known episodes are already present in the database.")
-                                    continue # Skip to the next item in the main loop
-                                elif not all_metadata_episodes_found_in_db:
-                                     logging.info(f"Show '{metadata.get('title')}' is ended, but not all episodes are present in DB. Proceeding.")
-                                # else: total_metadata_episodes == 0 or other edge cases - proceed
-
-                            except Exception as check_error:
-                                logging.error(f"Error during episode presence check for ended show {show_imdb_id}: {check_error}. Proceeding.", exc_info=True)
-                        elif not seasons_metadata or not isinstance(seasons_metadata, dict):
-                            logging.warning(f"Cannot perform episode presence check for ended show {show_imdb_id}: Invalid or missing 'seasons' data. Proceeding.")
-                        elif not show_imdb_id and not show_tmdb_id:
-                             logging.warning(f"Cannot perform episode presence check for ended show {metadata.get('title')}: No IMDb or TMDB ID. Proceeding.")
-                             
-                    # If status is not 'ended' or unknown, proceed directly to processing
-                    elif show_status: # If status is known but not 'ended'
-                         logging.info(f"Show '{metadata.get('title')}' (IMDb: {show_imdb_id}) status is '{show_status}' (not 'ended'). Proceeding with processing.")
-                    else: # If status check failed or returned empty
-                         logging.warning(f"Could not determine Trakt status for show '{metadata.get('title')}' (IMDb: {show_imdb_id}). Proceeding with processing.")
-                
-                # If IMDb ID was not available for status check, proceed directly to processing
-                elif not show_imdb_id:
-                    logging.info(f"No IMDb ID for show '{metadata.get('title')}' (TMDB: {show_tmdb_id}). Cannot check 'ended' status for skipping. Proceeding with processing.")
+        # Add ID to appropriate set for bulk fetching if resolved
+        if imdb_id:
+            items_by_imdb_id[imdb_id].append(original_item_copy) # Store original item(s)
+            if media_type == 'movie':
+                movie_imdb_ids_to_fetch.add(imdb_id)
+            elif media_type in ['tv', 'show', 'episode']:
+                show_imdb_ids_to_fetch.add(imdb_id)
+        elif tmdb_id and not resolved_imdb:
+             # Store items that started with TMDB but didn't convert
+             items_by_tmdb_id_only[tmdb_id].append(original_item_copy)
+        else:
+            logging.warning(f"Skipping item from processing due to missing IMDb/TMDB ID: {original_item_copy}")
 
 
-            # --- Original Processing Logic (if not skipped) ---
-            logging.debug(f"Proceeding with processing for {item_media_type_lower} {metadata.get('title')}")
-            if item_media_type_lower == 'movie':
-                # Movie processing logic remains the same
-                physical_release_date = get_physical_release_date(show_imdb_id) # Use ID from metadata
-                if physical_release_date:
-                    metadata['physical_release_date'] = physical_release_date
-                processed_items['movies'].append(metadata)
-                logging.debug(f"Added movie with content_source_detail={metadata.get('content_source_detail')}")
-            
-            elif item_media_type_lower in ['tv', 'show']:
-                # TV Show processing logic using the already fetched metadata
-                is_anime = 'anime' in [genre.lower() for genre in metadata.get('genres', [])]
-                
-                # Overseerr check remains the same
-                conn = get_db_connection()
-                try:
-                    cursor = conn.execute('''
-                        SELECT COUNT(*) as count FROM media_items
-                        WHERE (imdb_id = ? OR tmdb_id = ?)
-                        AND type = 'episode'
-                        AND requested_season = TRUE
-                    ''', (show_imdb_id, show_tmdb_id)) # Use IDs from metadata
-                    result = cursor.fetchone()
-                    has_requested_episodes = result['count'] > 0 if result else False
-                finally:
-                    conn.close()
+    # --- Step 2: Bulk Fetch Metadata ---
+    bulk_movie_metadata = {}
+    bulk_show_metadata = {}
+    missing_movie_imdb_ids = set()
+    missing_show_imdb_ids = set()
 
-                if has_requested_episodes and not item.get('requested_seasons'):
-                    logging.info(f"Skipping show {metadata.get('title', 'Unknown')} as it is managed by Overseerr and this request didn't specify seasons.")
-                    continue
+    if movie_imdb_ids_to_fetch:
+        logging.info(f"Bulk fetching metadata for {len(movie_imdb_ids_to_fetch)} movie IMDb IDs...")
+        try:
+            if not trakt_metadata_instance._check_rate_limit():
+                logging.warning("Trakt rate limit potentially hit before bulk movie fetch.")
+                # time.sleep(300) # Optional wait
 
-                seasons = metadata.get('seasons') # Use already fetched seasons data
-                # Handle potential 'None' string or non-dict type
-                if seasons == 'None' or not isinstance(seasons, dict):
-                    logging.error(f"Invalid seasons data found for show {show_imdb_id or show_tmdb_id} even after initial checks.")
-                    # Attempt refetch logic
-                    if DatabaseManager.remove_metadata(show_imdb_id or str(show_tmdb_id)):
-                        logging.info(f"Retrying metadata fetch for show {show_imdb_id or show_tmdb_id}")
-                        refetch_id = show_imdb_id or show_tmdb_id
-                        if refetch_id:
-                            new_metadata, _ = DirectAPI.get_show_metadata(str(refetch_id))
-                            if new_metadata and isinstance(new_metadata, dict):
-                                seasons = new_metadata.get('seasons')
-                                if not seasons or not isinstance(seasons, dict):
-                                     logging.error("Refetch failed to yield valid seasons data.")
-                                     continue # Skip item if refetch failed
-                            else:
-                                logging.error("Refetch failed to get valid metadata.")
-                                continue # Skip item if refetch failed
-                        else:
-                            logging.error("Cannot retry metadata fetch, no valid ID found")
-                            continue # Skip item if cannot refetch
-                    # If DatabaseManager.remove_metadata returned False, log and continue.
-                    else:
-                        logging.error("Failed to remove potentially bad metadata cache. Proceeding without valid seasons data may cause issues.")
-                        continue # Skip item if cannot remove bad cache
-
-                # Determine seasons to process (existing logic)
-                # This part now runs if the initial seasons data was valid, or if refetch was successful
-                requested_seasons = item.get('requested_seasons', [])
-                content_source_id = item.get('content_source_detail') # Use item's detail
-                allow_specials_for_source = False
-                if content_source_id:
-                    from queues.config_manager import load_config
-                    config = load_config()
-                    content_sources_config = config.get('Content Sources', {})
-                    source_settings = content_sources_config.get(content_source_id, {})
-                    if isinstance(source_settings, dict):
-                        # Correct indentation
-                        allow_specials_for_source = source_settings.get('allow_specials', False)
-                        logging.debug(f"'allow_specials' for source '{content_source_id}': {allow_specials_for_source}")
-                    else:
-                         logging.warning(f"Settings for source '{content_source_id}' are not a dictionary. Assuming allow_specials=False.")
-                else:
-                    logging.debug(f"No content_source_detail found for item {metadata.get('title')}, allow_specials defaults to False.")
-
-                if requested_seasons:
-                    logging.info(f"Processing specific requested seasons {requested_seasons} for show {metadata.get('title', 'Unknown')}")
-                    seasons_to_process = requested_seasons
-                else:
-                    logging.info(f"Processing seasons for show {metadata.get('title', 'Unknown')} from non-Overseerr source (allow_specials={allow_specials_for_source})")
-                    valid_season_keys = []
-                    for s_key in seasons.keys():
-                        try:
-                            s_num = int(s_key)
-                            if allow_specials_for_source or s_num != 0:
-                                valid_season_keys.append(s_num)
-                        except ValueError:
-                             logging.warning(f"Skipping non-integer season key '{s_key}' during season processing.")
-                    seasons_to_process = valid_season_keys
-
-                # Process the determined seasons (existing logic)
-                all_episodes = []
-                for season_number in seasons_to_process:
-                    season_data = seasons.get(str(season_number)) # Prefer string key first
-                    if season_data is None:
-                        season_data = seasons.get(season_number) # Try integer key
-
-                    if season_data is None or not isinstance(season_data, dict):
-                        logging.warning(f"Could not find or invalid season {season_number} data for show {show_imdb_id or show_tmdb_id}")
-                        continue
-
-                    episodes_in_season = season_data.get('episodes', {})
-                    if not episodes_in_season or not isinstance(episodes_in_season, dict):
-                        logging.warning(f"No valid episodes found for season {season_number}")
-                        continue
-                   
-                    logging.info(f"Processing {len(episodes_in_season)} episodes for season {season_number}")
-                    for episode_number_str, episode_data in episodes_in_season.items():
-                        try:
-                            episode_number = int(episode_number_str)
-                            episode_item = create_episode_item(
-                                metadata,
-                                season_number,
-                                episode_number,
-                                episode_data,
-                                is_anime
-                            )
-                            if requested_seasons:
-                                episode_item['requested_season'] = True
-                            all_episodes.append(episode_item)
-                        except ValueError:
-                             logging.error(f"Skipping episode with non-integer key '{episode_number_str}' in S{season_number} for show {show_imdb_id or show_tmdb_id}")
-                             continue
-                        except Exception as e:
-                            logging.error(f"Error processing episode S{season_number:02d}E{episode_number_str} of show {show_imdb_id or show_tmdb_id}: {str(e)}")
-                            continue
-
-                processed_items['episodes'].extend(all_episodes)
-                logging.info(f"Added {len(all_episodes)} episodes from {'requested seasons' if requested_seasons else 'source rules'} seasons")
-
-                # Overseerr webhook logic (existing)
-                if item.get('from_overseerr'):
-                    from utilities.settings import get_all_settings
-                    content_sources = get_all_settings().get('Content Sources', {})
-                    overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), None)
-                    if overseerr_settings and isinstance(overseerr_settings, dict):
-                        # Correct indentation
-                        versions = overseerr_settings.get('versions', {})
-                        # Add content source to episodes
-                        for episode in all_episodes:
-                            episode['content_source'] = 'overseerr_webhook'
-                            from content_checkers.content_source_detail import append_content_source_detail
-                            episode = append_content_source_detail(episode, source_type='Overseerr')
-                        add_wanted_items(all_episodes, versions)
-                    else:
-                         logging.warning("Could not find Overseerr settings or settings were invalid. Skipping add_wanted_items for Overseerr webhook.")
-
+            fetched_movies = direct_api.get_bulk_movie_metadata(list(movie_imdb_ids_to_fetch))
+            bulk_movie_metadata.update(fetched_movies) # Add fetched data
+            fetched_count = sum(1 for m in fetched_movies.values() if m)
+            logging.info(f"Successfully fetched metadata for {fetched_count} movies from battery.")
+            # Identify missing IDs
+            missing_movie_imdb_ids = {imdb_id for imdb_id in movie_imdb_ids_to_fetch if bulk_movie_metadata.get(imdb_id) is None}
+            if missing_movie_imdb_ids:
+                 logging.info(f"{len(missing_movie_imdb_ids)} movie IMDb IDs not found in battery bulk fetch.")
 
         except Exception as e:
-            # Use the most specific identifier available (existing logic)
-            show_id_for_error = (
-                item.get('imdb_id') or 
-                (metadata.get('imdb_id') if metadata else None) or
-                (f"TMDB:{item.get('tmdb_id')}" if item.get('tmdb_id') else None) or
-                 (f"TMDB:{metadata.get('tmdb_id')}" if metadata and metadata.get('tmdb_id') else 'Unknown')
-            )
-            logging.error(f"Error processing item for {show_id_for_error}: {str(e)}", exc_info=True)
+             logging.error(f"Error during bulk movie metadata fetch: {e}", exc_info=True)
+             missing_movie_imdb_ids = movie_imdb_ids_to_fetch # Mark all as missing on error
 
-    logging.info(f"Processed {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes after checks.")
+    if show_imdb_ids_to_fetch:
+        logging.info(f"Bulk fetching metadata for {len(show_imdb_ids_to_fetch)} show IMDb IDs...")
+        try:
+            if not trakt_metadata_instance._check_rate_limit():
+                logging.warning("Trakt rate limit potentially hit before bulk show fetch.")
+                # time.sleep(300) # Optional wait
+
+            fetched_shows = direct_api.get_bulk_show_metadata(list(show_imdb_ids_to_fetch))
+            bulk_show_metadata.update(fetched_shows) # Add fetched data
+            fetched_count = sum(1 for m in fetched_shows.values() if m)
+            logging.info(f"Successfully fetched metadata for {fetched_count} shows from battery.")
+             # Identify missing IDs
+            missing_show_imdb_ids = {imdb_id for imdb_id in show_imdb_ids_to_fetch if bulk_show_metadata.get(imdb_id) is None}
+            if missing_show_imdb_ids:
+                 logging.info(f"{len(missing_show_imdb_ids)} show IMDb IDs not found in battery bulk fetch.")
+
+        except Exception as e:
+             logging.error(f"Error during bulk show metadata fetch: {e}", exc_info=True)
+             missing_show_imdb_ids = show_imdb_ids_to_fetch # Mark all as missing on error
+
+    # --- Step 2.5: Individual Fetch for Missing Items ---
+    if missing_movie_imdb_ids or missing_show_imdb_ids:
+        logging.info(f"Attempting individual metadata fetch for {len(missing_movie_imdb_ids)} movies and {len(missing_show_imdb_ids)} shows missing from battery.")
+
+        # Consolidate missing IDs and their potential original items
+        ids_to_fetch_individually = {}
+        for imdb_id in missing_movie_imdb_ids:
+             if imdb_id in items_by_imdb_id:
+                 # Use the first item associated with this ID to determine type/tmdb_id
+                 ids_to_fetch_individually[imdb_id] = items_by_imdb_id[imdb_id][0]
+        for imdb_id in missing_show_imdb_ids:
+             if imdb_id in items_by_imdb_id:
+                 # Use the first item associated with this ID
+                 ids_to_fetch_individually[imdb_id] = items_by_imdb_id[imdb_id][0]
+
+        fetched_individually_count = 0
+        for imdb_id, representative_item in ids_to_fetch_individually.items():
+            try:
+                if not trakt_metadata_instance._check_rate_limit():
+                    logging.warning("Trakt rate limit reached during individual fetches. Waiting 5 minutes.")
+                    time.sleep(300)
+
+                logging.debug(f"Fetching individual metadata for missing IMDb: {imdb_id}")
+                # Call the original get_metadata which handles fetching and battery update
+                # Pass the representative item for context (like tmdb_id, media_type)
+                fetched_metadata = get_metadata(
+                    imdb_id=imdb_id,
+                    tmdb_id=representative_item.get('tmdb_id'),
+                    item_media_type=representative_item.get('media_type'),
+                    original_item=representative_item
+                )
+
+                if fetched_metadata:
+                    fetched_individually_count += 1
+                    # Add the fetched metadata back to the appropriate bulk dictionary
+                    media_type = representative_item.get('media_type', '').lower()
+                    if media_type == 'movie':
+                        bulk_movie_metadata[imdb_id] = fetched_metadata
+                    elif media_type in ['tv', 'show', 'episode']:
+                         bulk_show_metadata[imdb_id] = fetched_metadata
+                    logging.debug(f"Successfully fetched and added metadata for missing IMDb: {imdb_id}")
+                else:
+                     logging.warning(f"Individual fetch failed for missing IMDb: {imdb_id}")
+                     # Leave it as None in the bulk dictionaries
+
+            except Exception as e:
+                logging.error(f"Error during individual metadata fetch for {imdb_id}: {e}", exc_info=True)
+                # Leave it as None in the bulk dictionaries
+
+        logging.info(f"Finished individual fetch process. Successfully fetched metadata for {fetched_individually_count} items.")
+
+    # --- Step 3: Pre-fetch DB presence/state info in bulk ---
+    all_relevant_imdb_ids = list(movie_imdb_ids_to_fetch.union(show_imdb_ids_to_fetch))
+    db_item_states = {} # {imdb_id: {"movie_state": "...", "episode_identifiers": set(), "has_requested": bool}}
+    if all_relevant_imdb_ids:
+        logging.info(f"Bulk fetching database presence/state for {len(all_relevant_imdb_ids)} IMDb IDs...")
+        try:
+            db_item_states = get_media_item_ids(all_relevant_imdb_ids)
+            logging.info(f"Found DB info for {len(db_item_states)} IMDb IDs.")
+        except Exception as e:
+            logging.error(f"Error bulk fetching DB item states: {e}", exc_info=True)
+            # Proceed without DB states, skip logic will be affected
+
+
+    # --- Step 4: Process Items Using Fetched Data ---
+    logging.info("Processing items using fetched metadata and DB states...")
+    processed_count = 0
+    skipped_collected_movie = 0
+    skipped_ended_show = 0
+    processed_imdb_ids = set() # Track processed IDs to avoid duplication if multiple items had same ID
+
+    # Iterate through the original items_by_imdb_id structure
+    for imdb_id, original_items_list in items_by_imdb_id.items():
+        if imdb_id in processed_imdb_ids: continue # Already processed this ID via another item entry
+        processed_imdb_ids.add(imdb_id)
+
+        # Use the first item to determine type for fetching metadata
+        representative_item = original_items_list[0]
+        media_type = representative_item.get('media_type', '').lower()
+        metadata = None
+
+        # Retrieve metadata (potentially fetched individually now)
+        if media_type == 'movie' and imdb_id in bulk_movie_metadata:
+            metadata = bulk_movie_metadata[imdb_id]
+        elif media_type in ['tv', 'show', 'episode'] and imdb_id in bulk_show_metadata:
+            metadata = bulk_show_metadata[imdb_id]
+
+        # This warning should be less frequent now due to individual fetch attempt
+        if not metadata:
+            logging.warning(f"Could not retrieve metadata for IMDb ID: {imdb_id} even after individual attempt. Skipping {len(original_items_list)} related item(s).")
+            continue
+
+        # Use pre-fetched DB state
+        db_state_info = db_item_states.get(imdb_id, {})
+        movie_presence_state = db_state_info.get("movie_state")
+        existing_episodes_in_db = db_state_info.get("episode_identifiers", set())
+        has_requested_episodes_in_db = db_state_info.get("has_requested", False)
+
+        # --- Skip Logic (using pre-fetched data and fetched metadata) ---
+        should_skip = False
+        if media_type == 'movie':
+            if movie_presence_state == "Collected":
+                logging.info(f"Skipping collected movie: {metadata.get('title')} (IMDb: {imdb_id})")
+                skipped_collected_movie += len(original_items_list)
+                should_skip = True
+        elif media_type in ['tv', 'show', 'episode']:
+             # Check Trakt status *needs* IMDb ID, bulk fetch doesn't guarantee it if conversion failed
+            show_status = metadata.get('status', '').lower() # Get status from fetched metadata if available
+            if not show_status:
+                # Optionally try fetching status individually if missing and critical? Or rely on metadata.
+                logging.debug(f"Show status not found in bulk metadata for {imdb_id}. Ended check skipped.")
+
+            if show_status == 'ended':
+                logging.info(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) has status 'ended'. Checking episode presence.")
+                seasons_metadata = metadata.get('seasons')
+                if seasons_metadata and isinstance(seasons_metadata, dict):
+                    all_metadata_episodes_found_in_db = True
+                    total_metadata_episodes = 0
+                    for season_num_str, season_data in seasons_metadata.items():
+                        if not isinstance(season_data, dict) or 'episodes' not in season_data or not isinstance(season_data['episodes'], dict): continue
+                        try: season_num_int = int(season_num_str)
+                        except ValueError: continue
+                        for episode_num_str in season_data['episodes'].keys():
+                            total_metadata_episodes += 1
+                            try: episode_num_int = int(episode_num_str)
+                            except ValueError: continue
+                            if (season_num_int, episode_num_int) not in existing_episodes_in_db:
+                                all_metadata_episodes_found_in_db = False
+                                break
+                        if not all_metadata_episodes_found_in_db: break
+                    
+                    if all_metadata_episodes_found_in_db and total_metadata_episodes > 0:
+                        logging.info(f"Skipping ended show '{metadata.get('title')}' (IMDb: {imdb_id}) as all {total_metadata_episodes} known episodes are already present.")
+                        skipped_ended_show += len(original_items_list)
+                        should_skip = True
+                    else:
+                        logging.info(f"Ended show '{metadata.get('title')}' requires processing (missing episodes or none found in metadata).")
+                else:
+                    logging.warning(f"Cannot perform episode presence check for ended show {imdb_id}: Invalid or missing 'seasons' data in fetched metadata.")
+            elif show_status: # Status known but not 'ended'
+                 logging.info(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) status '{show_status}' (not ended). Proceeding.")
+            # else: status unknown, proceed
+
+        if should_skip:
+            continue # Skip to next IMDb ID
+
+        # --- Process each original item associated with this IMDb ID ---
+        for item in original_items_list:
+             # Make a copy of the potentially updated metadata for this specific item
+             item_metadata = metadata.copy()
+             processed_count += 1
+             item_media_type_lower = item.get('media_type', '').lower()
+
+             try:
+                 logging.debug(f"Processing item {processed_count}: Type={item_media_type_lower}, IMDb={imdb_id}, Detail={item.get('content_source_detail')}")
+
+                 # Re-integrate essential fields from original item into metadata copy
+                 item_metadata['content_source'] = item.get('content_source')
+                 item_metadata['content_source_detail'] = item.get('content_source_detail')
+                 item_metadata['imdb_id'] = imdb_id # Ensure correct ID
+                 item_metadata['tmdb_id'] = item.get('tmdb_id') or item_metadata.get('ids', {}).get('tmdb')
+
+                 if item_media_type_lower == 'movie':
+                     # Movie processing using the item_metadata
+                     physical_release_date = get_physical_release_date(imdb_id)
+                     if physical_release_date: item_metadata['physical_release_date'] = physical_release_date
+                     is_anime = 'anime' in [g.lower() for g in item_metadata.get('genres', [])]
+                     item_metadata['is_anime'] = is_anime
+                     item_metadata['release_date'] = get_release_date(item_metadata, imdb_id)
+
+                     processed_items['movies'].append(item_metadata)
+                     logging.debug(f"Added movie {item_metadata.get('title')}...")
+
+                 elif item_media_type_lower in ['tv', 'show', 'episode']:
+                     # TV Show/Episode processing using item_metadata
+                     is_anime = 'anime' in [g.lower() for g in item_metadata.get('genres', [])]
+                     item_metadata['is_anime'] = is_anime
+
+                     if has_requested_episodes_in_db and not item.get('requested_seasons'):
+                         logging.info(f"Skipping show {item_metadata.get('title', 'Unknown')} (Overseerr check)...")
+                         continue
+
+                     seasons = item_metadata.get('seasons')
+                     if seasons == 'None' or not isinstance(seasons, dict):
+                         logging.error(f"Invalid seasons data in final metadata for show {imdb_id}. Skipping.")
+                         continue
+
+                     requested_seasons = item.get('requested_seasons', [])
+                     content_source_id = item.get('content_source')
+                     allow_specials_for_source = False
+                     if content_source_id:
+                         from queues.config_manager import load_config
+                         config = load_config()
+                         content_sources_config = config.get('Content Sources', {})
+                         source_settings = content_sources_config.get(content_source_id, {})
+                         if isinstance(source_settings, dict):
+                             allow_specials_for_source = source_settings.get('allow_specials', False)
+
+                     seasons_to_process = []
+                     if requested_seasons:
+                         seasons_to_process = requested_seasons
+                     else:
+                         for s_key in seasons.keys():
+                             try:
+                                 s_num = int(s_key)
+                                 if allow_specials_for_source or s_num != 0:
+                                     seasons_to_process.append(s_num)
+                             except ValueError: continue
+
+                     all_episodes = []
+                     for season_number in seasons_to_process:
+                         season_data = seasons.get(str(season_number)) or seasons.get(season_number)
+                         if not season_data or not isinstance(season_data, dict): continue
+                         episodes_in_season = season_data.get('episodes', {})
+                         if not episodes_in_season or not isinstance(episodes_in_season, dict): continue
+                        
+                         for episode_number_str, episode_data in episodes_in_season.items():
+                             try:
+                                 episode_number = int(episode_number_str)
+                                 episode_item = create_episode_item(
+                                     item_metadata, # Pass the show metadata
+                                     season_number, episode_number, episode_data, is_anime
+                                 )
+                                 if requested_seasons: episode_item['requested_season'] = True
+                                 all_episodes.append(episode_item)
+                             except ValueError: continue
+                             except Exception as e: logging.error(f"Error creating episode S{season_number}E{episode_number_str} for {imdb_id}: {e}")
+
+                     processed_items['episodes'].extend(all_episodes)
+                     logging.info(f"Added {len(all_episodes)} episodes for item {item.get('content_source_detail')}...")
+
+                     # Overseerr webhook logic (remains the same)
+                     if item.get('from_overseerr'):
+                         # ... existing logic ...
+                         pass
+
+             except Exception as e:
+                 logging.error(f"Error processing item loop for IMDb {imdb_id} / Item {item}: {str(e)}", exc_info=True)
+
+
+    # --- Handle items with only TMDB ID (if any special processing needed) ---
+    if items_by_tmdb_id_only:
+         logging.warning(f"{len(items_by_tmdb_id_only)} items had only TMDB ID after conversion attempt. Needs specific handling if required (e.g., UFC/Jackett).")
+         # Add specific logic here to process items_by_tmdb_id_only if necessary
+         # For example, call a separate function or handle specific scrapers.
+
+    logging.info(f"Finished processing. Added {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes.")
+    logging.info(f"Skipped {skipped_collected_movie} collected movies and {skipped_ended_show} ended shows based on DB state.")
     return processed_items
 
 def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = None) -> str:

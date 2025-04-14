@@ -1,5 +1,5 @@
 from .metadata_manager import MetadataManager
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 from .logger_config import logger
 from .database import init_db, Session as DbSession
 
@@ -139,4 +139,22 @@ class DirectAPI:
         result = MetadataManager.get_bulk_show_airs_info(imdb_ids)
         found_count = sum(1 for airs in result.values() if airs is not None)
         logger.info(f"DirectAPI.get_bulk_show_airs returning airs info for {found_count} of {len(imdb_ids)} requested IDs.")
+        return result
+
+    @staticmethod
+    def get_bulk_movie_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Gets metadata for multiple movies from the battery."""
+        logger.info(f"DirectAPI.get_bulk_movie_metadata called for {len(imdb_ids)} movie IDs.")
+        result = MetadataManager.get_bulk_movie_metadata(imdb_ids)
+        found_count = sum(1 for data in result.values() if data is not None)
+        logger.info(f"DirectAPI.get_bulk_movie_metadata returning data for {found_count} of {len(imdb_ids)} requested IDs.")
+        return result
+
+    @staticmethod
+    def get_bulk_show_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Gets metadata for multiple shows from the battery."""
+        logger.info(f"DirectAPI.get_bulk_show_metadata called for {len(imdb_ids)} show IDs.")
+        result = MetadataManager.get_bulk_show_metadata(imdb_ids)
+        found_count = sum(1 for data in result.values() if data is not None)
+        logger.info(f"DirectAPI.get_bulk_show_metadata returning data for {found_count} of {len(imdb_ids)} requested IDs.")
         return result

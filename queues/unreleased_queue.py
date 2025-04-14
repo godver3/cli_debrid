@@ -37,6 +37,14 @@ class UnreleasedQueue:
 
         for item in self.items:
             item_identifier = queue_manager.generate_identifier(item)
+            # --- START EDIT: Check for Magnet Assigner ---
+            is_magnet_assigned = item.get('content_source') == 'Magnet_Assigner'
+            if is_magnet_assigned:
+                logging.info(f"Item {item_identifier} from Magnet Assigner found in Unreleased. Moving to Wanted immediately.")
+                items_to_move.append(item)
+                continue # Skip date checks for this item
+            # --- END EDIT ---
+
             release_date_str = item.get('release_date')
             version = item.get('version')
             airtime_str = item.get('airtime')

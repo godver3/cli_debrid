@@ -139,6 +139,15 @@
                        data-section="Debug" data-key="emby_jellyfin_token">
                 <p class="settings-description">Authentication token for Emby or Jellyfin</p>
             </div>
+
+            <!-- Ignore Wanted Queue Throttling -->
+            <div class="settings-form-group">
+                <label for="debug-ignore_wanted_queue_throttling" class="settings-title">Ignore Wanted Queue Throttling:</label>
+                <input type="checkbox" id="debug-ignore_wanted_queue_throttling" name="Debug.ignore_wanted_queue_throttling"
+                       data-section="Debug" data-key="ignore_wanted_queue_throttling"
+                       {% if settings.get('Debug', {}).get('ignore_wanted_queue_throttling') %}checked{% endif %}>
+                <p class="settings-description">Ignore Wanted Queue throttling limits. Allows Wanted queue to move all eligible items to Scraping regardless of Scraping queue size. USE WITH CAUTION.</p>
+            </div>
         </div>
     </div>
 </div>

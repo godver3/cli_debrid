@@ -18,6 +18,7 @@ import requests
 from content_checkers.trakt import get_trakt_headers, TRAKT_API_URL, REQUEST_TIMEOUT
 import json
 from fuzzywuzzy import fuzz
+from metadata.metadata import _get_local_timezone # Import the timezone helper
 
 magnet_bp = Blueprint('magnet', __name__)
 
@@ -882,6 +883,40 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
 
     extracted_title = episode_data.get('title', f'Episode {episode_number}')
     logging.debug(f"  Extracted title: '{extracted_title}'")
+
+    # --- BEGIN MODIFICATION: Parse release_date correctly ---
+    first_aired_str = episode_data.get('first_aired')
+    release_date = 'Unknown' # Default value
+
+    if first_aired_str:
+        try:
+            # Parse the UTC datetime string (expecting format like 2023-10-26T18:00:00.000Z)
+            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
+            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+
+            # Convert UTC to local timezone using the helper
+            local_tz = _get_local_timezone()
+            if local_tz:
+                 local_dt = first_aired_utc.astimezone(local_tz)
+                 # Format the local date
+                 release_date = local_dt.strftime("%Y-%m-%d")
+                 logging.info(f"  Calculated local release date {release_date} from UTC {first_aired_str}")
+            else:
+                 logging.warning(f"  Could not determine local timezone. Using UTC date {first_aired_utc.strftime('%Y-%m-%d')} for release_date.")
+                 release_date = first_aired_utc.strftime("%Y-%m-%d") # Fallback to UTC date part
+
+        except ValueError as e:
+            logging.error(f"  Invalid datetime format or conversion error for first_aired '{first_aired_str}': {e}. Setting release_date to 'Unknown'.")
+            release_date = 'Unknown'
+        except Exception as e:
+            logging.error(f"  Unexpected error parsing first_aired '{first_aired_str}': {e}. Setting release_date to 'Unknown'.")
+            release_date = 'Unknown'
+    else:
+        logging.warning("  No 'first_aired' date found in episode data. Setting release_date to 'Unknown'.")
+        release_date = 'Unknown'
+    # --- END MODIFICATION ---
+
+    logging.debug(f"  Final release_date: '{release_date}'")
     # --- END DETAILED LOGGING ---
     
     # Create base item data with only database fields
@@ -900,8 +935,10 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
         'season_number': season_number,
         'episode_number': episode_number,
         'episode_title': extracted_title, # Use the logged extracted title
-        'release_date': episode_data.get('first_aired', '1970-01-01'), 
+        'release_date': release_date, # Use the correctly formatted local date
         'content_source': 'Magnet_Assigner'
+        # NOTE: 'airtime' is not directly available here and usually calculated later or set to default.
+        # It's primarily used by Wanted/Unreleased queues. If needed here, logic similar to release_date parsing would be required.
     }
     
     # Add MediaMatcher fields as temporary attributes that won't be stored in DB
