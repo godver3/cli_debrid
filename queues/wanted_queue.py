@@ -142,37 +142,41 @@ class WantedQueue:
 
     def process(self, queue_manager):
         try:
-            # --- START EDIT: Add aggressive throttle check at the beginning ---
-            try:
-                scraping_queue = queue_manager.queues["Scraping"]
-                # Use the internal list length for efficiency if possible
-                current_scraping_queue_size = len(scraping_queue.items) if hasattr(scraping_queue, 'items') else len(scraping_queue.get_contents())
-            except KeyError:
-                logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
-                # If scraping queue is missing, we probably shouldn't proceed anyway.
-                return False 
-
-            if current_scraping_queue_size >= WANTED_THROTTLE_SCRAPING_SIZE:
-                logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is >= throttle limit ({WANTED_THROTTLE_SCRAPING_SIZE}). Skipping Wanted queue processing cycle entirely.")
-                return True # Return True indicating successful (but skipped) processing for this cycle
+            # --- START EDIT: Check for debug setting to ignore throttling ---
+            ignore_throttling = get_setting("Debug", "ignore_wanted_queue_throttling", False)
+            if ignore_throttling:
+                logging.warning("DEBUG SETTING ENABLED: Ignoring Wanted Queue throttling limits.")
             # --- END EDIT ---
 
-            # logging.debug("Processing wanted queue")
+            current_scraping_queue_size = 0 # Default if check skipped or fails
+            can_add_to_scraping = True # Default to true if ignoring throttling
+            allowed_to_add_count = float('inf') # Default to infinity if ignoring throttling
+
+            # --- START EDIT: Conditionally check throttling ---
+            if not ignore_throttling:
+                # --- START Original Throttle Logic ---
+                try:
+                    scraping_queue = queue_manager.queues["Scraping"]
+                    current_scraping_queue_size = len(scraping_queue.items) if hasattr(scraping_queue, 'items') else len(scraping_queue.get_contents())
+                except KeyError:
+                    logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
+                    return False
+
+                if current_scraping_queue_size >= WANTED_THROTTLE_SCRAPING_SIZE:
+                    logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is >= throttle limit ({WANTED_THROTTLE_SCRAPING_SIZE}). Skipping Wanted queue processing cycle entirely.")
+                    return True # Return True indicating successful (but skipped) processing for this cycle
+
+                # Calculate allowed count based on the 500 limit
+                allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
+                can_add_to_scraping = allowed_to_add_count > 0
+                # --- END Original Throttle Logic ---
+            # --- END EDIT ---
+
             current_datetime = datetime.now()
             items_to_move_scraping = []
             items_to_move_unreleased = []
-            
-            # Get current scraping queue size (needed for the 500 limit check during moves)
-            # This re-fetch is slightly redundant but harmless and keeps the move logic contained
-            allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
-            # We know we can add *some* because the check above passed (size < 100),
-            # but we still need allowed_to_add_count to respect the 500 hard limit.
-            can_add_to_scraping = allowed_to_add_count > 0
 
-            # This log is less relevant now but kept for context during item processing
-            # if not can_add_to_scraping:
-            #      logging.debug(f"Scraping queue size ({current_scraping_queue_size}) is at or above the limit ({SCRAPING_QUEUE_MAX_SIZE}). Throttling additions from Wanted queue.")
-
+            # The loop logic now respects `allowed_to_add_count` which is infinity if ignore_throttling is True
             for item in self.items:
                 try:
                     # First check if this item already exists in Collected/Upgrading state
@@ -183,29 +187,41 @@ class WantedQueue:
                     release_date_str = item.get('release_date')
                     airtime_str = item.get('airtime')
                     version = item.get('version')
+                    # --- START EDIT: Add content source check ---
+                    is_magnet_assigned = item.get('content_source') == 'Magnet_Assigner'
+                    # --- END EDIT ---
 
                     # Check if version requires physical release
                     scraping_versions = get_setting('Scraping', 'versions', {})
                     version_settings = scraping_versions.get(version, {})
                     require_physical = version_settings.get('require_physical_release', False)
                     physical_release_date = item.get('physical_release_date')
-                    
-                    if require_physical and not physical_release_date:
+
+                    # --- START EDIT: Add content source check before moving to Unreleased ---
+                    if not is_magnet_assigned and require_physical and not physical_release_date:
+                    # --- END EDIT ---
                         logging.info(f"Item {item_identifier} requires physical release date but none available. Moving to Unreleased queue.")
                         items_to_move_unreleased.append(item)
                         continue
 
                     # Handle early release items without release date
                     if item.get('early_release', False):
-                        # Check throttle before adding early release items
+                        # Check if we can add (respects ignore_throttling via can_add_to_scraping/allowed_to_add_count)
                         if can_add_to_scraping and len(items_to_move_scraping) < allowed_to_add_count:
-                            logging.info(f"Early release item {item_identifier} - moving to Scraping queue (within throttle limits)")
+                            logging.info(f"Early release item {item_identifier} - moving to Scraping queue")
                             items_to_move_scraping.append(item)
+                            # Check if limit reached (only relevant if not ignoring throttle)
+                            if not ignore_throttling and len(items_to_move_scraping) == allowed_to_add_count:
+                                logging.debug("Reached scraping queue add limit for this cycle. Breaking loop.")
+                                break
                         else:
+                             # This log might appear if ignore_throttling=False and queue is full
                              logging.debug(f"Skipping early release item {item_identifier} due to scraping queue throttle.")
                         continue # Process next item regardless
 
-                    if not release_date_str or release_date_str is None or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown'):
+                    # --- START EDIT: Add content source check before moving to Unreleased ---
+                    if not is_magnet_assigned and (not release_date_str or release_date_str is None or (isinstance(release_date_str, str) and release_date_str.lower() == 'unknown')):
+                    # --- END EDIT ---
                         logging.debug(f"Item {item_identifier} has no scrape time. Moving to Unreleased queue.")
                         items_to_move_unreleased.append(item)
                         continue  # Skip further processing for this item
@@ -218,11 +234,27 @@ class WantedQueue:
                                 logging.info(f"Item {item_identifier} using physical release date: {release_date}")
                             except ValueError:
                                 logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
-                                items_to_move_unreleased.append(item)
+                                # --- START EDIT: Add content source check before moving to Unreleased ---
+                                if not is_magnet_assigned:
+                                # --- END EDIT ---
+                                     items_to_move_unreleased.append(item)
                                 continue
                         else:
-                            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
-                        
+                            # --- START EDIT: Handle potential error only if not Magnet Assigner ---
+                            try:
+                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                            except ValueError:
+                                if not is_magnet_assigned:
+                                     logging.warning(f"Invalid release date format for item {item_identifier}: {release_date_str}. Moving to Unreleased.")
+                                     items_to_move_unreleased.append(item)
+                                else:
+                                     # If it's magnet assigned, treat as ready despite bad date
+                                     logging.warning(f"Invalid release date format for Magnet Assigned item {item_identifier}: {release_date_str}. Treating as ready.")
+                                     release_date = current_datetime.date() # Set to today to allow processing
+                                continue # Skip further date checks if original date was bad
+
+                            # --- END EDIT ---
+
                         # Handle case where airtime is None or invalid
                         if airtime_str:
                             try:
@@ -251,44 +283,56 @@ class WantedQueue:
                             else:
                                 episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", 0)
                             offset = float(episode_airtime_offset) if episode_airtime_offset else 0.0
-                        
+
                         release_datetime += timedelta(hours=offset)
 
-                        time_until_release = release_datetime - current_datetime
-                        item_is_ready = time_until_release <= timedelta()
+                        # --- START EDIT: Add content source check ---
+                        # Consider ready if magnet assigned OR time is past
+                        item_is_ready = is_magnet_assigned or (release_datetime <= current_datetime)
+                        time_until_release = release_datetime - current_datetime # Calculate for logging/check below
+                        # --- END EDIT ---
 
                         # Determine if item should move to scraping based on release criteria
                         should_move_to_scraping = False
-                        if require_physical:
-                            if item_is_ready: # Physical date already parsed above and used for release_datetime
-                                should_move_to_scraping = True
-                            elif time_until_release > timedelta(hours=24):
-                                logging.debug(f"Item {item_identifier} is more than 24 hours away from physical release. Moving to Unreleased queue.")
-                                items_to_move_unreleased.append(item)
-                                continue # Skip scraping check for this item
-                        elif item.get('early_release', False): # Already handled above, but keep logic path clear
-                             # This path shouldn't be reached due to 'continue' above, but included for robustness
-                             pass
-                        elif item_is_ready: # Normal release timing check
+                        if item_is_ready: # If magnet assigned OR time is past
                             should_move_to_scraping = True
-                        elif time_until_release > timedelta(hours=24):
-                             logging.debug(f"Item {item_identifier} is more than 24 hours away. Moving to Unreleased queue.")
-                             items_to_move_unreleased.append(item)
-                             continue # Skip scraping check for this item
+                        # --- START EDIT: Add content source check before moving to Unreleased ---
+                        elif not is_magnet_assigned and time_until_release > timedelta(hours=24):
+                        # --- END EDIT ---
+                            release_type_log = "physical release" if require_physical and physical_release_date else "release"
+                            logging.debug(f"Item {item_identifier} is more than 24 hours away from {release_type_log}. Moving to Unreleased queue.")
+                            items_to_move_unreleased.append(item)
+                            continue # Skip scraping check for this item
 
-                        # Apply throttle check (respecting the 500 limit for actual moves)
+                        # Apply throttle check (respects ignore_throttling via can_add_to_scraping/allowed_to_add_count)
                         if should_move_to_scraping:
                             if can_add_to_scraping and len(items_to_move_scraping) < allowed_to_add_count:
-                                logging.debug(f"Item {item_identifier} met release requirement. Adding to list for Scraping queue (within 500 limit).")
+                                # --- START EDIT: Log reason for moving ---
+                                reason = "Magnet Assigned" if is_magnet_assigned else "Release time met"
+                                logging.debug(f"Item {item_identifier} ready ({reason}). Adding to list for Scraping queue.")
+                                # --- END EDIT ---
                                 items_to_move_scraping.append(item)
+                                # Check if limit reached (only relevant if not ignoring throttle)
+                                if not ignore_throttling and len(items_to_move_scraping) == allowed_to_add_count:
+                                    logging.debug("Reached scraping queue add limit for this cycle. Breaking loop.")
+                                    break
                             else:
-                                # Item is ready but queue is full (hit 500 limit during this cycle), leave it in Wanted for next cycle
-                                logging.debug(f"Item {item_identifier} is ready but scraping queue hit 500 limit during this cycle. Keeping in Wanted.")
+                                # This log might appear if ignore_throttling=False and queue is full
+                                logging.debug(f"Item {item_identifier} is ready but scraping queue hit limit during this cycle. Keeping in Wanted.")
+                        # Check if limit reached even if current item didn't move (only relevant if not ignoring throttle)
+                        elif not ignore_throttling and len(items_to_move_scraping) == allowed_to_add_count:
+                             logging.debug("Reached scraping queue add limit for this cycle. Breaking loop.")
+                             break
 
                     except ValueError as e:
-                        logging.error(f"Error processing item {item_identifier}: {str(e)}")
-                        # Add to unreleased if there's an error parsing dates
-                        items_to_move_unreleased.append(item)
+                         # --- START EDIT: Add content source check before moving to Unreleased ---
+                        if not is_magnet_assigned:
+                             logging.error(f"Error processing item {item_identifier}: {str(e)}. Moving to Unreleased.")
+                             items_to_move_unreleased.append(item)
+                        else:
+                             logging.error(f"Error processing Magnet Assigned item {item_identifier}: {str(e)}. Treating as ready.")
+                             # Don't move to Unreleased, let it proceed to scraping
+                        # --- END EDIT ---
                 except Exception as e:
                     logging.error(f"Unexpected error processing item {item.get('id', 'Unknown')}: {str(e)}", exc_info=True)
                     # Skip this item and continue with others

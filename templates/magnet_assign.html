@@ -93,28 +93,47 @@ document.addEventListener('DOMContentLoaded', function() {
         // Handle selection type changes
         selectionType.addEventListener('change', function() {
             updateSelectionFields(this.value);
+            // Ensure selectionTypeInput is always updated
             selectionTypeInput.value = this.value;
         });
 
         // Initialize selection type fields based on default value
         const initialSelectionType = selectionType.value;
         updateSelectionFields(initialSelectionType);
+        // Ensure selectionTypeInput is updated on initial load
         selectionTypeInput.value = initialSelectionType;
 
         // Handle season selection for single episodes
         seasonSelect.addEventListener('change', function() {
-            const seasonData = this.seasonData?.[this.value];
+            const selectedSeason = this.value; // Get value directly
+            const seasonData = this.seasonData?.[selectedSeason];
             if (seasonData) {
                 populateEpisodes(seasonData);
-                seasonInput.value = this.value;
+                seasonInput.value = selectedSeason; // Set hidden input *immediately*
+                // Reset episode selection when season changes
+                episodeSelect.value = '';
+                episodeInput.value = ''; // Clear hidden episode input
+                hideMagnetFields(); // Hide fields until episode is selected
+            } else {
+                // Handle case where season data might be missing (error?)
+                 episodeSelect.innerHTML = '';
+                 episodeSelect.disabled = true;
+                 seasonInput.value = ''; // Clear hidden input
+                 episodeInput.value = ''; // Clear hidden input
+                 hideMagnetFields();
             }
         });
 
         // Handle episode selection
         episodeSelect.addEventListener('change', function() {
-            episodeInput.value = this.value;
-            // Show magnet input fields when episode is selected
-            showMagnetFields();
+            const selectedEpisode = this.value; // Get value directly
+            episodeInput.value = selectedEpisode; // Set hidden input *immediately*
+            // Show magnet input fields only if a valid episode is selected
+            if (selectedEpisode) {
+                 showMagnetFields();
+            } else {
+                 hideMagnetFields();
+            }
         });
 
         // Handle multi-season selection
@@ -129,6 +148,16 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         function updateSelectionFields(type) {
+            // Clear season/episode hidden inputs when type changes away from 'episode'
+            if (type !== 'episode') {
+                seasonInput.value = '';
+                episodeInput.value = '';
+            }
+            // Clear multi-season hidden input when type changes away from 'seasons'
+            if (type !== 'seasons') {
+                selectedSeasonsInput.value = '';
+            }
+
             switch(type) {
                 case 'all':
                     seasonSelection.style.display = 'none';
@@ -138,36 +167,63 @@ document.addEventListener('DOMContentLoaded', function() {
                 case 'seasons':
                     seasonSelection.style.display = 'block';
                     episodeSelection.style.display = 'none';
-                    hideMagnetFields();
+                    // Hide fields initially for seasons, show when selection made
+                    const selectedSeasons = Array.from(seasonsSelect.selectedOptions).map(opt => opt.value);
+                    if (selectedSeasons.length > 0) {
+                         selectedSeasonsInput.value = selectedSeasons.join(','); // Ensure hidden input syncs if already selected
+                         showMagnetFields();
+                    } else {
+                         selectedSeasonsInput.value = ''; // Ensure it's cleared if no selection
+                         hideMagnetFields();
+                    }
                     break;
                 case 'episode':
                     seasonSelection.style.display = 'none';
                     episodeSelection.style.display = 'block';
-                    hideMagnetFields();
-                    
-                    // If we have season data and no episode is selected yet, populate episodes for the first season
+                    hideMagnetFields(); // Hide fields initially
+
+                    // Attempt to auto-select and populate
                     if (seasonSelect.seasonData && !episodeSelect.value) {
                         // Select the first season if none selected
                         if (!seasonSelect.value && seasonSelect.options.length > 0) {
                             seasonSelect.value = seasonSelect.options[0].value;
+                            // --- EDIT: Set hidden input during auto-select ---
                             seasonInput.value = seasonSelect.value;
+                            // --- END EDIT ---
                         }
-                        
+
                         // Populate episodes for the selected season
                         const seasonData = seasonSelect.seasonData[seasonSelect.value];
                         if (seasonData) {
                             populateEpisodes(seasonData);
-                            
+
                             // Select the first episode if none selected
                             if (!episodeSelect.value && episodeSelect.options.length > 0) {
                                 episodeSelect.value = episodeSelect.options[0].value;
+                                // --- EDIT: Set hidden input during auto-select ---
                                 episodeInput.value = episodeSelect.value;
-                                showMagnetFields();
+                                // --- END EDIT ---
                             }
                         }
                     }
+
+                    // --- Show fields ONLY if both season AND episode have values ---
+                    // Sync hidden inputs one last time based on current dropdown values
+                    // This handles the case where dropdowns might already have values '1' selected
+                    // when the switch to 'episode' happens.
+                    seasonInput.value = seasonSelect.value || ''; // Use empty string if no value
+                    episodeInput.value = episodeSelect.value || ''; // Use empty string if no value
+
+                    if (seasonInput.value && episodeInput.value) {
+                         showMagnetFields();
+                    } else {
+                         hideMagnetFields(); // Keep hidden if either is missing
+                    }
+                    // --- End logic ---
                     break;
             }
+            // Update the hidden input for selection type *after* the switch logic
+            selectionTypeInput.value = type;
         }
 
         function populateEpisodes(episodeCount) {
@@ -461,3 +517,4 @@ document.addEventListener('DOMContentLoaded', function() {
     {% endif %}
 </div>
 {% endblock %}
+

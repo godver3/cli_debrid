@@ -14,7 +14,7 @@ from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
 import traceback
-from datetime import datetime, timedelta, time as dt_time # Modified import
+from datetime import datetime, timedelta, time as dt_time, timezone # Modified import
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
 from routes.notifications import send_notifications
@@ -54,6 +54,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError # Keep this if needed elsew
 from database.core import get_db_connection # Add DB connection import
 from utilities.local_library_scan import check_local_file_for_item # Add local scan import
 from utilities.rclone_processing import handle_rclone_file # Add this import
+from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -140,6 +141,7 @@ class ProgramRunner:
             'task_update_statistics_summary': 300,  # Run every 5 minutes
             'task_precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
             'task_process_pending_rclone_paths': 10, # Add new task: check pending rclone paths every 10 seconds (was 60)
+            'task_update_tv_show_status': 172800, # NEW: 48 hours (48 * 60 * 60)
         }
         # Store original intervals for reference
         self.original_task_intervals = self.task_intervals.copy()
@@ -180,8 +182,8 @@ class ProgramRunner:
             'task_refresh_plex_tokens',
             'task_check_database_health',
             'task_update_statistics_summary',
-            'task_precompute_airing_shows'
-            #'task_process_pending_rclone_paths' # Enable the new task
+            'task_precompute_airing_shows',
+            'task_update_tv_show_status', # NEW: Enable the task by default
         }
 
         # *** START EDIT ***
@@ -1041,7 +1043,8 @@ class ProgramRunner:
             'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
-            'task_precompute_airing_shows', 'task_process_pending_rclone_paths'
+            'task_precompute_airing_shows', 'task_process_pending_rclone_paths',
+            'task_update_tv_show_status'
         }
         # Also add content sources with intervals > 15 minutes (900 seconds)
         for task, interval in self.original_task_intervals.items():
@@ -1509,15 +1512,6 @@ class ProgramRunner:
                     file_found_on_disk = True
                     actual_file_path = file_path_no_ext
                 else:
-                    # Try to find the file anywhere under plex_file_location
-                    # from utilities.local_library_scan import find_file # REMOVED IMPORT
-                    # found_path = find_file(filled_by_file, plex_file_location) # REMOVED CALL
-                    # if found_path:
-                    #     logging.info(f"Found file in alternate location: {found_path}")
-                    #     file_found_on_disk = True
-                    #     actual_file_path = found_path
-                    #     self.file_location_cache[cache_key] = 'exists' # Cache if found via find_file
-                    # else:
                     not_found_items += 1
                     logging.debug(f"File not found on disk in primary locations:\n  {file_path}\n  {file_path_no_ext}")
                     continue
@@ -2210,7 +2204,6 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error precomputing airing shows: {e}")
 
-
     # Method to add path received from webhook
     def add_pending_rclone_path(self, path: str):
         """Adds a path received from the rclone webhook to the pending queue."""
@@ -2329,30 +2322,6 @@ class ProgramRunner:
             else:
                  # Log why it's being kept (using message from processing_result)
                 logging.info(f"Processing failed or incomplete for '{relative_file_path}' (Reason: {processing_result.get('message', 'Unknown')}). Leaving it in queue for retry.")
-        # --- END EDIT ---
-
-    # --- EDIT: Add the remove_specific_pending_rclone_path method if it wasn't added before ---
-    def remove_specific_pending_rclone_path(self, relative_path_to_remove: str):
-        """
-        Removes a specific path from the pending_rclone_paths deque.
-        Intended to be used as a callback.
-        """
-        removed = False
-        try:
-            # Convert deque to list for safe iteration and removal
-            current_paths = list(self.pending_rclone_paths)
-            if relative_path_to_remove in current_paths:
-                 current_paths.remove(relative_path_to_remove)
-                 # Recreate the deque
-                 self.pending_rclone_paths = deque(current_paths)
-                 removed = True
-                 logging.info(f"Removed path '{relative_path_to_remove}' from pending rclone queue via callback.")
-            else:
-                 logging.warning(f"Attempted to remove path '{relative_path_to_remove}' via callback, but it was not found in the queue.")
-        except Exception as e:
-            logging.error(f"Error removing specific path '{relative_path_to_remove}' from rclone queue: {e}", exc_info=True)
-        return removed
-    # --- END EDIT ---
 
     # --- START EDIT: New method for dynamic adjustment ---
     def apply_dynamic_interval_adjustment(self, task_name: str, duration: float):
@@ -2401,6 +2370,259 @@ class ProgramRunner:
             self.task_intervals[task_name] = original_interval
             logging.info(f"Task '{task_name}' took {duration:.2f}s (<= {threshold:.2f}s threshold). Resetting interval to default {original_interval}s.")
     # --- END EDIT ---
+
+    # --- START: New Task Implementation ---
+    def task_update_tv_show_status(self):
+        """
+        Periodically updates the status for TV shows in the tv_shows table
+        based on external metadata, and calculates per-version presence status
+        in the tv_show_version_status table based on local collection state.
+        """
+        logging.info("[TASK] Running TV show status update...")
+        start_time = time.time()
+        conn = None
+        updated_count = 0
+        # inserted_count = 0 # Removed as combined count is simpler
+        failed_count = 0
+        processed_shows = set() # Track shows processed in this run
+        shows_with_versions_updated = set() # Track shows where versions were processed
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            # Get distinct show IMDB IDs from media_items (episodes only needed now)
+            cursor.execute("""
+                SELECT DISTINCT imdb_id
+                FROM media_items
+                WHERE type = 'episode' AND imdb_id IS NOT NULL AND imdb_id != '' AND season_number > 0
+            """)
+            show_imdb_ids = [row['imdb_id'] for row in cursor.fetchall()]
+
+            if not show_imdb_ids:
+                logging.info("[TV Status] No TV show IMDB IDs found in media_items (episodes) to update.")
+                return
+
+            logging.info(f"[TV Status] Found {len(show_imdb_ids)} unique show IMDB IDs with episodes to check.")
+            api = DirectAPI()
+
+            for imdb_id in show_imdb_ids:
+                if imdb_id in processed_shows:
+                    continue
+
+                logging.debug(f"[TV Status] Processing show: {imdb_id}")
+                show_metadata = None
+                source = "Unknown"
+                show_status = 'unknown' # Default status
+                total_episodes_from_source = 0
+                is_show_ended = False
+                tmdb_id = None
+                title = None
+                year = None
+
+                try:
+                    # Fetch metadata using DirectAPI
+                    show_metadata, source = api.get_show_metadata(imdb_id)
+
+                    if not show_metadata:
+                        logging.warning(f"[TV Status] No metadata found for show {imdb_id} from source '{source}'. Will proceed with version check using existing DB status if available.")
+                        # Try to get existing status from DB to determine if ended
+                        cursor.execute("SELECT status, total_episodes FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
+                        existing_show = cursor.fetchone()
+                        if existing_show:
+                            show_status = existing_show['status'].lower() if existing_show['status'] else 'unknown'
+                            total_episodes_from_source = existing_show['total_episodes'] or 0
+                        else:
+                             # No metadata and no existing record, cannot determine version completeness accurately
+                             logging.warning(f"[TV Status] No existing record for {imdb_id} either. Skipping version status calculation.")
+                             failed_count += 1
+                             processed_shows.add(imdb_id)
+                             continue # Skip to next show
+                    else:
+                        # Process metadata if found
+                        show_status = show_metadata.get('status', 'unknown').lower()
+                    tmdb_id = show_metadata.get('ids', {}).get('tmdb')
+                    title = show_metadata.get('title')
+                    year = show_metadata.get('year')
+
+                    # Calculate total episodes from source metadata
+                    if 'seasons' in show_metadata:
+                        for season_num, season_data in show_metadata.get('seasons', {}).items():
+                            if int(season_num) == 0: continue # Skip specials
+                            total_episodes_from_source += len(season_data.get('episodes', {}))
+                    else:
+                            logging.warning(f"[TV Status] Metadata for {imdb_id} ('{title}') lacks 'seasons' key. Total episode count may be inaccurate.")
+                            # Fallback to DB value if exists? Or treat as 0? Let's fetch existing.
+                            cursor.execute("SELECT total_episodes FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
+                            existing_show = cursor.fetchone()
+                            total_episodes_from_source = existing_show['total_episodes'] or 0
+                            if total_episodes_from_source == 0:
+                                logging.warning(f"[TV Status] No episode count from metadata or DB for {imdb_id}. Skipping version status calculation.")
+                                # We can still update show status, but version logic is impossible
+                                # Let the main show update proceed, but skip version logic later
+
+
+                    # Determine overall show ended status based *only* on metadata status
+                    # Treat 'canceled' the same as 'ended' for completion purposes
+                    is_show_ended = bool(show_status in ('ended', 'canceled'))
+
+                    logging.debug(f"[TV Status] Show: {imdb_id} ('{title}') - Status: {show_status}, Source Episodes: {total_episodes_from_source}, IsEnded/Canceled: {is_show_ended}")
+
+                    # Prepare data for tv_shows DB update/insert
+                    now_utc = datetime.now(timezone.utc)
+                    now_str = now_utc.strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Upsert into tv_shows. 'is_complete' only reflects if the show's status is 'ended'.
+                    # total_episodes is updated from source metadata.
+                    # Ensure COALESCE is used for fields that might not be present in new metadata fetch
+                    cursor.execute("""
+                        INSERT INTO tv_shows (
+                            imdb_id, tmdb_id, title, year, status, is_complete,
+                            total_episodes, last_status_check, added_at, last_updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(imdb_id) DO UPDATE SET
+                            tmdb_id = COALESCE(excluded.tmdb_id, tv_shows.tmdb_id),
+                            title = COALESCE(excluded.title, tv_shows.title),
+                            year = COALESCE(excluded.year, tv_shows.year),
+                            status = COALESCE(excluded.status, tv_shows.status),
+                            is_complete = excluded.is_complete, -- Set based on show_status=='ended'
+                            total_episodes = excluded.total_episodes,
+                            last_status_check = excluded.last_status_check,
+                            last_updated = excluded.last_updated
+                        WHERE imdb_id = excluded.imdb_id;
+                    """, (
+                        imdb_id, tmdb_id, title, year, show_status, int(is_show_ended),
+                        total_episodes_from_source, now_str, now_str, now_str # last_status_check, added_at, last_updated
+                    ))
+                    conn.commit() # Commit show data before processing versions
+
+                    # --- NEW: Per-Version Status Update ---
+                    # Skip if we couldn't determine total episodes
+                    if total_episodes_from_source <= 0 and is_show_ended:
+                         logging.warning(f"[TV Status] Cannot reliably calculate version completeness for ended show {imdb_id} due to zero total episodes. Skipping version updates.")
+                    else:
+                        try:
+                            # Get all episode items with their version and state for this show
+                            cursor.execute("""
+                                SELECT state, version -- Fetch the version key directly
+                                FROM media_items
+                                WHERE imdb_id = ? AND type = 'episode' AND season_number > 0
+                            """, (imdb_id,))
+                            all_episodes = cursor.fetchall()
+
+                            if not all_episodes:
+                                logging.debug(f"[TV Status] No local episode media items found for {imdb_id}. Cleaning up old version statuses.")
+                                # Remove any stale version statuses if no episodes exist anymore
+                                cursor.execute("DELETE FROM tv_show_version_status WHERE imdb_id = ?", (imdb_id,))
+                            else:
+                                # Group episodes by version identifier
+                                episodes_by_version = {}
+                                for episode in all_episodes:
+                                    version_identifier = (episode['version'] or 'UnknownVersion').rstrip('*') # Handle potential NULL/empty version and trim trailing '*'
+                                    if version_identifier not in episodes_by_version:
+                                        episodes_by_version[version_identifier] = []
+                                    episodes_by_version[version_identifier].append(episode)
+
+                                logging.debug(f"[TV Status] Found {len(episodes_by_version)} versions for {imdb_id}: {list(episodes_by_version.keys())}")
+
+                                # Process each version
+                                version_now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                                versions_processed_this_show = set()
+                                for version_id, episodes_in_version in episodes_by_version.items():
+                                    versions_processed_this_show.add(version_id)
+                                    # Count present episodes (Collected or Blacklisted)
+                                    present_count = sum(1 for ep in episodes_in_version if ep['state'] in ('Collected', 'Blacklisted'))
+
+                                    # Determine if this version is up-to-date (has all known episodes)
+                                    is_up_to_date = bool(
+                                        total_episodes_from_source > 0 and
+                                        present_count >= total_episodes_from_source
+                                    )
+
+                                    # Determine if this version is complete AND fully present
+                                    # Requires the show to be ended/canceled AND have enough present episodes
+                                    is_complete_and_present = bool(
+                                        is_show_ended and is_up_to_date # Simplified using is_up_to_date
+                                    )
+                                    logging.debug(f"[TV Status] Version '{version_id}' for {imdb_id}: Present: {present_count}/{total_episodes_from_source}, ShowEnded/Canceled: {is_show_ended} -> UpToDate: {is_up_to_date}, CompleteAndPresent: {is_complete_and_present}")
+
+                                    # Upsert into the new version status table
+                                    version_data = (
+                                        imdb_id,
+                                        version_id,
+                                        int(is_complete_and_present), # Store as integer 0 or 1
+                                        int(is_up_to_date),           # Store as integer 0 or 1
+                                        present_count,
+                                        version_now_str # last_checked
+                                    )
+                                    cursor.execute("""
+                                        INSERT INTO tv_show_version_status (
+                                            imdb_id, version_identifier, is_complete_and_present,
+                                            is_up_to_date, present_episode_count, last_checked
+                                        ) VALUES (?, ?, ?, ?, ?, ?)
+                                        ON CONFLICT(imdb_id, version_identifier) DO UPDATE SET
+                                            is_complete_and_present = excluded.is_complete_and_present,
+                                            is_up_to_date = excluded.is_up_to_date,
+                                            present_episode_count = excluded.present_episode_count,
+                                            last_checked = excluded.last_checked;
+                                    """, version_data)
+
+                                # Clean up version statuses for versions that no longer exist locally
+                                cursor.execute("""
+                                    DELETE FROM tv_show_version_status
+                                    WHERE imdb_id = ? AND version_identifier NOT IN ({})
+                                """.format(','.join('?'*len(versions_processed_this_show))), (imdb_id, *versions_processed_this_show))
+
+                                shows_with_versions_updated.add(imdb_id)
+
+                            conn.commit() # Commit version status updates for this show
+
+                        except sqlite3.Error as db_err_version:
+                            logging.error(f"[TV Status] Database error during version status update for {imdb_id}: {db_err_version}", exc_info=True)
+                            if conn: conn.rollback()
+                            failed_count += 1 # Count show as failed if version update fails
+                            # Ensure we don't count it as successfully processed below
+                            if imdb_id in shows_with_versions_updated:
+                                shows_with_versions_updated.remove(imdb_id)
+                        except Exception as e_version:
+                            logging.error(f"[TV Status] Error during version status update for {imdb_id}: {e_version}", exc_info=True)
+                            if conn: conn.rollback()
+                            failed_count += 1 # Count show as failed if version update fails
+                             # Ensure we don't count it as successfully processed below
+                            if imdb_id in shows_with_versions_updated:
+                                shows_with_versions_updated.remove(imdb_id)
+
+                    processed_shows.add(imdb_id) # Mark base show info as processed
+
+                except Exception as e:
+                    logging.error(f"[TV Status] Failed to process show {imdb_id}: {e}", exc_info=True)
+                    failed_count += 1
+                    if conn: conn.rollback() # Rollback any partial changes for this show
+                    # Ensure we don't process this ID again in this run if it failed
+                    processed_shows.add(imdb_id)
+                    # Also ensure it's not counted as successfully updated for versions
+                    if imdb_id in shows_with_versions_updated:
+                        shows_with_versions_updated.remove(imdb_id)
+
+
+            # No final commit needed here as commits happen per-show or are rolled back on error
+
+        except sqlite3.Error as db_err:
+            logging.error(f"[TV Status] Database error during TV show status update setup: {db_err}", exc_info=True)
+            if conn: conn.rollback()
+        except Exception as err:
+            logging.error(f"[TV Status] Unexpected error during TV show status update: {err}", exc_info=True)
+            if conn: conn.rollback() # Rollback any potential transaction
+        finally:
+            if conn:
+                conn.close()
+
+        duration = time.time() - start_time
+        # Refined counting: processed shows = total unique imdb_ids attempted.
+        # successful updates = shows where version status was processed without error (or skipped cleanly)
+        successful_updates = len(shows_with_versions_updated) + (len(processed_shows) - failed_count - len(shows_with_versions_updated))
+        logging.info(f"[TASK] TV show status update finished in {duration:.2f}s. Processed Shows: {len(processed_shows)}, Successful Updates (incl. versions): {successful_updates}, Failed: {failed_count}.")
+    # --- END: New Task Implementation ---
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

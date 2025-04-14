@@ -256,7 +256,7 @@ export function updateSettings() {
             const sourceData = {};
             sourceData.versions = [];
 
-            section.querySelectorAll('input, select').forEach(input => {
+            section.querySelectorAll('input, select, textarea').forEach(input => {
                 const nameParts = input.name.split('.');
                 const fieldName = nameParts[nameParts.length - 1];
                 console.log(`Processing field: ${fieldName}, Type: ${input.type}, Value: ${input.value}, Checked: ${input.checked}`);

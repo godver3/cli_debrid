@@ -278,7 +278,9 @@ def create_tables():
     conn = get_db_connection()
 
     try:
-        conn.execute('''
+        cursor = conn.cursor() # Use a cursor for PRAGMA checks
+
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS media_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 imdb_id TEXT,
@@ -346,7 +348,7 @@ def create_tables():
         ''')
 
         # Add new table for tracking requested seasons
-        conn.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS show_requested_seasons (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 imdb_id TEXT NOT NULL,
@@ -358,7 +360,7 @@ def create_tables():
         ''')
         
         # Add new table for tracking symlinked files for Plex verification
-        conn.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS symlinked_files_verification (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 media_item_id INTEGER NOT NULL,
@@ -373,12 +375,61 @@ def create_tables():
             )
         ''')
 
+        # Add new table for tracking tv shows
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tv_shows (
+                imdb_id TEXT PRIMARY KEY,
+                tmdb_id TEXT UNIQUE,
+                title TEXT,
+                year INTEGER,
+                status TEXT,
+                is_complete INTEGER NOT NULL DEFAULT 0,
+                total_episodes INTEGER,
+                last_status_check TEXT,
+                added_at TEXT,
+                last_updated TEXT
+            )
+        ''')
+
+        # Optional: Add indexes for tv_shows if needed
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tv_shows_tmdb_id ON tv_shows (tmdb_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tv_shows_status ON tv_shows (status)')
+
+        # Add new table for tracking tv_show_version_status (logic adjusted previously)
+        # Create the table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tv_show_version_status (
+                imdb_id TEXT NOT NULL,
+                version_identifier TEXT NOT NULL, -- Will store the 'version' key value
+                is_complete_and_present INTEGER NOT NULL DEFAULT 0, -- 1 for true, 0 for false
+                present_episode_count INTEGER NOT NULL DEFAULT 0,
+                # is_up_to_date INTEGER NOT NULL DEFAULT 0, # This column added by migration logic below now
+                last_checked TEXT NOT NULL,
+                PRIMARY KEY (imdb_id, version_identifier),
+                FOREIGN KEY (imdb_id) REFERENCES tv_shows(imdb_id) ON DELETE CASCADE
+            )
+        ''')
+
+        # Check if the tv_show_version_status table exists and add missing columns
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tv_show_version_status'")
+        if cursor.fetchone():
+            # Check if the 'is_up_to_date' column exists
+            cursor.execute("PRAGMA table_info(tv_show_version_status)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'is_up_to_date' not in columns:
+                cursor.execute('ALTER TABLE tv_show_version_status ADD COLUMN is_up_to_date INTEGER NOT NULL DEFAULT 0')
+                logging.info("Successfully added is_up_to_date column to tv_show_version_status table.")
+            # Add checks for other columns here if needed in the future
+
         conn.commit()
         # logging.info("Tables created successfully.")
     except Exception as e:
-        logging.error(f"Error creating media_items table: {str(e)}")
+        logging.error(f"Error creating tables: {str(e)}")
+        if conn:
+            conn.rollback() # Rollback on error
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def purge_database(content_type=None, state=None):
     conn = get_db_connection()

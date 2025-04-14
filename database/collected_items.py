@@ -1,14 +1,15 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import json
 from .database_writing import add_to_collected_notifications, update_media_item_state
 from utilities.reverse_parser import parser_approximation
 from utilities.settings import get_setting
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from utilities.post_processing import handle_state_change
 from cli_battery.app.direct_api import DirectAPI
+import sqlite3
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
@@ -663,3 +664,84 @@ def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: L
             logging.warning(f"No original file path found for {generate_identifier(item)}")
     except Exception as e:
         logging.error(f"Error in remove_original_item_from_results: {str(e)}", exc_info=True)
+
+# --- START: New function to add/update TV show ---
+def add_or_update_tv_show(imdb_id: str, tmdb_id: Optional[str] = None, title: Optional[str] = None, year: Optional[int] = None, status: Optional[str] = None):
+    """
+    Adds a new TV show to the tv_shows table or updates an existing one.
+    This is typically called when a show is first encountered during metadata processing.
+    Completeness checks are handled by a separate periodic task.
+
+    Args:
+        imdb_id (str): The IMDb ID of the show (required).
+        tmdb_id (str, optional): The TMDB ID of the show.
+        title (str, optional): The title of the show.
+        year (int, optional): The release year of the show.
+        status (str, optional): The current status of the show (e.g., 'Ended', 'Continuing').
+    """
+    if not imdb_id:
+        logging.error("[TV Show Upsert] Attempted to add/update TV show without an IMDb ID.")
+        return
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        now_utc = datetime.now(timezone.utc)
+        # Convert to string format compatible with SQLite DATETIME
+        now_str = now_utc.strftime('%Y-%m-%d %H:%M:%S')
+
+
+        # Data for the INSERT part
+        insert_data = (
+            imdb_id,
+            tmdb_id,
+            title,
+            year,
+            status,
+            False, # Default is_complete to False initially
+            None,  # Default total_episodes to None initially
+            None,  # last_status_check is initially None (set by periodic task)
+            now_str,   # Set added_at timestamp
+            now_str    # Set last_updated timestamp
+        )
+
+        # Use INSERT ... ON CONFLICT for atomic upsert based on imdb_id
+        # We only update fields that might change or need refreshing.
+        # We specifically DO NOT update is_complete or total_episodes here.
+        # last_status_check is also not updated here.
+        # Using COALESCE prevents overwriting existing values with NULL if new metadata is missing fields.
+        cursor.execute("""
+            INSERT INTO tv_shows (
+                imdb_id, tmdb_id, title, year, status, is_complete,
+                total_episodes, last_status_check, added_at, last_updated
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(imdb_id) DO UPDATE SET
+                tmdb_id = COALESCE(excluded.tmdb_id, tmdb_id),
+                title = COALESCE(excluded.title, title),
+                year = COALESCE(excluded.year, year),
+                status = COALESCE(excluded.status, status),
+                last_updated = excluded.last_updated
+            WHERE imdb_id = excluded.imdb_id;
+        """, insert_data)
+
+        conn.commit()
+        if cursor.rowcount > 0:
+            logging.debug(f"[TV Show Upsert] Successfully added or updated show: IMDb ID {imdb_id}")
+        else:
+            # This might happen if the ON CONFLICT update resulted in no actual change
+            logging.debug(f"[TV Show Upsert] No rows affected for show IMDb ID {imdb_id} (likely no change needed).")
+
+    except sqlite3.Error as db_err:
+        logging.error(f"[TV Show Upsert] Database error for show IMDb ID {imdb_id}: {db_err}", exc_info=True)
+        if conn:
+            conn.rollback()
+    except Exception as err:
+        logging.error(f"[TV Show Upsert] Unexpected error for show IMDb ID {imdb_id}: {err}", exc_info=True)
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+# --- END: New function ---

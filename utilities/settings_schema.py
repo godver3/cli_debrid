@@ -651,6 +651,11 @@ SETTINGS_SCHEMA = {
             "description": "Enable checking and fixing of unmatched or incorrectly matched items in Plex during collection scans",
             "default": True
         },
+        "ignore_wanted_queue_throttling": {
+            "type": "boolean",
+            "description": "Ignore Wanted Queue throttling limits (WANTED_THROTTLE_SCRAPING_SIZE and SCRAPING_QUEUE_MAX_SIZE). Allows Wanted queue to move all eligible items to Scraping regardless of Scraping queue size. USE WITH CAUTION.",
+            "default": False
+        },
         "upgrade_queue_duration_hours": {
             "type": "integer",
             "description": "Duration in hours to keep items in the upgrade queue before moving them to Collected state (default: 24)",
