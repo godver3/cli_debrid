@@ -2,7 +2,7 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "dev", "main", "battery_integration"]
+    branches: [ "dev", "main", "battery_integration", "db-testing" ]
   workflow_dispatch:  # This enables manual triggering
 
 jobs:
@@ -58,8 +58,7 @@ jobs:
       - name: Package Windows executable
         shell: powershell
         run: |
-          $version = Get-Content -Path version.txt -Raw
-          $version = $version.Trim()
+          $version = "0.6.29-testing"
           
           # Create a zip file containing the entire dist directory
           Compress-Archive -Path dist\cli_debrid\* -DestinationPath "dist\cli_debrid-$version.zip"
@@ -68,116 +67,116 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-executable
-          path: dist/cli_debrid-*.zip
+          path: dist/cli_debrid-0.6.29-testing.zip
 
-  build-and-push:
-    runs-on: ubuntu-latest
-    needs: build-windows-exe
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
-          submodules: recursive
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-executable
-          path: windows-executable
-
-      - name: Get version and verify branch
-        id: version_check
-        run: |
-          VERSION=$(cat version.txt)
-          BRANCH_ID=$(cat branch_id | tr -d '[:space:]')
-          CURRENT_BRANCH=${{ github.ref_name }}
-          
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          
-          # Verify branch_id matches current branch
-          if [ "$BRANCH_ID" != "$CURRENT_BRANCH" ]; then
-            echo "::error::Branch mismatch! branch_id contains '$BRANCH_ID' but current branch is '$CURRENT_BRANCH'"
-            exit 1
-          fi
-
-      - name: Create Release
-        if: github.ref_name == 'main' || github.ref_name == 'dev'
-        uses: softprops/action-gh-release@v1
-        with:
-          files: "windows-executable/cli_debrid-${{ env.VERSION }}.zip"
-          name: "Release ${{ env.VERSION }}"
-          tag_name: "v${{ env.VERSION }}"
-          target_commitish: ${{ github.sha }}
-          draft: false
-          prerelease: ${{ github.ref_name == 'dev' }}
-          body: |
-            Version ${{ env.VERSION }} (${{ github.ref_name }} branch)
-            
-            This release was automatically created from the ${{ github.ref_name }} branch.
-            Commit: ${{ github.sha }}
-            
-            ## Installation Instructions:
-            
-            1. Download the ZIP file
-            2. Extract all contents to a folder of your choice
-            3. Run `cli_debrid.exe` from the extracted folder
-            
-            **Note:** All files must be kept together in the same folder for the application to work properly.
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Get version from version.txt
-        run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
-
-      - name: Set Docker tags
-        run: |
-          if [ "${{ github.ref_name }}" = "dev" ]; then
-            echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }},godver3/cli_debrid:latest" >> $GITHUB_ENV
-          elif [ "${{ github.ref_name }}" = "main" ]; then
-            echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
-          else
-            echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
-          fi
-          echo "Resolved tags: $DOCKER_TAGS" # Added for debugging/visibility
-
-      - name: Notify Discord - Build Started
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ secrets.DISCORD_TOKEN }}
-          title: "Docker Build Started"
-          description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}"
-          color: 0xFFA500
-
-      - name: Build and push multi-platform image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ env.DOCKER_TAGS }}
-          build-args: |
-            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            # Pass Windows executable info if needed via build context or args
-
-      - name: Notify Discord - Build Completed
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ secrets.DISCORD_TOKEN }}
-          title: "Docker Build Completed"
-          description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}"
-          color: 0x00FF00
+  # build-and-push:
+  #   runs-on: ubuntu-latest
+  #   needs: build-windows-exe
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+  #         token: ${{ secrets.PAT_TOKEN }}
+  #         submodules: recursive
+  #
+  #     - name: Download Windows artifact
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: windows-executable
+  #         path: windows-executable
+  #
+  #     - name: Get version and verify branch
+  #       id: version_check
+  #       run: |
+  #         VERSION=$(cat version.txt)
+  #         BRANCH_ID=$(cat branch_id | tr -d '[:space:]')
+  #         CURRENT_BRANCH=${{ github.ref_name }}
+  #         
+  #         echo "VERSION=$VERSION" >> $GITHUB_ENV
+  #         
+  #         # Verify branch_id matches current branch
+  #         if [ "$BRANCH_ID" != "$CURRENT_BRANCH" ]; then
+  #           echo "::error::Branch mismatch! branch_id contains '$BRANCH_ID' but current branch is '$CURRENT_BRANCH'"
+  #           exit 1
+  #         fi
+  #
+  #     - name: Create Release
+  #       if: github.ref_name == 'main' || github.ref_name == 'dev'
+  #       uses: softprops/action-gh-release@v1
+  #       with:
+  #         files: "windows-executable/cli_debrid-${{ env.VERSION }}.zip"
+  #         name: "Release ${{ env.VERSION }}"
+  #         tag_name: "v${{ env.VERSION }}"
+  #         target_commitish: ${{ github.sha }}
+  #         draft: false
+  #         prerelease: ${{ github.ref_name == 'dev' }}
+  #         body: |
+  #           Version ${{ env.VERSION }} (${{ github.ref_name }} branch)
+  #           
+  #           This release was automatically created from the ${{ github.ref_name }} branch.
+  #           Commit: ${{ github.sha }}
+  #           
+  #           ## Installation Instructions:
+  #           
+  #           1. Download the ZIP file
+  #           2. Extract all contents to a folder of your choice
+  #           3. Run `cli_debrid.exe` from the extracted folder
+  #           
+  #           **Note:** All files must be kept together in the same folder for the application to work properly.
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+  #
+  #     - name: Set up QEMU
+  #       uses: docker/setup-qemu-action@v3
+  #
+  #     - name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v3
+  #
+  #     - name: Login to Docker Hub
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ secrets.DOCKER_USERNAME }}
+  #         password: ${{ secrets.DOCKER_PASSWORD }}
+  #
+  #     - name: Get version from version.txt
+  #       run: echo "VERSION=$(cat version.txt)" >> $GITHUB_ENV
+  #
+  #     - name: Set Docker tags
+  #       run: |
+  #         if [ "${{ github.ref_name }}" = "dev" ]; then
+  #           echo "DOCKER_TAGS=godver3/cli_debrid:dev,godver3/cli_debrid:dev-${{ env.VERSION }},godver3/cli_debrid:latest" >> $GITHUB_ENV
+  #         elif [ "${{ github.ref_name }}" = "main" ]; then
+  #           echo "DOCKER_TAGS=godver3/cli_debrid:main,godver3/cli_debrid:main-${{ env.VERSION }}" >> $GITHUB_ENV
+  #         else
+  #           echo "DOCKER_TAGS=godver3/cli_debrid:batteryintegration,godver3/cli_debrid:batteryintegration-${{ env.VERSION }}" >> $GITHUB_ENV
+  #         fi
+  #         echo "Resolved tags: $DOCKER_TAGS" # Added for debugging/visibility
+  #
+  #     - name: Notify Discord - Build Started
+  #       uses: sarisia/actions-status-discord@v1
+  #       with:
+  #         webhook: ${{ secrets.DISCORD_TOKEN }}
+  #         title: "Docker Build Started"
+  #         description: "Building version ${{ env.VERSION }} for tags: ${{ env.DOCKER_TAGS }}"
+  #         color: 0xFFA500
+  #
+  #     - name: Build and push multi-platform image
+  #       uses: docker/build-push-action@v5
+  #       with:
+  #         context: .
+  #         file: ./Dockerfile
+  #         platforms: linux/amd64,linux/arm64
+  #         push: true
+  #         tags: ${{ env.DOCKER_TAGS }}
+  #         build-args: |
+  #           BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+  #           # Pass Windows executable info if needed via build context or args
+  #
+  #     - name: Notify Discord - Build Completed
+  #       uses: sarisia/actions-status-discord@v1
+  #       with:
+  #         webhook: ${{ secrets.DISCORD_TOKEN }}
+  #         title: "Docker Build Completed"
+  #         description: "Version ${{ env.VERSION }} has been built and pushed to Docker Hub.\nTags: ${{ env.DOCKER_TAGS }}"
+  #         color: 0x00FF00

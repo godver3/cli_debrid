@@ -673,22 +673,53 @@ class MetadataManager:
 
     @staticmethod
     def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Optional[str]:
+        # First, check the cache without starting a full transaction yet
         with DbSession() as session:
             cached_mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
             if cached_mapping:
                 return cached_mapping.imdb_id, 'battery'
 
-            trakt = TraktMetadata()
-            imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
-            
-            if imdb_id:
-                new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
-                session.add(new_mapping)
-                session.commit()
-            else:
-                logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
-            
-            return imdb_id, source
+        # If not cached, fetch from external source (Trakt)
+        trakt = TraktMetadata()
+        imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+
+        # If found externally, attempt to add to cache
+        if imdb_id:
+            with DbSession() as session:
+                try:
+                    # Check again inside the transaction just in case another thread added it
+                    # while we were fetching from Trakt.
+                    existing = session.query(TMDBToIMDBMapping.imdb_id).filter_by(tmdb_id=tmdb_id).scalar()
+                    if existing:
+                        logger.debug(f"Mapping for TMDB ID {tmdb_id} was added concurrently. Using existing: {existing}")
+                        return existing, 'battery' # Or source, depending on desired behavior
+
+                    # If still doesn't exist, add it
+                    new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
+                    session.add(new_mapping)
+                    session.commit()
+                    logger.debug(f"Successfully added mapping for TMDB ID {tmdb_id} -> {imdb_id}")
+                except IntegrityError:
+                    # Handle the rare case where the second check passed but commit still failed
+                    # due to extremely close timing (another commit happened between check and our commit).
+                    session.rollback()
+                    logger.warning(f"IntegrityError on commit for TMDB ID {tmdb_id}, likely added concurrently. Fetching existing.")
+                    # Re-fetch the now committed value
+                    existing_after_rollback = session.query(TMDBToIMDBMapping.imdb_id).filter_by(tmdb_id=tmdb_id).scalar()
+                    if existing_after_rollback:
+                        return existing_after_rollback, 'battery'
+                    else:
+                        # This case should be extremely rare - something else went wrong
+                        logger.error(f"Failed to add or retrieve mapping for TMDB ID {tmdb_id} after IntegrityError.")
+                        return None, source # Return None as we failed to get/add the mapping
+                except Exception as e:
+                    session.rollback()
+                    logger.error(f"Unexpected error adding TMDB mapping for {tmdb_id}: {e}")
+                    raise # Re-raise other unexpected errors
+        else:
+            logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
+
+        return imdb_id, source
                 
     @staticmethod
     def get_metadata_by_episode_imdb(episode_imdb_id):
