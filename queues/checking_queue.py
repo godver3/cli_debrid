@@ -631,12 +631,10 @@ class CheckingQueue:
                             processing_successful = check_local_file_for_item(
                                 item,
                                 extended_search=use_extended_search,
-                                # Pass the program_runner's specific removal method as the callback
-                                on_success_callback=program_runner.remove_specific_pending_rclone_path
                             )
 
                             if processing_successful:
-                                logging.info(f"Local file found and symlinked for item {item['id']} by CheckingQueue. Callback invoked to attempt removal from rclone queue.")
+                                logging.info(f"Local file found and symlinked for item {item['id']} by CheckingQueue.")
 
                                 # --- EDIT: Fetch updated item data ---
                                 from database import get_media_item_by_id # Ensure import is available
