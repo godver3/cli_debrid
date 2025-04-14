@@ -18,7 +18,6 @@ import requests
 from content_checkers.trakt import get_trakt_headers, TRAKT_API_URL, REQUEST_TIMEOUT
 import json
 from fuzzywuzzy import fuzz
-from metadata.metadata import _get_local_timezone # Import the timezone helper
 
 magnet_bp = Blueprint('magnet', __name__)
 
@@ -895,6 +894,7 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
             first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
             # Convert UTC to local timezone using the helper
+            from metadata.metadata import _get_local_timezone # Import the timezone helper
             local_tz = _get_local_timezone()
             if local_tz:
                  local_dt = first_aired_utc.astimezone(local_tz)
