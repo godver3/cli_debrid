@@ -27,6 +27,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from datetime import timezone
 import pytz
 from datetime import datetime
+import json
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -556,104 +557,146 @@ def check_program_conditions():
 def get_task_timings():
     global program_runner
 
-    if not program_runner or not program_runner.is_running() or not hasattr(program_runner, 'scheduler'):
+    # If program runner isn't initialized, return empty immediately
+    if not program_runner or not hasattr(program_runner, 'task_intervals'):
+        logging.debug("Program runner not fully initialized, returning empty task timings.")
         return jsonify({
             "success": True,
             "tasks": {"queues": {}, "content_sources": {}, "system_tasks": {}}
         })
 
-    # Ensure content sources are loaded (for display names)
-    content_sources = program_runner.get_content_sources()
+    # Load saved toggle states to determine the intended state if a task isn't scheduled
+    saved_states = {}
+    try:
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+        if os.path.exists(toggles_file_path):
+            with open(toggles_file_path, 'r') as f:
+                saved_states = json.load(f)
+    except Exception as e:
+        logging.error(f"Error loading task_toggles.json: {e}")
 
-    # Use scheduler's timezone if available, else UTC
-    tz = program_runner.scheduler.timezone if hasattr(program_runner.scheduler, 'timezone') else pytz.utc
+    # Get all defined tasks and their default intervals
+    defined_tasks_with_intervals = program_runner.task_intervals or {}
+
+    # Get currently scheduled jobs if scheduler is running
+    scheduled_jobs_dict = {}
+    tz = pytz.utc # Default timezone
     current_time_dt = datetime.now(tz)
-    current_timestamp = current_time_dt.timestamp()
+    scheduler_running = False
+    if hasattr(program_runner, 'scheduler') and program_runner.scheduler.running:
+        scheduler_running = True
+        # Use scheduler's timezone if available
+        tz = program_runner.scheduler.timezone if hasattr(program_runner.scheduler, 'timezone') else pytz.utc
+        current_time_dt = datetime.now(tz)
+        with program_runner.scheduler_lock: # Use lock for safety
+            jobs = program_runner.scheduler.get_jobs()
+            scheduled_jobs_dict = {job.id: job for job in jobs}
+            logging.debug(f"Found {len(scheduled_jobs_dict)} scheduled jobs.")
+    else:
+        logging.debug("Scheduler not running or not found.")
 
-    task_timings = {}
-    with program_runner.scheduler_lock: # Use lock for safety
-        jobs = program_runner.scheduler.get_jobs()
-        for job in jobs:
-            task_name = job.id
-            interval = None
+
+    # Ensure content sources are loaded (for display names)
+    # Use force_refresh=False to avoid redundant work if already loaded
+    content_sources = program_runner.get_content_sources(force_refresh=False) or {}
+
+    all_tasks_data = {}
+
+    # Iterate through all DEFINED tasks
+    for task_name, defined_interval in defined_tasks_with_intervals.items():
+        job = scheduled_jobs_dict.get(task_name)
+        is_scheduled = job is not None
+        live_enabled = is_scheduled and job.next_run_time is not None
+
+        interval = defined_interval # Use the defined interval as default
+        next_run_timestamp = None
+        time_until_next_run = 0
+
+        if is_scheduled:
+            # Use interval from the job trigger if available and it's an IntervalTrigger
             if isinstance(job.trigger, IntervalTrigger):
-                interval = job.trigger.interval.total_seconds()
+                 interval = job.trigger.interval.total_seconds()
 
-            next_run_timestamp = None
             if job.next_run_time:
                 # Ensure next_run_time is timezone-aware using scheduler's timezone
                 next_run_aware = job.next_run_time.astimezone(tz)
                 next_run_timestamp = next_run_aware.timestamp()
+                # Calculate time until next run in seconds only if live_enabled
+                if live_enabled:
+                     time_until_next_run = max(0, next_run_timestamp - current_time_dt.timestamp())
 
-            # Enabled = job has a next run time (is not paused indefinitely)
-            enabled = job.next_run_time is not None
+        # Convert to hours, minutes, seconds
+        hours, remainder = divmod(int(time_until_next_run), 3600)
+        minutes, seconds = divmod(remainder, 60)
 
-            # Calculate time until next run in seconds
-            time_until_next_run = 0
-            if enabled and next_run_timestamp:
-                time_until_next_run = max(0, next_run_timestamp - current_timestamp)
+        # Create a human-readable display name (reuse existing logic block)
+        display_name = task_name # Default
+        normalized_task_name_for_display = program_runner._normalize_task_name(task_name) # Normalize for consistent lookup
 
-            # Convert to hours, minutes, seconds
-            hours, remainder = divmod(int(time_until_next_run), 3600)
-            minutes, seconds = divmod(remainder, 60)
-
-            # Create a human-readable display name
-            display_name = task_name # Default
-            if task_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
-                           'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
-                display_name = task_name
-            elif task_name.endswith('_wanted'):
-                source_name = task_name.replace('task_', '').replace('_wanted', '')
-                source_config = content_sources.get(source_name)
-                if isinstance(source_config, dict) and source_config.get('display_name'):
-                    display_name = source_config['display_name']
-                else:
-                    display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
-            elif task_name.startswith('task_'):
-                 display_name = ' '.join(word.capitalize() for word in task_name.replace('task_', '').split('_'))
+        if normalized_task_name_for_display in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
+                       'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+            display_name = normalized_task_name_for_display
+        elif normalized_task_name_for_display.endswith('_wanted'):
+            source_name = normalized_task_name_for_display.replace('task_', '').replace('_wanted', '')
+            source_config = content_sources.get(source_name) # Use normalized name lookup
+            if isinstance(source_config, dict) and source_config.get('display_name'):
+                display_name = source_config['display_name']
+            else:
+                # Fallback formatting using the derived source_name
+                display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
+        elif normalized_task_name_for_display.startswith('task_'):
+             display_name = ' '.join(word.capitalize() for word in normalized_task_name_for_display.replace('task_', '').split('_'))
+        # Keep original task_name as fallback if no rule matched
+        else:
+             display_name = task_name
 
 
-            task_timings[task_name] = {
-                "display_name": display_name,
-                "next_run_in": {
-                    "hours": hours,
-                    "minutes": minutes,
-                    "seconds": seconds,
-                    "total_seconds": time_until_next_run
-                },
-                "interval": interval if interval is not None else 0, # Use 0 if no interval found
-                "last_run": None, # Last run time is not easily available from APScheduler job object
-                "enabled": enabled
-            }
+        all_tasks_data[task_name] = {
+            "display_name": display_name,
+            "next_run_in": {
+                "hours": hours,
+                "minutes": minutes,
+                "seconds": seconds,
+                "total_seconds": time_until_next_run
+            },
+            "interval": interval, # Use interval from job or defined default
+            "last_run": None, # Last run time is not easily available
+             # 'enabled' reflects LIVE status if scheduled, FALSE otherwise.
+             # This matches frontend expectation for styling/labels.
+            "enabled": live_enabled
+        }
 
-    # Group tasks by type (same logic as before)
+    # Group tasks by type (using the combined data)
     grouped_timings = {
         "queues": {},
         "content_sources": {},
         "system_tasks": {}
     }
 
-    for task, timing in task_timings.items():
-        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
+    # Use the same grouping logic as before, applying it to all_tasks_data
+    for task, timing in all_tasks_data.items():
+        normalized_task_name = program_runner._normalize_task_name(task) # Normalize for consistent checks
+        if normalized_task_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
                    'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
-            grouped_timings["queues"][task] = timing
-        elif task.endswith('_wanted'):
-            grouped_timings["content_sources"][task] = timing
+            # Use the original task name (which might be non-normalized if that's the key)
+            # Or better, use the normalized name as the key for consistency
+            grouped_timings["queues"][normalized_task_name] = timing
+        elif normalized_task_name.endswith('_wanted'):
+             # Use normalized name as key
+            grouped_timings["content_sources"][normalized_task_name] = timing
         else:
-            # Only include tasks that start with 'task_' in system tasks
-            # This avoids including internal scheduler jobs like 'rate_limit_resume_job'
-            if task.startswith('task_'):
-                 grouped_timings["system_tasks"][task] = timing
-
-    # Log content source tasks for debugging (keep if useful)
-    # content_source_tasks = [task for task in task_timings.keys() if task.endswith('_wanted')]
-    # logging.debug(f"Content source tasks: {content_source_tasks}")
-    # logging.debug(f"Content sources in grouped_timings: {list(grouped_timings['content_sources'].keys())}")
+            # Only include tasks that start with 'task_' in system tasks (using normalized name)
+            if normalized_task_name.startswith('task_'):
+                 # Use normalized name as key
+                 grouped_timings["system_tasks"][normalized_task_name] = timing
+            # else: # Log tasks that didn't fit into any category?
+            #    logging.debug(f"Task '{task}' (normalized: '{normalized_task_name}') did not fit into known categories.")
 
     return jsonify({
         "success": True,
         "tasks": grouped_timings,
-        "current_time": current_timestamp # Send current timestamp for reference
+        "current_time": current_time_dt.timestamp() # Send current timestamp for reference
     })
 
 @program_operation_bp.route('/task_timings')
