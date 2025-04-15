@@ -116,7 +116,7 @@ class ProgramRunner:
             'Upgrading': 3600,  # 1 hour (no change)
             'task_plex_full_scan': 3600,
             #'task_debug_log': 60,
-            'task_refresh_release_dates': 3600,
+            'task_refresh_release_dates': 36000,
             #'task_purge_not_wanted_magnets_file': 604800,
             'task_generate_airtime_report': 3600,
             'task_check_service_connectivity': 60,
@@ -128,10 +128,10 @@ class ProgramRunner:
             #'task_local_library_scan': 900,  # Run every 5 minutes
             'task_refresh_download_stats': 300,  # Run every 5 minutes
             'task_check_plex_files': 60,  # Run every 60 seconds
-            'task_update_show_ids': 21600,  # Run every six hours
-            'task_update_show_titles': 21600,  # Run every six hours
-            'task_update_movie_ids': 21600,  # Run every six hours
-            'task_update_movie_titles': 21600,  # Run every six hours
+            'task_update_show_ids': 40600,  # Run every six hours
+            'task_update_show_titles': 45600,  # Run every six hours
+            'task_update_movie_ids': 50600,  # Run every six hours
+            'task_update_movie_titles': 55600,  # Run every six hours
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
             'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
             'task_check_database_health': 3600,  # Run every hour

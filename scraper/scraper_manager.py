@@ -326,9 +326,6 @@ class ScraperManager:
         # Log the final report
         self._log_scraper_report(title, year, instance_summary)
 
-        # Log the final report to the main log
-        self._log_scraper_report(title, year, instance_summary)
-
         # --- Add logging of detailed results to separate file ---
         self._log_detailed_results(title, year, all_results)
         # --- End detailed results logging ---

@@ -3,6 +3,7 @@ import os
 import pickle
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
+import random
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -83,32 +84,73 @@ def should_process_item(item: Dict[str, Any], source_id: str, cache: Dict[str, A
     if not cache_item:
         return True
     
-    last_processed = cache_item['timestamp']
-    if isinstance(last_processed, (int, float)):
-        last_processed = datetime.fromtimestamp(last_processed)
-    
-    # Determine expiry based on source type
-    if source_id.startswith('Collected_'): # Check if it's a Collected source
-        expiry_hours = 24
-    else:
-        expiry_hours = CACHE_EXPIRY_HOURS
+    last_processed = cache_item.get('timestamp')
+    if not last_processed:
+         # Should ideally not happen if timestamp is always stored, but handle defensively
+         logging.warning(f"Cache item {cache_key} for source {source_id} missing timestamp. Reprocessing.")
+         return True
 
-    # Check if cache has expired
-    if datetime.now() - last_processed >= timedelta(hours=expiry_hours):
+    if isinstance(last_processed, (int, float)):
+        try:
+            last_processed = datetime.fromtimestamp(last_processed)
+        except Exception as e:
+             logging.warning(f"Error converting timestamp for {cache_key}: {e}. Reprocessing.")
+             return True
+    elif not isinstance(last_processed, datetime):
+        logging.warning(f"Invalid timestamp format for {cache_key}: {type(last_processed)}. Reprocessing.")
         return True
-    
+
+    # --- Retrieve or Calculate Expiry Duration ---
+    # Get stored random expiry duration if available
+    expiry_duration_hours = cache_item.get('expiry_duration_hours')
+
+    if expiry_duration_hours is None:
+        # Fallback for older cache entries or if calculation failed during update
+        # Use the old logic as a default
+        logging.debug(f"Cache item {cache_key} missing expiry duration. Using fallback logic.")
+        if source_id.startswith('Collected_'): # Check if it's a Collected source
+            expiry_duration_hours = 48
+        else:
+            # Use the global constant or a default like 12 if CACHE_EXPIRY_HOURS is also removed
+            expiry_duration_hours = CACHE_EXPIRY_HOURS # Or change to 12 if preferred default
+
+    if not isinstance(expiry_duration_hours, (int, float)) or expiry_duration_hours <= 0:
+        logging.warning(f"Invalid expiry duration {expiry_duration_hours} for {cache_key}. Using default 12 hours.")
+        expiry_duration_hours = 12 # Default to 12 hours if invalid
+
+    # --- Check if cache has expired using the determined duration ---
+    if datetime.now() - last_processed >= timedelta(hours=expiry_duration_hours):
+        logging.debug(f"Cache expired for {cache_key} (Expiry: {expiry_duration_hours} hours). Reprocessing.")
+        return True # Cache expired, should process
+
+    # --- Additional Checks (e.g., seasons) ---
     # For TV shows with season info, check if requested seasons match
+    # This check remains important even if not expired, in case requested seasons changed
     if item.get('media_type') == 'tv' and 'requested_seasons' in item:
-        cached_seasons = cache_item.get('data', {}).get('requested_seasons', [])
+        cached_data = cache_item.get('data', {})
+        cached_seasons = cached_data.get('requested_seasons', [])
         if set(item['requested_seasons']) != set(cached_seasons):
-            return True
-    
-    return False
+            logging.debug(f"Requested seasons changed for {cache_key}. Reprocessing.")
+            return True # Requested seasons differ, should process
+
+    logging.debug(f"Cache hit and valid for {cache_key} (Expiry: {expiry_duration_hours} hours). Skipping.")
+    return False # Cache hit and still valid, skip processing
 
 def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str, Any]) -> None:
-    """Update cache entry for a specific item."""
+    """Update cache entry for a specific item with randomized expiry."""
     cache_key = create_cache_key(item, source_id)
+
+    # Calculate randomized expiry duration: 12 hours +/- 6 hours (range 6 to 18)
+    base_expiry_hours = 12
+    random_offset_hours = random.uniform(-6, 6) # Offset between -6 and +6 hours
+    expiry_duration_hours = base_expiry_hours + random_offset_hours
+    # Ensure it's at least a minimum positive duration, e.g., 1 hour
+    expiry_duration_hours = max(1.0, expiry_duration_hours)
+    logging.debug(f"Calculated expiry for {cache_key}: {expiry_duration_hours:.2f} hours")
+
     cache[cache_key] = {
         'timestamp': datetime.now(),
+        'expiry_duration_hours': expiry_duration_hours, # Store the calculated duration
         'data': item.copy()  # Store a copy of the full item data
-    } 
+    }
+    logging.debug(f"Updated cache for {cache_key}") 

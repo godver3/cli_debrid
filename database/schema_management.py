@@ -403,7 +403,7 @@ def create_tables():
                 version_identifier TEXT NOT NULL, -- Will store the 'version' key value
                 is_complete_and_present INTEGER NOT NULL DEFAULT 0, -- 1 for true, 0 for false
                 present_episode_count INTEGER NOT NULL DEFAULT 0,
-                # is_up_to_date INTEGER NOT NULL DEFAULT 0, # This column added by migration logic below now
+                is_up_to_date INTEGER NOT NULL DEFAULT 0,
                 last_checked TEXT NOT NULL,
                 PRIMARY KEY (imdb_id, version_identifier),
                 FOREIGN KEY (imdb_id) REFERENCES tv_shows(imdb_id) ON DELETE CASCADE

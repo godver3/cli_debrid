@@ -609,6 +609,11 @@
         
         eventSource.onmessage = function(event) {
             try {
+                // Defensive: Only parse if event.data looks like JSON
+                if (typeof event.data !== 'string' || !event.data.trim().startsWith('{')) {
+                    console.warn('Skipping non-JSON event data:', event.data);
+                    return; // Ignore this message
+                }
                 const data = JSON.parse(event.data);
                 
                 if (!hasReceivedFirstResponse) {

@@ -380,7 +380,11 @@ def queue_stream():
                     
             except Exception as e:
                 logging.error(f"Error in queue stream: {str(e)}")
-                yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
+                try:
+                    yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
+                except Exception as inner_e:
+                    # Failsafe: yield a hardcoded valid JSON string
+                    yield 'data: {"success": false, "error": "Unknown streaming error"}\n\n'
             
             time.sleep(2.5)  # Check for updates every 2.5 seconds
     
