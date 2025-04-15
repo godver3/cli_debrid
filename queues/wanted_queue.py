@@ -23,6 +23,40 @@ class WantedQueue:
         self.items = [dict(row) for row in get_all_media_items(state="Wanted")]
         # Move any blacklisted items to blacklisted state before calculating scrape times
         self.move_blacklisted_items()
+        # --- START: Add sorting logic to match ScrapingQueue ---
+        # Get the queue sort order setting
+        sort_order = get_setting("Queue", "queue_sort_order", "None")
+        # Get content source priority setting
+        content_source_priority = get_setting("Queue", "content_source_priority", "")
+        source_priority_list = [s.strip() for s in content_source_priority.split(',') if s.strip()]
+        # First sort by content source priority
+        if source_priority_list:
+            def get_source_priority(item):
+                source = item.get('content_source', '')
+                try:
+                    return source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
+                except ValueError:
+                    return len(source_priority_list)
+            self.items.sort(key=get_source_priority)
+        # Then apply type-based sorting if specified
+        if sort_order == "Movies First":
+            self.items.sort(key=lambda x: 0 if x['type'] == 'movie' else 1)
+        elif sort_order == "Episodes First":
+            self.items.sort(key=lambda x: 0 if x['type'] == 'episode' else 1)
+        # Secondary sorting by release date (newest first)
+        sort_by_release_date = get_setting("Queue", "sort_by_release_date_desc", False)
+        if sort_by_release_date:
+            from datetime import datetime, date
+            def get_release_date_key(item):
+                release_date_str = item.get('release_date')
+                if release_date_str and release_date_str != 'Unknown':
+                    try:
+                        return datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                    except ValueError:
+                        pass
+                return date.min
+            self.items.sort(key=get_release_date_key, reverse=True)
+        # --- END: Add sorting logic ---
         self._calculate_scrape_times()
 
     def _calculate_scrape_times(self):
