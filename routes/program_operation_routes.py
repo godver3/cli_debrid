@@ -23,6 +23,10 @@ from routes.notifications import (
     send_queue_start_notification,
     send_queue_stop_notification
 )
+from apscheduler.triggers.interval import IntervalTrigger
+from datetime import timezone
+import pytz
+from datetime import datetime
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -551,71 +555,78 @@ def check_program_conditions():
 @user_required
 def get_task_timings():
     global program_runner
-    
-    if not program_runner or not program_runner.is_running():
+
+    if not program_runner or not program_runner.is_running() or not hasattr(program_runner, 'scheduler'):
         return jsonify({
             "success": True,
-            "current_task": None,
-            "tasks": []
+            "tasks": {"queues": {}, "content_sources": {}, "system_tasks": {}}
         })
 
-    # Ensure content sources are loaded
+    # Ensure content sources are loaded (for display names)
     content_sources = program_runner.get_content_sources()
 
-    current_time = time.time()
+    # Use scheduler's timezone if available, else UTC
+    tz = program_runner.scheduler.timezone if hasattr(program_runner.scheduler, 'timezone') else pytz.utc
+    current_time_dt = datetime.now(tz)
+    current_timestamp = current_time_dt.timestamp()
+
     task_timings = {}
-    
-    # Get all task intervals and their last run times
-    for task, interval in program_runner.task_intervals.items():
-        last_run = program_runner.last_run_times.get(task, current_time)
-        time_until_next_run = interval - (current_time - last_run)
-        
-        # Convert to hours, minutes, seconds
-        hours, remainder = divmod(int(time_until_next_run), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        
-        # Create a human-readable display name
-        display_name = task
-        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
-                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
-            # Queue tasks already have a nice display name
-            display_name = task
-        elif task.endswith('_wanted'):
-            # Get the source name from the task name
-            source_name = task.replace('task_', '').replace('_wanted', '')
-            
-            # Check if this is a content source and has a display_name
-            if source_name in content_sources:
-                source_config = content_sources[source_name]
-                # If a custom display name is set and not empty, use it
+    with program_runner.scheduler_lock: # Use lock for safety
+        jobs = program_runner.scheduler.get_jobs()
+        for job in jobs:
+            task_name = job.id
+            interval = None
+            if isinstance(job.trigger, IntervalTrigger):
+                interval = job.trigger.interval.total_seconds()
+
+            next_run_timestamp = None
+            if job.next_run_time:
+                # Ensure next_run_time is timezone-aware using scheduler's timezone
+                next_run_aware = job.next_run_time.astimezone(tz)
+                next_run_timestamp = next_run_aware.timestamp()
+
+            # Enabled = job has a next run time (is not paused indefinitely)
+            enabled = job.next_run_time is not None
+
+            # Calculate time until next run in seconds
+            time_until_next_run = 0
+            if enabled and next_run_timestamp:
+                time_until_next_run = max(0, next_run_timestamp - current_timestamp)
+
+            # Convert to hours, minutes, seconds
+            hours, remainder = divmod(int(time_until_next_run), 3600)
+            minutes, seconds = divmod(remainder, 60)
+
+            # Create a human-readable display name
+            display_name = task_name # Default
+            if task_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
+                           'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+                display_name = task_name
+            elif task_name.endswith('_wanted'):
+                source_name = task_name.replace('task_', '').replace('_wanted', '')
+                source_config = content_sources.get(source_name)
                 if isinstance(source_config, dict) and source_config.get('display_name'):
                     display_name = source_config['display_name']
                 else:
-                    # Otherwise, format the source name nicely
                     display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
-            else:
-                # Fallback: Format task name if source not found
-                display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
-        else:
-            # Regular tasks need task_ prefix removed and underscores replaced with spaces
-            display_name = task.replace('task_', '').replace('_', ' ')
-            # Capitalize first letter of each word
-            display_name = ' '.join(word.capitalize() for word in display_name.split())
-        
-        task_timings[task] = {
-            "display_name": display_name,
-            "next_run_in": {
-                "hours": hours,
-                "minutes": minutes,
-                "seconds": seconds,
-                "total_seconds": time_until_next_run
-            },
-            "interval": interval,
-            "last_run": last_run,
-            "enabled": task in program_runner.enabled_tasks
-        }
+            elif task_name.startswith('task_'):
+                 display_name = ' '.join(word.capitalize() for word in task_name.replace('task_', '').split('_'))
 
-    # Group tasks by type
+
+            task_timings[task_name] = {
+                "display_name": display_name,
+                "next_run_in": {
+                    "hours": hours,
+                    "minutes": minutes,
+                    "seconds": seconds,
+                    "total_seconds": time_until_next_run
+                },
+                "interval": interval if interval is not None else 0, # Use 0 if no interval found
+                "last_run": None, # Last run time is not easily available from APScheduler job object
+                "enabled": enabled
+            }
+
+    # Group tasks by type (same logic as before)
     grouped_timings = {
         "queues": {},
         "content_sources": {},
@@ -623,23 +634,26 @@ def get_task_timings():
     }
 
     for task, timing in task_timings.items():
-        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+        if task in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
                    'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
             grouped_timings["queues"][task] = timing
         elif task.endswith('_wanted'):
             grouped_timings["content_sources"][task] = timing
         else:
-            grouped_timings["system_tasks"][task] = timing
-    
-    # Log content source tasks for debugging
-    content_source_tasks = [task for task in task_timings.keys() if task.endswith('_wanted')]
-    logging.debug(f"Content source tasks: {content_source_tasks}")
-    logging.debug(f"Content sources in grouped_timings: {list(grouped_timings['content_sources'].keys())}")
+            # Only include tasks that start with 'task_' in system tasks
+            # This avoids including internal scheduler jobs like 'rate_limit_resume_job'
+            if task.startswith('task_'):
+                 grouped_timings["system_tasks"][task] = timing
+
+    # Log content source tasks for debugging (keep if useful)
+    # content_source_tasks = [task for task in task_timings.keys() if task.endswith('_wanted')]
+    # logging.debug(f"Content source tasks: {content_source_tasks}")
+    # logging.debug(f"Content sources in grouped_timings: {list(grouped_timings['content_sources'].keys())}")
 
     return jsonify({
         "success": True,
         "tasks": grouped_timings,
-        "current_time": current_time
+        "current_time": current_timestamp # Send current timestamp for reference
     })
 
 @program_operation_bp.route('/task_timings')

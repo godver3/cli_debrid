@@ -845,6 +845,7 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         'addedAt': episode['addedAt'],
         'guid': episode.get('guid'),
         'ratingKey': episode['ratingKey'],
+        'grandparentRatingKey': episode.get('grandparentRatingKey'),
         'release_date': episode.get('originallyAvailableAt'),
         'imdb_id': show_imdb_id,
         'tmdb_id': show_tmdb_id,
