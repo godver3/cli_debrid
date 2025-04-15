@@ -1791,7 +1791,15 @@ class ProgramRunner:
             logging.info("Plex library checks disabled - marking found files as Collected")
             updated_items = 0
             not_found_items = 0
-            sections_to_update = {}  # Store {section_object: set_of_paths}
+            
+            # --- START EDIT: Initialize scan tracking and tick counts ---
+            paths_to_scan_by_section = {} # Store {section_title: set(constructed_paths)}
+            sections_map = {}
+            if plex and sections: # Only map if connection succeeded
+                sections_map = {s.title: s for s in sections} # Map titles to section objects
+            if not hasattr(self, 'plex_scan_tick_counts'):
+                self.plex_scan_tick_counts = {}
+            # --- END EDIT ---
 
             for item_dict in items: # Iterate over dicts
                 item_id = item_dict['id']
@@ -1807,12 +1815,18 @@ class ProgramRunner:
                 # Handle cases where filled_by_title might have an extension (less common now?)
                 title_without_ext = os.path.splitext(filled_by_title)[0]
                 file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
+                # Add check for file directly under plex_file_location (less common)
+                file_path_direct = os.path.join(plex_file_location, filled_by_file) # Direct path
+
 
                 # Check if we've already found this file before (cache)
                 cache_key = f"{filled_by_title}:{filled_by_file}"
-                if self.file_location_cache.get(cache_key) == 'exists':
-                    logging.debug(f"Skipping previously verified file via cache: {filled_by_title}/{filled_by_file}")
-                    continue
+                # --- START EDIT: Remove early cache skip - needs tick logic first ---
+                # if self.file_location_cache.get(cache_key) == 'exists':
+                #     logging.debug(f"Skipping previously verified file via cache: {filled_by_title}/{filled_by_file}")
+                #     continue
+                # --- END EDIT ---
+
 
                 file_found_on_disk = False
                 actual_file_path = None
@@ -1823,14 +1837,44 @@ class ProgramRunner:
                     file_found_on_disk = True
                     actual_file_path = file_path_no_ext
                 # Add check for file directly under plex_file_location (less common)
-                elif os.path.exists(os.path.join(plex_file_location, filled_by_file)):
+                elif os.path.exists(file_path_direct):
                      file_found_on_disk = True
-                     actual_file_path = os.path.join(plex_file_location, filled_by_file)
+                     actual_file_path = file_path_direct
 
 
                 if file_found_on_disk:
                     logging.info(f"Found file on disk: {actual_file_path} for item {item_id}")
                     self.file_location_cache[cache_key] = 'exists' # Update cache
+
+                    # --- START EDIT: Add Tick Check and Scan Path Gathering ---
+                    should_trigger_scan = False
+                    current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
+                    self.plex_scan_tick_counts[cache_key] = current_tick
+                    if current_tick <= 5:
+                        should_trigger_scan = True
+                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
+                    else:
+                        logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
+
+                    if should_trigger_scan and plex and sections_map: # Check connection exists
+                        item_type_mapped = 'show' if item_dict['type'] == 'episode' else item_dict['type']
+                        logging.debug(f"Identifying scan paths for item {item_id} (type: {item_type_mapped}, title: '{filled_by_title}')")
+                        found_matching_section_location = False
+                        for section in sections:
+                            if section.type != item_type_mapped:
+                                continue
+                            logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
+                            for location in section.locations:
+                                constructed_plex_path = os.path.join(location, filled_by_title)
+                                logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}'")
+                                if section.title not in paths_to_scan_by_section:
+                                    paths_to_scan_by_section[section.title] = set()
+                                paths_to_scan_by_section[section.title].add(constructed_plex_path)
+                                found_matching_section_location = True
+                        if not found_matching_section_location:
+                            logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{filled_by_file}'. Scan might not be triggered correctly.")
+                    # --- END EDIT ---
+                            
                     updated_items += 1 # Count item as 'updated' if found
 
                     # Update item state to Collected if found
@@ -1839,10 +1883,11 @@ class ProgramRunner:
                         conn_update = get_db_connection()
                         cursor_update = conn_update.cursor()
                         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        # Important: Only update if the item is still in 'Checking' state
-                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ?, filled_by_file = ?, filled_by_title = ? WHERE id = ? AND state = "Checking"',
-                                              (now, os.path.basename(actual_file_path), os.path.basename(os.path.dirname(actual_file_path)), item_id)) # Update file/title too? Maybe safer not to here. Use original filled_by.
+                        # --- START EDIT: Remove redundant first update ---
+                        # cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ?, filled_by_file = ?, filled_by_title = ? WHERE id = ? AND state = "Checking"',
+                        #                       (now, os.path.basename(actual_file_path), os.path.basename(os.path.dirname(actual_file_path)), item_id)) # Update file/title too? Maybe safer not to here. Use original filled_by.
                         # Let's stick to only updating state and time here for safety
+                        # --- END EDIT ---
                         cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
                                               (now, item_id))
 
@@ -1895,21 +1940,45 @@ class ProgramRunner:
                     finally:
                         if conn_update: conn_update.close()
 
-
-                    # Identify relevant Plex sections for potential future scan triggers (even if disabled now)
-                    # This logic seems flawed as it relies on `sections` from a potentially different code path
-                    # Let's simplify: if library checks are disabled, we don't need to determine sections here.
-
                 else: # File not found on disk
                     not_found_items += 1
-                    logging.debug(f"File not found on disk for item {item_id} in primary locations:\n  {file_path}\n  {file_path_no_ext}")
+                    logging.debug(f"File not found on disk for item {item_id} in primary locations:\n  {file_path}\n  {file_path_no_ext}\n  {file_path_direct}")
+                    # --- START EDIT: Reset tick count if file missing ---
+                    if cache_key in self.plex_scan_tick_counts:
+                        logging.debug(f"Resetting Plex scan tick count for missing file '{filled_by_file}'.")
+                        del self.plex_scan_tick_counts[cache_key]
+                    # --- END EDIT ---
                     # Optional: Clear cache if file is confirmed missing? Might cause re-checks later if transient.
                     # if cache_key in self.file_location_cache:
                     #     del self.file_location_cache[cache_key]
 
+            # --- START EDIT: Add Scan Triggering Logic ---
+            if paths_to_scan_by_section and plex and sections_map: # Check connection exists
+                logging.info(f"Triggering scans for {len(paths_to_scan_by_section)} sections based on detected files (library checks disabled)...")
+                final_updated_sections = set() # Track unique section titles updated
+                for section_title, scan_paths in paths_to_scan_by_section.items():
+                    section = sections_map.get(section_title)
+                    if not section:
+                        logging.error(f"Could not find section object for title '{section_title}' during scan trigger phase.")
+                        continue
+
+                    for scan_path in scan_paths:
+                        try:
+                            logging.info(f"Triggering Plex section '{section.title}' update scan for path: {scan_path}")
+                            section.update(path=scan_path)
+                            final_updated_sections.add(section.title)
+                        except NotFound:
+                             logging.warning(f"Path '{scan_path}' not found by Plex server during scan trigger for section '{section.title}'. This might be expected if the folder doesn't exist yet.")
+                        except Exception as e_scan:
+                             logging.error(f"Failed to trigger update scan for Plex section '{section.title}' with path '{scan_path}': {str(e_scan)}", exc_info=True)
+
+                if final_updated_sections:
+                    logging.info(f"Plex sections triggered for update in this run: {', '.join(sorted(list(final_updated_sections)))}")
+            # --- END EDIT ---
+
             # Log summary of operations
             logging.info(f"Plex check summary (checks disabled): {updated_items} items found on disk and marked Collected, {not_found_items} items not found.")
-            # We don't update sections when checks are disabled.
+            # We don't update sections when checks are disabled. # <-- This comment is now slightly inaccurate due to the edit, but harmless.
 
         # ----- ELSE: Plex library checks are ENABLED -----
         else:
@@ -1964,7 +2033,7 @@ class ProgramRunner:
                     self.plex_scan_tick_counts[cache_key] = current_tick
                     if current_tick <= 5:
                         should_trigger_scan = True
-                        updated_items += 1
+                        updated_items += 1 # Count item here when scan is intended
                         logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
                     else:
                         logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
@@ -1975,9 +2044,11 @@ class ProgramRunner:
                     if cache_key in self.plex_scan_tick_counts:
                         logging.debug(f"Resetting Plex scan tick count for missing file '{filled_by_file}'.")
                         del self.plex_scan_tick_counts[cache_key]
-                    continue
+                    # --- START EDIT: Need to continue loop if file not found ---
+                    continue 
+                    # --- END EDIT ---
 
-                # --- START: New Logic to identify scan paths ---
+                # --- START: Logic to identify scan paths (original location) ---
                 if should_trigger_scan:
                     if not sections:
                          logging.error("Plex sections not available, cannot identify scan paths.")
@@ -2008,7 +2079,7 @@ class ProgramRunner:
 
                     if not found_matching_section_location:
                         logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{filled_by_file}'. Scan might not be triggered correctly.")
-                # --- END: New Logic to identify scan paths ---
+                # --- END: Logic to identify scan paths ---
 
 
             # --- Trigger scans after checking all items ---
