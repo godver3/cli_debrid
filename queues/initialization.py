@@ -258,9 +258,9 @@ def initialize(skip_initial_plex_update=False):
         complete_phase('sources')
         
         # Refresh Release Dates Phase (30 seconds)
-        start_phase('release', 'Refresh Release Dates', 'Starting release date refresh')
-        refresh_release_dates()
-        complete_phase('release')
+        #start_phase('release', 'Refresh Release Dates', 'Starting release date refresh')
+        #refresh_release_dates()
+        #complete_phase('release')
     else:
         logging.info("Skipping content sources and release date refresh due to Plex update status.")
         # Manually set progress past these skipped phases

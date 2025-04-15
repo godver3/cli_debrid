@@ -12,6 +12,8 @@ import hashlib
 import json
 from pathlib import Path
 import errno # Add errno for file locking checks
+from apscheduler.triggers.interval import IntervalTrigger # Add this import
+import pytz # Add pytz for timezone handling
 
 # Import notification functions
 from .notifications import (
@@ -378,54 +380,79 @@ def task_stream():
         while True:
             try:
                 program_runner = get_program_runner()
-                current_time = datetime.now().timestamp()
-                
-                if program_runner is not None and program_runner.is_running():
-                    last_run_times = program_runner.last_run_times
-                    task_intervals = program_runner.task_intervals
-                    
+                # Use scheduler's timezone if available, else UTC
+                tz = program_runner.scheduler.timezone if program_runner and hasattr(program_runner, 'scheduler') else pytz.utc
+                current_time_dt = datetime.now(tz)
+
+                if program_runner is not None and program_runner.is_running() and hasattr(program_runner, 'scheduler'):
                     tasks_info = []
-                    for task, last_run in last_run_times.items():
-                        interval = task_intervals.get(task, 0)
-                        time_since_last_run = current_time - last_run
-                        next_run = max(0, interval - time_since_last_run)
-                        
-                        if task in program_runner.enabled_tasks:
+                    # Use scheduler lock for safety when iterating jobs
+                    with program_runner.scheduler_lock:
+                        jobs = program_runner.scheduler.get_jobs()
+                        for job in jobs:
+                            interval = None
+                            if isinstance(job.trigger, IntervalTrigger):
+                                interval = job.trigger.interval.total_seconds()
+
+                            next_run_timestamp = None
+                            if job.next_run_time:
+                                # Ensure next_run_time is timezone-aware using scheduler's timezone
+                                next_run_aware = job.next_run_time.astimezone(tz)
+                                next_run_timestamp = next_run_aware.timestamp()
+
+                            # Enabled = job has a next run time (is not paused indefinitely)
+                            enabled = job.next_run_time is not None
+
+                            # Running status is difficult to get accurately, omitting for now
+                            # running = False # Placeholder
+
+                            # Calculate time until next run in seconds
+                            time_until_next = None
+                            if enabled and next_run_timestamp:
+                                time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
+
+
                             tasks_info.append({
-                                'name': task,
-                                'last_run': last_run,
-                                'next_run': next_run if task not in program_runner.currently_running_tasks else 0,
+                                'name': job.id,
+                                # 'last_run': Not easily available from APScheduler job object
+                                'next_run': time_until_next, # Time until next run in seconds
+                                'next_run_timestamp': next_run_timestamp, # Actual timestamp
                                 'interval': interval,
-                                'enabled': True,
-                                'running': task in program_runner.currently_running_tasks
+                                'enabled': enabled,
+                                #'running': running # Omitted for now
                             })
-                    
+
                     tasks_info.sort(key=lambda x: x['name'])
-                    
+
+                    # Use the runner's pause state and reason
+                    is_paused = program_runner.queue_paused
+                    pause_reason = program_runner.pause_reason
+
                     data = {
                         'success': True,
-                        'running': True,
+                        'running': True, # ProgramRunner itself is running
                         'tasks': tasks_info,
-                        'paused': program_runner.queue_manager.is_paused() if hasattr(program_runner, 'queue_manager') else False,
-                        'pause_reason': program_runner.pause_reason
+                        'paused': is_paused,
+                        'pause_reason': pause_reason
                     }
                 else:
                     data = {
                         'success': True,
-                        'running': False,
+                        'running': False, # ProgramRunner is not running or scheduler missing
                         'tasks': [],
                         'paused': False,
                         'pause_reason': None
                     }
-                
+
                 yield f"data: {json.dumps(data, default=str)}\n\n"
-                    
+
             except Exception as e:
-                logging.error(f"Error in task stream: {str(e)}")
-                yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
-            
+                logging.error(f"Error in task stream: {str(e)}", exc_info=True) # Log stack trace
+                # Ensure we yield an error structure consistent with the success case
+                yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_reason': None, 'error': str(e)})}\n\n"
+
             time.sleep(1)  # Check for updates every second
-    
+
     response = Response(generate(), mimetype='text/event-stream')
     response.headers.update({
         'Cache-Control': 'no-cache',
@@ -434,7 +461,7 @@ def task_stream():
         'Access-Control-Allow-Headers': 'Content-Type',
         'X-Accel-Buffering': 'no'  # Disable buffering in Nginx
     })
-    return response 
+    return response
 
 # Clear check-update cache on startup
 clear_cache()

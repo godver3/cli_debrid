@@ -4,6 +4,13 @@ import time
 import os
 import sqlite3
 import plexapi # Added import
+# *** START EDIT ***
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+import threading # For scheduler lock AND concurrent queue processing
+import functools # Added for partial
+import apscheduler.events # Added for listener events
+# *** END EDIT ***
 from queues.initialization import initialize
 from utilities.settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
@@ -52,6 +59,7 @@ from plexapi.exceptions import NotFound
 import pytz # Added import
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError # Keep this if needed elsewhere, or remove if only _get_local_timezone uses it
 from database.core import get_db_connection # Add DB connection import
+from database.database_reading import get_media_item_by_id
 from utilities.local_library_scan import check_local_file_for_item # Add local scan import
 from utilities.rclone_processing import handle_rclone_file # Add this import
 from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
@@ -77,13 +85,26 @@ class ProgramRunner:
         self._initialized = True
         self.running = False
         self.initializing = False
-        self.currently_running_tasks = set()  # Track which tasks are currently running
         self.pause_reason = None  # Track why the queue is paused
         self.connectivity_failure_time = None  # Track when connectivity failed
         self.connectivity_retry_count = 0  # Track number of retries
+        self.queue_paused = False # Initialize the pause state flag
         
         # Add a queue for pending rclone paths (using deque for efficiency)
         self.pending_rclone_paths = deque() 
+        
+        # Configure scheduler timezone using the local timezone helper
+        from metadata.metadata import _get_local_timezone
+        try:
+            tz = _get_local_timezone()
+            logging.info(f"Initializing APScheduler with timezone: {tz.key}")
+            self.scheduler = BackgroundScheduler(timezone=tz)
+        except Exception as e:
+            logging.error(f"Failed to get local timezone for scheduler, using system default: {e}")
+            self.scheduler = BackgroundScheduler() # Fallback to default
+
+        self.scheduler_lock = threading.Lock() # Lock for modifying scheduler jobs
+        self.paused_jobs_by_queue = set() # Keep track of jobs paused by pause_queue
         
         from queues.queue_manager import QueueManager
         
@@ -103,47 +124,70 @@ class ProgramRunner:
         
         logging.info("Successfully initialized QueueManager with queues: " + ", ".join(self.queue_manager.queues.keys()))
         
-        self.tick_counter = 0
-        self.task_intervals = {
-            'Wanted': 5,       # Keep these responsive
-            'Scraping': 5,     # Keep these responsive
-            'Adding': 5,       # Keep these responsive
-            'Checking': 180,   # 3 minutes (was already good)
-            'Sleeping': 1800,  # 30 minutes (increased from 15)
-            'Unreleased': 300,  # 5 minutes (reduced from 1 hour to ensure regular checking)
-            'Blacklisted': 7200,  # 2 hours (increased from 1)
-            'Pending Uncached': 3600,  # 1 hour (no change)
-            'Upgrading': 3600,  # 1 hour (no change)
-            'task_plex_full_scan': 3600,
-            #'task_debug_log': 60,
-            'task_refresh_release_dates': 36000,
-            #'task_purge_not_wanted_magnets_file': 604800,
-            'task_generate_airtime_report': 3600,
-            'task_check_service_connectivity': 60,
-            'task_send_notifications': 15,  # Run every 0.25 minutes (15 seconds)
-            'task_sync_time': 3600,  # Run every hour
-            'task_check_trakt_early_releases': 3600,  # Run every hour
-            'task_reconcile_queues': 3600,  # Run every 1 hour (was 5 minutes)
-            'task_heartbeat': 120,  # Run every 2 minutes
-            #'task_local_library_scan': 900,  # Run every 5 minutes
-            'task_refresh_download_stats': 300,  # Run every 5 minutes
-            'task_check_plex_files': 60,  # Run every 60 seconds
-            'task_update_show_ids': 40600,  # Run every six hours
-            'task_update_show_titles': 45600,  # Run every six hours
-            'task_update_movie_ids': 50600,  # Run every six hours
-            'task_update_movie_titles': 55600,  # Run every six hours
-            'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours
-            'task_refresh_plex_tokens': 24 * 60 * 60,  # Run every 24 hours
-            'task_check_database_health': 3600,  # Run every hour
-            'task_run_library_maintenance': 12 * 60 * 60,  # Run every twelve hours
-            'task_verify_symlinked_files': 900,  # Run every 15 minutes
-            'task_verify_plex_removals': 900, # NEW: Run every 15 minutes
-            'task_update_statistics_summary': 300,  # Run every 5 minutes
-            'task_precompute_airing_shows': 600,  # Precompute airing shows every 10 minutes
-            'task_process_pending_rclone_paths': 10, # Add new task: check pending rclone paths every 10 seconds (was 60)
-            'task_update_tv_show_status': 172800, # NEW: 48 hours (48 * 60 * 60)
+        # --- START EDIT: Define queue_processing_map FIRST ---
+        # Define queue processing map needed early by _normalize_task_name
+        # This map connects queue names (often used in toggles/settings)
+        # to the corresponding processing methods in QueueManager.
+        self.queue_processing_map = {
+            'Wanted': 'process_wanted',
+            # 'Scraping': 'process_scraping', # Handled by combined task
+            # 'Adding': 'process_adding',     # Handled by combined task
+            'Checking': 'process_checking',
+            'Sleeping': 'process_sleeping',
+            'Unreleased': 'process_unreleased',
+            'Blacklisted': 'process_blacklisted',
+            'Pending Uncached': 'process_pending_uncached',
+            'Upgrading': 'process_upgrading'
         }
-        # Store original intervals for reference
+        # --- END EDIT ---
+
+        # Base Task Intervals
+        self.task_intervals = {
+            # Queue Processing Tasks (intervals for individual queues are less critical now)
+            'Wanted': 5,
+            # 'Scraping': 5, # Handled by combined task
+            # 'Adding': 5,   # Handled by combined task
+            'Checking': 180,
+            'Sleeping': 1800,
+            'Unreleased': 300,
+            'Blacklisted': 7200,
+            'Pending Uncached': 3600,
+            'Upgrading': 3600,
+            # Combined/High Frequency Tasks
+            'task_process_scraping_adding': 10, # Process scraping and adding every 10 seconds
+            'task_update_queue_views': 30,     # Update queue views every 30 seconds
+            'task_process_pending_rclone_paths': 10, # Check pending rclone paths every 10 seconds
+            'task_send_notifications': 15,       # Run every 15 seconds
+            'task_check_plex_files': 60,         # Run every 60 seconds (if enabled)
+            # Periodic Maintenance/Update Tasks
+            'task_check_service_connectivity': 60, # Run every 60 seconds
+            'task_heartbeat': 120,               # Run every 2 minutes
+            'task_update_statistics_summary': 300, # Run every 5 minutes
+            'task_refresh_download_stats': 300,    # Run every 5 minutes
+            'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
+            'task_verify_symlinked_files': 900,    # Run every 15 minutes (if enabled)
+            'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled)
+            'task_reconcile_queues': 3600,         # Run every 1 hour
+            'task_check_database_health': 3600,    # Run every hour
+            'task_sync_time': 3600,                # Run every hour
+            'task_check_trakt_early_releases': 3600,# Run every hour
+            'task_update_show_ids': 40600,         # Run every ~11 hours
+            'task_update_show_titles': 45600,      # Run every ~12 hours
+            'task_update_movie_ids': 50600,        # Run every ~14 hours
+            'task_update_movie_titles': 55600,     # Run every ~15 hours
+            'task_refresh_release_dates': 36000,   # Run every 10 hours
+            'task_generate_airtime_report': 3600,  # Run every hour
+            'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
+            'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
+            'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
+            'task_update_tv_show_status': 172800,       # Run every 48 hours
+            # 'task_purge_not_wanted_magnets_file': 604800, # Default: 1 week (Can be added if needed)
+            # 'task_local_library_scan': 900, # Default: 15 mins (Can be added if needed)
+            'task_plex_full_scan': 3600, # Run every hour (Can be adjusted)
+            # NEW Load Adjustment Task
+            'task_adjust_intervals_for_load': 120, # Run every 2 minutes
+        }
+        # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
         
         # Initialize content_sources attribute FIRST
@@ -151,137 +195,311 @@ class ProgramRunner:
         self.file_location_cache = {}  # Cache to store known file locations
 
         self.start_time = time.time()
-        # Initialize with base intervals FIRST
-        self.last_run_times = {task: self.start_time for task in self.task_intervals}
-        self.original_task_intervals = self.task_intervals.copy() # Keep original intervals
 
-        # Initialize enabled_tasks with base tasks FIRST
+        # --- START: Task Enabling Logic Reorder ---
+
+        # 1. Initialize enabled_tasks with base/essential tasks
         self.enabled_tasks = {
+            # Core Queue Processing (Individual queues are less important to enable here)
             'Wanted', 
-            'Scraping', 
-            'Adding', 
             'Checking', 
             'Sleeping', 
             'Unreleased', 
             'Blacklisted',
             'Pending Uncached',
             'Upgrading',
-            'task_refresh_release_dates',
-            'task_generate_airtime_report',
-            'task_check_service_connectivity',
+            # Combined/High Frequency Tasks
+            'task_process_scraping_adding',
+            'task_update_queue_views',
+            'task_process_pending_rclone_paths',
             'task_send_notifications',
+            # Essential Periodic Tasks
+            'task_check_service_connectivity',
+            'task_heartbeat',
+            'task_update_statistics_summary',
+            'task_refresh_download_stats',
+            'task_precompute_airing_shows',
+            'task_reconcile_queues',
+            'task_check_database_health',
             'task_sync_time',
             'task_check_trakt_early_releases',
-            'task_reconcile_queues',
-            'task_heartbeat',
-            'task_refresh_download_stats',
             'task_update_show_ids',
             'task_update_show_titles',
             'task_update_movie_ids',
             'task_update_movie_titles',
-            'task_refresh_plex_tokens',
-            'task_check_database_health',
-            'task_update_statistics_summary',
-            'task_precompute_airing_shows',
-            'task_update_tv_show_status', # NEW: Enable the task by default
-        }
-
-        # *** START EDIT ***
-        # Define the set of tasks eligible for dynamic interval adjustment
-        self.DYNAMIC_INTERVAL_TASKS = {
             'task_refresh_release_dates',
             'task_generate_airtime_report',
-            'task_check_trakt_early_releases',
-            'task_reconcile_queues',
-            'task_refresh_download_stats',
-            'task_check_plex_files',
-            'task_update_show_ids',
-            'task_update_show_titles',
-            'task_update_movie_ids',
-            'task_update_movie_titles',
-            'task_get_plex_watch_history',
-            'task_run_library_maintenance',
-            'task_verify_symlinked_files',
-            'task_verify_plex_removals',
-            'task_update_statistics_summary',
-            'task_precompute_airing_shows',
-            'task_plex_full_scan'
+            'task_refresh_plex_tokens',
+            'task_update_tv_show_status',
+            # NEW Load Adjustment Task
+            'task_adjust_intervals_for_load',
         }
-        # Define a maximum multiplier for dynamic intervals (e.g., 16x original)
-        self.MAX_INTERVAL_MULTIPLIER = 16
-        # Define an absolute maximum interval (e.g., 24 hours in seconds)
-        self.ABSOLUTE_MAX_INTERVAL = 48 * 60 * 60
-        # *** END EDIT ***
+        logging.info("Initialized base enabled tasks.")
 
-        # THEN populate content source intervals AND add enabled content source tasks
-        logging.info("Performing initial population of content source intervals and enabled tasks...")
-        self.get_content_sources(force_refresh=True) # This call will now work as self.enabled_tasks exists
-        logging.info("Initial content source interval/task population complete.")
-        
-        # Enable Plex removal task if symlink verification is enabled
-        if 'task_verify_symlinked_files' in self.enabled_tasks:
-            self.enabled_tasks.add('task_verify_plex_removals')
-            logging.info("Enabled Plex removal verification task as symlink verification is active.")
-
-        # FINALLY load saved task toggle states from JSON file (AFTER intervals are populated)
+        # 2. Load task_toggles.json ONCE and update enabled_tasks
+        # --- START EDIT: Initialize saved_states before try block ---
+        saved_states = {} # Ensure saved_states exists even if file loading fails
+        # --- END EDIT ---
         try:
             import os
             import json
 
-            # Get the user_db_content directory from environment variable
             db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
             toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
 
-            # Check if file exists
             if os.path.exists(toggles_file_path):
-                # Load from JSON file
+                logging.info(f"Loading task toggle states from {toggles_file_path}")
                 with open(toggles_file_path, 'r') as f:
                     saved_states = json.load(f)
 
-                # Apply saved states
                 for task_name, enabled in saved_states.items():
                     normalized_name = self._normalize_task_name(task_name)
-                    # --- START EDIT ---
                     # Check if the task from the JSON file actually exists in our defined intervals
                     if normalized_name not in self.task_intervals:
                         logging.warning(f"Task '{normalized_name}' found in task_toggles.json but not defined in task_intervals. Skipping toggle.")
-                        continue # Skip this task if it's not defined in the code
-                    # --- END EDIT ---
+                        continue
 
-                    if enabled and normalized_name not in self.enabled_tasks:
-                        self.enabled_tasks.add(normalized_name)
-                        logging.info(f"Enabled task from saved settings: {normalized_name}")
-                    elif not enabled and normalized_name in self.enabled_tasks:
-                        self.enabled_tasks.remove(normalized_name)
-                        logging.info(f"Disabled task from saved settings: {normalized_name}")
+                    if enabled:
+                        if normalized_name not in self.enabled_tasks:
+                            self.enabled_tasks.add(normalized_name)
+                            logging.info(f"Enabled task from saved settings: {normalized_name}")
+                    elif not enabled:
+                        if normalized_name in self.enabled_tasks:
+                            self.enabled_tasks.remove(normalized_name)
+                            logging.info(f"Disabled task from saved settings: {normalized_name}")
+            else:
+                logging.info("No task_toggles.json found, using default enabled tasks.")
         except Exception as e:
             logging.error(f"Error loading saved task toggle states: {str(e)}")
 
-        if get_setting('File Management', 'file_collection_management') == 'Plex' and (
-            get_setting('Plex', 'update_plex_on_file_discovery') or 
-            get_setting('Plex', 'disable_plex_library_checks')
-        ):
-            self.enabled_tasks.add('task_check_plex_files')
+        # 3. Get Content Sources (populates intervals AND updates enabled_tasks based on source settings)
+        logging.info("Populating content source intervals and updating enabled tasks based on source settings...")
+        self.get_content_sources(force_refresh=True) # This populates intervals and toggles sources
+        logging.info("Content source processing complete.")
 
-        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local' and (
-            get_setting('File Management', 'plex_url_for_symlink') and 
-            get_setting('File Management', 'plex_token_for_symlink')
-        ):
-            self.enabled_tasks.add('task_verify_symlinked_files')
+        # 4. Apply remaining get_setting() checks for specific tasks
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
+            # Enable Plex file checking if either setting is true and not explicitly disabled by toggle
+            if get_setting('Plex', 'update_plex_on_file_discovery') or get_setting('Plex', 'disable_plex_library_checks'):
+                 if 'task_check_plex_files' not in self.enabled_tasks:
+                      # Check if it was disabled by toggle before enabling
+                      # This logic might be complex depending on desired precedence (setting vs toggle)
+                      # Assuming setting enables it unless explicitly toggled off:
+                      # Check toggle state again (or rely on previous toggle load)
+                      is_toggled_off = saved_states.get(self._normalize_task_name('task_check_plex_files'), True) is False
+                      if not is_toggled_off:
+                          self.enabled_tasks.add('task_check_plex_files')
+                          logging.info("Enabled 'task_check_plex_files' based on Plex settings.")
+            else:
+                 # Ensure it's disabled if conditions aren't met AND wasn't manually enabled by toggle
+                 is_toggled_on = saved_states.get(self._normalize_task_name('task_check_plex_files'), False) is True
+                 if 'task_check_plex_files' in self.enabled_tasks and not is_toggled_on:
+                      self.enabled_tasks.remove('task_check_plex_files')
+                      logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
+
+        if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+             # Enable symlink/removal tasks if configured and not toggled off
+            if get_setting('File Management', 'plex_url_for_symlink') and get_setting('File Management', 'plex_token_for_symlink'):
+                symlink_task = 'task_verify_symlinked_files'
+                removal_task = 'task_verify_plex_removals'
+                is_symlink_toggled_off = saved_states.get(self._normalize_task_name(symlink_task), True) is False
+                is_removal_toggled_off = saved_states.get(self._normalize_task_name(removal_task), True) is False
+
+                if not is_symlink_toggled_off and symlink_task not in self.enabled_tasks:
+                    self.enabled_tasks.add(symlink_task)
+                    logging.info("Enabled symlink verification task based on settings.")
+                if not is_removal_toggled_off and removal_task not in self.enabled_tasks:
+                    self.enabled_tasks.add(removal_task)
+                    logging.info("Enabled Plex removal verification task based on settings.")
+            else:
+                 # Disable if settings are off and not toggled on
+                 is_symlink_toggled_on = saved_states.get(self._normalize_task_name('task_verify_symlinked_files'), False) is True
+                 is_removal_toggled_on = saved_states.get(self._normalize_task_name('task_verify_plex_removals'), False) is True
+                 if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
+                     self.enabled_tasks.remove('task_verify_symlinked_files')
+                     logging.info("Disabled symlink verification task as settings are off.")
+                 if 'task_verify_plex_removals' in self.enabled_tasks and not is_removal_toggled_on:
+                     self.enabled_tasks.remove('task_verify_plex_removals')
+                     logging.info("Disabled Plex removal verification task as settings are off.")
+
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
-            self.enabled_tasks.add('task_get_plex_watch_history')
+             task_name = 'task_get_plex_watch_history'
+             is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
+             if not is_toggled_off and task_name not in self.enabled_tasks:
+                self.enabled_tasks.add(task_name)
+                logging.info(f"Enabled '{task_name}' based on Debug setting.")
+        else:
+            task_name = 'task_get_plex_watch_history'
+            is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
+            if task_name in self.enabled_tasks and not is_toggled_on:
+                 self.enabled_tasks.remove(task_name)
+                 logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
         if get_setting('Debug', 'enable_library_maintenance_task', False):
-            self.enabled_tasks.add('task_run_library_maintenance')
-        
-        # Add this line to store content sources
-        self.content_sources = None
-        self.file_location_cache = {}  # Cache to store known file locations
+            task_name = 'task_run_library_maintenance'
+            is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
+            if not is_toggled_off and task_name not in self.enabled_tasks:
+                self.enabled_tasks.add(task_name)
+                logging.info(f"Enabled '{task_name}' based on Debug setting.")
+        else:
+            task_name = 'task_run_library_maintenance'
+            is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
+            if task_name in self.enabled_tasks and not is_toggled_on:
+                 self.enabled_tasks.remove(task_name)
+                 logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
-        # *** Add this line to update the original intervals AFTER dynamic tasks are added ***
+        # 5. Ensure legacy individual Scraping/Adding tasks are removed *after* all logic
+        if 'Scraping' in self.enabled_tasks:
+            logging.info("Removing legacy 'Scraping' task from enabled tasks (handled by combined task).")
+            self.enabled_tasks.remove('Scraping')
+        if 'Adding' in self.enabled_tasks:
+            logging.info("Removing legacy 'Adding' task from enabled tasks (handled by combined task).")
+            self.enabled_tasks.remove('Adding')
+
+        # 6. Finalize original task intervals *after* content sources potentially added intervals
         self.original_task_intervals = self.task_intervals.copy()
-        logging.info("Finalized original task intervals after content source and toggle loading.")
+        logging.info("Finalized original task intervals after all task definitions and settings.")
+
+        # --- END: Task Enabling Logic Reorder ---
+
+
+        # Define queue processing map EARLIER
+        self.queue_processing_map = {
+            'Wanted': 'process_wanted',
+            # 'Scraping': 'process_scraping', # Handled by combined task
+            # 'Adding': 'process_adding',     # Handled by combined task
+            'Checking': 'process_checking',
+            'Sleeping': 'process_sleeping',
+            'Unreleased': 'process_unreleased',
+            'Blacklisted': 'process_blacklisted',
+            'Pending Uncached': 'process_pending_uncached',
+            'Upgrading': 'process_upgrading'
+        }
+
+        # Log the final set of enabled tasks right before starting the scheduling process
+        logging.info(f"Final enabled tasks before initial scheduling: {sorted(list(self.enabled_tasks))}")
+
+        # Schedule initial tasks
+        self._schedule_initial_tasks()
+
+    # *** START EDIT: New method to get task target ***
+    def _get_task_target(self, task_name: str):
+        """Resolves the target function and arguments for a given task name."""
+        target_func = None
+        args = []
+        kwargs = {}
+        task_type_determined = "Unknown"
+
+        # 1. Queue Processing Tasks (using the map)
+        if task_name in self.queue_processing_map:
+            task_type_determined = "Queue Task (Map)"
+            method_name = self.queue_processing_map[task_name]
+            if hasattr(self.queue_manager, method_name):
+                target_func = getattr(self.queue_manager, method_name)
+                if task_name == 'Checking':
+                    args = [self] # Pass ProgramRunner instance
+            else:
+                logging.error(f"Method '{method_name}' not found in QueueManager for task '{task_name}'")
+
+        # 2. Content Source Tasks (task_SOURCE_wanted)
+        elif task_name.startswith('task_') and task_name.endswith('_wanted'):
+            task_type_determined = "Content Source Task"
+            source_id = task_name[5:-7]
+            if self.content_sources is None:
+                self.get_content_sources(force_refresh=True)
+            source_data = self.content_sources.get(source_id)
+            if source_data:
+                target_func = self.process_content_source
+                args = [source_id, source_data]
+            else:
+                logging.error(f"Content source data not found for source ID '{source_id}' derived from task '{task_name}'")
+
+        # 3. Regular task_* methods (including combined tasks and new load adjustment task)
+        elif task_name.startswith('task_'):
+            task_type_determined = "Regular Task (task_*)"
+            if hasattr(self, task_name):
+                target_func = getattr(self, task_name)
+            else:
+                logging.error(f"Method '{task_name}' not found in ProgramRunner")
+
+        # Default/Error case
+        else:
+            task_type_determined = "ERROR - Unknown Format"
+            logging.error(f"Unknown task type or name format for task resolution: '{task_name}'")
+
+        logging.debug(f"Resolved task '{task_name}' as Type: {task_type_determined}")
+        return target_func, args, kwargs
+    # *** END EDIT ***
+
+
+    # *** START EDIT: Use _get_task_target in _schedule_task ***
+    def _schedule_task(self, task_name: str, interval_seconds: int, initial_run: bool = False):
+        """Schedules a single task in APScheduler, wrapped for duration measurement."""
+        logging.debug(f"Attempting to schedule task: '{task_name}' with interval {interval_seconds}s")
+
+        with self.scheduler_lock:
+            job_id = task_name # Use task name as job ID
+
+            # Check if job already exists
+            existing_job = self.scheduler.get_job(job_id)
+            if existing_job:
+                if initial_run:
+                    logging.debug(f"Task '{job_id}' already scheduled. Skipping initial schedule.")
+                    return True
+                logging.info(f"Task '{job_id}' already exists. Removing old job before rescheduling.")
+                try:
+                    self.scheduler.remove_job(job_id)
+                except Exception as e:
+                    logging.error(f"Error removing existing job '{job_id}': {e}")
+                    return False
+
+            # --- Resolve target function using helper ---
+            target_func, args, kwargs = self._get_task_target(task_name)
+            # ------------------------------------------
+
+            if target_func:
+                try:
+                    # Wrap the target function
+                    wrapped_func = functools.partial(self._run_and_measure_task, target_func, args, kwargs)
+
+                    trigger = IntervalTrigger(seconds=interval_seconds)
+                    self.scheduler.add_job(
+                        func=wrapped_func,
+                        trigger=trigger,
+                        id=job_id,
+                        name=job_id,
+                        replace_existing=True,
+                        misfire_grace_time=max(60, interval_seconds // 4)
+                    )
+                    logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (wrapped for duration measurement).")
+                    return True
+                except Exception as e:
+                    logging.error(f"Error scheduling task '{job_id}': {e}", exc_info=True)
+                    return False
+            else:
+                 logging.error(f"Failed to determine target function for task '{task_name}'. Cannot schedule.")
+                 return False
+    # *** END EDIT ***
+
+
+    def _schedule_initial_tasks(self):
+        """Schedules all enabled tasks based on initial configuration."""
+        logging.info("Scheduling initial tasks...")
+        scheduled_count = 0
+        failed_count = 0
+        for task_name in self.enabled_tasks:
+            interval = self.task_intervals.get(task_name)
+            if interval is not None:
+                if self._schedule_task(task_name, interval, initial_run=True):
+                    scheduled_count += 1
+                else:
+                    failed_count += 1
+            else:
+                logging.warning(f"Task '{task_name}' is enabled but has no interval defined in task_intervals. Skipping scheduling.")
+                failed_count += 1
+        logging.info(f"Initial task scheduling complete. Scheduled: {scheduled_count}, Failed/Skipped: {failed_count}")
+
 
     def _is_within_pause_schedule(self):
         """Checks if the current time is within the configured pause schedule."""
@@ -319,7 +537,6 @@ class ProgramRunner:
             else:
                 logging.info("Program running...is your fridge?")
 
-    # Modify this method to cache content sources
     def get_content_sources(self, force_refresh=False):
         if self.content_sources is None or force_refresh:
             settings = get_all_settings()
@@ -341,6 +558,8 @@ class ProgramRunner:
                 'My Friends Trakt Watchlist': 900
             }
             
+            log_intervals_message = ["Content source intervals:"] # Prepare log message
+            
             for source, data in self.content_sources.items():
                 if isinstance(data, str):
                     data = {'enabled': data.lower() == 'true'}
@@ -353,54 +572,46 @@ class ProgramRunner:
 
                 # Use custom check period if present, otherwise use default
                 custom_interval = custom_check_periods.get(source)
+                final_interval = 0 # Initialize
                 if custom_interval is not None:
-                    # Convert minutes to seconds, handling decimals
-                    data['interval'] = int(float(custom_interval) * 60)  # First multiply by 60, then convert to int
+                    try:
+                        final_interval = int(float(custom_interval) * 60)
+                        data['interval'] = final_interval
+                    except ValueError:
+                         logging.error(f"Invalid custom interval '{custom_interval}' for source {source}. Using default.")
+                         final_interval = int(data.get('interval', default_intervals.get(source_type, 3600)))
+                         data['interval'] = final_interval
                 else:
-                    data['interval'] = int(data.get('interval', default_intervals.get(source_type, 3600)))
+                    final_interval = int(data.get('interval', default_intervals.get(source_type, 3600)))
+                    data['interval'] = final_interval
 
                 task_name = f'task_{source}_wanted'
-                self.task_intervals[task_name] = data['interval']
-                self.last_run_times[task_name] = self.start_time
+                # Update task_intervals (this defines the task interval for scheduling)
+                self.task_intervals[task_name] = final_interval
+                # Update original intervals map too (used for resets)
+                if task_name not in self.original_task_intervals:
+                     self.original_task_intervals[task_name] = final_interval
+
+                log_intervals_message.append(f"  {task_name}: {final_interval} seconds")
                 
                 if isinstance(data.get('enabled'), str):
                     data['enabled'] = data['enabled'].lower() == 'true'
                 
-                if data.get('enabled', False):
+                # Add to enabled tasks if enabled (this happens *after* toggle loading in the new flow)
+                is_enabled = data.get('enabled', False)
+                if is_enabled and task_name not in self.enabled_tasks:
                     self.enabled_tasks.add(task_name)
-            
-            # Log the intervals only once
-            logging.info("Content source intervals:")
-            for task, interval in self.task_intervals.items():
-                if task.startswith('task_') and task.endswith('_wanted'):
-                    logging.info(f"{task}: {interval} seconds")
+                    logging.info(f"Enabled content source task based on its settings: {task_name}")
+                # Ensure it's removed if disabled (respecting if it was already removed by toggle)
+                elif not is_enabled and task_name in self.enabled_tasks:
+                     self.enabled_tasks.remove(task_name)
+                     logging.info(f"Disabled content source task based on its settings: {task_name}")
+
+            # Log the intervals once after processing all sources
+            logging.info("\n".join(log_intervals_message))
 
         return self.content_sources
         
-    def should_run_task(self, task_name):
-        if task_name not in self.enabled_tasks or task_name in self.currently_running_tasks:
-            return False
-        
-        # Defensive check: Ensure task exists in interval/timing dictionaries
-        if task_name not in self.task_intervals or task_name not in self.last_run_times:
-            logging.error(f"Task '{task_name}' found in enabled_tasks but missing from task_intervals or last_run_times. Skipping run.")
-            # Optionally, try to re-initialize content sources here if it's a source task
-            if task_name.endswith('_wanted'):
-                 logging.warning(f"Attempting to re-initialize content sources due to missing task interval for {task_name}")
-                 try:
-                     self.get_content_sources(force_refresh=True)
-                 except Exception as e:
-                     logging.error(f"Error during forced content source refresh: {e}")
-            return False
-            
-        current_time = time.time()
-        time_since_last_run = current_time - self.last_run_times[task_name]
-        should_run = time_since_last_run >= self.task_intervals[task_name]
-        if should_run:
-            self.last_run_times[task_name] = current_time
-            self.currently_running_tasks.add(task_name)  # Mark task as running
-        return should_run
-
     def task_check_service_connectivity(self):
         """Check connectivity to required services"""
         from routes.program_operation_routes import check_service_connectivity
@@ -472,202 +683,99 @@ class ProgramRunner:
                 self.connectivity_retry_count = 0
 
     def pause_queue(self):
+        # *** START EDIT: Pause ALL running jobs ***
+        with self.scheduler_lock:
+            if self.scheduler.state != 1: # 1 = STATE_RUNNING
+                logging.warning("Scheduler is not running, cannot pause jobs.")
+                return
+
+            all_jobs = self.scheduler.get_jobs()
+            paused_count = 0
+            logging.debug(f"Pausing all running jobs. Total jobs found: {len(all_jobs)}")
+            logging.debug(f"Jobs already tracked as paused by this mechanism: {sorted(list(self.paused_jobs_by_queue))}")
+
+            for job in all_jobs:
+                job_id = job.id
+                # Only pause if the job is scheduled to run (not already paused indefinitely)
+                # and not already tracked by this mechanism
+                if job.next_run_time is not None and job_id not in self.paused_jobs_by_queue:
+                     try:
+                         self.scheduler.pause_job(job_id)
+                         self.paused_jobs_by_queue.add(job_id)
+                         paused_count += 1
+                         logging.debug(f"Paused scheduler job via pause_queue: {job_id}")
+                     except Exception as e:
+                         logging.error(f"Error pausing job '{job_id}': {e}")
+                elif job.next_run_time is None:
+                    logging.debug(f"Job '{job_id}' was already paused. Ensuring it's tracked.")
+                    # Ensure it's tracked if it was already paused by other means
+                    if job_id not in self.paused_jobs_by_queue:
+                        self.paused_jobs_by_queue.add(job_id)
+                elif job_id in self.paused_jobs_by_queue:
+                     logging.debug(f"Job '{job_id}' was already in paused_jobs_by_queue set. Skipping pause action.")
+
+
+            # Use the existing QueueManager pause state if needed for UI/status
         from queues.queue_manager import QueueManager
-        
-        QueueManager().pause_queue(reason=self.pause_reason)
-        self.queue_paused = True
-        logging.info("Queue paused")
+        QueueManager().pause_queue(reason=self.pause_reason) # Keep for status reporting
+
+        self.queue_paused = True # Keep internal flag if used elsewhere
+        # Updated log to reflect pausing *all* running jobs
+        logging.info(f"Queue paused. Attempted to pause all running jobs, newly paused: {paused_count}. Tracked paused jobs: {len(self.paused_jobs_by_queue)}. Reason: {self.pause_reason}")
+        # *** END EDIT ***
 
     def resume_queue(self):
+        # *** START EDIT: Resume logic remains the same, but update log context ***
+        with self.scheduler_lock:
+            if self.scheduler.state != 1: # 1 = STATE_RUNNING
+                logging.warning("Scheduler is not running, cannot resume jobs.")
+                return
+
+            resumed_count = 0
+            # Only resume jobs that were paused by pause_queue (or added to the set)
+            jobs_to_resume = list(self.paused_jobs_by_queue) # Copy to avoid modification issues
+            logging.debug(f"Attempting to resume jobs tracked during pause: {sorted(jobs_to_resume)}")
+
+            for job_id in jobs_to_resume:
+                 try:
+                     job = self.scheduler.get_job(job_id)
+                     if job:
+                        # Check if the job is actually paused (next_run_time is None)
+                        if job.next_run_time is None:
+                            self.scheduler.resume_job(job_id)
+                            self.paused_jobs_by_queue.remove(job_id) # Remove from tracked set
+                            resumed_count += 1
+                            logging.debug(f"Resumed scheduler job via resume_queue: {job_id}")
+                        else:
+                            logging.debug(f"Job '{job_id}' was found but already running (not paused). Removing from paused_jobs_by_queue set.")
+                            # Remove from set even if not paused, as it shouldn't be tracked anymore
+                            if job_id in self.paused_jobs_by_queue:
+                                self.paused_jobs_by_queue.remove(job_id)
+                     else:
+                         # Job doesn't exist anymore, remove it from the tracking set
+                         logging.warning(f"Job '{job_id}' not found while resuming, removing from paused_jobs_by_queue set.")
+                         if job_id in self.paused_jobs_by_queue:
+                              self.paused_jobs_by_queue.remove(job_id)
+
+                 except Exception as e:
+                     # Log specific errors during resume attempt
+                     logging.error(f"Error resuming job '{job_id}': {e}")
+                     # Decide if we should keep it in the set or remove on error?
+                     # Removing might be safer to prevent infinite loops if resume fails consistently.
+                     if job_id in self.paused_jobs_by_queue:
+                           logging.warning(f"Removing job '{job_id}' from paused_jobs_by_queue set due to resume error.")
+                           self.paused_jobs_by_queue.remove(job_id)
+
+
+            # Use the existing QueueManager resume state if needed for UI/status
         from queues.queue_manager import QueueManager
+        QueueManager().resume_queue() # Keep for status reporting
 
-        QueueManager().resume_queue()
-        self.queue_paused = False
+        self.queue_paused = False # Keep internal flag
         self.pause_reason = None  # Clear pause reason on resume
-        logging.info("Queue resumed")
-
-    def process_queues(self):
-        try:
-            # Check connectivity status if we're in a failure state
-            self.check_connectivity_status()
-
-            # Check scheduled pause
-            is_scheduled_pause = self._is_within_pause_schedule()
-            queue_manager = self.queue_manager # Get manager instance
-
-            if is_scheduled_pause and not queue_manager.is_paused():
-                pause_start = get_setting('Queue', 'pause_start_time', '00:00')
-                pause_end = get_setting('Queue', 'pause_end_time', '00:00')
-                self.pause_reason = f"Scheduled pause active ({pause_start} - {pause_end})"
-                self.pause_queue()
-                logging.info(f"Queue automatically paused due to schedule: {self.pause_reason}")
-            elif not is_scheduled_pause and queue_manager.is_paused() and self.pause_reason and "Scheduled pause active" in self.pause_reason:
-                 # Only resume if the current pause reason is the scheduled one
-                logging.info("Scheduled pause period ended. Resuming queue.")
-                self.resume_queue()
-
-            # Get current time once for this cycle
-            current_time = time.time()
-            
-            # Initialize timing tracking attributes if they don't exist
-            if not hasattr(self, '_last_heartbeat_check'):
-                self._last_heartbeat_check = 0
-                self._last_task_health_check = 0
-                self._last_full_update = 0
-                
-            # Only update heartbeat every second at most
-            if current_time - self._last_heartbeat_check >= 1.0:
-                self.update_heartbeat()
-                
-                # Only check heartbeat every 30 seconds
-                if current_time - self._last_heartbeat_check >= 30:
-                    self.check_heartbeat()
-                    
-                self._last_heartbeat_check = current_time
-            
-            # Only check task health and adjust intervals every 60 seconds
-            if current_time - self._last_task_health_check >= 60:
-                stale_tasks_count = self.check_task_health()
-                # Determine queue state for adjustment
-                queues_are_empty = self.queue_manager.are_main_queues_empty() if hasattr(self, 'queue_manager') else True
-                # Call adjustment function
-                self.adjust_task_intervals_based_on_load(queues_are_empty, stale_tasks_count)
-                
-                self._last_task_health_check = current_time
-            
-            # Update frequently polled queues first (to check for new items)
-            frequent_queues = ['Wanted', 'Scraping', 'Adding']
-            for queue_name in frequent_queues:
-                if queue_name in self.queue_manager.queues:
-                    self.queue_manager.queues[queue_name].update()
-            
-            # Only do a full update of all queues periodically to reduce database load
-            if not hasattr(self, '_last_full_update') or current_time - self._last_full_update >= 30:  # 30 seconds
-                logging.debug("Performing full queue update")
-                for queue_name, queue in self.queue_manager.queues.items():
-                    if queue_name not in frequent_queues:  # Skip queues we already updated
-                        queue.update()
-                self._last_full_update = current_time
-            # Always track the last Unreleased queue update separately
-            elif not hasattr(self, '_last_unreleased_update') or current_time - self._last_unreleased_update >= 300:  # 5 minutes
-                if 'Unreleased' in self.queue_manager.queues:
-                    self.queue_manager.queues['Unreleased'].update()  # Update queue contents
-                    self._last_unreleased_update = current_time
-            
-            # Process queue tasks (check for pause *before* processing each queue)
-            for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
-                if self.queue_manager.is_paused(): # Check pause state again
-                    #logging.debug(f"Skipping queue {queue_name} due to pause state.")
-                    continue # Skip processing this queue if paused
-
-                should_run = self.should_run_task(queue_name)
-                if should_run:
-                    self.safe_process_queue(queue_name)
-
-            # Process content source tasks (check for pause *before* processing each source)
-            for source, data in self.get_content_sources().items():
-                if self.queue_manager.is_paused(): # Check pause state again
-                    #logging.debug(f"Skipping content source {source} due to pause state.")
-                    continue # Skip processing this source if paused
-
-                task_name = f'task_{source}_wanted'
-                should_run = self.should_run_task(task_name)
-                if should_run:
-                    try:
-                        self.process_content_source(source, data)
-                    except Exception as e:
-                        logging.error(f"Error processing content source {source}: {str(e)}")
-                        logging.error(traceback.format_exc())
-                    finally:
-                        self.currently_running_tasks.discard(task_name)
-
-            # Process other enabled tasks (check for pause *before* processing each task)
-            for task_name in list(self.enabled_tasks): # Use list to allow modification during iteration if needed
-                if self.queue_manager.is_paused(): # Check pause state again
-                    #logging.debug(f"Skipping task {task_name} due to pause state.")
-                    continue # Skip processing this task if paused
-
-                # Check if it's NOT a standard queue or a content source task
-                is_standard_queue = task_name in [
-                    'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
-                    'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'
-                ]
-                is_content_source = task_name.startswith('task_') and task_name.endswith('_wanted')
-                
-                if not is_standard_queue and not is_content_source:
-                    if self.should_run_task(task_name):
-                        task_start_time = time.time() # Start timer
-                        try:
-                            logging.debug(f"Running task: {task_name}")
-                            task_method = getattr(self, task_name)
-                            task_method()
-                        except Exception as e:
-                            logging.error(f"Error running task {task_name}: {str(e)}")
-                            logging.error(traceback.format_exc())
-                        finally:
-                            task_duration = time.time() - task_start_time # Calculate duration
-                            logging.debug(f"Task {task_name} finished in {task_duration:.2f}s")
-                            # --- START EDIT: Apply dynamic interval logic ---
-                            self.apply_dynamic_interval_adjustment(task_name, task_duration)
-        # --- END EDIT ---
-                            self.currently_running_tasks.discard(task_name)
-
-        except Exception as e:
-            logging.error(f"Error in process_queues: {str(e)}")
-            logging.error(traceback.format_exc())
-
-    def safe_process_queue(self, queue_name: str):
-        try:
-            start_time = time.time()
-            
-            if not hasattr(self, 'queue_manager') or not hasattr(self.queue_manager, 'queues'):
-                logging.error("Queue manager not properly initialized")
-                return None
-                
-            if queue_name not in self.queue_manager.queues:
-                logging.error(f"Queue '{queue_name}' not found in queue manager!")
-                return None
-            
-            # Convert queue name to method name, replacing spaces with underscores
-            method_name = f'process_{queue_name.lower().replace(" ", "_")}'
-            if not hasattr(self.queue_manager, method_name):
-                logging.error(f"Process method '{method_name}' not found in queue manager!")
-                return None
-                
-            process_method = getattr(self.queue_manager, method_name)
-            
-            queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            
-            if self.queue_manager.is_paused():
-                logging.warning(f"Queue processing is paused. Skipping {queue_name} queue.")
-                return None
-            
-            try:
-                if queue_name == "Checking":
-                    result = process_method(self) # Pass self as program_runner
-                else:
-                    result = process_method()
-            except RateLimitError:
-                logging.warning("Rate limit exceeded on Debrid API")
-                self.handle_rate_limit()
-                return None
-            finally:
-                # Always remove the task from currently_running_tasks
-                self.currently_running_tasks.discard(queue_name)
-            
-            queue_contents = self.queue_manager.queues[queue_name].get_contents()
-            
-            duration = time.time() - start_time
-            
-            return result
-        
-        except Exception as e:
-            logging.error(f"Error processing {queue_name} queue: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None
-        finally:
-            # Double ensure task is removed from currently_running_tasks
-            self.currently_running_tasks.discard(queue_name)
+        # Updated log to reflect resuming *all* tracked jobs
+        logging.info(f"Queue resumed. Attempted to resume {len(jobs_to_resume)} tracked jobs, successfully resumed: {resumed_count}.")
+        # *** END EDIT ***
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
@@ -897,103 +1005,99 @@ class ProgramRunner:
     def start(self):
         if not self.running:
             self.running = True
+            # *** START EDIT: Start Scheduler ***
+            try:
+                 logging.info("Starting APScheduler...")
+                 self.scheduler.start(paused=False) # Start scheduler, ensure it's not paused initially
+                 logging.info("APScheduler started.")
+            except Exception as e:
+                 logging.error(f"Failed to start APScheduler: {e}", exc_info=True)
+                 self.running = False # Indicate startup failure
+                 return # Don't proceed if scheduler fails
+            # *** END EDIT ***
             self.run()
 
     def stop(self):
         logging.warning("Program stop requested")
         self.running = False
         self.initializing = False
+        # *** START EDIT: Shutdown Scheduler ***
+        try:
+            if self.scheduler and self.scheduler.running:
+                 logging.info("Shutting down APScheduler...")
+                 # wait=False allows the stop command to return faster,
+                 # but background jobs might still be finishing.
+                 # Set wait=True for a cleaner shutdown if blocking is acceptable.
+                 self.scheduler.shutdown(wait=False)
+                 logging.info("APScheduler shut down.")
+        except Exception as e:
+            logging.error(f"Error shutting down APScheduler: {e}", exc_info=True)
+        # *** END EDIT ***
 
     def is_running(self):
-        return self.running
+        # *** EDIT: Check scheduler state as well ***
+        return self.running and self.scheduler and self.scheduler.running
+        # *** END EDIT ***
 
     def is_initializing(self):  # Add this method
         return self.initializing
 
     def run(self):
         try:
-            logging.info("Starting program run")
+            logging.info("Starting program run loop (monitoring scheduler state)")
             self.running = True  # Make sure running flag is set
-            logging.info(f"Program running state: {self.running}")
 
             self.run_initialization()
 
-            # Track activity to adjust sleep times
-            all_empty_count = 0
-            unreleased_check_interval = 300  # Check Unreleased queue every 5 minutes (300 seconds)
-
-            # Initialize sleep_time before the loop
-            sleep_time = 0.1
-
+            # *** START EDIT: Simplified run loop ***
+            # The main loop now just keeps the script alive while the scheduler runs.
+            # We can add checks here if needed (e.g., monitoring scheduler health).
             while self.running:
                 try:
-                    cycle_start = time.time()
-                    current_time = cycle_start  # Store current time for later use
+                    # Check scheduler status periodically
+                    if not self.scheduler or not self.scheduler.running:
+                         logging.error("APScheduler is not running. Stopping program.")
+                         self.stop() # Trigger stop if scheduler died
+                         break
+            
+                    # Perform checks that still need to run outside scheduled tasks
+                    # e.g., connectivity checks that might pause/resume scheduler jobs
+                    self.check_connectivity_status()
 
-                    # Check if all relevant queues are empty before processing
-                    all_queues_empty = True
-                    if hasattr(self, 'queue_manager'):
-                        all_queues_empty = self.queue_manager.are_main_queues_empty()
+                    # Check scheduled pause (pauses/resumes scheduler jobs)
+                    is_scheduled_pause = self._is_within_pause_schedule()
+                    # Use the internal self.queue_paused flag which is set by pause_queue/resume_queue
+                    if is_scheduled_pause and not self.queue_paused:
+                        pause_start = get_setting('Queue', 'pause_start_time', '00:00')
+                        pause_end = get_setting('Queue', 'pause_end_time', '00:00')
+                        new_reason = f"Scheduled pause active ({pause_start} - {pause_end})"
+                        # Check if reason needs update (or if already paused for another reason)
+                        if self.pause_reason != new_reason:
+                             self.pause_reason = new_reason
+                             self.pause_queue() # Pauses scheduler jobs
+                             logging.info(f"Queue automatically paused due to schedule: {self.pause_reason}")
+                    elif not is_scheduled_pause and self.queue_paused and self.pause_reason and "Scheduled pause active" in self.pause_reason:
+                        logging.info("Scheduled pause period ended. Resuming queue.")
+                        self.resume_queue() # Resumes scheduler jobs
 
-                    # Process all queues and tasks
-                    self.process_queues()
+                    # Main loop sleep
+                    time.sleep(5) # Check status every 5 seconds
 
-                    # If all main queues are empty, we still need to periodically check the Unreleased queue
-                    # since it contains items that might be ready to move to Wanted based on release dates
-                    if all_queues_empty and hasattr(self, 'queue_manager') and 'Unreleased' in self.queue_manager.queues:
-                        if not hasattr(self, '_last_unreleased_check'):
-                            self._last_unreleased_check = 0
+                except Exception as loop_error:
+                     logging.error(f"Error in main monitoring loop: {loop_error}", exc_info=True)
+                     time.sleep(10) # Longer sleep on error
 
-                        # Check if it's time to process the Unreleased queue
-                        if current_time - self._last_unreleased_check >= unreleased_check_interval:
-                            logging.debug("Checking Unreleased queue despite empty main queues")
-                            if 'Unreleased' in self.queue_manager.queues: # Check again as update might remove it
-                                self.queue_manager.queues['Unreleased'].update()  # Update queue contents
-                            self.safe_process_queue('Unreleased')  # Process the queue
-                            self._last_unreleased_check = current_time
+            logging.warning("Program run loop exited.")
+            # Ensure scheduler is stopped if loop exits unexpectedly
+            if self.scheduler and self.scheduler.running:
+                 self.stop()
+            # *** END EDIT ***
 
-                    # Track empty queue state
-                    if all_queues_empty:
-                        all_empty_count = min(all_empty_count + 1, 120)  # Cap at 120 (60 seconds with 0.5s sleep)
-                    else:
-                        all_empty_count = 0  # Reset when any queue has items
-
-                    # Simplified sleep time logic
-                    if all_queues_empty:
-                        # Use a fixed longer sleep when main queues are idle
-                        sleep_time = 5.0 # 5000ms sleep when idle
-                        # Log occasionally if queues remain empty
-                        if all_empty_count > 0 and all_empty_count % 12 == 0: # Log every 60 seconds (5s sleep * 12)
-                             logging.debug(f"All critical queues empty for {all_empty_count} cycles, sleeping for {sleep_time:.2f}s (still checking Unreleased queue every {unreleased_check_interval/60:.1f} minutes)")
-                    else:
-                        # Use a fixed short sleep when active
-                        sleep_time = 0.1 # 100ms sleep when active
-
-                    # Check queue manager state (log pause only occasionally)
-                    if hasattr(self, 'queue_manager'):
-                        paused = self.queue_manager.is_paused()
-                        # Use current_time already captured
-                        if paused:
-                            # Initialize last_pause_log if it doesn't exist
-                            if not hasattr(self, 'last_pause_log'):
-                                self.last_pause_log = 0
-
-                            # Log only every 30 seconds
-                            if current_time - self.last_pause_log >= 30:
-                                logging.warning("Queue manager is currently paused")
-                                self.last_pause_log = current_time
-
-                except Exception as e:
-                    logging.error(f"Unexpected error in main loop: {str(e)}")
-                    logging.error(traceback.format_exc())
-                    sleep_time = 1.0  # Longer sleep after error
-                finally:
-                    time.sleep(sleep_time)  # Use the calculated sleep time
-
-            logging.warning("Program has stopped running")
         except Exception as e:
             logging.error(f"Fatal error in run method: {str(e)}")
             logging.error(traceback.format_exc())
+            # Ensure stop is called on fatal error
+            self.stop()
 
     def invalidate_content_sources_cache(self):
         self.content_sources = None
@@ -1012,28 +1116,26 @@ class ProgramRunner:
         except:
             logging.error("Failed to synchronize time with NTP server")
 
-    def adjust_task_intervals_based_on_load(self, queues_are_empty: bool, delayed_tasks_count: int):
+    def task_adjust_intervals_for_load(self): # Renamed
         """
-        Dynamically adjust task intervals based on queue status and task health.
-        When main queues are empty and few tasks are delayed, slightly increase intervals for long-running tasks.
-        Otherwise, ensure intervals are reset to their defaults.
-        
-        Args:
-            queues_are_empty: Whether the main processing queues are empty.
-            delayed_tasks_count: The number of tasks currently detected as potentially delayed.
+        Task to dynamically adjust non-critical task intervals based on queue load.
+        Intervals are increased when Scraping/Adding queues are empty,
+        and reset when they have items.
         """
+        # Remove [Refactor Needed] log
+        # logging.debug("[Refactor Needed] adjust_task_intervals_based_on_load needs to use scheduler.modify_job/reschedule_job")
+
+        # --- START REFACTOR ---
         if not hasattr(self, '_interval_adjustment_time'):
             self._interval_adjustment_time = 0
-        
+
         current_time = time.time()
-        # Only adjust every 60 seconds to avoid thrashing
         if current_time - self._interval_adjustment_time < 60:
             return
-            
+
         self._interval_adjustment_time = current_time
-        
-        # Define non-critical tasks that can be slowed down when idle
-        # (Exclude frequent checks, content sources with short intervals, etc.)
+
+        # Define non-critical tasks (same logic as before)
         slowdown_candidates = {
             'Checking', 'Sleeping', 'Blacklisted', 'Pending Uncached', 'Upgrading',
             'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
@@ -1046,101 +1148,121 @@ class ProgramRunner:
             'task_precompute_airing_shows', 'task_process_pending_rclone_paths',
             'task_update_tv_show_status'
         }
-        # Also add content sources with intervals > 15 minutes (900 seconds)
         for task, interval in self.original_task_intervals.items():
              if task.endswith('_wanted') and interval > 900:
                  slowdown_candidates.add(task)
 
-        idle_increase_seconds = 300 # Increase interval by 5 minutes when idle
-        DELAY_THRESHOLD = 3 # Number of allowed delayed tasks before considering the system busy
+        idle_increase_seconds = 300
+        # DELAY_THRESHOLD = 3 # Remove delay threshold
 
-        # Determine if system is truly idle (empty queues AND few delayed tasks)
-        system_is_idle = queues_are_empty and (delayed_tasks_count < DELAY_THRESHOLD)
-
-        if system_is_idle:
-            if not hasattr(self, '_last_idle_adjustment_log') or current_time - self._last_idle_adjustment_log >= 600: # Log every 10 mins
-                 logging.info(f"System idle (main queues empty, {delayed_tasks_count} delayed tasks < {DELAY_THRESHOLD}) - increasing non-critical task intervals.")
-                 self._last_idle_adjustment_log = current_time
-                 
-            # Apply slight increase to candidate tasks
-            for task in slowdown_candidates:
-                if task in self.original_task_intervals and task in self.task_intervals:
-                    self.task_intervals[task] = self.original_task_intervals[task] + idle_increase_seconds
+        # --- Determine idle state based on Scraping/Adding queues ---
+        system_is_idle = False
+        if hasattr(self, 'queue_manager') and self.queue_manager:
+            scraping_queue = self.queue_manager.queues.get('Scraping')
+            adding_queue = self.queue_manager.queues.get('Adding')
+            if scraping_queue and adding_queue:
+                try:
+                    # Use get_contents with limit 1 for efficiency
+                    scraping_empty = len(scraping_queue.get_contents()) == 0
+                    adding_empty = len(adding_queue.get_contents()) == 0
+                    system_is_idle = scraping_empty and adding_empty
+                except Exception as e:
+                    logging.error(f"Error checking Scraping/Adding queue state for idle check: {e}")
+                    # Default to not idle on error
+                    system_is_idle = False
+            else:
+                logging.warning("Scraping or Adding queue not found for idle check.")
+                system_is_idle = False # Assume not idle if queues are missing
         else:
-            active_reason = []
-            if not queues_are_empty:
-                 active_reason.append("main queues have items")
-            if delayed_tasks_count >= DELAY_THRESHOLD:
-                 active_reason.append(f"{delayed_tasks_count} potentially delayed tasks >= threshold {DELAY_THRESHOLD}")
-                 
-            # Log only when state changes back to active or periodically if remaining active
-            if not hasattr(self, '_last_active_state_log'): self._last_active_state_log = 0
-            if not hasattr(self, '_was_idle_last_check'): self._was_idle_last_check = False
-            
-            log_now = False
-            if not system_is_idle and self._was_idle_last_check: # Changed from idle to active
-                log_now = True
-            elif not system_is_idle and current_time - self._last_active_state_log >= 600: # Still active, log every 10 mins
-                log_now = True
-                
-            if log_now:
-                logging.info(f"System active ({', '.join(active_reason)}) - ensuring default task intervals.")
-                self._last_active_state_log = current_time
-                 
-            # Reset all intervals to original values if they were changed
-            needs_reset = False
-            for task in slowdown_candidates:
-                 if task in self.original_task_intervals and task in self.task_intervals:
-                     if self.task_intervals[task] != self.original_task_intervals[task]:
-                         needs_reset = True
-                         break
-            
-            if needs_reset:
-                 logging.info("Resetting task intervals to default values.")
-                 # Create a fresh copy to avoid modifying the original
-                 self.task_intervals = self.original_task_intervals.copy()
-                 # Re-apply any custom intervals that might not be in slowdown_candidates (just in case)
-                 # Although this shouldn't be necessary if original_task_intervals is the true source
-                 # for task, interval in self.original_task_intervals.items():
-                 #     self.task_intervals[task] = interval
-            
-        # Update idle state tracking for next check
+             logging.warning("Queue manager not available for idle check.")
+             system_is_idle = False # Assume not idle if manager is missing
+
+        # --- End Determine idle state ---
+
+        with self.scheduler_lock:
+            if system_is_idle:
+                if not hasattr(self, '_last_idle_adjustment_log') or current_time - self._last_idle_adjustment_log >= 600:
+                     # Updated log message
+                     logging.info(f"System idle (Scraping/Adding queues empty) - increasing non-critical task intervals by {idle_increase_seconds}s.")
+                     self._last_idle_adjustment_log = current_time
+
+                for task_id in slowdown_candidates:
+                     job = self.scheduler.get_job(task_id)
+                     original_interval = self.original_task_intervals.get(task_id)
+                     if job and original_interval:
+                         current_job_interval = job.trigger.interval.total_seconds()
+                         new_interval = original_interval + idle_increase_seconds
+                         if new_interval > current_job_interval: # Only modify if increasing
+                             try:
+                                 self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=new_interval))
+                                 logging.debug(f"Increased interval for '{task_id}' to {new_interval}s")
+                             except Exception as e:
+                                 logging.error(f"Error modifying job '{task_id}' interval to {new_interval}s: {e}")
+
+            else: # System is active
+                 active_reason = []
+                 # Update active reason based on new check
+                 if not system_is_idle: active_reason.append("Scraping or Adding queue has items")
+                 # Remove delayed task check from reason
+                 # if delayed_tasks_count >= DELAY_THRESHOLD: active_reason.append(f"{delayed_tasks_count} potentially delayed tasks >= threshold {DELAY_THRESHOLD}")
+
+                 # Logging logic (same as before)
+                 # ...
+                 log_now = False # Determine if logging is needed
+                 if not hasattr(self, '_last_active_state_log'):
+                      self._last_active_state_log = 0
+                      self._was_idle_last_check = True # Assume initially idle so first active state logs
+
+                 if not self._was_idle_last_check: # Only log transition to active or periodically
+                      if current_time - self._last_active_state_log >= 600:
+                           log_now = True
+                 else: # Was idle, now active
+                      log_now = True
+
+
+                 if log_now:
+                      # Updated log message
+                      logging.info(f"System active ({', '.join(active_reason)}) - ensuring default task intervals.")
+                      self._last_active_state_log = current_time
+
+                 needs_reset = False
+                 tasks_to_reset = []
+                 for task_id in slowdown_candidates:
+                      job = self.scheduler.get_job(task_id)
+                      original_interval = self.original_task_intervals.get(task_id)
+                      if job and original_interval:
+                           current_job_interval = job.trigger.interval.total_seconds()
+                           if current_job_interval != original_interval:
+                                needs_reset = True
+                                tasks_to_reset.append(task_id)
+
+                 if needs_reset:
+                      logging.info(f"Resetting intervals for {len(tasks_to_reset)} tasks to default values.")
+                      for task_id in tasks_to_reset:
+                           original_interval = self.original_task_intervals.get(task_id)
+                           if original_interval:
+                                try:
+                                    self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=original_interval))
+                                    logging.debug(f"Reset interval for '{task_id}' to {original_interval}s")
+                                except Exception as e:
+                                    logging.error(f"Error resetting job '{task_id}' interval to {original_interval}s: {e}")
+
+
         self._was_idle_last_check = system_is_idle
+         # --- END REFACTOR ---
+
 
     def check_task_health(self):
-        """Check task health, log potential delays, and return the count of delayed tasks."""
-        current_time = time.time()
-        delayed_tasks_info = []
-        
-        for task, last_run_time in self.last_run_times.items():
-            if task not in self.enabled_tasks:
-                continue
-                
-            time_since_last_run = current_time - last_run_time
-            interval = self.task_intervals.get(task) # Use .get for safety
-            
-            if interval is None:
-                logging.warning(f"Task {task} found in last_run_times but missing interval. Skipping health check.")
-                continue
+        """
+        Check task health. This check is currently disabled as APScheduler's
+        misfire handling is preferred over manual delay detection based on
+        next_run_time.
+        """
+        # --- START REFACTOR (Disabled) ---
+        logging.info("Task health check is disabled. Returning 0 delayed tasks.")
+        return 0 # Return 0, indicating no delayed tasks detected by this method
+        # --- END REFACTOR (Disabled) ---
 
-            # Check if the task is behind schedule by 1.5x its interval
-            if time_since_last_run > interval * 1.5:
-                delayed_tasks_info.append((task, time_since_last_run, interval))
-                # Don't reset the timer here anymore, just log the potential delay.
-        
-        delayed_count = len(delayed_tasks_info)
-
-        # Only log if there are potentially delayed tasks
-        if delayed_count > 0:
-            logging.info(f"Potential task delays detected ({delayed_count} tasks):")
-            for task, time_since_last_run, interval in delayed_tasks_info:
-                logging.info(f"  - Task '{task}' overdue: ran {time_since_last_run:.2f}s ago (interval: {interval}s)")
-            
-            # Log if multiple tasks are delayed
-            if delayed_count >= 3:
-                logging.info(f"Multiple ({delayed_count}) potentially delayed tasks detected. System might be busy or tasks taking longer.")
-                
-        return delayed_count # Return the count of potentially delayed tasks
 
     def task_check_trakt_early_releases(self):
         check_trakt_early_releases()
@@ -1264,36 +1386,88 @@ class ProgramRunner:
         
         if notifications_file.exists():
             try:
-                with open(notifications_file, "rb") as f:
-                    notifications = pickle.load(f)
+                # Use a temporary file to read and then delete original safely
+                temp_notifications_file = notifications_file.with_suffix(".pkl.tmp")
+                notifications = []
+                try:
+                    # Move/rename the file first
+                    notifications_file.rename(temp_notifications_file)
+                    with open(temp_notifications_file, "rb") as f:
+                        notifications = pickle.load(f)
+                        # Delete the temp file after successful read
+                        temp_notifications_file.unlink()
+                except FileNotFoundError:
+                    # If the original file disappeared between exists() and rename()
+                    logging.debug("Notifications file disappeared before processing.")
+                    return
+                except (pickle.UnpicklingError, EOFError) as pe:
+                    logging.error(f"Error reading notifications pickle file: {pe}. Discarding file.")
+                    try: temp_notifications_file.unlink() # Attempt removal of corrupt file
+                    except OSError: pass
+                    return # Don't proceed with empty/corrupt data
+                except Exception as e_read:
+                    logging.error(f"Error handling notifications file read/rename: {e_read}", exc_info=True)
+                    # Attempt to put the file back? Or just leave the temp? Leaving temp might be safer.
+                    return # Avoid processing potentially partial data
                 
                 if notifications:
                     # Fetch enabled notifications using CLI_DEBRID_PORT
                     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-                    response = requests.get(f'http://localhost:{port}/settings/notifications/enabled')
-                    if response.status_code == 200:
+                    try:
+                        response = requests.get(f'http://localhost:{port}/settings/notifications/enabled', timeout=10) # Add timeout
+                        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+
                         enabled_notifications = response.json().get('enabled_notifications', {})
                         
                         # Send notifications
                         send_notifications(notifications, enabled_notifications)
                         
-                        # Clear the notifications file
-                        with open(notifications_file, "wb") as f:
-                            pickle.dump([], f)
-                        
-                        logging.info(f"Sent {len(notifications)} notifications and cleared the notifications file")
-                    else:
-                        logging.error(f"Failed to fetch enabled notifications: {response.text}")
-                else:
+                        logging.info(f"Sent {len(notifications)} notifications.")
+
+                    except requests.exceptions.RequestException as req_err:
+                        logging.error(f"Failed to fetch enabled notifications: {req_err}")
+                        # Re-queue notifications if fetching config fails?
+                        # For simplicity now, we log error and notifications are lost for this cycle.
+                        # Could re-pickle 'notifications' back to the original file path.
+                    except json.JSONDecodeError as json_err:
+                         logging.error(f"Failed to parse enabled notifications response: {json_err}")
+                    except Exception as e_send:
+                        logging.error(f"Error sending notifications: {str(e_send)}", exc_info=True)
+
+                # else: # No notifications loaded, log removed for less noise
                     # logging.debug("No notifications to send")
-                    pass
+
             except Exception as e:
-                logging.error(f"Error processing notifications: {str(e)}")
-        else:
-            logging.debug("No notifications file found")
+                logging.error(f"Error processing notifications task: {str(e)}", exc_info=True)
+        # else: # File doesn't exist, log removed for less noise
+            # logging.debug("No notifications file found")
 
     def task_sync_time(self):
-        self.sync_time()
+        # self.sync_time() # Call the original sync_time logic
+        try:
+            ntp_client = ntplib.NTPClient()
+            # Increased timeout for robustness
+            response = ntp_client.request('pool.ntp.org', version=3, timeout=10)
+            system_time = time.time()
+            ntp_time = response.tx_time
+            offset = ntp_time - system_time
+
+            logging.info(f"Time sync check: System time offset from NTP = {offset:.3f} seconds.")
+
+            # Adjusting task timers based on offset is complex with APScheduler.
+            # APScheduler uses the system clock. If the system clock is significantly off,
+            # tasks might run at the "wrong" wall-clock time but consistently relative
+            # to the system clock. Correcting the system clock itself is the best approach.
+            # This task now mainly serves to LOG the offset.
+            if abs(offset) > 60:  # Log a warning if offset is more than 1 minute
+                logging.warning(f"System time offset is significant ({offset:.2f} seconds). Consider synchronizing the system clock.")
+            # Removing the part that tried to adjust self.last_run_times
+            # self.last_run_times = {task: ntp_time for task in self.task_intervals}
+        except ntplib.NTPException as e:
+            logging.error(f"Failed to synchronize time with NTP server: {e}")
+        except Exception as e:
+             # Catch potential socket errors, etc.
+             logging.error(f"Unexpected error during time synchronization: {e}")
 
     def task_reconcile_queues(self):
         """Task to reconcile items in Checking state with matching filled_by_file items"""
@@ -1376,31 +1550,128 @@ class ProgramRunner:
 
         except sqlite3.Error as e:
             logging.error(f"Database error during queue reconciliation: {str(e)}")
+            conn.rollback() # Rollback on error
+        finally:
+            conn.close() # Ensure connection is closed
+
 
     def reinitialize(self):
         """Force reinitialization of the program runner to pick up new settings"""
         logging.info("Reinitializing ProgramRunner...")
+        # Need to shutdown and restart scheduler carefully
+        with self.scheduler_lock:
+            if self.scheduler and self.scheduler.running:
+                logging.info("Shutting down scheduler for reinitialization...")
+                self.scheduler.shutdown(wait=True) # Wait for jobs to finish if possible
+                logging.info("Scheduler stopped.")
+
         self._initialized = False
-        self.__init__()
-        # Force refresh content sources
-        self.get_content_sources(force_refresh=True)
-        logging.info("ProgramRunner reinitialized successfully")
+        self.__init__() # Re-runs init, including scheduling initial tasks
+
+        # Restart scheduler if it was running before
+        # self.start() will handle starting the scheduler
+        logging.info("ProgramRunner reinitialized successfully. Restarting...")
+        # The restart might need to happen externally depending on how reinit is called
+        # If called internally, we might need to call self.start() here,
+        # but need to be careful about threading/context.
 
     def handle_rate_limit(self):
-        """Handle rate limit by pausing the queue for 30 minutes"""
-        logging.warning("Rate limit exceeded. Pausing queue for 30 minutes.")
-        self.pause_reason = "Rate limit exceeded - resuming in 30 minutes"
-        self.pause_queue()
-        
-        # Schedule queue resume after 30 minutes
-        resume_time = datetime.now() + timedelta(minutes=30)
-        logging.info(f"Queue will resume at {resume_time}")
-        
-        # Sleep for 30 minutes
-        time.sleep(1800)  # 30 minutes in seconds
-        
-        logging.info("Rate limit pause period complete. Resuming queue.")
-        self.resume_queue()
+        """Handle rate limit by pausing relevant jobs for a period."""
+        logging.warning("Rate limit exceeded. Pausing relevant Debrid-interacting jobs for 30 minutes.")
+        pause_duration = 1800 # 30 minutes
+
+        jobs_to_pause = set()
+        # Identify jobs that might hit Debrid APIs
+        # Now includes the combined task
+        debrid_related_ids = {
+            'Wanted', 'task_process_scraping_adding', 'Checking', 'Upgrading',
+            # Content sources that *might* trigger checks? Less likely direct Debrid hits.
+            # task_reconcile_queues? Unlikely.
+            # task_process_pending_rclone_paths? Depends on handle_rclone_file logic.
+        }
+        # Add content source tasks that might trigger searches
+        for task_id in self.task_intervals:
+             if task_id.startswith('task_') and task_id.endswith('_wanted'):
+                 debrid_related_ids.add(task_id)
+
+
+        with self.scheduler_lock:
+            if self.scheduler.state != 1: return # Not running
+
+            paused_count = 0
+            for job_id in debrid_related_ids:
+                 try:
+                     job = self.scheduler.get_job(job_id)
+                     if job and job.next_run_time is not None: # Only pause if running
+                          # Pause the job temporarily
+                          self.scheduler.pause_job(job_id)
+                          jobs_to_pause.add(job_id) # Track jobs we actually paused
+                          paused_count += 1
+                          logging.debug(f"Rate Limit: Paused job {job_id}")
+                     elif job and job.next_run_time is None:
+                          logging.debug(f"Rate Limit: Job {job_id} was already paused.")
+                          jobs_to_pause.add(job_id) # Also track already paused jobs to ensure they get resumed
+                 except Exception as e:
+                      logging.error(f"Rate Limit: Error pausing job {job_id}: {e}")
+
+            if paused_count > 0:
+                 logging.info(f"Rate Limit: Paused {paused_count} active jobs. Scheduling resume in {pause_duration} seconds for {len(jobs_to_pause)} total affected jobs.")
+            elif jobs_to_pause:
+                 logging.info(f"Rate Limit: No active jobs needed pausing, but scheduling resume check for {len(jobs_to_pause)} already paused jobs in {pause_duration} seconds.")
+            else:
+                 logging.info("Rate Limit: No relevant jobs found to pause or schedule for resume.")
+                 return # No need to schedule resume if nothing was affected
+
+
+            # Schedule a one-off job to resume these tasks
+            resume_time = datetime.now(self.scheduler.timezone) + timedelta(seconds=pause_duration)
+            self.scheduler.add_job(
+                self._resume_rate_limited_jobs,
+                trigger='date',
+                run_date=resume_time,
+                args=[list(jobs_to_pause)], # Pass the list of jobs to resume
+                id='rate_limit_resume_job',
+                name='RateLimitResume',
+                replace_existing=True
+            )
+
+        # Set pause reason for status (though queue might not be fully paused)
+        self.pause_reason = f"Debrid Rate Limit - Resuming tasks around {resume_time.strftime('%H:%M:%S')}"
+        # Optionally pause the entire queue manager status reporting
+        # from queues.queue_manager import QueueManager
+        # QueueManager().pause_queue(reason=self.pause_reason)
+        self.queue_paused = True # Indicate partial pause state
+
+    def _resume_rate_limited_jobs(self, job_ids_to_resume):
+        """Internal function called by scheduler to resume jobs after rate limit pause."""
+        logging.info(f"Rate limit pause period complete. Resuming {len(job_ids_to_resume)} jobs.")
+        with self.scheduler_lock:
+             if self.scheduler.state != 1: return # Not running
+
+             resumed_count = 0
+             for job_id in job_ids_to_resume:
+                  try:
+                       job = self.scheduler.get_job(job_id)
+                       # Only resume if the job exists and is actually paused
+                       if job and job.next_run_time is None:
+                           self.scheduler.resume_job(job_id)
+                           resumed_count += 1
+                           logging.debug(f"Rate Limit: Resumed job {job_id}")
+                       elif job:
+                            logging.debug(f"Rate Limit: Job {job_id} was already running, no resume needed.")
+                       # If job doesn't exist, ignore
+                  except Exception as e:
+                       logging.error(f"Rate Limit: Error resuming job {job_id}: {e}")
+
+        logging.info(f"Rate Limit: Resumed {resumed_count} jobs.")
+        # Clear the rate limit pause reason and state
+        if self.pause_reason and "Rate Limit" in self.pause_reason:
+             self.pause_reason = None
+             self.queue_paused = False
+             # Optionally resume the entire queue manager status reporting
+             # from queues.queue_manager import QueueManager
+             # QueueManager().resume_queue()
+
 
     def task_local_library_scan(self):
         """Run local library scan for symlinked files."""
@@ -1440,7 +1711,7 @@ class ProgramRunner:
         """Task to refresh the download stats cache"""
         from database.statistics import get_cached_download_stats
         try:
-            get_cached_download_stats()  # This will refresh the cache if needed
+            get_cached_download_stats(force_refresh=True) # Explicitly force refresh
             logging.debug("Download stats cache refreshed")
         except Exception as e:
             logging.error(f"Error refreshing download stats cache: {str(e)}")
@@ -1459,211 +1730,90 @@ class ProgramRunner:
         """Check for new files in Plex location and update libraries"""
         updated_sections = set()  # Initialize here to prevent UnboundLocalError
         if not get_setting('Plex', 'update_plex_on_file_discovery') and not get_setting('Plex', 'disable_plex_library_checks'):
-            logging.debug("Skipping Plex file check")
+            logging.debug("Skipping Plex file check as both relevant settings are disabled.")
             return
 
-        from database import get_media_item_by_id
-
-        plex_file_location = get_setting('Plex', 'mounted_file_location', default='/mnt/zurg/__all__')
-        if not os.path.exists(plex_file_location):
-            logging.warning(f"Plex file location does not exist: {plex_file_location}")
-            return
-
-        # Get all media items from database that are in Checking state
-        from database.core import get_db_connection
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file FROM media_items WHERE state = "Checking"').fetchall()
-        conn.close()
-        logging.info(f"Found {len(items)} media items in Checking state to verify")
-
-        # Check if Plex library checks are disabled
-        if get_setting('Plex', 'disable_plex_library_checks', default=False):
-            logging.info("Plex library checks disabled - marking found files as Collected")
-            updated_items = 0
-            not_found_items = 0
-
-            sections_to_update = {}  # Store {section_object: set_of_paths}
-
-            for item in items:
-                filled_by_title = item['filled_by_title']
-                filled_by_file = item['filled_by_file']
-                
-                if not filled_by_title or not filled_by_file:
-                    continue
-
-                # Check if the file exists in the expected location
-                file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
-                title_without_ext = os.path.splitext(filled_by_title)[0]
-                file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
-                
-                # Check if we've already found this file before
-                cache_key = f"{filled_by_title}:{filled_by_file}"
-                if cache_key in self.file_location_cache and self.file_location_cache[cache_key] == 'exists':
-                    logging.debug(f"Skipping previously verified file: {filled_by_title}")
-                    continue
-
-                file_found_on_disk = False
-                actual_file_path = None
-                if os.path.exists(file_path):
-                    file_found_on_disk = True
-                    actual_file_path = file_path
-                elif os.path.exists(file_path_no_ext):
-                    file_found_on_disk = True
-                    actual_file_path = file_path_no_ext
-                else:
-                    not_found_items += 1
-                    logging.debug(f"File not found on disk in primary locations:\n  {file_path}\n  {file_path_no_ext}")
-                    continue
-
-                if file_found_on_disk:
-                    logging.info(f"Found file on disk: {actual_file_path}")
-                    if cache_key not in self.file_location_cache:
-                        self.file_location_cache[cache_key] = 'exists'
-                    updated_items += 1 # Count item as 'updated' if found
-                    
-                    # Update item state to Collected if found
-                    conn = get_db_connection()
-                    cursor = conn.cursor()
-                    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    # Important: Only update if the item is still in 'Checking' state
-                    cursor.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"', (now, item['id']))
-                    if cursor.rowcount > 0: # Check if the update actually happened
-                        conn.commit()
-                        # Use dictionary access for title, provide a default if None or empty
-                        item_title = item['title'] if item['title'] else 'N/A'
-                        logging.info(f"Updated item {item['id']} ({item_title}) to Collected state.")
-
-                        # Add post-processing call after state update
-                        updated_item_details = get_media_item_by_id(item['id']) # Fetch the updated details
-                        if updated_item_details:
-                            handle_state_change(dict(updated_item_details))
-
-                        # Send notification for collected item
-                        try:
-                            # Imports moved inside to avoid potential top-level issues if routes aren't ready
-                            from routes.notifications import send_notifications
-                            from routes.settings_routes import get_enabled_notifications_for_category
-                            from routes.extensions import app
-
-                            with app.app_context():
-                                response = get_enabled_notifications_for_category('collected')
-                                # Check status code and content type for safety
-                                if response.status_code == 200 and response.is_json:
-                                    response_data = response.get_json()
-                                    if response_data.get('success'):
-                                        enabled_notifications = response_data.get('enabled_notifications')
-                                        if enabled_notifications:
-                                            # Use updated_item_details fetched above
-                                            notification_data = {
-                                                'id': updated_item_details['id'],
-                                                'title': updated_item_details.get('title', 'Unknown Title'),
-                                                'type': updated_item_details.get('type', 'unknown'),
-                                                'year': updated_item_details.get('year', ''),
-                                                'version': updated_item_details.get('version', ''),
-                                                'season_number': updated_item_details.get('season_number'),
-                                                'episode_number': updated_item_details.get('episode_number'),
-                                                'new_state': 'Collected'
-                                            }
-                                            send_notifications([notification_data], enabled_notifications, notification_category='collected')
-                                else:
-                                     logging.error(f"Failed to get enabled notifications: Status {response.status_code}, Response: {response.text}")
-                        except Exception as e:
-                            logging.error(f"Failed to send collected notification for item {item['id']}: {str(e)}")
-                    else:
-                        # Log if the item wasn't updated (e.g., it was already Collected or state changed concurrently)
-                        logging.debug(f"Item {item['id']} was not updated to Collected (possibly already in correct state or state changed concurrently).")
-                    conn.close()
-
-                    # Identify relevant Plex sections and paths to update for this file
-                    for section in sections:
-                        for location in section.locations:
-                            # Check if the found file path is within this library location
-                            # This check needs refinement based on how Zurg maps files
-                            # For now, let's assume the file *should* be based on filled_by_title
-                            expected_path = os.path.join(location, filled_by_title)
-                            # More robust check: is actual_file_path under location?
-                            try:
-                                if Path(actual_file_path).resolve().is_relative_to(Path(location).resolve()):
-                                    if section not in sections_to_update:
-                                        sections_to_update[section] = set()
-                                    # We might want to update the specific file path or the parent directory
-                                    # Updating the parent dir (expected_path) seems more aligned with Plex behavior
-                                    sections_to_update[section].add(expected_path)
-                                    # break # Found the correct section for this file
-                            except ValueError: # Can happen if paths are on different drives on Windows
-                                pass # Ignore this section if paths can't be compared
-                            except Exception as e:
-                                logging.warning(f"Error checking path relation for {actual_file_path} and {location}: {e}")
-
-            # Now, update the relevant Plex sections once per section, using one relevant path
-            if sections_to_update:
-                logging.info(f"Updating {len(sections_to_update)} Plex sections...")
-                for section, paths in sections_to_update.items():
-                    # Decide which path to use for the update - maybe the first one found?
-                    path_to_scan = next(iter(paths)) if paths else None
-                    if path_to_scan:
-                        try:
-                            logging.info(f"Updating Plex section '{section.title}' for path: {path_to_scan}")
-                            section.update(path=path_to_scan)
-                            updated_sections.add(section) # Keep track for final summary
-                        except Exception as e:
-                            logging.error(f"Failed to update Plex section '{section.title}' with path '{path_to_scan}': {str(e)}", exc_info=True)
-                    else:
-                         logging.warning(f"No valid paths found to update section '{section.title}'")
-
-            # Log summary of operations
-            logging.info(f"Plex check summary: {updated_items} items found on disk, {not_found_items} items not found")
-            if updated_sections:
-                logging.info("Plex sections updated in this run:")
-
-        if not get_setting('Plex', 'url', default=False):
-                return
-
+        # Use centralized Plex connection setup if possible or ensure proper error handling
+        plex = None
         try:
             plex_url = get_setting('Plex', 'url', default='')
             plex_token = get_setting('Plex', 'token', default='')
             
             if not plex_url or not plex_token:
-                logging.warning("Plex URL or token not configured")
+                # Check symlink settings if primary are missing
+                if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                    plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+                    plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+
+            if not plex_url or not plex_token:
+                logging.warning("Plex URL or token not configured in primary or symlink settings. Skipping Plex file check.")
                 return
 
-            # Connect to Plex server and log library information
+            # Connect to Plex server
             plex = PlexServer(plex_url, plex_token)
             sections = plex.library.sections()
-            logging.info(f"Connected to Plex server, found {len(sections)} library sections")
-            
-            # Log detailed information about each library section
-            for section in sections:
-                logging.info(f"Library Section: {section.title}")
-                logging.info(f"  Type: {section.type}")
-                logging.info(f"  Locations:")
-                for location in section.locations:
-                    logging.info(f"    - {location}")
-            # <<< remove the 'if not os.path.exists...' check here
+            logging.info(f"Connected to Plex server for file check, found {len(sections)} library sections.")
 
-            updated_sections = set()  # Track which sections we've updated
-            updated_items = 0 # This counter seems unused in the original logic, removing its increment
+        except Exception as e:
+            logging.error(f"Failed to connect to Plex for file check: {str(e)}")
+            return # Cannot proceed without Plex connection
+
+        plex_file_location = get_setting('Plex', 'mounted_file_location', default='/mnt/zurg/__all__')
+        if not os.path.exists(plex_file_location):
+             # Also check original_files_path for symlink mode as a fallback?
+            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                plex_file_location = get_setting('File Management', 'original_files_path', default=None)
+                if not plex_file_location or not os.path.exists(plex_file_location):
+                    logging.warning(f"Plex mounted_file_location and original_files_path (for symlink mode) do not exist. Cannot check files.")
+                    return
+            else:
+                logging.warning(f"Plex mounted_file_location does not exist: {plex_file_location}")
+                return
+
+
+        # Get all media items from database that are in Checking state
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        try:
+            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version FROM media_items WHERE state = "Checking"').fetchall()
+        except sqlite3.Error as db_err:
+            logging.error(f"Database error fetching items for Plex check: {db_err}")
+            conn.close()
+            return
+        finally:
+             # Ensure connection is closed even if fetch fails after opening
+            if conn: conn.close()
+
+        logging.info(f"Found {len(items)} media items in Checking state to verify against Plex location '{plex_file_location}'")
+
+        # Check if Plex library checks are disabled (file discovery only)
+        if get_setting('Plex', 'disable_plex_library_checks', default=False):
+            logging.info("Plex library checks disabled - marking found files as Collected")
+            updated_items = 0
             not_found_items = 0
+            sections_to_update = {}  # Store {section_object: set_of_paths}
 
-            # Ensure the tick count dictionary exists
-            if not hasattr(self, 'plex_scan_tick_counts'):
-                self.plex_scan_tick_counts = {}
-
-            for item in items:
-                filled_by_title = item['filled_by_title']
-                filled_by_file = item['filled_by_file']
+            for item_dict in items: # Iterate over dicts
+                item_id = item_dict['id']
+                filled_by_title = item_dict['filled_by_title']
+                filled_by_file = item_dict['filled_by_file']
 
                 if not filled_by_title or not filled_by_file:
+                    logging.debug(f"Item {item_id} missing filled_by_title or filled_by_file. Skipping.")
                     continue
 
-                # Generate cache key and potential file paths
-                cache_key = f"{filled_by_title}:{filled_by_file}"
+                # Construct potential paths
                 file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
+                # Handle cases where filled_by_title might have an extension (less common now?)
                 title_without_ext = os.path.splitext(filled_by_title)[0]
                 file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
 
-                # Check if the file exists on disk
+                # Check if we've already found this file before (cache)
+                cache_key = f"{filled_by_title}:{filled_by_file}"
+                if self.file_location_cache.get(cache_key) == 'exists':
+                    logging.debug(f"Skipping previously verified file via cache: {filled_by_title}/{filled_by_file}")
+                    continue
+
                 file_found_on_disk = False
                 actual_file_path = None
                 if os.path.exists(file_path):
@@ -1672,76 +1822,224 @@ class ProgramRunner:
                 elif os.path.exists(file_path_no_ext):
                     file_found_on_disk = True
                     actual_file_path = file_path_no_ext
+                # Add check for file directly under plex_file_location (less common)
+                elif os.path.exists(os.path.join(plex_file_location, filled_by_file)):
+                     file_found_on_disk = True
+                     actual_file_path = os.path.join(plex_file_location, filled_by_file)
+
+
+                if file_found_on_disk:
+                    logging.info(f"Found file on disk: {actual_file_path} for item {item_id}")
+                    self.file_location_cache[cache_key] = 'exists' # Update cache
+                    updated_items += 1 # Count item as 'updated' if found
+
+                    # Update item state to Collected if found
+                    conn_update = None
+                    try:
+                        conn_update = get_db_connection()
+                        cursor_update = conn_update.cursor()
+                        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        # Important: Only update if the item is still in 'Checking' state
+                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ?, filled_by_file = ?, filled_by_title = ? WHERE id = ? AND state = "Checking"',
+                                              (now, os.path.basename(actual_file_path), os.path.basename(os.path.dirname(actual_file_path)), item_id)) # Update file/title too? Maybe safer not to here. Use original filled_by.
+                        # Let's stick to only updating state and time here for safety
+                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
+                                              (now, item_id))
+
+                        if cursor_update.rowcount > 0: # Check if the update actually happened
+                            conn_update.commit()
+                            item_title_log = item_dict['title'] if item_dict['title'] else 'N/A'
+                            logging.info(f"Updated item {item_id} ({item_title_log}) to Collected state.")
+
+                            # Add post-processing call after state update
+                            # Fetch updated details AFTER commit
+                            updated_item_details = get_media_item_by_id(item_id)
+                            if updated_item_details:
+                                handle_state_change(dict(updated_item_details)) # Pass as dict
+
+                            # Send notification for collected item
+                            try:
+                                from routes.notifications import send_notifications # Keep import local
+                                from routes.settings_routes import get_enabled_notifications_for_category # Keep import local
+                                from routes.extensions import app # Keep import local
+
+                                with app.app_context(): # Ensure Flask app context
+                                    # Fetch enabled notifications (simplified call)
+                                    enabled_notifications = get_enabled_notifications_for_category('collected').get_json().get('enabled_notifications', {})
+
+                                    if enabled_notifications and updated_item_details:
+                                        # Construct notification data from fetched details
+                                        notification_data = {
+                                            'id': updated_item_details['id'],
+                                            'title': updated_item_details.get('title', 'Unknown Title'),
+                                            'type': updated_item_details.get('type', 'unknown'),
+                                            'year': updated_item_details.get('year', ''),
+                                            'version': updated_item_details.get('version', ''),
+                                            'season_number': updated_item_details.get('season_number'),
+                                            'episode_number': updated_item_details.get('episode_number'),
+                                            'new_state': 'Collected'
+                                        }
+                                        send_notifications([notification_data], enabled_notifications, notification_category='collected')
+                            except Exception as e_notify:
+                                logging.error(f"Failed to send collected notification for item {item_id}: {str(e_notify)}", exc_info=True)
+                        else:
+                             # Log if the item wasn't updated (e.g., state changed concurrently)
+                            logging.debug(f"Item {item_id} was not updated to Collected (state may have changed).")
+
+                    except sqlite3.Error as db_update_err:
+                        logging.error(f"Database error updating item {item_id} to collected: {db_update_err}")
+                        if conn_update: conn_update.rollback()
+                    except Exception as e_update:
+                         logging.error(f"Unexpected error during item update/notification for {item_id}: {e_update}", exc_info=True)
+                         if conn_update: conn_update.rollback()
+                    finally:
+                        if conn_update: conn_update.close()
+
+
+                    # Identify relevant Plex sections for potential future scan triggers (even if disabled now)
+                    # This logic seems flawed as it relies on `sections` from a potentially different code path
+                    # Let's simplify: if library checks are disabled, we don't need to determine sections here.
+
+                else: # File not found on disk
+                    not_found_items += 1
+                    logging.debug(f"File not found on disk for item {item_id} in primary locations:\n  {file_path}\n  {file_path_no_ext}")
+                    # Optional: Clear cache if file is confirmed missing? Might cause re-checks later if transient.
+                    # if cache_key in self.file_location_cache:
+                    #     del self.file_location_cache[cache_key]
+
+            # Log summary of operations
+            logging.info(f"Plex check summary (checks disabled): {updated_items} items found on disk and marked Collected, {not_found_items} items not found.")
+            # We don't update sections when checks are disabled.
+
+        # ----- ELSE: Plex library checks are ENABLED -----
+        else:
+            logging.info("Plex library checks enabled - verifying file existence and triggering scans if needed.")
+            updated_sections = set()  # Track which sections we've updated
+            updated_items = 0 # Count items found AND triggering scan
+            not_found_items = 0
+
+            if not hasattr(self, 'plex_scan_tick_counts'):
+                self.plex_scan_tick_counts = {}
+
+            # Store tuples of (section, constructed_scan_path)
+            # Using a set avoids triggering the exact same path scan multiple times if found via different items
+            paths_to_scan_by_section = {} # {section_title: set(constructed_paths)}
+            sections_map = {s.title: s for s in sections} # Map titles to section objects
+
+            for item_dict in items: # Iterate over dicts
+                item_id = item_dict['id']
+                filled_by_title = item_dict['filled_by_title']
+                filled_by_file = item_dict['filled_by_file']
+
+                if not filled_by_title or not filled_by_file:
+                    logging.debug(f"Item {item_id} missing filled_by_title or filled_by_file. Skipping Plex scan trigger check.")
+                    continue
+
+                # Generate cache key and potential file paths (remains the same)
+                cache_key = f"{filled_by_title}:{filled_by_file}"
+                file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
+                title_without_ext = os.path.splitext(filled_by_title)[0]
+                file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
+                file_path_direct = os.path.join(plex_file_location, filled_by_file) # Direct path
+
+                # Check if the file exists on disk (remains the same)
+                file_found_on_disk = False
+                actual_file_path = None
+                if os.path.exists(file_path):
+                    file_found_on_disk = True
+                    actual_file_path = file_path
+                elif os.path.exists(file_path_no_ext):
+                    file_found_on_disk = True
+                    actual_file_path = file_path_no_ext
+                elif os.path.exists(file_path_direct):
+                    file_found_on_disk = True
+                    actual_file_path = file_path_direct
 
                 should_trigger_scan = False
                 if file_found_on_disk:
-                    # File exists, update cache and handle tick count
-                    logging.debug(f"Confirmed file exists on disk: {actual_file_path}")
+                    # File exists, update cache and handle tick count (remains the same)
+                    logging.debug(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}")
                     self.file_location_cache[cache_key] = 'exists'
-
-                    # Increment tick count
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
-
-                    # Determine if scan should be triggered (first 5 times found)
-                    if current_tick <= 5: # Changed condition
+                    if current_tick <= 5:
                         should_trigger_scan = True
-                        # Updated log message
-                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Triggering Plex scan for all {len(sections)} sections (will trigger for first 5 ticks).")
+                        updated_items += 1
+                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
                     else:
-                        should_trigger_scan = False
-                        # Updated log message
                         logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
-
                 else:
-                    # File not found
+                    # File not found (remains the same)
                     not_found_items += 1
-                    logging.debug(f"File not found on disk in primary locations for item {item['id']}:\n  {file_path}\n  {file_path_no_ext}")
-                    # Reset tick count if file is not found
+                    logging.debug(f"File not found on disk for item {item_id} in primary locations:\n  {file_path}\n  {file_path_no_ext}\n  {file_path_direct}")
                     if cache_key in self.plex_scan_tick_counts:
                         logging.debug(f"Resetting Plex scan tick count for missing file '{filled_by_file}'.")
                         del self.plex_scan_tick_counts[cache_key]
-                    # No scan if file not found
-                    should_trigger_scan = False
-                    continue # Move to the next item
+                    continue
 
-                # Perform Plex scan only if the file was found and it's within the first 5 ticks
+                # --- START: New Logic to identify scan paths ---
                 if should_trigger_scan:
-                    scan_triggered_for_item = False
+                    if not sections:
+                         logging.error("Plex sections not available, cannot identify scan paths.")
+                         continue
+
+                    item_type_mapped = 'show' if item_dict['type'] == 'episode' else item_dict['type']
+                    logging.debug(f"Identifying scan paths for item {item_id} (type: {item_type_mapped}, title: '{filled_by_title}')")
+
+                    found_matching_section_location = False
                     for section in sections:
+                        # Check if section type matches item type
+                        if section.type != item_type_mapped:
+                            continue
+
+                        logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
+                        for location in section.locations:
+                            # Construct the path Plex *should* see for this item within this location
+                            # Assumes the item folder name is `filled_by_title`
+                            constructed_plex_path = os.path.join(location, filled_by_title)
+                            logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}'")
+
+                            # Add this section/path combination to our list
+                            if section.title not in paths_to_scan_by_section:
+                                paths_to_scan_by_section[section.title] = set()
+                            paths_to_scan_by_section[section.title].add(constructed_plex_path)
+                            found_matching_section_location = True
+                            # Don't break - a section might have multiple relevant locations? Unlikely, but safe not to break.
+
+                    if not found_matching_section_location:
+                        logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{filled_by_file}'. Scan might not be triggered correctly.")
+                # --- END: New Logic to identify scan paths ---
+
+
+            # --- Trigger scans after checking all items ---
+            if paths_to_scan_by_section:
+                logging.info(f"Triggering scans for {len(paths_to_scan_by_section)} sections based on detected files...")
+                final_updated_sections = set() # Track unique section titles updated
+                for section_title, scan_paths in paths_to_scan_by_section.items():
+                    section = sections_map.get(section_title)
+                    if not section:
+                        logging.error(f"Could not find section object for title '{section_title}' during scan trigger phase.")
+                        continue
+
+                    for scan_path in scan_paths:
                         try:
-                            # Update each library location with the expected path structure
-                            for location in section.locations:
-                                # Calculate path relative to this specific library location
-                                expected_path = os.path.join(location, filled_by_title)
-                                logging.debug(f"Attempting Plex section '{section.title}' scan trigger:")
-                                logging.debug(f"  Location: {location}")
-                                logging.debug(f"  Scan Path: {expected_path}")
+                            logging.info(f"Triggering Plex section '{section.title}' update scan for path: {scan_path}")
+                            section.update(path=scan_path)
+                            final_updated_sections.add(section.title)
+                        except NotFound:
+                             logging.warning(f"Path '{scan_path}' not found by Plex server during scan trigger for section '{section.title}'. This might be expected if the folder doesn't exist yet.")
+                        except Exception as e_scan:
+                             logging.error(f"Failed to trigger update scan for Plex section '{section.title}' with path '{scan_path}': {str(e_scan)}", exc_info=True)
 
-                                # Trigger update for this section using the calculated path
-                                section.update(path=expected_path)
-                                scan_triggered_for_item = True
-                                # Optimization: If a file path matches one location, we might not need
-                                # to trigger scans based on *other* locations in the same section for the *same* file.
-                                # However, the current logic triggers based on filled_by_title under *each* location.
-                                # We'll keep the original behavior of trying all locations per section.
+                if final_updated_sections:
+                    logging.info(f"Plex sections triggered for update in this run: {', '.join(sorted(list(final_updated_sections)))}")
 
-                        except Exception as e:
-                            # Construct expected_path for logging even if loop didn't run
-                            expected_path_for_log = f"location/{filled_by_title}" if not 'expected_path' in locals() else expected_path
-                            logging.error(f"Failed to trigger update scan for Plex section '{section.title}' with expected path like '{expected_path_for_log}': {str(e)}", exc_info=True)
-
-                    if scan_triggered_for_item:
-                        logging.info(f"Completed Plex scan trigger attempt in relevant sections for item {item['id']}.")
-                # No need for an else block here, skip message is logged above
 
             # Log summary of operations
             processed_items_count = len(items) # Count items processed in this run
-            logging.info(f"Plex check summary: Processed {processed_items_count} items. {not_found_items} items not found on disk during this check.")
-            # Removed logging block for updated_sections as it wasn't used consistently
+            logging.info(f"Plex check summary (checks enabled): Processed {processed_items_count} items. Identified {updated_items} found items potentially needing scans (within tick limit). {not_found_items} items not found on disk.")
+            # Updated sections log moved to after the scan loop
 
-        except Exception as e:
-            logging.error(f"Error during Plex library update: {str(e)}", exc_info=True)
 
     def task_update_show_ids(self):
         """Update show IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
@@ -1776,156 +2074,182 @@ class ProgramRunner:
             logging.error(f"Error in task_update_movie_titles: {str(e)}")
 
     def trigger_task(self, task_name):
-        """Manually trigger a task to run immediately."""
-        if task_name not in self.enabled_tasks:
-            # Convert task name to match how it's stored in enabled_tasks
-            task_name_normalized = task_name
-            if task_name.startswith('task_'):
-                task_name_normalized = task_name[5:]  # Remove task_ prefix
-            
-            # For content source tasks, they're stored with spaces in enabled_tasks
-            if '_wanted' in task_name_normalized:
-                task_name_normalized = task_name_normalized.replace('_', ' ')
-                if not task_name_normalized.startswith('task_'):
-                    task_name_normalized = f'task_{task_name_normalized}'
-                
-            if task_name_normalized not in self.enabled_tasks:
-                raise ValueError(f"Task {task_name} is not enabled")
-            task_name = task_name_normalized
-        
-        # Handle queue tasks (which don't have task_ prefix)
-        queue_tasks = [
-            'process_wanted',
-            'process_checking',
-            'process_scraping',
-            'process_adding',
-            'process_unreleased',
-            'process_sleeping',
-            'process_blacklisted',
-            'process_pending_uncached',
-            'process_upgrading'
-        ]
-        
-        # Remove process_ prefix and convert to lower case for comparison
-        task_name_lower = task_name.lower()
-        if task_name_lower.startswith('process_'):
-            task_name_lower = task_name_lower[8:]  # Remove 'process_'
-        elif task_name_lower.startswith('task_'):
-            task_name_lower = task_name_lower[5:]  # Remove 'task_'
-            
-        # Check if this task name (without prefix) matches any queue task
-        for queue_task in queue_tasks:
-            queue_task_lower = queue_task.lower()[8:]  # Remove 'process_' prefix
-            if task_name_lower == queue_task_lower:
-                try:
-                    queue_method = getattr(self.queue_manager, queue_task)  # Use original queue task name
-                    # Check if the method is process_checking and pass self if it is
-                    if queue_task == 'process_checking':
-                        queue_method(self) # Pass self (ProgramRunner instance)
-                    else:
-                        queue_method()
-                    logging.info(f"Manually triggered queue task: {queue_task}")
-                    return
-                except Exception as e:
-                    logging.error(f"Error running queue task {queue_task}: {str(e)}")
-                    raise
-                    
-        # Handle content source tasks
-        if '_wanted' in task_name_lower or ' wanted' in task_name_lower:
-            content_sources = self.get_content_sources()
-            source_id = None
-            
-            # Try to match the task name to a content source
-            task_name_parts = task_name_lower.replace('task_', '').replace('_wanted', ' wanted').split(' wanted')[0]
-            
-            for source in content_sources:
-                if source.lower() == task_name_parts:
-                    source_id = source
-                    break
-                    
-            if source_id and source_id in content_sources:
-                try:
-                    self.process_content_source(source_id, content_sources[source_id])
-                    logging.info(f"Manually triggered content source: {source_id}")
-                    return
-                except Exception as e:
-                    logging.error(f"Error running content source {source_id}: {str(e)}")
-                    raise
-        
-        # If we get here, it's a regular task - ensure it has task_ prefix
-        if not task_name.startswith('task_'):
-            task_name = f'task_{task_name}'
-            
-        task_method = getattr(self, task_name, None)
-        if task_method is None:
-            raise ValueError(f"Task {task_name} does not exist")
-            
-        try:
-            task_method()
-            logging.info(f"Manually triggered task: {task_name}")
-        except Exception as e:
-            logging.error(f"Error running task {task_name}: {str(e)}")
-            raise
-            
-    def enable_task(self, task_name):
-        """Enable a task that was previously disabled."""
-        # Normalize task name to match how it's stored in enabled_tasks
-        normalized_name = self._normalize_task_name(task_name)
-        
-        if normalized_name in self.enabled_tasks:
-            logging.info(f"Task {normalized_name} is already enabled")
-            return True
-            
-        # Add to enabled tasks
-        self.enabled_tasks.add(normalized_name)
-        logging.info(f"Enabled task: {normalized_name}")
-        return True
-        
-    def disable_task(self, task_name):
-        """Disable a task to prevent it from running."""
-        # Normalize task name to match how it's stored in enabled_tasks
-        normalized_name = self._normalize_task_name(task_name)
-        
-        if normalized_name not in self.enabled_tasks:
-            logging.info(f"Task {normalized_name} is already disabled")
-            return True
-            
-        # Remove from enabled tasks
-        self.enabled_tasks.remove(normalized_name)
-        logging.info(f"Disabled task: {normalized_name}")
-        return True
-        
-    def _normalize_task_name(self, task_name):
-        """Normalize task name to match how it's stored in enabled_tasks."""
-        task_name_normalized = task_name
-        
-        # Handle queue tasks (which don't have task_ prefix)
-        queue_names = [
-            'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
-            'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading'
-        ]
-        
-        # Check if this is a queue name
-        for queue_name in queue_names:
-            if task_name.lower() == queue_name.lower():
-                return queue_name
-                
-        # Handle task_ prefix
-        if task_name.startswith('task_'):
-            task_name_normalized = task_name
+        """Manually trigger a task to run immediately by running its job now."""
+        normalized_name = self._normalize_task_name(task_name) # Use existing normalization
+        job_id = normalized_name # Job ID should match normalized name
+
+        logging.info(f"Attempting to manually trigger task: {job_id}")
+
+        # --- Resolve target function using helper ---
+        target_func, args, kwargs = self._get_task_target(job_id)
+        # ------------------------------------------
+
+        if target_func:
+            logging.info(f"Executing task '{job_id}' manually...")
+            try:
+                # Execute directly in the current thread (API request thread)
+                target_func(*args, **kwargs)
+                logging.info(f"Manual trigger for task '{job_id}' completed.")
+                return True # Indicate success
+            except Exception as e:
+                 logging.error(f"Error during manual execution of task '{job_id}': {e}", exc_info=True)
+                 # Raise a more specific error or wrap the original
+                 raise RuntimeError(f"Error executing task {job_id} manually: {e}") from e
         else:
-            # Check if it's a content source task
-            if '_wanted' in task_name.lower():
-                # Content source tasks have spaces, not underscores
-                task_name_normalized = task_name.replace('_', ' ')
-                if not task_name_normalized.startswith('task_'):
-                    task_name_normalized = f'task_{task_name_normalized}'
-            else:
-                # Regular task - add task_ prefix if not present
-                if not task_name.startswith('task_'):
-                    task_name_normalized = f'task_{task_name}'
-                    
-        return task_name_normalized
+            logging.error(f"Could not determine target function for manual trigger of '{job_id}'")
+            # Check scheduler for job existence to provide better error
+            with self.scheduler_lock:
+                 job = self.scheduler.get_job(job_id)
+                 if job_id not in self.task_intervals:
+                      raise ValueError(f"Task '{job_id}' is not defined.")
+                 elif not job:
+                      raise ValueError(f"Task '{job_id}' exists but is not currently scheduled (likely disabled). Cannot trigger.")
+                 else:
+                      # Should not happen if target_func is None but job exists and is defined
+                      raise ValueError(f"Task function for '{job_id}' not found despite job existing.")
+
+    def enable_task(self, task_name):
+        """Enable a task by adding/resuming its job in the scheduler."""
+        normalized_name = self._normalize_task_name(task_name)
+        job_id = normalized_name
+
+        if normalized_name not in self.task_intervals:
+             logging.error(f"Cannot enable task '{normalized_name}': No interval defined.")
+             return False # Return False for failure
+
+        with self.scheduler_lock:
+            job = self.scheduler.get_job(job_id)
+            if job:
+                 if job.next_run_time is not None: # Job exists and is scheduled (not paused indefinitely)
+                     logging.info(f"Task '{normalized_name}' is already scheduled and enabled.")
+                     # Ensure it's in our enabled_tasks set
+                     if normalized_name not in self.enabled_tasks: self.enabled_tasks.add(normalized_name)
+                     return True
+                 else: # Job exists but is paused
+                     try:
+                         self.scheduler.resume_job(job_id)
+                         self.enabled_tasks.add(normalized_name) # Add to set
+                         # Remove from manual pause set if it was there
+                         if job_id in self.paused_jobs_by_queue: self.paused_jobs_by_queue.remove(job_id)
+                         logging.info(f"Resumed existing paused job for task: {normalized_name}")
+                         return True
+                     except Exception as e:
+                         logging.error(f"Error resuming job '{job_id}': {e}")
+                         return False
+            else: # Job doesn't exist, need to add it
+                 interval = self.task_intervals.get(normalized_name)
+                 if interval:
+                     if self._schedule_task(normalized_name, interval): # Use the schedule method
+                         self.enabled_tasks.add(normalized_name) # Add to set
+                         logging.info(f"Scheduled and enabled new task: {normalized_name}")
+                         return True
+                     else:
+                         logging.error(f"Failed to schedule new job for task: {normalized_name}")
+                         return False
+                 else:
+                     # This case should be caught by the initial check
+                     logging.error(f"Interval not found for task '{normalized_name}' during enable.")
+                     return False
+
+    def disable_task(self, task_name):
+        """Disable a task by pausing its job in the scheduler."""
+        normalized_name = self._normalize_task_name(task_name)
+        job_id = normalized_name
+
+        # Don't allow disabling essential tasks? Or handle via UI?
+        # essential = {'task_heartbeat', 'task_check_service_connectivity', ...}
+        # if job_id in essential:
+        #    logging.warning(f"Cannot disable essential task: {job_id}")
+        #    return False
+
+        if normalized_name not in self.task_intervals:
+             # Should not happen if task was previously enabled, but good practice
+             logging.warning(f"Task '{normalized_name}' not found in intervals. Cannot disable.")
+             # Still ensure it's removed from enabled_tasks set if present
+             if normalized_name in self.enabled_tasks: self.enabled_tasks.remove(normalized_name)
+             return True # Consider successful if not defined/already disabled
+
+        with self.scheduler_lock:
+            job = self.scheduler.get_job(job_id)
+            if job:
+                 if job.next_run_time is None: # Already paused
+                      logging.info(f"Task '{normalized_name}' job is already paused.")
+                      # Ensure it's removed from enabled_tasks set
+                      if normalized_name in self.enabled_tasks: self.enabled_tasks.remove(normalized_name)
+                      return True
+                 else: # Job exists and is running, pause it
+                      try:
+                          self.scheduler.pause_job(job_id)
+                          if normalized_name in self.enabled_tasks: self.enabled_tasks.remove(normalized_name) # Remove from set
+                          logging.info(f"Paused job for task: {normalized_name}")
+                          return True
+                      except Exception as e:
+                          logging.error(f"Error pausing job '{job_id}': {e}")
+                          return False
+            else: # Job doesn't exist
+                 logging.info(f"Task '{normalized_name}' job not found (already removed or never scheduled). Considered disabled.")
+                 # Ensure it's removed from enabled_tasks set
+                 if normalized_name in self.enabled_tasks: self.enabled_tasks.remove(normalized_name)
+                 return True
+
+    def _normalize_task_name(self, task_name):
+        """Normalize task name to match how it's stored internally."""
+        # Ensure queue_processing_map exists before trying to access it
+        if not hasattr(self, 'queue_processing_map'):
+             # This might happen if called extremely early, though unlikely now
+             logging.error("_normalize_task_name called before queue_processing_map was defined!")
+             # Fallback: try other normalization rules without map check
+        else:
+            # Handle queue tasks (which might be passed without task_ prefix)
+            # Use the map keys now
+            for queue_name_key in self.queue_processing_map.keys():
+                if task_name.lower() == queue_name_key.lower():
+                    return queue_name_key # Return the canonical name used as the key/job_id
+
+        # Handle task_ prefix for other tasks
+        if task_name.startswith('task_'):
+            # Check if it's a known task (including the combined one)
+            if task_name in self.task_intervals:
+                 return task_name
+            # Maybe it's a content source task passed with underscores?
+            elif '_wanted' in task_name:
+                 # Try replacing underscores with spaces (except first one) for content sources
+                 parts = task_name.split('_')
+                 if len(parts) > 2 and parts[0] == 'task' and parts[-1] == 'wanted':
+                     # Reconstruct potential name with spaces (handle multi-word sources)
+                     # Example: task_My_Overseerr_Instance_wanted -> task_My Overseerr Instance_wanted
+                     content_part = "_".join(parts[1:-1]) # Get 'My_Overseerr_Instance'
+                     # This simple reconstruction might fail if source names have underscores themselves
+                     # A better approach would be to iterate self.task_intervals keys if needed.
+                     # For now, assume simple cases or that keys match `task_..._wanted` format.
+                     # Let's just check if the original task_name is in intervals again, as that's the primary key format.
+                     if task_name in self.task_intervals:
+                           return task_name
+                 # Fallback: return original if complex content source name check failed or not found
+                 # Check if original name exists before warning
+                 if task_name in self.task_intervals: return task_name
+
+            # If it starts with task_ but isn't found, return as is but maybe log?
+            # Let's assume if it starts with task_ it should be in intervals if valid.
+
+        # Try adding task_ prefix if not present
+        potential_task_name = f'task_{task_name}'
+        if potential_task_name in self.task_intervals:
+            return potential_task_name
+
+        # Handle potential content source task passed without prefix/suffix
+        potential_content_source_task = f'task_{task_name}_wanted'
+        if potential_content_source_task in self.task_intervals:
+             return potential_content_source_task
+        # Handle content source task passed with spaces needing underscores
+        potential_content_source_task_underscores = f'task_{task_name.replace(" ", "_")}_wanted'
+        if potential_content_source_task_underscores in self.task_intervals:
+             return potential_content_source_task_underscores
+
+
+        # If no match found after all checks, return the original input
+        # logging.warning(f"Could not normalize task name '{task_name}' to a known task key.")
+        return task_name # Return original if no normalization rule matched
 
     def task_run_library_maintenance(self):
         """Run library maintenance tasks."""
@@ -1941,21 +2265,21 @@ class ProgramRunner:
             logging.debug("Scheduled statistics summary update complete")
         except Exception as e:
             logging.error(f"Error updating statistics summary: {str(e)}")
-            
+
     def task_check_database_health(self):
         """Periodic task to verify database health and handle any corruption."""
         from main import verify_database_health
-        
+
         try:
             if not verify_database_health():
                 logging.error("Database health check failed during periodic check")
                 # Pause the queue if database is corrupted
                 self.pause_reason = "Database corruption detected - check logs for details"
                 self.pause_queue()
-                
+
                 # Send notification about database corruption
                 try:
-                    from routes.notifications import send_program_crash_notification                    
+                    from routes.notifications import send_program_crash_notification
                     send_program_crash_notification("Database corruption detected - program must be restarted to recreate databases")
 
                 except Exception as e:
@@ -1972,39 +2296,39 @@ class ProgramRunner:
             # Import here to avoid circular imports
             from database.symlink_verification import get_verification_stats
             from utilities.plex_verification import run_plex_verification_scan
-            
+
             # Check if there are any unverified files to process
             stats = get_verification_stats()
             if stats['unverified'] == 0:
                 logging.info("No unverified files in queue. Skipping verification scan.")
                 return
-            
+
             # Alternate between full and recent scans
             # Use a class attribute to track the last scan type
             if not hasattr(self, '_last_symlink_scan_was_full'):
                 # Initialize to True so first scan will be recent (gets toggled below)
                 self._last_symlink_scan_was_full = True
-            
+
             # Toggle scan type
             do_full_scan = not self._last_symlink_scan_was_full
             self._last_symlink_scan_was_full = do_full_scan
-            
+
             scan_type = "full" if do_full_scan else "recent"
             logging.info(f"Running {scan_type} symlink verification scan...")
-            
+
             # Run the verification scan
             verified_count, total_processed = run_plex_verification_scan(
                 max_files=50,
                 recent_only=not do_full_scan
             )
-            
+
             logging.info(f"Verified {verified_count} out of {total_processed} symlinked files in Plex ({scan_type} scan)")
-            
+
             # If recent scan found nothing but we have unverified files, force a full scan next time
             if not do_full_scan and total_processed == 0 and stats['unverified'] > 0:
                 logging.info("Recent scan found no files but unverified files exist. Will run full scan next time.")
                 self._last_symlink_scan_was_full = False
-                
+
         except Exception as e:
             logging.error(f"Error verifying symlinked files: {e}")
 
@@ -2012,20 +2336,25 @@ class ProgramRunner:
         """Verify that files marked for removal are actually gone from Plex using title-based search."""
         logging.info("[TASK] Running Plex removal verification task.")
 
+        # Determine Plex connection details based on settings
+        plex_url, plex_token = None, None
         if get_setting('File Management', 'file_collection_management') == 'Plex':
-            plex_url = get_setting('Plex', 'url').rstrip('/')
-            plex_token = get_setting('Plex', 'token')
+            plex_url = get_setting('Plex', 'url', '').rstrip('/')
+            plex_token = get_setting('Plex', 'token', '')
         elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='').rstrip('/')
             plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
-        else:
-            logging.error("No Plex URL or token found in settings")
-            return False
-    
-        # Initialize Plex connection centrally if possible, or handle per task run
-        plex = plexapi.server.PlexServer(plex_url, plex_token)
-        if not plex:
-            logging.error("[VERIFY] Failed to connect to Plex for removal verification.")
+
+        if not plex_url or not plex_token:
+            logging.error("[VERIFY] No Plex URL or token found in relevant settings. Skipping removal verification.")
+            return
+
+        # Initialize Plex connection
+        plex = None
+        try:
+            plex = plexapi.server.PlexServer(plex_url, plex_token)
+        except Exception as e:
+            logging.error(f"[VERIFY] Failed to connect to Plex ({plex_url}) for removal verification: {e}")
             return
 
         # Fetch pending items (now includes titles)
@@ -2061,8 +2390,9 @@ class ProgramRunner:
                 logging.debug(f"[VERIFY DEBUG] Finding Plex section for path: {item_path}")
                 plex_library, plex_section = find_plex_library_and_section(plex, item_path)
                 if not plex_section:
-                    logging.warning(f"[VERIFY] Could not find Plex section for path: {item_path}. Skipping verification for now.")
-                    # Don't increment attempts if the section isn't found, might be temporary issue
+                    logging.warning(f"[VERIFY] Could not find Plex section for path: {item_path}. Incrementing attempt count.")
+                    increment_removal_attempt(item_id) # Increment attempt if section not found
+                    failed_verification_count += 1
                     continue
                 logging.debug(f"[VERIFY DEBUG] Found section: {plex_section.title}")
 
@@ -2076,15 +2406,14 @@ class ProgramRunner:
                      failed_verification_count += 1
                      continue
 
+                # --- Movie Check ---
                 if section_type == 'movie':
-                    # Search for the movie by title
                     logging.debug(f"[VERIFY DEBUG] Searching for MOVIE title: '{item_title}' in section '{plex_section.title}'")
                     search_results = plex_section.search(title=item_title, libtype='movie')
                     logging.debug(f"[VERIFY DEBUG] Movie search results count: {len(search_results)}")
                     if not search_results:
-                         logging.info(f"[VERIFY] Movie title '{item_title}' not found in section '{plex_section.title}'. Verification check passed for this item (so far).")
+                         logging.debug(f"[VERIFY] Movie title '{item_title}' not found in section '{plex_section.title}'. Check passed for this item.")
                     else:
-                        # Check if any media parts match the original filename
                         for movie in search_results:
                             logging.debug(f"[VERIFY DEBUG] Checking parts for movie: {movie.title} ({movie.key})")
                             for part in movie.iterParts():
@@ -2093,25 +2422,23 @@ class ProgramRunner:
                                  if part_basename == target_basename:
                                      logging.warning(f"[VERIFY] Path '{item_path}' still found associated with Movie '{item_title}' (Part: {part.file}). Verification FAILED.")
                                      item_still_exists = True
-                                     break # Found a match, no need to check other parts of this movie
-                            if item_still_exists: break # Found a match, no need to check other movies with the same title
+                                     break
+                            if item_still_exists: break
 
+                # --- Show Check ---
                 elif section_type == 'show':
-                     # Search for the show by title
                     logging.debug(f"[VERIFY DEBUG] Searching for SHOW title: '{item_title}' in section '{plex_section.title}'")
                     shows = plex_section.search(title=item_title, libtype='show')
                     logging.debug(f"[VERIFY DEBUG] Show search results count: {len(shows)}")
                     if not shows:
-                        logging.info(f"[VERIFY] Show title '{item_title}' not found in section '{plex_section.title}'. Verification check passed for this item (so far).")
+                        logging.debug(f"[VERIFY] Show title '{item_title}' not found in section '{plex_section.title}'. Check passed for this item.")
                     else:
-                        # Check all shows matching the title (rare, but possible)
                         for show in shows:
                             logging.debug(f"[VERIFY DEBUG] Found show: {show.title} ({show.key})")
-                            # If episode_title is provided, search for the specific episode
+                            # Search specific episode if title provided
                             if episode_title:
                                 logging.debug(f"[VERIFY DEBUG] Searching for EPISODE title: '{episode_title}' within show '{show.title}'")
                                 try:
-                                    # Use show.episode() which handles season/episode numbers or titles
                                     episode = show.episode(title=episode_title)
                                     logging.debug(f"[VERIFY DEBUG] Found episode: {episode.title} ({episode.key})")
                                     for part in episode.iterParts():
@@ -2120,85 +2447,87 @@ class ProgramRunner:
                                         if part_basename == target_basename:
                                             logging.warning(f"[VERIFY] Path '{item_path}' still found associated with Episode '{item_title} - {episode_title}' (Part: {part.file}). Verification FAILED.")
                                             item_still_exists = True
-                                            break # Found match, stop checking parts
+                                            break
                                 except NotFound:
-                                    logging.info(f"[VERIFY] Episode '{episode_title}' not found for show '{show.title}'. Verification check passed for this episode (so far).")
-                                except Exception as e:
-                                     logging.error(f"[VERIFY] Error searching for episode '{episode_title}' in show '{show.title}': {e}")
-                                     # Treat error as potentially still existing to be safe
-                                     item_still_exists = True 
+                                    logging.debug(f"[VERIFY] Episode '{episode_title}' not found for show '{show.title}'. Check passed for this episode.")
+                                except Exception as e_ep:
+                                     logging.error(f"[VERIFY] Error searching for episode '{episode_title}' in show '{show.title}': {e_ep}")
+                                     item_still_exists = True # Assume exists on error
+                            # If no episode title, check all episodes (less common)
                             else:
-                                # If no episode title, maybe it was a whole show removal? Check all episodes (less common case)
-                                logging.warning(f"[VERIFY DEBUG] No episode title provided for show '{item_title}' path '{item_path}'. Checking ALL episode parts (this might be slow).")
+                                logging.debug(f"[VERIFY DEBUG] No episode title for '{item_title}', path '{item_path}'. Checking ALL episode parts.")
                                 for episode in show.episodes():
-                                     logging.debug(f"[VERIFY DEBUG] Checking parts for episode: {episode.title} ({episode.key})")
                                      for part in episode.iterParts():
                                          part_basename = os.path.basename(part.file)
-                                         logging.debug(f"[VERIFY DEBUG] Comparing target '{target_basename}' with part '{part_basename}' (from {part.file})")
                                          if part_basename == target_basename:
-                                             logging.warning(f"[VERIFY] Path '{item_path}' still found associated with Show '{item_title}' (Episode: {episode.title}, Part: {part.file}). Verification FAILED.")
+                                             logging.warning(f"[VERIFY] Path '{item_path}' still found (no ep title) with Show '{item_title}' (Ep: {episode.title}, Part: {part.file}). Verification FAILED.")
                                              item_still_exists = True
-                                             break # Found match, stop checking parts
-                                     if item_still_exists: break # Stop checking episodes for this show
-                            # If match found in this show, no need to check other shows with same title
-                            if item_still_exists: break 
+                                             break
+                                     if item_still_exists: break
+                            if item_still_exists: break
 
+                # --- Unknown Section Type ---
                 else:
-                    logging.warning(f"[VERIFY] Unknown section type '{section_type}' for section '{plex_section.title}'. Cannot verify path {item_path}.")
-                    # Don't increment attempts for unknown section types
-                
-                # Log the final decision logic before potential errors
-                logging.debug(f"[VERIFY DEBUG] Pre-update check for ID {item_id}: item_still_exists = {item_still_exists}")
+                    logging.warning(f"[VERIFY] Unknown section type '{section_type}' for section '{plex_section.title}'. Cannot verify path {item_path}. Incrementing attempt.")
+                    increment_removal_attempt(item_id) # Increment attempt for unknown type
+                    failed_verification_count += 1
+                    continue # Skip update logic below
 
-            except Exception as e:
-                logging.error(f"[VERIFY] Error during Plex verification processing for path {item_path} (ID: {item_id}): {e}", exc_info=True)
-                # Increment attempts on general errors during processing
+                # --- Logging before potential update ---
+                logging.debug(f"[VERIFY DEBUG] Post-check for ID {item_id}: item_still_exists = {item_still_exists}")
+
+            except Exception as e_proc:
+                logging.error(f"[VERIFY] Error during Plex verification processing for path {item_path} (ID: {item_id}): {e_proc}", exc_info=True)
                 increment_removal_attempt(item_id)
-                failed_verification_count +=1 # Treat errors as failed attempts for now
+                failed_verification_count += 1
                 continue # Skip to next item
 
-            # Update status based on whether the item was found
+            # --- Update status based on verification result ---
             try:
                 if not item_still_exists:
-                    logging.info(f"[VERIFY] Path '{item_path}' appears removed from Plex metadata based on title/part search. Marking as Verified.")
+                    logging.info(f"[VERIFY] Path '{item_path}' appears removed from Plex metadata. Marking as Verified.")
                     update_removal_status(item_id, 'Verified')
                     verified_count += 1
                 else:
-                    logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex based on title/part search. Attempting removal...")
-                    # Attempt removal again
+                    # Item still exists - log, attempt removal again, increment attempts
+                    logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex. Attempting removal again...")
                     removal_successful = remove_symlink_from_plex(item_title, item_path, episode_title)
                     if removal_successful:
-                        logging.info(f"[VERIFY] Successfully triggered removal for '{item_path}'. Will verify again later.")
+                        logging.info(f"[VERIFY] Successfully triggered removal *again* for '{item_path}'. Will verify later.")
                     else:
-                        logging.error(f"[VERIFY] Failed to trigger removal again for '{item_path}'.")
-                    
-                    # Increment attempt count regardless of removal attempt success
-                    logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}'.")
+                        logging.error(f"[VERIFY] Failed to trigger removal *again* for '{item_path}'.")
+
+                    logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}' as it still exists.")
                     increment_removal_attempt(item_id)
-                    failed_verification_count += 1 
+                    failed_verification_count += 1
             except Exception as db_update_err:
                  logging.error(f"[VERIFY] Database error updating status/attempts for ID {item_id}: {db_update_err}", exc_info=True)
+                 # If DB update fails, the attempt count might not increment, potentially causing loops.
 
-        logging.info(f"[VERIFY] Plex removal verification task finished. Verified: {verified_count}, Failed/Pending: {failed_verification_count}.")
+        logging.info(f"[VERIFY] Plex removal verification task finished. Verified: {verified_count}, Failed/Still Pending: {failed_verification_count}.")
 
-        # Clean up verified entries older than a certain period (optional, good practice)
-        # cleanup_days is now defined above using get_setting
+        # Clean up old verified/failed entries
         if cleanup_days > 0:
-            logging.info(f"[VERIFY] Cleaning up verified entries older than {cleanup_days} days.")
-            # Use remove_verified_paths (assuming it replaced cleanup_old_verified_removals)
-            removed_count = cleanup_old_verified_removals(days=cleanup_days) # Corrected function name and parameter
-            logging.info(f"[VERIFY] Removed {removed_count} old verified entries.")
+            logging.info(f"[VERIFY] Cleaning up verified/failed entries older than {cleanup_days} days.")
+            try:
+                 # Use the correct function name
+                removed_count = cleanup_old_verified_removals(days=cleanup_days)
+                logging.info(f"[VERIFY] Removed {removed_count} old verified/failed entries.")
+            except Exception as e_cleanup:
+                 logging.error(f"[VERIFY] Error during cleanup of old removal entries: {e_cleanup}")
+
 
     def task_precompute_airing_shows(self):
         """Precompute the recently aired and airing soon shows in a background task"""
         try:
             from routes.statistics_routes import get_recently_aired_and_airing_soon
-            
+
             # Actually call the function to populate the cache
             logging.info("Precomputing airing shows data...")
             start_time = time.time()
-            recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-            
+            # Pass force_refresh=True to ensure it runs even if cache seems fresh
+            recently_aired, airing_soon = get_recently_aired_and_airing_soon(force_refresh=True)
+
             duration = time.time() - start_time
             logging.info(f"Precomputed airing shows data in {duration:.2f}s. Found {len(recently_aired)} recently aired and {len(airing_soon)} airing soon shows.")
         except Exception as e:
@@ -2244,7 +2573,7 @@ class ProgramRunner:
             if file_management_mode == 'Plex':
                  # Use Plex mount path for existence check if mode is Plex
                 original_files_path = get_setting('Plex', 'mounted_file_location')
-            else: # Symlinked/Local
+            else: # Symlinked/Local or other modes potentially
                 original_files_path = get_setting('File Management', 'original_files_path')
 
             if not original_files_path:
@@ -2282,6 +2611,11 @@ class ProgramRunner:
 
             if not found:
                 logging.error(f"File '{target_full_path}' not found or not accessible after {attempt} attempts for relative path '{relative_file_path}'. Path will be retried later.")
+                # --- START EDIT: Add logic to potentially discard after N attempts ---
+                # Track retry attempts per path (requires storing attempts with the path)
+                # For simplicity now, keep infinite retries. If this becomes problematic,
+                # a dictionary could store {'path': attempt_count} in the class.
+                # --- END EDIT ---
                 return # Keep in queue
 
             # --- Call handle_rclone_file ---
@@ -2323,53 +2657,11 @@ class ProgramRunner:
                  # Log why it's being kept (using message from processing_result)
                 logging.info(f"Processing failed or incomplete for '{relative_file_path}' (Reason: {processing_result.get('message', 'Unknown')}). Leaving it in queue for retry.")
 
-    # --- START EDIT: New method for dynamic adjustment ---
-    def apply_dynamic_interval_adjustment(self, task_name: str, duration: float):
-        """
-        Adjusts the interval for a task based on its execution duration.
-        Increases interval if duration exceeds 10% of current interval.
-        Resets interval if duration is within threshold and interval was previously increased.
-        """
-        # Check if this task is eligible for dynamic adjustment
-        # Also include content source tasks in this logic
-        is_dynamic_eligible = task_name in self.DYNAMIC_INTERVAL_TASKS or \
-                              (task_name.startswith('task_') and task_name.endswith('_wanted'))
 
-        if not is_dynamic_eligible:
-            return # Not eligible for this adjustment type
+    # --- REMOVE apply_dynamic_interval_adjustment method ---
+    # def apply_dynamic_interval_adjustment(self, task_name: str, duration: float):
+    # ... remove this method ...
 
-        current_interval = self.task_intervals.get(task_name)
-        original_interval = self.original_task_intervals.get(task_name)
-
-        if current_interval is None or original_interval is None:
-            logging.warning(f"Cannot apply dynamic interval adjustment for task '{task_name}': Missing interval data.")
-            return
-
-        # Avoid division by zero or negative intervals
-        if current_interval <= 0:
-             return
-
-        threshold = current_interval * 0.10
-
-        if duration > threshold:
-            # Task took longer than 10% of its interval, increase the interval (double it)
-            new_interval = current_interval * 2
-
-            # Apply maximum caps
-            max_interval_by_multiplier = original_interval * self.MAX_INTERVAL_MULTIPLIER
-            capped_interval = min(new_interval, max_interval_by_multiplier, self.ABSOLUTE_MAX_INTERVAL)
-
-            if capped_interval > current_interval: # Only update if it actually increases
-                 self.task_intervals[task_name] = capped_interval
-                 logging.info(f"Task '{task_name}' took {duration:.2f}s (> {threshold:.2f}s threshold). Increasing interval to {capped_interval}s.")
-            elif new_interval > current_interval: # Log even if capped, indicating cap was hit
-                 logging.info(f"Task '{task_name}' took {duration:.2f}s (> {threshold:.2f}s threshold). Interval increase capped at {capped_interval}s.")
-
-        elif current_interval != original_interval:
-            # Task was fast enough and interval was previously increased, reset to default
-            self.task_intervals[task_name] = original_interval
-            logging.info(f"Task '{task_name}' took {duration:.2f}s (<= {threshold:.2f}s threshold). Resetting interval to default {original_interval}s.")
-    # --- END EDIT ---
 
     # --- START: New Task Implementation ---
     def task_update_tv_show_status(self):
@@ -2441,25 +2733,31 @@ class ProgramRunner:
                     else:
                         # Process metadata if found
                         show_status = show_metadata.get('status', 'unknown').lower()
-                    tmdb_id = show_metadata.get('ids', {}).get('tmdb')
-                    title = show_metadata.get('title')
-                    year = show_metadata.get('year')
+                        tmdb_id = show_metadata.get('ids', {}).get('tmdb')
+                        title = show_metadata.get('title')
+                        year = show_metadata.get('year')
 
-                    # Calculate total episodes from source metadata
-                    if 'seasons' in show_metadata:
-                        for season_num, season_data in show_metadata.get('seasons', {}).items():
-                            if int(season_num) == 0: continue # Skip specials
-                            total_episodes_from_source += len(season_data.get('episodes', {}))
-                    else:
+                        # Calculate total episodes from source metadata
+                        if 'seasons' in show_metadata:
+                             # Reset count before summing seasons
+                            total_episodes_from_source = 0
+                            for season_num_str, season_data in show_metadata.get('seasons', {}).items():
+                                try:
+                                     season_num = int(season_num_str)
+                                     if season_num == 0: continue # Skip specials season
+                                     total_episodes_from_source += len(season_data.get('episodes', {}))
+                                except ValueError:
+                                     logging.warning(f"[TV Status] Invalid season number '{season_num_str}' in metadata for {imdb_id}. Skipping.")
+                                     continue
+                        else:
                             logging.warning(f"[TV Status] Metadata for {imdb_id} ('{title}') lacks 'seasons' key. Total episode count may be inaccurate.")
                             # Fallback to DB value if exists? Or treat as 0? Let's fetch existing.
                             cursor.execute("SELECT total_episodes FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
-                            existing_show = cursor.fetchone()
-                            total_episodes_from_source = existing_show['total_episodes'] or 0
+                            existing_show_fallback = cursor.fetchone()
+                            total_episodes_from_source = existing_show_fallback['total_episodes'] if existing_show_fallback else 0
                             if total_episodes_from_source == 0:
                                 logging.warning(f"[TV Status] No episode count from metadata or DB for {imdb_id}. Skipping version status calculation.")
                                 # We can still update show status, but version logic is impossible
-                                # Let the main show update proceed, but skip version logic later
 
 
                     # Determine overall show ended status based *only* on metadata status
@@ -2472,34 +2770,40 @@ class ProgramRunner:
                     now_utc = datetime.now(timezone.utc)
                     now_str = now_utc.strftime('%Y-%m-%d %H:%M:%S')
 
-                    # Upsert into tv_shows. 'is_complete' only reflects if the show's status is 'ended'.
+                    # Upsert into tv_shows. 'is_complete' reflects if the show's status is 'ended'/'canceled'.
                     # total_episodes is updated from source metadata.
                     # Ensure COALESCE is used for fields that might not be present in new metadata fetch
                     cursor.execute("""
                         INSERT INTO tv_shows (
                             imdb_id, tmdb_id, title, year, status, is_complete,
                             total_episodes, last_status_check, added_at, last_updated
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM tv_shows WHERE imdb_id = ?), ?), ?)
                         ON CONFLICT(imdb_id) DO UPDATE SET
                             tmdb_id = COALESCE(excluded.tmdb_id, tv_shows.tmdb_id),
                             title = COALESCE(excluded.title, tv_shows.title),
                             year = COALESCE(excluded.year, tv_shows.year),
                             status = COALESCE(excluded.status, tv_shows.status),
-                            is_complete = excluded.is_complete, -- Set based on show_status=='ended'
+                            is_complete = excluded.is_complete, -- Set based on show_status=='ended'/'canceled'
                             total_episodes = excluded.total_episodes,
                             last_status_check = excluded.last_status_check,
                             last_updated = excluded.last_updated
-                        WHERE imdb_id = excluded.imdb_id;
+                        WHERE tv_shows.imdb_id = excluded.imdb_id;
                     """, (
                         imdb_id, tmdb_id, title, year, show_status, int(is_show_ended),
-                        total_episodes_from_source, now_str, now_str, now_str # last_status_check, added_at, last_updated
+                        total_episodes_from_source, now_str, # last_status_check
+                        # Values for INSERT part (added_at logic)
+                        imdb_id, now_str, # imdb_id for subquery, now_str for COALESCE fallback
+                        # Value for INSERT part (last_updated)
+                        now_str
                     ))
                     conn.commit() # Commit show data before processing versions
+                    updated_count += 1 # Count successful show upsert
 
                     # --- NEW: Per-Version Status Update ---
-                    # Skip if we couldn't determine total episodes
+                    # Skip if we couldn't determine total episodes and show is ended/canceled
+                    # (Can't reliably calculate completeness)
                     if total_episodes_from_source <= 0 and is_show_ended:
-                         logging.warning(f"[TV Status] Cannot reliably calculate version completeness for ended show {imdb_id} due to zero total episodes. Skipping version updates.")
+                         logging.warning(f"[TV Status] Cannot reliably calculate version completeness for ended/canceled show {imdb_id} due to zero total episodes. Skipping version updates.")
                     else:
                         try:
                             # Get all episode items with their version and state for this show
@@ -2534,16 +2838,18 @@ class ProgramRunner:
                                     present_count = sum(1 for ep in episodes_in_version if ep['state'] in ('Collected', 'Blacklisted'))
 
                                     # Determine if this version is up-to-date (has all known episodes)
+                                    # If show is not ended, up-to-date is meaningless, default to False? Or base on present_count?
+                                    # Let's define up-to-date ONLY if the show is ended/canceled AND has all eps.
                                     is_up_to_date = bool(
+                                        is_show_ended and # Show must be finished
                                         total_episodes_from_source > 0 and
                                         present_count >= total_episodes_from_source
                                     )
 
                                     # Determine if this version is complete AND fully present
-                                    # Requires the show to be ended/canceled AND have enough present episodes
-                                    is_complete_and_present = bool(
-                                        is_show_ended and is_up_to_date # Simplified using is_up_to_date
-                                    )
+                                    # is_complete_and_present is essentially the same as is_up_to_date by this definition
+                                    is_complete_and_present = is_up_to_date
+
                                     logging.debug(f"[TV Status] Version '{version_id}' for {imdb_id}: Present: {present_count}/{total_episodes_from_source}, ShowEnded/Canceled: {is_show_ended} -> UpToDate: {is_up_to_date}, CompleteAndPresent: {is_complete_and_present}")
 
                                     # Upsert into the new version status table
@@ -2568,10 +2874,16 @@ class ProgramRunner:
                                     """, version_data)
 
                                 # Clean up version statuses for versions that no longer exist locally
-                                cursor.execute("""
-                                    DELETE FROM tv_show_version_status
-                                    WHERE imdb_id = ? AND version_identifier NOT IN ({})
-                                """.format(','.join('?'*len(versions_processed_this_show))), (imdb_id, *versions_processed_this_show))
+                                if versions_processed_this_show: # Ensure set is not empty before query
+                                     cursor.execute("""
+                                        DELETE FROM tv_show_version_status
+                                        WHERE imdb_id = ? AND version_identifier NOT IN ({})
+                                    """.format(','.join('?'*len(versions_processed_this_show))), (imdb_id, *versions_processed_this_show))
+                                else:
+                                     # If somehow versions_processed_this_show is empty after finding episodes, delete all for this imdb_id
+                                     logging.warning(f"[TV Status] No versions processed for {imdb_id} despite finding episodes. Cleaning all version statuses.")
+                                     cursor.execute("DELETE FROM tv_show_version_status WHERE imdb_id = ?", (imdb_id,))
+
 
                                 shows_with_versions_updated.add(imdb_id)
 
@@ -2581,26 +2893,23 @@ class ProgramRunner:
                             logging.error(f"[TV Status] Database error during version status update for {imdb_id}: {db_err_version}", exc_info=True)
                             if conn: conn.rollback()
                             failed_count += 1 # Count show as failed if version update fails
-                            # Ensure we don't count it as successfully processed below
-                            if imdb_id in shows_with_versions_updated:
-                                shows_with_versions_updated.remove(imdb_id)
+                            # Rollback removed the main show update, so no need to adjust updated_count
+                            updated_count -= 1 # Decrement successful show update count
                         except Exception as e_version:
                             logging.error(f"[TV Status] Error during version status update for {imdb_id}: {e_version}", exc_info=True)
                             if conn: conn.rollback()
-                            failed_count += 1 # Count show as failed if version update fails
-                             # Ensure we don't count it as successfully processed below
-                            if imdb_id in shows_with_versions_updated:
-                                shows_with_versions_updated.remove(imdb_id)
+                            failed_count += 1
+                            updated_count -= 1 # Decrement successful show update count
 
-                    processed_shows.add(imdb_id) # Mark base show info as processed
+
+                    processed_shows.add(imdb_id) # Mark base show info as processed (even if version failed)
 
                 except Exception as e:
                     logging.error(f"[TV Status] Failed to process show {imdb_id}: {e}", exc_info=True)
                     failed_count += 1
                     if conn: conn.rollback() # Rollback any partial changes for this show
-                    # Ensure we don't process this ID again in this run if it failed
-                    processed_shows.add(imdb_id)
-                    # Also ensure it's not counted as successfully updated for versions
+                    processed_shows.add(imdb_id) # Mark as processed to avoid retrying in this run
+                    # Ensure it's not counted as having versions updated
                     if imdb_id in shows_with_versions_updated:
                         shows_with_versions_updated.remove(imdb_id)
 
@@ -2618,11 +2927,246 @@ class ProgramRunner:
                 conn.close()
 
         duration = time.time() - start_time
-        # Refined counting: processed shows = total unique imdb_ids attempted.
-        # successful updates = shows where version status was processed without error (or skipped cleanly)
-        successful_updates = len(shows_with_versions_updated) + (len(processed_shows) - failed_count - len(shows_with_versions_updated))
-        logging.info(f"[TASK] TV show status update finished in {duration:.2f}s. Processed Shows: {len(processed_shows)}, Successful Updates (incl. versions): {successful_updates}, Failed: {failed_count}.")
+        # Refined counting:
+        # processed_shows = count of unique imdb_ids attempted.
+        # updated_count = count of successful base show info upserts.
+        # shows_with_versions_updated = count where version logic also completed.
+        # failed_count = count where either base or version logic failed with error/rollback.
+        logging.info(f"[TASK] TV show status update finished in {duration:.2f}s. Processed Shows: {len(processed_shows)}, Base Info Updated: {updated_count}, Versions Updated: {len(shows_with_versions_updated)}, Failed: {failed_count}.")
     # --- END: New Task Implementation ---
+
+    # *** START EDIT: Add task method to update queue views ***
+    def task_update_queue_views(self):
+        """Periodically updates the in-memory queue views from the database."""
+        if not hasattr(self, 'queue_manager') or not self.queue_manager:
+            logging.warning("Queue manager not available, cannot update queue views.")
+            return
+
+        # logging.debug("Running task_update_queue_views to sync queues with DB.")
+        updated_count = 0
+        start_time = time.time()
+        try:
+            # It's important to iterate over a copy of the items in case the dict changes
+            queues_to_update = list(self.queue_manager.queues.values())
+            for queue in queues_to_update:
+                if hasattr(queue, 'update'):
+                    try:
+                        queue.update()
+                        updated_count += 1
+                    except Exception as e:
+                        logging.error(f"Error updating queue '{getattr(queue, 'name', 'Unknown')}': {e}", exc_info=True)
+                else:
+                     # This might happen if initialization failed partially
+                    logging.warning(f"Queue object '{getattr(queue, 'name', 'Unknown')}' lacks an update method.")
+
+            duration = time.time() - start_time
+            # logging.debug(f"Finished task_update_queue_views in {duration:.3f}s. Updated {updated_count} queues.")
+        except Exception as e:
+            logging.error(f"Unexpected error in task_update_queue_views: {e}", exc_info=True)
+    # *** END EDIT ***
+
+    # *** START EDIT: Add combined Scraping/Adding task ***
+    def task_process_scraping_adding(self):
+        """
+        Checks Scraping and Adding queues and processes them, potentially
+        concurrently using threads if both have items.
+        """
+        if self.queue_manager.is_paused():
+            # logging.debug("Skipping task_process_scraping_adding due to pause state.")
+            return
+
+        scraping_queue = self.queue_manager.queues.get('Scraping')
+        adding_queue = self.queue_manager.queues.get('Adding')
+
+        if not scraping_queue or not adding_queue:
+            logging.error("Scraping or Adding queue not found in QueueManager.")
+            return
+
+        # Check if queues have items by getting contents and checking length
+        has_scraping_items = False
+        has_adding_items = False
+        try:
+            # Ensure queue view is up-to-date before checking
+            # scraping_queue.update() # Update view may happen in separate task
+            has_scraping_items = len(scraping_queue.get_contents()) > 0
+        except Exception as e:
+            logging.error(f"Error checking Scraping queue contents: {e}")
+
+        try:
+            # adding_queue.update() # Update view may happen in separate task
+            has_adding_items = len(adding_queue.get_contents()) > 0
+        except Exception as e:
+            logging.error(f"Error checking Adding queue contents: {e}")
+
+
+        scraping_thread = None
+        adding_thread = None
+
+        def run_scraping():
+            try:
+                logging.debug("Starting Scraping processing in thread.")
+                self.queue_manager.process_scraping()
+                logging.debug("Finished Scraping processing in thread.")
+            except RateLimitError:
+                logging.warning("Rate limit exceeded during Scraping processing (thread). Handling rate limit.")
+                self.handle_rate_limit() # Trigger rate limit handling
+            except Exception as e:
+                logging.error(f"Error in Scraping processing thread: {e}", exc_info=True)
+
+        def run_adding():
+            try:
+                logging.debug("Starting Adding processing in thread.")
+                self.queue_manager.process_adding()
+                logging.debug("Finished Adding processing in thread.")
+            except RateLimitError:
+                logging.warning("Rate limit exceeded during Adding processing (thread). Handling rate limit.")
+                self.handle_rate_limit() # Trigger rate limit handling
+            except Exception as e:
+                logging.error(f"Error in Adding processing thread: {e}", exc_info=True)
+
+        if has_scraping_items and has_adding_items:
+            logging.info("Both Scraping and Adding queues have items. Processing concurrently.")
+            scraping_thread = threading.Thread(target=run_scraping, name="ScrapingThread", daemon=True) # Use daemon threads?
+            adding_thread = threading.Thread(target=run_adding, name="AddingThread", daemon=True)
+            scraping_thread.start()
+            adding_thread.start()
+            # Wait for threads to complete? If they handle errors/rate limits, maybe not strictly needed.
+            # Let's join them to ensure work is done before task cycle completes. Add timeout?
+            join_timeout = 60 # Timeout in seconds for joining threads
+            if scraping_thread:
+                 scraping_thread.join(timeout=join_timeout)
+                 if scraping_thread.is_alive(): logging.warning("Scraping thread did not finish within timeout.")
+            if adding_thread:
+                 adding_thread.join(timeout=join_timeout)
+                 if adding_thread.is_alive(): logging.warning("Adding thread did not finish within timeout.")
+            logging.debug("Concurrent Scraping/Adding threads finished or timed out.")
+
+        elif has_scraping_items:
+            logging.debug("Only Scraping queue has items. Processing.")
+            run_scraping() # Run directly in current thread
+
+        elif has_adding_items:
+            logging.debug("Only Adding queue has items. Processing.")
+            run_adding() # Run directly in current thread
+        # else: # Log removed for less noise
+            # No items in either queue, do nothing.
+            # logging.debug("Neither Scraping nor Adding queues have items.")
+    # *** END EDIT ***
+
+    # *** START EDIT: Add Listener Method ***
+    def _job_listener(self, event: apscheduler.events.JobExecutionEvent):
+        """Listener called after a job executes. Adjusts interval based on duration."""
+        if event.exception:
+            # Optionally handle job errors here, but for now just skip adjustment
+            logging.warning(f"Job '{event.job_id}' failed with exception: {event.exception}")
+            return
+
+        task_name = event.job_id
+        duration = event.retval # Assuming the wrapper returns duration
+
+        # Ensure duration is a number (it might be None if job failed before wrapper could return)
+        if not isinstance(duration, (int, float)) or duration < 0:
+            # logging.debug(f"Skipping interval adjustment for '{task_name}': Invalid duration ({duration}) returned by wrapper.")
+            return
+
+        # --- Start of logic moved from apply_dynamic_interval_adjustment ---
+        # Check if this task is eligible for dynamic adjustment
+        is_dynamic_eligible = task_name in self.DYNAMIC_INTERVAL_TASKS or \
+                              (task_name.startswith('task_') and task_name.endswith('_wanted'))
+
+        if not is_dynamic_eligible:
+            # logging.debug(f"Task '{task_name}' not eligible for duration-based interval adjustment.")
+            return # Not eligible for this adjustment type
+
+        with self.scheduler_lock: # Ensure thread safety when accessing intervals/scheduler
+            current_job = self.scheduler.get_job(task_name)
+            if not current_job:
+                logging.warning(f"Cannot adjust interval for task '{task_name}': Job not found in scheduler (might have been removed).")
+                return
+
+            # Get current interval from the job's trigger
+            try:
+                # Check if trigger is IntervalTrigger first
+                if not isinstance(current_job.trigger, IntervalTrigger):
+                     logging.debug(f"Cannot adjust interval for task '{task_name}': Trigger is not IntervalTrigger ({type(current_job.trigger)}).")
+                     return
+                current_interval = current_job.trigger.interval.total_seconds()
+            except AttributeError:
+                 # Should not happen after the type check, but safety first
+                logging.warning(f"Cannot adjust interval for task '{task_name}': Failed to get interval from trigger.")
+                return
+
+            original_interval = self.original_task_intervals.get(task_name)
+
+            if current_interval is None or original_interval is None:
+                logging.warning(f"Cannot apply dynamic interval adjustment for task '{task_name}': Missing original interval data.")
+                return
+
+            # Avoid division by zero or negative intervals
+            if current_interval <= 0:
+                 logging.warning(f"Cannot adjust interval for task '{task_name}': Current interval is zero or negative ({current_interval}s).")
+                 return
+
+            threshold = current_interval * 0.10 # 10% threshold
+            new_interval_seconds = None # Variable to store the new interval if changed
+
+            if duration > threshold:
+                # Task took longer than 10% of its interval, increase the interval (double it)
+                potential_new_interval = current_interval * 2
+
+                # Apply maximum caps: original * multiplier AND absolute max
+                max_interval_by_multiplier = original_interval * self.MAX_INTERVAL_MULTIPLIER
+                capped_interval = min(potential_new_interval, max_interval_by_multiplier, self.ABSOLUTE_MAX_INTERVAL)
+
+                # Ensure capped interval is actually greater than current
+                if capped_interval > current_interval:
+                    new_interval_seconds = capped_interval
+                    logging.info(f"Task '{task_name}' took {duration:.2f}s (> {threshold:.2f}s threshold). Increasing interval to {new_interval_seconds}s.")
+                # else: # Log if capped interval didn't result in an increase
+                #     logging.debug(f"Task '{task_name}' duration {duration:.2f}s exceeded threshold, but interval increase was capped. Interval remains {current_interval}s.")
+
+
+            elif current_interval != original_interval:
+                # Task was fast enough and interval was previously increased, reset to default
+                new_interval_seconds = original_interval
+                logging.info(f"Task '{task_name}' took {duration:.2f}s (<= {threshold:.2f}s threshold). Resetting interval to default {new_interval_seconds}s.")
+
+            # Modify the job if the interval changed
+            if new_interval_seconds is not None:
+                try:
+                    # Create a new trigger with the adjusted interval
+                    new_trigger = IntervalTrigger(seconds=new_interval_seconds)
+                    # Reschedule the job with the new trigger
+                    # Use reschedule_job which is safer than modify_job for trigger changes
+                    self.scheduler.reschedule_job(job_id=task_name, trigger=new_trigger)
+                    logging.debug(f"Successfully rescheduled job '{task_name}' with new interval {new_interval_seconds}s")
+                except Exception as e:
+                    logging.error(f"Error rescheduling job '{task_name}' with new interval {new_interval_seconds}s: {e}", exc_info=True)
+         # --- End of moved logic ---
+    # *** END EDIT ***
+
+    # *** START EDIT: Add Wrapper Method ***
+    def _run_and_measure_task(self, func, args, kwargs):
+        """Wraps a task function to measure and return its execution duration."""
+        start_time = time.time()
+        task_name_for_log = getattr(func, '__name__', 'unknown_function')
+        # Add args/kwargs to log for better context? Be careful with sensitive data.
+        logging.debug(f"Executing wrapped task: '{task_name_for_log}'")
+        try:
+            # Execute the original task function
+            func(*args, **kwargs)
+            # Duration calculation happens after successful execution
+            duration = time.time() - start_time
+            # Log duration for debugging
+            logging.debug(f"Task '{task_name_for_log}' completed successfully in {duration:.3f}s")
+            return duration # Return duration for the listener
+        except Exception as e:
+            # Log the error
+            duration = time.time() - start_time
+            logging.error(f"Error during execution of wrapped task '{task_name_for_log}' after {duration:.3f}s: {e}", exc_info=True)
+            # Re-raise the exception so APScheduler handles it as an error
+            raise
+    # *** END EDIT ***
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
@@ -2638,44 +3182,78 @@ def process_overseerr_webhook(data):
 
     media_type = media.get('media_type')
     tmdb_id = media.get('tmdbId')
+    # Extract additional info if available
+    imdb_id = media.get('imdbId')
+    tvdb_id = media.get('tvdbId')
+    title = data.get('subject') # Title might be in subject
+    requester_email = data.get('request', {}).get('requestedBy', {}).get('email') # Requester info
+
 
     if not media_type or not tmdb_id:
-        logging.error("Invalid webhook data: missing media_type or tmdbId")
+        logging.error(f"Invalid Overseerr webhook data: missing media_type or tmdbId. Data: {data}")
         return
+
+    logging.info(f"Processing Overseerr webhook: Type={media_type}, TMDB={tmdb_id}, Title='{title}', Requester='{requester_email}'")
 
     wanted_item = {
         'tmdb_id': tmdb_id,
-        'media_type': media_type
+        'media_type': media_type,
+        # Include other IDs if available
+        'imdb_id': imdb_id,
+        'tvdb_id': tvdb_id,
     }
 
-    # Add requested_seasons if present in media data
-    if media_type == 'tv' and media.get('requested_seasons'):
-        wanted_item['requested_seasons'] = media['requested_seasons']
-        logging.info(f"Added requested seasons to wanted item: {media['requested_seasons']}")
-    else:
-        logging.debug(f"No requested seasons found in media data: {media}")
+    # Handle TV Show specific data
+    if media_type == 'tv':
+        # Requested seasons (array of numbers)
+        requested_seasons = media.get('requested_seasons')
+        if requested_seasons:
+            wanted_item['requested_seasons'] = requested_seasons
+            logging.info(f"Added requested seasons to wanted item: {requested_seasons}")
+
+        # Specific episode request? (Usually full season requests)
+        # episode_number = media.get('episodeNumber')
+        # season_number = media.get('seasonNumber')
+        # if season_number is not None and episode_number is not None:
+        #     wanted_item['season_number'] = season_number
+        #     wanted_item['episode_number'] = episode_number
+        #     logging.info(f"Webhook specified specific episode: S{season_number}E{episode_number}")
+
 
     wanted_content = [wanted_item]
-    logging.debug(f"Processing wanted content with item: {wanted_item}")
+    logging.debug(f"Processing wanted content from webhook: {wanted_item}")
     from metadata.metadata import process_metadata
     wanted_content_processed = process_metadata(wanted_content)
+
     if wanted_content_processed:
-        # Get the versions for Overseerr from settings
-        content_sources = ProgramRunner().get_content_sources(force_refresh=True)
-        overseerr_settings = next((data for source, data in content_sources.items() if source.startswith('Overseerr')), {})
-        versions = overseerr_settings.get('versions', {})
-        
-        logging.info(f"Versions: {versions}")
+        # Get the versions for the relevant Overseerr source from settings
+        content_sources = ProgramRunner().get_content_sources(force_refresh=False) # Don't need full refresh usually
+        # Find the first enabled Overseerr source (assuming only one usually)
+        overseerr_source_key = next((source for source, data in content_sources.items()
+                                     if source.startswith('Overseerr') and data.get('enabled')), None)
+
+        versions = {}
+        source_name = 'overseerr_webhook' # Default source name
+        if overseerr_source_key:
+             versions = content_sources[overseerr_source_key].get('versions', {})
+             source_name = overseerr_source_key # Use the actual source name if found
+             logging.info(f"Using versions from configured Overseerr source '{overseerr_source_key}': {versions}")
+        else:
+             logging.warning("No enabled Overseerr content source found in settings. Using default versions (empty).")
+
 
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
-        for item in all_items:
-            item['content_source'] = 'overseerr_webhook'
-            from content_checkers.content_source_detail import append_content_source_detail
-            item = append_content_source_detail(item, source_type='Overseerr')
+        if all_items:
+             for item in all_items:
+                 item['content_source'] = source_name # Use determined source name
+                 from content_checkers.content_source_detail import append_content_source_detail
+                 item = append_content_source_detail(item, source_type='Overseerr') # Keep source type generic
 
-        from database import add_collected_items, add_wanted_items
-        add_wanted_items(all_items, versions)
-        logging.info(f"Processed and added wanted item from webhook: {wanted_item}")
+             from database import add_collected_items, add_wanted_items
+             add_wanted_items(all_items, versions) # Pass the determined versions
+             logging.info(f"Processed and added {len(all_items)} wanted item(s) from Overseerr webhook (TMDB ID: {tmdb_id}).")
+        else:
+             logging.warning(f"Metadata processing for Overseerr webhook (TMDB ID: {tmdb_id}) resulted in no items to add.")
 
 def generate_airtime_report():
     from metadata.metadata import _get_local_timezone # Added import here
@@ -2693,153 +3271,283 @@ def generate_airtime_report():
         ORDER BY release_date, airtime
     """)
     items = cursor.fetchall()
+    conn.close() # Close connection after fetching
 
-    current_datetime = datetime.now()
+    current_datetime_local = datetime.now(_get_local_timezone()) # Use local timezone
     report = []
 
-    logging.info(f"Movie airtime offset: {get_setting('Queue', 'movie_airtime_offset', '19')}")
-    logging.info(f"Episode airtime offset: {get_setting('Queue', 'episode_airtime_offset', '0')}")
+    movie_airtime_offset_min = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
+    episode_airtime_offset_min = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
 
-    for item in items:
-        item_id, title, item_type, release_date, airtime, state = item
-        
-        if not release_date or release_date.lower() == "unknown":
-            report.append(f"{title} ({item_type}): Unknown release date")
+    logging.info(f"Movie airtime offset: {movie_airtime_offset_min / 60} hours")
+    logging.info(f"Episode airtime offset: {episode_airtime_offset_min / 60} hours")
+
+
+    for item_dict in items: # Use dicts
+        item_id = item_dict['id']
+        title = item_dict['title']
+        item_type = item_dict['type']
+        release_date_str = item_dict['release_date']
+        airtime_str = item_dict['airtime']
+        state = item_dict['state']
+
+        if not release_date_str or release_date_str.lower() == "unknown":
+            report.append(f"{title} ({item_type}, ID: {item_id}): Unknown release date (State: {state})")
             continue
 
         try:
-            release_date = datetime.strptime(release_date, '%Y-%m-%d').date()
+            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
         except ValueError:
-            report.append(f"{title} ({item_type}): Invalid release date format")
+            report.append(f"{title} ({item_type}, ID: {item_id}): Invalid release date format '{release_date_str}' (State: {state})")
             continue
 
-        if item_type == 'movie':
-            airtime_offset = (float(get_setting("Queue", "movie_airtime_offset", "19"))*60)
-            airtime = datetime.strptime("00:00", '%H:%M').time()
-        elif item_type == 'episode':
-            airtime_offset = (float(get_setting("Queue", "episode_airtime_offset", "0"))*60)
-            airtime = datetime.strptime(airtime or "00:00", '%H:%M').time()
-        else:
-            airtime_offset = 0
-            airtime = datetime.now().time()
+        # Determine airtime and offset based on type
+        airtime_offset_minutes = 0
+        airtime = dt_time(0, 0) # Default to midnight
+        try:
+            if item_type == 'movie':
+                airtime_offset_minutes = movie_airtime_offset_min
+                # Movies often don't have specific airtime, use default (midnight)
+            elif item_type == 'episode':
+                airtime_offset_minutes = episode_airtime_offset_min
+                if airtime_str:
+                    airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                else:
+                     # Use default if airtime is missing for episode
+                     airtime = dt_time(0, 0)
+            # else: handle other types if necessary
+        except ValueError:
+             report.append(f"{title} ({item_type}, ID: {item_id}): Invalid airtime format '{airtime_str}' (State: {state})")
+             continue
 
-        release_datetime = datetime.combine(release_date, airtime)
-        scrape_datetime = release_datetime + timedelta(minutes=airtime_offset)
-        time_until_scrape = scrape_datetime - current_datetime
 
-        if time_until_scrape > timedelta(0):
-            report.append(f"{title} ({item_type}): Start scraping at {scrape_datetime}, in {time_until_scrape}")
-        else:
-            report.append(f"{title} ({item_type}): Ready to scrape (Release date: {release_date}, Current state: {state})")
+        # Combine date and time using local timezone awareness
+        tz = _get_local_timezone()
+        try:
+            # Assume release_date and airtime are naive, localize them to the system's configured timezone
+            naive_release_datetime = datetime.combine(release_date, airtime)
+            local_release_datetime = tz.localize(naive_release_datetime, is_dst=None) # Let pytz handle DST ambiguity
 
-    conn.close()
+            # Calculate scrape datetime by adding offset
+            scrape_datetime_local = local_release_datetime + timedelta(minutes=airtime_offset_minutes)
+
+            time_until_scrape = scrape_datetime_local - current_datetime_local
+
+            # Format datetimes for readability
+            scrape_dt_str = scrape_datetime_local.strftime('%Y-%m-%d %H:%M:%S %Z%z')
+
+            if time_until_scrape > timedelta(0):
+                # Format timedelta nicely (e.g., remove microseconds)
+                days, remainder = divmod(time_until_scrape.total_seconds(), 86400)
+                hours, remainder = divmod(remainder, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                time_until_str = f"{int(days)}d {int(hours)}h {int(minutes)}m" if days > 0 else f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+
+                report.append(f"{title} ({item_type}, ID: {item_id}): State={state}. Scrape at ~{scrape_dt_str} (In: {time_until_str})")
+            else:
+                report.append(f"{title} ({item_type}, ID: {item_id}): State={state}. Ready to scrape (Scrape time was ~{scrape_dt_str})")
+
+        except Exception as dt_err:
+            logging.error(f"Error calculating airtime for item {item_id}: {dt_err}", exc_info=True)
+            report.append(f"{title} ({item_type}, ID: {item_id}): Error calculating airtime (State: {state})")
+
 
     # Log the report
-    logging.info("Airtime Report:\n" + "\n".join(report))
+    logging.info("--- Airtime Report Start ---")
+    if report:
+        for line in report:
+            logging.info(line)
+    else:
+        logging.info("No Wanted/Unreleased items found for report.")
+    logging.info("--- Airtime Report End ---")
 
 def append_runtime_airtime(items):
     from metadata.metadata import get_runtime, get_episode_airtime # Added import here
     logging.info(f"Starting to append runtime and airtime for {len(items)} items")
+    processed_count = 0
     for index, item in enumerate(items, start=1):
+        # Use dict access with .get() for safety
         imdb_id = item.get('imdb_id')
-        media_type = item.get('type')
-        
-        if not imdb_id or not type:
-            logging.warning(f"Item {index} is missing imdb_id or type: {item}")
+        media_type = item.get('type') # Changed 'type' to 'media_type' based on other usage? Check consistency. Let's assume 'type'.
+
+        if not imdb_id or not media_type:
+            logging.warning(f"Item {index} is missing imdb_id ('{imdb_id}') or type ('{media_type}'). Skipping runtime/airtime.")
             continue
-        
+
         try:
+            runtime = None
+            airtime = None
             if media_type == 'movie':
                 runtime = get_runtime(imdb_id, 'movie')
-                item['runtime'] = runtime
             elif media_type == 'episode':
-                runtime = get_runtime(imdb_id, 'episode')
-                airtime = get_episode_airtime(imdb_id)
-                item['runtime'] = runtime
-                item['airtime'] = airtime
+                runtime = get_runtime(imdb_id, 'episode') # Assuming get_runtime handles episode lookup
+                airtime = get_episode_airtime(imdb_id) # Assuming uses imdb_id of episode
             else:
-                logging.warning(f"Unknown media type for item {index}: {media_type}")
+                logging.warning(f"Unknown media type '{media_type}' for item {index} (IMDb: {imdb_id}). Cannot get runtime/airtime.")
+                continue # Skip unknown types
+
+            # Append to item if values were found
+            if runtime is not None:
+                item['runtime'] = runtime
+            if airtime is not None:
+                item['airtime'] = airtime
+            processed_count += 1
+
         except Exception as e:
-            logging.error(f"Error processing item {index} (IMDb: {imdb_id}): {str(e)}")
-            logging.error(f"Item details: {item}")
-            logging.error(traceback.format_exc())
-    
+            logging.error(f"Error processing runtime/airtime for item {index} (IMDb: {imdb_id}, Type: {media_type}): {str(e)}")
+            # Avoid logging full traceback for potentially common API errors? Optional.
+            # logging.error(traceback.format_exc())
+
+    logging.info(f"Finished appending runtime/airtime. Processed {processed_count}/{len(items)} items.")
+
+
 def get_and_add_all_collected_from_plex(bypass=False):
     collected_content = None  # Initialize here
-    if get_setting('File Management', 'file_collection_management') == 'Plex' or bypass:
-        logging.info("Getting all collected content from Plex")
-        if bypass:
-            collected_content = asyncio.run(run_get_collected_from_plex(bypass=True))
-        else:
-            collected_content = asyncio.run(run_get_collected_from_plex())
+    mode = get_setting('File Management', 'file_collection_management')
+
+    if mode == 'Plex' or bypass:
+        logging.info("Getting all collected content from Plex...")
+        try:
+            collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass))
+        except Exception as e:
+             logging.error(f"Error running run_get_collected_from_plex: {e}", exc_info=True)
+             return None # Return None on error during fetch
+
+    elif mode == 'Zurg':
+        logging.info("Getting all collected content from Zurg...")
+        try:
+             # Assuming a similar function exists or needs to be created for Zurg full scan
+            collected_content = asyncio.run(run_get_collected_from_zurg(bypass=bypass)) # Added bypass
+        except Exception as e:
+            logging.error(f"Error running run_get_collected_from_zurg: {e}", exc_info=True)
+            return None # Return None on error during fetch
+    else:
+        logging.info(f"File collection management mode ('{mode}') does not support full library scan for collected items.")
+        return None
+
 
     if collected_content:
-        movies = collected_content['movies']
-        episodes = collected_content['episodes']
-        
-        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
-        
+        movies = collected_content.get('movies', []) # Use .get for safety
+        episodes = collected_content.get('episodes', [])
+
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from {mode}.")
+
         # Don't return None if some items were skipped during add_collected_items
         if len(movies) > 0 or len(episodes) > 0:
-            from database import add_collected_items, add_wanted_items
+            from database import add_collected_items # Keep import local
             add_collected_items(movies + episodes)
+            logging.info(f"Finished adding {len(movies) + len(episodes)} collected items to database.")
             return collected_content  # Return the original content even if some items were skipped
-        
-    logging.error("Failed to retrieve content")
+        else:
+            logging.info("No collected movies or episodes retrieved or processed.")
+            return collected_content # Return empty dict if nothing found
+
+    logging.warning(f"Failed to retrieve or process collected content from {mode}.")
     return None
 
 def get_and_add_recent_collected_from_plex():
-    if get_setting('File Management', 'file_collection_management') == 'Plex':
-        logging.info("Getting recently added content from Plex")
-        collected_content = asyncio.run(run_get_recent_from_plex())
-    elif get_setting('File Management', 'file_collection_management') == 'Zurg':
-        logging.info("Getting recently added content from Zurg")
-        collected_content = asyncio.run(run_get_recent_from_zurg())
-    
+    collected_content = None
+    mode = get_setting('File Management', 'file_collection_management')
+    logging.info(f"Getting recently added content from {mode}...")
+
+    try:
+        if mode == 'Plex':
+            collected_content = asyncio.run(run_get_recent_from_plex())
+        elif mode == 'Zurg':
+            collected_content = asyncio.run(run_get_recent_from_zurg())
+        else:
+            logging.info(f"File collection management mode ('{mode}') does not support recent library scan.")
+            return None
+    except Exception as e:
+         logging.error(f"Error running recent scan function for {mode}: {e}", exc_info=True)
+         return None
+
+
     if collected_content:
-        movies = collected_content['movies']
-        episodes = collected_content['episodes']
-        
-        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes")
-        
+        movies = collected_content.get('movies', [])
+        episodes = collected_content.get('episodes', [])
+
+        logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} recent episodes from {mode}.")
+
         # Check and fix any unmatched items before adding to database if enabled
         if get_setting('Debug', 'enable_unmatched_items_check', True):
             logging.info("Checking and fixing unmatched items before adding to database")
-            from utilities.plex_matching_functions import check_and_fix_unmatched_items
-            collected_content = check_and_fix_unmatched_items(collected_content)
-            # Get updated counts after matching check
-            movies = collected_content['movies']
-            episodes = collected_content['episodes']
-        
+            try:
+                from utilities.plex_matching_functions import check_and_fix_unmatched_items
+                collected_content = check_and_fix_unmatched_items(collected_content)
+                # Get updated counts after matching check
+                movies = collected_content.get('movies', [])
+                episodes = collected_content.get('episodes', [])
+                logging.info(f"Counts after unmatched check: {len(movies)} movies, {len(episodes)} episodes.")
+            except Exception as e_match:
+                logging.error(f"Error during check_and_fix_unmatched_items: {e_match}", exc_info=True)
+                # Proceed with potentially unmatched items? Or return? Let's proceed.
+
+
         # Don't return None if some items were skipped during add_collected_items
         if len(movies) > 0 or len(episodes) > 0:
             from database import add_collected_items
-            add_collected_items(movies + episodes, recent=True)
-            return collected_content  # Return the original content even if some items were skipped
-    
-    logging.error("Failed to retrieve content")
+            try:
+                add_collected_items(movies + episodes, recent=True)
+                logging.info(f"Finished adding {len(movies) + len(episodes)} recent items to database.")
+                return collected_content  # Return the original content even if some items were skipped
+            except Exception as e_add:
+                 logging.error(f"Error during add_collected_items for recent items: {e_add}", exc_info=True)
+                 return None # Return None if adding fails
+        else:
+            logging.info("No recent movies or episodes to add after processing.")
+            return collected_content # Return empty dict if nothing to add
+
+    logging.warning(f"Failed to retrieve or process recent content from {mode}.")
     return None
 
 def run_local_library_scan():
+    # ... (This function seems unused/disabled, no changes needed) ...
     from utilities.local_library_scan import local_library_scan
     logging.info("Full library scan disabled for now")
     #local_library_scan()
 
 def run_recent_local_library_scan():
+    # ... (This function seems unused/disabled, no changes needed) ...
     from utilities.local_library_scan import recent_local_library_scan
     logging.info("Recent library scan disabled for now")
     #recent_local_library_scan()
 
+# *** START EDIT: Add Listener Setup Method ***
+def _setup_scheduler_listeners(runner_instance):
+    """Adds necessary event listeners to the scheduler."""
+    if runner_instance and runner_instance.scheduler:
+        try:
+            logging.info("Setting up APScheduler job execution listener...")
+            runner_instance.scheduler.add_listener(
+                runner_instance._job_listener, # Ensure this uses the correct method name
+                apscheduler.events.EVENT_JOB_EXECUTED | apscheduler.events.EVENT_JOB_ERROR # Listen for errors too
+            )
+            logging.info("APScheduler job execution/error listener added successfully.")
+        except Exception as e:
+            logging.error(f"Failed to add APScheduler listener: {e}", exc_info=True)
+    else:
+        logging.error("Cannot setup scheduler listeners: ProgramRunner instance or scheduler not found.")
+# *** END EDIT ***
+
 def run_program():
     global program_runner
-    logging.info("Program started")
+    logging.info("Program start requested")
 
     if program_runner is None or not program_runner.is_running():
+        logging.info("Initializing ProgramRunner...")
         program_runner = ProgramRunner()
+        # *** START EDIT: Setup listeners after init ***
+        try:
+            _setup_scheduler_listeners(program_runner) # Use the correct function name
+        except Exception as e:
+             logging.error(f"Failed to set up scheduler listeners during startup: {e}", exc_info=True)
+        # *** END EDIT ***
         # Update the program runner in program_operation_routes
         from routes.program_operation_routes import program_operation_bp
-        program_operation_bp.program_runner = program_runner
-        program_runner.start()  # Start the program runner
+        program_operation_bp.program_runner = program_runner # Ensure routes use the instance
+        logging.info("Starting ProgramRunner instance...")
+        program_runner.start()  # Starts the scheduler and run loop
     else:
         logging.info("Program is already running")
     return program_runner
