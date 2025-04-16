@@ -163,7 +163,7 @@ class QueueTimer:
             
             if item_identifier:
                 time_str = self._format_duration(duration)
-                logging.info(f"Item {item_identifier} (ID: {item_id}) exited {queue_name} queue after {time_str}")
+                logging.debug(f"Item {item_identifier} (ID: {item_id}) exited {queue_name} queue after {time_str}")
                 
             # Periodically save timing data
             self.save_timing_data()
@@ -434,11 +434,8 @@ class QueueManager:
         queue_contents = self.queues["Scraping"].get_contents()
         
         if queue_contents:
-            for item in queue_contents:
-                logging.debug(f"Scraping queue item: {self.generate_identifier(item)}")
-            
             result = self._process_queue_safely("Scraping", with_result=True)
-            logging.info(f"Scraping queue process result: {result}")
+            logging.debug(f"Scraping queue process result: {result}")
             return result
             
         return False
@@ -474,7 +471,7 @@ class QueueManager:
     def move_to_wanted(self, item: Dict[str, Any], from_queue: str, new_version: str = None):
         item_identifier = self.generate_identifier(item)
         target_version_str = f" (Version: {new_version})" if new_version else ""
-        logging.info(f"Moving item {item_identifier}{target_version_str} to Wanted queue from {from_queue}")
+        logging.debug(f"Moving item {item_identifier}{target_version_str} to Wanted queue from {from_queue}")
         
         # If moving from Sleeping, preserve wake count (though usually reset when entering Wanted)
         from database import get_wake_count
@@ -573,7 +570,7 @@ class QueueManager:
 
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to Sleeping queue")
+        logging.debug(f"Moving item {item_identifier} to Sleeping queue")
         
         from database import get_wake_count
         wake_count = get_wake_count(item['id'])
@@ -590,7 +587,7 @@ class QueueManager:
 
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
-        logging.info(f"Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
+        logging.debug(f"Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
         
         # Log initiation of move
         self.item_tracker.info({
@@ -739,7 +736,7 @@ class QueueManager:
             The updated item if successful, None otherwise
         """
         item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to {to_queue_name}")
+        logging.debug(f"Moving item {item_identifier} to {to_queue_name}")
         
         # Log initiation of move
         self.item_tracker.info({
@@ -812,7 +809,7 @@ class QueueManager:
     def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
-        logging.info(f"Moving item {item_identifier} to Collected state")
+        logging.debug(f"Moving item {item_identifier} to Collected state")
         
         # Log initiation of move to Collected
         self.item_tracker.info({
@@ -846,7 +843,7 @@ class QueueManager:
             # Remove from the source queue
             if from_queue in self.queues:
                 self.queues[from_queue].remove_item(item)
-            logging.info(f"Successfully moved item {item_identifier} to Collected state")
+            logging.debug(f"Successfully moved item {item_identifier} to Collected state")
             
             # Log completion of move to Collected
             log_data = {

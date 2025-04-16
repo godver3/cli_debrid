@@ -296,10 +296,26 @@ class ScrapingQueue:
                                             else:
                                                 logging.info(f"  Episode {ep_num}: unknown air date")
 
+                                        # --- START: New logic for 'old season' check ---
+                                        is_likely_old_season = False
+                                        one_year_ago = today - timedelta(days=365)
+                                        for ep_num, ep_data in season_data['episodes'].items():
+                                            first_aired_str = ep_data.get('first_aired')
+                                            if first_aired_str:
+                                                try:
+                                                    air_date = datetime.strptime(first_aired_str.split('T')[0], '%Y-%m-%d').date()
+                                                    if air_date < one_year_ago:
+                                                        logging.info(f"Found episode {ep_num} aired on {air_date} (more than a year ago). Assuming season is old enough for multi-pack.")
+                                                        is_likely_old_season = True
+                                                        break # Found one, no need to check others
+                                                except (ValueError, TypeError):
+                                                    continue # Ignore episodes with invalid date formats for this check
+                                        # --- END: New logic for 'old season' check ---
 
-                                        # Check for any unaired episodes
+
+                                        # Check for any unaired episodes (original logic)
                                         has_unaired_episodes = False
-                                        for ep_data in season_data['episodes'].values():
+                                        for ep_num, ep_data in season_data['episodes'].items(): # Iterate again for the original check
                                             if 'first_aired' not in ep_data or not ep_data['first_aired']:
                                                 logging.info(f"Episode {ep_data.get('episode_number', 'unknown')} has unknown air date")
                                                 has_unaired_episodes = True
@@ -315,20 +331,28 @@ class ScrapingQueue:
                                                 has_unaired_episodes = True
                                                 break
 
-                                        # Enable multi-pack only if all episodes have aired AND it wasn't disabled by the finale check
+                                        # Enable multi-pack if all episodes have aired OR if it's likely an old season,
+                                        # AND it wasn't disabled by the finale check,
                                         # AND there are other pending episodes for the show.
-                                        if not has_unaired_episodes:
+                                        if not has_unaired_episodes or is_likely_old_season:
                                             if other_pending_episodes:
                                                 is_multi_pack = True # Enable multi-pack
-                                                logging.info("All episodes have aired and other episodes are pending - enabling multi-pack")
-                                            else:
-                                                logging.info("All episodes have aired, but no other episodes are pending for this show - using single episode scrape")
+                                                if is_likely_old_season and has_unaired_episodes:
+                                                    logging.info("Enabling multi-pack based on 'old season' heuristic despite some unknown/invalid dates.")
+                                                elif not has_unaired_episodes:
+                                                     logging.info("All episodes have aired and other episodes are pending - enabling multi-pack")
+                                                # else: (is_likely_old_season and not has_unaired_episodes) - handled by the above case
+                                            else: # No other pending episodes for the show
+                                                if not has_unaired_episodes:
+                                                    logging.info("All episodes have aired, but no other episodes are pending for this show - using single episode scrape")
+                                                elif is_likely_old_season:
+                                                    logging.info("Season is likely old, but no other episodes are pending for this show - using single episode scrape")
                                                 # is_multi_pack remains False
-                                        else:
-                                            logging.info("Some episodes haven't aired yet - skipping multi-pack")
+                                        else: # has_unaired_episodes is True AND not is_likely_old_season
+                                            logging.info("Some episodes haven't aired yet in this recent season - skipping multi-pack")
                                             # is_multi_pack remains False
                                     # else: (can_attempt_multi_pack is False)
-                                        # is_multi_pack remains False - already logged reason above
+                                        # is_multi_pack remains False - already logged reason above (finale check)
 
                                 else: # No 'episodes' in season_data
                                     logging.info("No episodes data found in season metadata - skipping multi-pack check")

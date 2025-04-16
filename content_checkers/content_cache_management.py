@@ -133,7 +133,6 @@ def should_process_item(item: Dict[str, Any], source_id: str, cache: Dict[str, A
             logging.debug(f"Requested seasons changed for {cache_key}. Reprocessing.")
             return True # Requested seasons differ, should process
 
-    logging.debug(f"Cache hit and valid for {cache_key} (Expiry: {expiry_duration_hours} hours). Skipping.")
     return False # Cache hit and still valid, skip processing
 
 def update_cache_for_item(item: Dict[str, Any], source_id: str, cache: Dict[str, Any]) -> None:

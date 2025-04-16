@@ -5,6 +5,38 @@ from scraper.functions.similarity_checks import similarity, normalize_title
 from scraper.functions.other_functions import smart_search
 from fuzzywuzzy import fuzz
 
+# Function to normalize filter patterns for tracking duplicates
+def _normalize_filter_pattern(pattern: str) -> str:
+    return re.sub(r'[\s-]+', '', pattern).lower()
+
+# Modified check_preferred function
+def check_preferred(patterns_weights, fields, is_bonus):
+    score_change = 0
+    breakdown = {}
+    matched_normalized_patterns = set() # Track normalized forms matched for this item
+
+    for pattern, weight in patterns_weights:
+        normalized_pattern = _normalize_filter_pattern(pattern)
+
+        # Check if this normalized form has already contributed to the score
+        if normalized_pattern in matched_normalized_patterns:
+            # logging.debug(f"Skipping pattern '{pattern}' as normalized '{normalized_pattern}' already scored.")
+            continue # Skip if normalized form already scored
+
+        # Check the pattern against the fields using smart_search
+        for field_value in fields:
+            # Ensure field_value is not None before lowercasing/checking
+            field_str = field_value if isinstance(field_value, str) else ""
+            if smart_search(pattern, field_str): # Use original pattern for smart_search
+                # Matched! Apply score *once* for this normalized pattern
+                score_change += weight if is_bonus else -weight
+                breakdown[pattern] = weight if is_bonus else -weight # Record the original pattern
+                matched_normalized_patterns.add(normalized_pattern) # Mark normalized form as scored
+                # logging.debug(f"Pref Filter {'Bonus' if is_bonus else 'Penalty'}: Normalized '{normalized_pattern}' matched via pattern '{pattern}'. Applied score change: {weight if is_bonus else -weight}")
+                break # Apply weight only once per pattern (stop checking fields for this pattern)
+
+    return score_change, breakdown
+
 def rank_result_key(
     result: Dict[str, Any], all_results: List[Dict[str, Any]],
     query: str, query_year: int, query_season: int, query_episode: int,
@@ -281,26 +313,9 @@ def rank_result_key(
     # Implement preferred filtering logic
     preferred_filter_score = 0
     torrent_title_lower = torrent_title.lower()
-    filename_lower = filename.lower() if filename else None
-    binge_group_lower = binge_group.lower() if binge_group else None
+    filename_lower = filename.lower() if filename else "" # Use empty string if None
+    binge_group_lower = binge_group.lower() if binge_group else "" # Use empty string if None
     fields_to_check_pref = [torrent_title_lower, filename_lower, binge_group_lower]
-
-    # Function to check preferred patterns against multiple fields
-    def check_preferred(patterns_weights, fields, is_bonus):
-        score_change = 0
-        breakdown = {}
-        for pattern, weight in patterns_weights:
-            pattern_matched = False
-            for field_value in fields:
-                if field_value and smart_search(pattern, field_value):
-                    score_change += weight if is_bonus else -weight
-                    breakdown[pattern] = weight if is_bonus else -weight
-                    pattern_matched = True
-                    break # Apply weight only once per pattern
-            # if pattern_matched: # Log which pattern matched which field (optional)
-            #      logging.debug(f"Pref Filter {'Bonus' if is_bonus else 'Penalty'}: Pattern '{pattern}' matched.")
-
-        return score_change, breakdown
 
     # Apply preferred_filter_in bonus
     in_score, in_breakdown = check_preferred(version_settings.get('preferred_filter_in', []), fields_to_check_pref, is_bonus=True)
@@ -321,9 +336,9 @@ def rank_result_key(
         weighted_bitrate +
         weighted_country +
         weighted_language +
-        weighted_year_match + # Use weighted year score
-        (season_match_score * 5) + # Use base season score * multiplier
-        (episode_match_score * 5) + # Use base episode score * multiplier
+        weighted_year_match +
+        (season_match_score * 5) +
+        (episode_match_score * 5) +
         multi_pack_score +
         single_episode_score +
         preferred_filter_score
@@ -415,8 +430,8 @@ def rank_result_key(
         'multi_pack_score': multi_pack_score,
         'single_episode_score': single_episode_score,
         'preferred_filter_score': preferred_filter_score,
-        'preferred_filter_in_breakdown': preferred_filter_in_breakdown,
-        'preferred_filter_out_breakdown': preferred_filter_out_breakdown,
+        'preferred_filter_in_breakdown': preferred_filter_in_breakdown, # Contains original patterns that matched
+        'preferred_filter_out_breakdown': preferred_filter_out_breakdown, # Contains original patterns that matched
         'content_type_score': content_type_score,
         'total_score': round(total_score, 2)
     }

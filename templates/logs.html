@@ -28,8 +28,16 @@
         .log-container {
             width: 100vw;
             margin: 0;
-            height: calc(100vh - 70px);
+            /* Default adjusted height for mobile browser UI */
+            height: calc(100vh - 160px); 
             border-radius: 0;
+        }
+
+        /* Override height if running as standalone PWA or fullscreen */
+        @media (display-mode: standalone), (display-mode: fullscreen) {
+            .log-container {
+                 height: calc(100vh - 70px); /* Use original offset when browser UI is minimal/absent */
+            }
         }
 
         .log-controls {

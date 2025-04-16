@@ -1390,6 +1390,15 @@ class ProgramRunner:
                 temp_notifications_file = notifications_file.with_suffix(".pkl.tmp")
                 notifications = []
                 try:
+                    # Ensure the temp file doesn't exist before renaming
+                    if temp_notifications_file.exists():
+                        try:
+                            temp_notifications_file.unlink()
+                        except OSError as e_unlink:
+                            logging.warning(f"Could not remove pre-existing temp notifications file {temp_notifications_file}: {e_unlink}")
+                            # Decide if we should proceed or return. Returning might be safer.
+                            return 
+
                     # Move/rename the file first
                     notifications_file.rename(temp_notifications_file)
                     with open(temp_notifications_file, "rb") as f:
@@ -3039,8 +3048,10 @@ class ProgramRunner:
     # *** START EDIT: Add combined Scraping/Adding task ***
     def task_process_scraping_adding(self):
         """
-        Checks Scraping and Adding queues and processes them, potentially
-        concurrently using threads if both have items.
+        Checks Scraping and Adding queues and processes them. If both queues
+        contain items for the *same show AND same version*, Adding is
+        prioritized and run sequentially to prevent race conditions.
+        Otherwise, they run concurrently.
         """
         if self.queue_manager.is_paused():
             # logging.debug("Skipping task_process_scraping_adding due to pause state.")
@@ -3053,75 +3064,109 @@ class ProgramRunner:
             logging.error("Scraping or Adding queue not found in QueueManager.")
             return
 
-        # Check if queues have items by getting contents and checking length
-        has_scraping_items = False
-        has_adding_items = False
+        # Get current contents
+        scraping_items = []
+        adding_items = []
         try:
-            # Ensure queue view is up-to-date before checking
-            # scraping_queue.update() # Update view may happen in separate task
-            has_scraping_items = len(scraping_queue.get_contents()) > 0
+            scraping_items = scraping_queue.get_contents()
         except Exception as e:
-            logging.error(f"Error checking Scraping queue contents: {e}")
+            logging.error(f"Error getting Scraping queue contents: {e}")
 
         try:
-            # adding_queue.update() # Update view may happen in separate task
-            has_adding_items = len(adding_queue.get_contents()) > 0
+            adding_items = adding_queue.get_contents()
         except Exception as e:
-            logging.error(f"Error checking Adding queue contents: {e}")
+            logging.error(f"Error getting Adding queue contents: {e}")
 
+        has_scraping_items = bool(scraping_items)
+        has_adding_items = bool(adding_items)
 
-        scraping_thread = None
-        adding_thread = None
-
+        # Define the processing functions locally
         def run_scraping():
             try:
-                logging.debug("Starting Scraping processing in thread.")
+                logging.debug("Starting Scraping processing.")
                 self.queue_manager.process_scraping()
-                logging.debug("Finished Scraping processing in thread.")
+                logging.debug("Finished Scraping processing.")
             except RateLimitError:
-                logging.warning("Rate limit exceeded during Scraping processing (thread). Handling rate limit.")
+                logging.warning("Rate limit exceeded during Scraping processing. Handling rate limit.")
                 self.handle_rate_limit() # Trigger rate limit handling
             except Exception as e:
-                logging.error(f"Error in Scraping processing thread: {e}", exc_info=True)
+                logging.error(f"Error in Scraping processing: {e}", exc_info=True)
 
         def run_adding():
             try:
-                logging.debug("Starting Adding processing in thread.")
+                logging.debug("Starting Adding processing.")
                 self.queue_manager.process_adding()
-                logging.debug("Finished Adding processing in thread.")
+                logging.debug("Finished Adding processing.")
             except RateLimitError:
-                logging.warning("Rate limit exceeded during Adding processing (thread). Handling rate limit.")
+                logging.warning("Rate limit exceeded during Adding processing. Handling rate limit.")
                 self.handle_rate_limit() # Trigger rate limit handling
             except Exception as e:
-                logging.error(f"Error in Adding processing thread: {e}", exc_info=True)
+                logging.error(f"Error in Adding processing: {e}", exc_info=True)
 
+        # --- Concurrency Decision Logic ---
+        run_concurrently = False
         if has_scraping_items and has_adding_items:
-            logging.info("Both Scraping and Adding queues have items. Processing concurrently.")
-            scraping_thread = threading.Thread(target=run_scraping, name="ScrapingThread", daemon=True) # Use daemon threads?
+            # Check for show AND version conflicts
+            try:
+                # Use a consistent identifier for missing/empty versions
+                def get_version_identifier(item):
+                    version = item.get('version')
+                    return version if version else 'UnknownVersion'
+
+                scraping_show_version_pairs = {
+                    (item['imdb_id'], get_version_identifier(item))
+                    for item in scraping_items
+                    if item.get('type') == 'episode' and item.get('imdb_id')
+                }
+                adding_show_version_pairs = {
+                    (item['imdb_id'], get_version_identifier(item))
+                    for item in adding_items
+                    if item.get('type') == 'episode' and item.get('imdb_id')
+                }
+
+                conflicting_pairs = scraping_show_version_pairs.intersection(adding_show_version_pairs)
+
+                if conflicting_pairs:
+                    # Conflict detected! Prioritize Adding sequentially.
+                    logging.info(f"Conflict detected: Same show/version found in Scraping and Adding queues {conflicting_pairs}. Prioritizing Adding queue processing sequentially.")
+                    run_adding() # Run adding directly
+                    # Do NOT run scraping in this cycle
+                else:
+                    # No conflict, safe to run concurrently
+                    logging.debug("No show/version conflicts found between Scraping and Adding queues. Processing concurrently.")
+                    run_concurrently = True
+            except Exception as e:
+                 logging.error(f"Error checking for show/version conflicts: {e}. Running sequentially as fallback.", exc_info=True)
+                 # Fallback to sequential (Adding first) on error
+                 run_adding()
+
+        elif has_scraping_items:
+            # Only scraping has items
+            logging.debug("Only Scraping queue has items. Processing.")
+            run_scraping()
+
+        elif has_adding_items:
+            # Only adding has items
+            logging.debug("Only Adding queue has items. Processing.")
+            run_adding()
+        # else: # No items
+
+        # --- Execute Concurrent Threads (if decided) ---
+        if run_concurrently:
+            logging.info("Both Scraping and Adding queues have items (no conflicts). Processing concurrently.")
+            scraping_thread = threading.Thread(target=run_scraping, name="ScrapingThread", daemon=True)
             adding_thread = threading.Thread(target=run_adding, name="AddingThread", daemon=True)
             scraping_thread.start()
             adding_thread.start()
-            # Wait for threads to complete? If they handle errors/rate limits, maybe not strictly needed.
-            # Let's join them to ensure work is done before task cycle completes. Add timeout?
-            join_timeout = 60 # Timeout in seconds for joining threads
-            if scraping_thread:
-                 scraping_thread.join(timeout=join_timeout)
-                 if scraping_thread.is_alive(): logging.warning("Scraping thread did not finish within timeout.")
-            if adding_thread:
-                 adding_thread.join(timeout=join_timeout)
-                 if adding_thread.is_alive(): logging.warning("Adding thread did not finish within timeout.")
+
+            # Join threads with timeout
+            join_timeout = 60 # Timeout in seconds
+            scraping_thread.join(timeout=join_timeout)
+            if scraping_thread.is_alive(): logging.warning("Scraping thread did not finish within timeout.")
+            adding_thread.join(timeout=join_timeout)
+            if adding_thread.is_alive(): logging.warning("Adding thread did not finish within timeout.")
             logging.debug("Concurrent Scraping/Adding threads finished or timed out.")
 
-        elif has_scraping_items:
-            logging.debug("Only Scraping queue has items. Processing.")
-            run_scraping() # Run directly in current thread
-
-        elif has_adding_items:
-            logging.debug("Only Adding queue has items. Processing.")
-            run_adding() # Run directly in current thread
-        # else: # Log removed for less noise
-            # No items in either queue, do nothing.
-            # logging.debug("Neither Scraping nor Adding queues have items.")
     # *** END EDIT ***
 
     # *** START EDIT: Add Listener Method ***
@@ -3222,14 +3267,14 @@ class ProgramRunner:
         start_time = time.time()
         task_name_for_log = getattr(func, '__name__', 'unknown_function')
         # Add args/kwargs to log for better context? Be careful with sensitive data.
-        logging.debug(f"Executing wrapped task: '{task_name_for_log}'")
+        # logging.debug(f"Executing wrapped task: '{task_name_for_log}'")
         try:
             # Execute the original task function
             func(*args, **kwargs)
             # Duration calculation happens after successful execution
             duration = time.time() - start_time
             # Log duration for debugging
-            logging.debug(f"Task '{task_name_for_log}' completed successfully in {duration:.3f}s")
+            # logging.debug(f"Task '{task_name_for_log}' completed successfully in {duration:.3f}s")
             return duration # Return duration for the listener
         except Exception as e:
             # Log the error

@@ -9,6 +9,7 @@ import cProfile
 import pstats
 import io
 import json
+import re
 from datetime import datetime
 from queues.performance_monitor import monitor, start_performance_monitoring
 
@@ -77,6 +78,57 @@ class DynamicConsoleHandler(logging.StreamHandler):
         except Exception:
             self.handleError(record)
 
+class APSchedulerQueueJobFilter(logging.Filter):
+    """
+    Filters out INFO level logs regarding the start and successful
+    completion of known queue-related jobs, regardless of the
+    originating logger.
+    """
+    # !!! IMPORTANT: Verify and update this set with the exact names
+    # of all your queue-related APScheduler jobs !!!
+    QUEUE_JOB_NAMES = {
+        "Wanted",
+        "task_send_notifications",
+        "task_process_scraping_adding",
+        "task_process_pending_rclone_paths",
+        # Add other queue job names here if necessary
+    }
+
+    def filter(self, record):
+        if record.levelno == logging.INFO:
+            try:
+                msg = record.getMessage()
+                if "Running job" in msg or "executed successfully" in msg:
+                    # Corrected regex to capture only the job name
+                    match = re.search(r'(?:Running job|Job) "(.+?)\s*\(' , msg)
+                    job_name = match.group(1) if match else None
+
+                    if job_name and job_name in self.QUEUE_JOB_NAMES:
+                        return False # Don't log this record
+            except Exception:
+                 # In case of error during filtering, allow the log to pass
+                 pass
+
+        # For all other records, allow them to be logged
+        return True
+
+# --- Add Filter for APScheduler DEBUG noise ---
+class APSchedulerDebugNoiseFilter(logging.Filter):
+    """
+    Filters out specific DEBUG messages from apscheduler.scheduler.
+    """
+    def filter(self, record):
+        # Check if the log record is from apscheduler.scheduler and is DEBUG level
+        if record.levelno == logging.DEBUG and record.name == 'apscheduler.scheduler':
+            msg = record.getMessage()
+            # Check if it's one of the messages we want to suppress
+            if "Looking for jobs to run" in msg or "Next wakeup is due at" in msg:
+                return False # Suppress these specific messages
+
+        # Allow all other records
+        return True
+# --- End of APSchedulerDebugNoiseFilter ---
+
 def log_system_stats():
     """Start the performance monitoring system"""
     monitor.start_monitoring()
@@ -138,6 +190,8 @@ def setup_debug_logging(log_dir):
     # Add filters to exclude unwanted messages
     debug_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     debug_handler.addFilter(ExcludeFilter())
+    debug_handler.addFilter(APSchedulerQueueJobFilter())
+    debug_handler.addFilter(APSchedulerDebugNoiseFilter())
     
     formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     debug_handler.setFormatter(formatter)
@@ -151,6 +205,7 @@ def setup_info_logging(log_dir):
     # Add filters to exclude unwanted messages
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     console_handler.addFilter(ExcludeFilter())
+    console_handler.addFilter(APSchedulerQueueJobFilter())
     
     # Add handler to root logger
     logging.getLogger().addHandler(console_handler)

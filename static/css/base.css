@@ -1522,3 +1522,190 @@ header:hover ~ .rate-limits-section {
         padding-top: 70px;
     }
 }
+
+/* Prevent body scrolling when a modal is open */
+body.modal-open {
+    overflow: hidden;
+}
+
+/* Help Overlay Styles */
+#help-overlay { 
+    display: none; /* Hidden by default */
+    position: fixed;
+    z-index: 1050; 
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7); 
+    backdrop-filter: blur(3px); 
+}
+
+/* Make overlay visible when its associated modal is shown */
+#help-overlay.visible {
+    display: block; 
+}
+
+/* Help Modal Box Styles */
+#help-modal-box { 
+    display: none; /* Hidden by default */
+    position: fixed;
+    z-index: 1051; 
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%); 
+    width: 70%;
+    max-height: 85vh; 
+    background-color: #1e1e1e; 
+    color: #f1f1f1;
+    border: 1px solid #555; 
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+    /* Use flexbox for internal layout ONLY WHEN VISIBLE */
+    flex-direction: column;
+}
+
+/* Make modal box visible AND apply flex layout when shown */
+#help-modal-box.visible {
+    display: flex; 
+}
+
+/* Style for the header section within the help modal */
+.help-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid #444;
+    flex-shrink: 0; /* Prevent header shrinking */
+}
+
+.help-modal-header h2 {
+    margin: 0;
+    font-size: 1.3em;
+    color: #fff;
+}
+
+/* Style for the close button within the help modal header */
+.help-modal-close {
+    background: none;
+    border: none;
+    font-size: 28px;
+    font-weight: bold;
+    color: #aaa;
+    cursor: pointer;
+    padding: 0 5px;
+    line-height: 1;
+}
+
+.help-modal-close:hover {
+    color: #fff;
+}
+
+/* Style for the main scrollable body of the help modal */
+.help-modal-body {
+    padding: 20px;
+    overflow-y: auto; /* Enable scrolling for content */
+    flex-grow: 1; /* Allow body to take up remaining space */
+    line-height: 1.6;
+}
+
+/* Content styling using the body ID */
+#help-modal-body h3 { 
+    color: #4CAF50;
+    margin-top: 15px;
+    margin-bottom: 10px;
+    font-size: 1.2em;
+    border-bottom: 1px solid #444;
+    padding-bottom: 5px;
+}
+
+#help-modal-body h4 {
+    color: #00aeff;
+    margin-top: 10px;
+    margin-bottom: 5px;
+    font-size: 1.1em;
+}
+
+#help-modal-body ul {
+    list-style: disc;
+    padding-left: 30px;
+    margin-bottom: 15px;
+}
+
+#help-modal-body li {
+    margin-bottom: 8px;
+}
+
+#help-modal-body p {
+    margin-bottom: 15px;
+}
+
+#help-modal-body code {
+    background-color: #333;
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.9em;
+    color: #eee; /* Ensure code text is visible */
+}
+
+#help-modal-body pre code {
+     display: block;
+     background-color: #111;
+     padding: 10px;
+     border-radius: 5px;
+     overflow-x: auto;
+     font-size: 0.85em;
+     border: 1px solid #333;
+}
+
+#help-modal-body a {
+    color: #3498db;
+    text-decoration: none;
+}
+
+#help-modal-body a:hover {
+    text-decoration: underline;
+}
+
+/* Help Button styles remain the same */
+.help-button {
+    display: none; /* Still hidden by default and on mobile */
+    position: fixed;
+    top: 60px; /* Below the header */
+    /* Start mostly hidden off-screen */
+    left: -30px; /* Keep 10px visible (40px width - 30px) */
+    z-index: 999; 
+    background-color: #007bff; 
+    color: white;
+    border: none;
+    border-radius: 0 50% 50% 0; /* Round only the right corners */
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    cursor: pointer;
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.2); /* Adjust shadow for side position */
+    /* Add transition for smooth reveal */
+    transition: left 0.3s ease-in-out, background-color 0.3s ease; 
+    padding-left: 10px; /* Add padding to push icon right */
+}
+
+.help-button:hover {
+    background-color: #0056b3;
+    /* Reveal the button on hover */
+    left: 0px; /* Position fully visible */
+}
+
+.help-button i {
+    margin: 0; 
+}
+
+/* Show Help Button only on Desktop (No changes made here in the last step) */
+@media (min-width: 1046px) {
+    .help-button {
+        display: flex; /* Or inline-flex, block depending on desired layout */
+        align-items: center;
+        justify-content: center;
+    }
+}

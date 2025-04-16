@@ -45,3 +45,4 @@ PyGithub==2.1.1
 nyaapy==0.7
 tld>=0.13
 feedparser==6.0.11
+Markdown==3.8

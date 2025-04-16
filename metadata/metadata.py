@@ -252,7 +252,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         return {}
 
 def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: int, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
-    logging.info(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number}")
+    logging.debug(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number}")
     logging.debug(f"Show item details: content_source_detail={show_item.get('content_source_detail')}")
 
     # Get the first_aired datetime string
@@ -273,7 +273,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             # Use the localized datetime for both date and time
             release_date = premiere_dt_local_tz.strftime("%Y-%m-%d")
             airtime = premiere_dt_local_tz.strftime("%H:%M")
-            logging.info(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
+            logging.debug(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
 
         except ValueError as e:
             logging.warning(f"Invalid datetime format or timezone conversion error: {first_aired_str} - {e}")
@@ -291,12 +291,12 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
                     # If that fails, try without seconds (HH:MM)
                     air_time_obj = datetime.strptime(default_airtime_str, "%H:%M").time()
                 airtime = air_time_obj.strftime("%H:%M")
-                logging.info(f"Using show's default airtime: {airtime} as fallback.")
+                logging.debug(f"Using show's default airtime: {airtime} as fallback.")
             except ValueError:
                  logging.warning(f"Invalid show default airtime format: {default_airtime_str}. Using default 19:00.")
                  # airtime remains '19:00'
         else:
-            logging.info("No first_aired data and no default show airtime. Using default 19:00.")
+            logging.debug("No first_aired data and no default show airtime. Using default 19:00.")
             # airtime remains '19:00'
 
     episode_item = {
@@ -556,7 +556,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     items_by_tmdb_id_only = defaultdict(list) # Store items that only have TMDB ID after conversion attempt
 
     # --- Step 1: Collect IMDb IDs and organize items ---
-    logging.info(f"Starting metadata processing for {len(media_items)} items. Collecting IDs...")
+    logging.debug(f"Starting metadata processing for {len(media_items)} items. Collecting IDs...")
     for item in media_items:
         imdb_id = item.get('imdb_id')
         tmdb_id = item.get('tmdb_id')
@@ -614,7 +614,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     missing_show_imdb_ids = set()
 
     if movie_imdb_ids_to_fetch:
-        logging.info(f"Bulk fetching metadata for {len(movie_imdb_ids_to_fetch)} movie IMDb IDs...")
+        logging.debug(f"Bulk fetching metadata for {len(movie_imdb_ids_to_fetch)} movie IMDb IDs...")
         try:
             if not trakt_metadata_instance._check_rate_limit():
                 logging.warning("Trakt rate limit potentially hit before bulk movie fetch.")
@@ -623,18 +623,18 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             fetched_movies = direct_api.get_bulk_movie_metadata(list(movie_imdb_ids_to_fetch))
             bulk_movie_metadata.update(fetched_movies) # Add fetched data
             fetched_count = sum(1 for m in fetched_movies.values() if m)
-            logging.info(f"Successfully fetched metadata for {fetched_count} movies from battery.")
+            logging.debug(f"Successfully fetched metadata for {fetched_count} movies from battery.")
             # Identify missing IDs
             missing_movie_imdb_ids = {imdb_id for imdb_id in movie_imdb_ids_to_fetch if bulk_movie_metadata.get(imdb_id) is None}
             if missing_movie_imdb_ids:
-                 logging.info(f"{len(missing_movie_imdb_ids)} movie IMDb IDs not found in battery bulk fetch.")
+                 logging.debug(f"{len(missing_movie_imdb_ids)} movie IMDb IDs not found in battery bulk fetch.")
 
         except Exception as e:
              logging.error(f"Error during bulk movie metadata fetch: {e}", exc_info=True)
              missing_movie_imdb_ids = movie_imdb_ids_to_fetch # Mark all as missing on error
 
     if show_imdb_ids_to_fetch:
-        logging.info(f"Bulk fetching metadata for {len(show_imdb_ids_to_fetch)} show IMDb IDs...")
+        logging.debug(f"Bulk fetching metadata for {len(show_imdb_ids_to_fetch)} show IMDb IDs...")
         try:
             if not trakt_metadata_instance._check_rate_limit():
                 logging.warning("Trakt rate limit potentially hit before bulk show fetch.")
@@ -643,11 +643,11 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             fetched_shows = direct_api.get_bulk_show_metadata(list(show_imdb_ids_to_fetch))
             bulk_show_metadata.update(fetched_shows) # Add fetched data
             fetched_count = sum(1 for m in fetched_shows.values() if m)
-            logging.info(f"Successfully fetched metadata for {fetched_count} shows from battery.")
+            logging.debug(f"Successfully fetched metadata for {fetched_count} shows from battery.")
              # Identify missing IDs
             missing_show_imdb_ids = {imdb_id for imdb_id in show_imdb_ids_to_fetch if bulk_show_metadata.get(imdb_id) is None}
             if missing_show_imdb_ids:
-                 logging.info(f"{len(missing_show_imdb_ids)} show IMDb IDs not found in battery bulk fetch.")
+                 logging.debug(f"{len(missing_show_imdb_ids)} show IMDb IDs not found in battery bulk fetch.")
 
         except Exception as e:
              logging.error(f"Error during bulk show metadata fetch: {e}", exc_info=True)
@@ -655,7 +655,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
 
     # --- Step 2.5: Individual Fetch for Missing Items ---
     if missing_movie_imdb_ids or missing_show_imdb_ids:
-        logging.info(f"Attempting individual metadata fetch for {len(missing_movie_imdb_ids)} movies and {len(missing_show_imdb_ids)} shows missing from battery.")
+        logging.debug(f"Attempting individual metadata fetch for {len(missing_movie_imdb_ids)} movies and {len(missing_show_imdb_ids)} shows missing from battery.")
 
         # Consolidate missing IDs and their potential original items
         ids_to_fetch_individually = {}
@@ -702,23 +702,23 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                 logging.error(f"Error during individual metadata fetch for {imdb_id}: {e}", exc_info=True)
                 # Leave it as None in the bulk dictionaries
 
-        logging.info(f"Finished individual fetch process. Successfully fetched metadata for {fetched_individually_count} items.")
+        logging.debug(f"Finished individual fetch process. Successfully fetched metadata for {fetched_individually_count} items.")
 
     # --- Step 3: Pre-fetch DB presence/state info in bulk ---
     all_relevant_imdb_ids = list(movie_imdb_ids_to_fetch.union(show_imdb_ids_to_fetch))
     db_item_states = {} # {imdb_id: {"movie_state": "...", "episode_identifiers": set(), "has_requested": bool}}
     if all_relevant_imdb_ids:
-        logging.info(f"Bulk fetching database presence/state for {len(all_relevant_imdb_ids)} IMDb IDs...")
+        logging.debug(f"Bulk fetching database presence/state for {len(all_relevant_imdb_ids)} IMDb IDs...")
         try:
             db_item_states = get_media_item_ids(all_relevant_imdb_ids)
-            logging.info(f"Found DB info for {len(db_item_states)} IMDb IDs.")
+            logging.debug(f"Found DB info for {len(db_item_states)} IMDb IDs.")
         except Exception as e:
             logging.error(f"Error bulk fetching DB item states: {e}", exc_info=True)
             # Proceed without DB states, skip logic will be affected
 
 
     # --- Step 4: Process Items Using Fetched Data ---
-    logging.info("Processing items using fetched metadata and DB states...")
+    logging.debug("Processing items using fetched metadata and DB states...")
     processed_count = 0
     skipped_collected_movie = 0
     skipped_ended_show = 0
@@ -755,7 +755,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         should_skip = False
         if media_type == 'movie':
             if movie_presence_state == "Collected":
-                logging.info(f"Skipping collected movie: {metadata.get('title')} (IMDb: {imdb_id})")
+                logging.debug(f"Skipping collected movie: {metadata.get('title')} (IMDb: {imdb_id})")
                 skipped_collected_movie += len(original_items_list)
                 should_skip = True
         elif media_type in ['tv', 'show', 'episode']:
@@ -766,7 +766,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                 logging.debug(f"Show status not found in bulk metadata for {imdb_id}. Ended check skipped.")
 
             if show_status == 'ended':
-                logging.info(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) has status 'ended'. Checking episode presence.")
+                logging.debug(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) has status 'ended'. Checking episode presence.")
                 seasons_metadata = metadata.get('seasons')
                 if seasons_metadata and isinstance(seasons_metadata, dict):
                     all_metadata_episodes_found_in_db = True
@@ -785,15 +785,15 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                         if not all_metadata_episodes_found_in_db: break
                     
                     if all_metadata_episodes_found_in_db and total_metadata_episodes > 0:
-                        logging.info(f"Skipping ended show '{metadata.get('title')}' (IMDb: {imdb_id}) as all {total_metadata_episodes} known episodes are already present.")
+                        logging.debug(f"Skipping ended show '{metadata.get('title')}' (IMDb: {imdb_id}) as all {total_metadata_episodes} known episodes are already present.")
                         skipped_ended_show += len(original_items_list)
                         should_skip = True
                     else:
-                        logging.info(f"Ended show '{metadata.get('title')}' requires processing (missing episodes or none found in metadata).")
+                        logging.debug(f"Ended show '{metadata.get('title')}' requires processing (missing episodes or none found in metadata).")
                 else:
                     logging.warning(f"Cannot perform episode presence check for ended show {imdb_id}: Invalid or missing 'seasons' data in fetched metadata.")
             elif show_status: # Status known but not 'ended'
-                 logging.info(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) status '{show_status}' (not ended). Proceeding.")
+                 logging.debug(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) status '{show_status}' (not ended). Proceeding.")
             # else: status unknown, proceed
 
         if should_skip:
@@ -807,8 +807,6 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
              item_media_type_lower = item.get('media_type', '').lower()
 
              try:
-                 logging.debug(f"Processing item {processed_count}: Type={item_media_type_lower}, IMDb={imdb_id}, Detail={item.get('content_source_detail')}")
-
                  # Re-integrate essential fields from original item into metadata copy
                  item_metadata['content_source'] = item.get('content_source')
                  item_metadata['content_source_detail'] = item.get('content_source_detail')
@@ -832,7 +830,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                      item_metadata['is_anime'] = is_anime
 
                      if has_requested_episodes_in_db and not item.get('requested_seasons'):
-                         logging.info(f"Skipping show {item_metadata.get('title', 'Unknown')} (Overseerr check)...")
+                         logging.debug(f"Skipping show {item_metadata.get('title', 'Unknown')} (Overseerr check)...")
                          continue
 
                      seasons = item_metadata.get('seasons')
@@ -882,7 +880,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                              except Exception as e: logging.error(f"Error creating episode S{season_number}E{episode_number_str} for {imdb_id}: {e}")
 
                      processed_items['episodes'].extend(all_episodes)
-                     logging.info(f"Added {len(all_episodes)} episodes for item {item.get('content_source_detail')}...")
+                     logging.debug(f"Added {len(all_episodes)} episodes for item {item.get('content_source_detail')}...")
 
                      # Overseerr webhook logic (remains the same)
                      if item.get('from_overseerr'):
@@ -899,8 +897,8 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
          # Add specific logic here to process items_by_tmdb_id_only if necessary
          # For example, call a separate function or handle specific scrapers.
 
-    logging.info(f"Finished processing. Added {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes.")
-    logging.info(f"Skipped {skipped_collected_movie} collected movies and {skipped_ended_show} ended shows based on DB state.")
+    logging.debug(f"Finished processing. Added {len(processed_items['movies'])} movies and {len(processed_items['episodes'])} episodes.")
+    logging.debug(f"Skipped {skipped_collected_movie} collected movies and {skipped_ended_show} ended shows based on DB state.")
     return processed_items
 
 def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = None) -> str:
@@ -913,7 +911,7 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
         return media_details.get('released', 'Unknown')
 
     release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
-    logging.info(f"Processing release dates for IMDb ID: {imdb_id}")
+    logging.debug(f"Processing release dates for IMDb ID: {imdb_id}")
 
     if not release_dates:
         logging.warning(f"No release dates found for IMDb ID: {imdb_id}")
