@@ -301,6 +301,75 @@ async function checkAndShowPhalanxDisclaimer() {
     }
 }
 
+// Add this function
+function initializeHelpModal() {
+    const helpButton = document.getElementById('helpButton');
+    const helpOverlay = document.getElementById('help-overlay');
+    const helpModalBox = document.getElementById('help-modal-box');
+    const helpModalClose = document.getElementById('help-modal-close');
+    const helpModalBody = document.getElementById('help-modal-body');
+
+    if (!helpButton || !helpOverlay || !helpModalBox || !helpModalClose || !helpModalBody) {
+        return;
+    }
+
+    function showHelpModal() {
+        // Add class to body to prevent scrolling
+        document.body.classList.add('modal-open');
+
+        // Add the 'visible' class to show modal elements
+        helpOverlay.classList.add('visible');
+        helpModalBox.classList.add('visible');
+        fetchHelpContent(window.location.pathname);
+    }
+
+    function hideHelpModal() {
+        // Remove class from body to restore scrolling
+        document.body.classList.remove('modal-open');
+
+        // Remove the 'visible' class to hide modal elements
+        helpOverlay.classList.remove('visible');
+        helpModalBox.classList.remove('visible');
+    }
+
+    // Fetch content function remains the same
+    async function fetchHelpContent(pagePath) {
+        helpModalBody.innerHTML = `<p>Loading help...</p>`;
+        try {
+            const response = await fetch(`/base/api/help-content?page_path=${encodeURIComponent(pagePath)}`);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const data = await response.json();
+
+            if (data.success && data.html) {
+                helpModalBody.innerHTML = data.html;
+            } else {
+                throw new Error(data.error || 'Failed to load help content from server.');
+            }
+
+        } catch (error) {
+            console.error("Error fetching help content:", error);
+            helpModalBody.innerHTML = '<p class="error">Could not load help content. Please try again later.</p>';
+        }
+    }
+
+    helpButton.addEventListener('click', showHelpModal);
+    helpModalClose.addEventListener('click', hideHelpModal);
+
+    helpOverlay.addEventListener('click', function(event) {
+        if (event.target === helpOverlay) {
+            hideHelpModal();
+        }
+    });
+
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' && helpModalBox.classList.contains('visible')) {
+            hideHelpModal();
+        }
+    });
+}
+
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Add this line near the beginning of the DOMContentLoaded handler
@@ -681,6 +750,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial fetch
     fetchNotifications();
+
+    initializeHelpModal();
 });
 
 // Add resize listener to handle screen size changes

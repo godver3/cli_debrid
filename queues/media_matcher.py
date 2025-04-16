@@ -318,32 +318,52 @@ class MediaMatcher:
             return False
         return abs(int(item_year) - int(parsed_year)) <= 1
 
-    def find_related_items(self, files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], original_item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def find_related_items(self, files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], wanted_items: List[Dict[str, Any]], original_item: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Find items in the scraping queue that match files in the torrent.
-        
+        Find items in the scraping and wanted queues that match files in the torrent.
+
         Args:
             files: List of files from the torrent
             scraping_items: List of items currently in scraping state
+            wanted_items: List of items currently in wanted state
             original_item: The original item being processed, used to match version
-            
+
         Returns:
-            List of items from scraping_items that match files in the torrent
+            List of items from scraping_items and wanted_items that match files in the torrent
         """
         related_items = []
         original_version = original_item.get('version')
-        original_title = original_item.get('title')
-        
-        for item in scraping_items:
+        original_title = original_item.get('title') # Assuming title check is still desired (e.g. for series title)
+
+        # Combine items from both Scraping and Wanted queues
+        all_candidate_items = scraping_items + wanted_items
+        processed_item_ids = set() # Prevent adding the same item ID twice if somehow present in both lists
+
+        logging.debug(f"Checking {len(all_candidate_items)} candidate items ({len(scraping_items)} scraping, {len(wanted_items)} wanted) for matches in files.")
+
+        for item in all_candidate_items:
+            item_id = item.get('id')
+            if not item_id or item_id in processed_item_ids:
+                continue # Skip if no ID or already processed
+
             # Skip if not an episode, different version, or different title
-            if (item.get('type') != 'episode' or 
+            # Ensure consistent title check (e.g., using series_title if available)
+            item_title_to_check = item.get('series_title') or item.get('title')
+            if (item.get('type') != 'episode' or
                 item.get('version') != original_version or
-                item.get('title') != original_title):
+                item_title_to_check != original_title): # Compare against original item's title/series_title
                 continue
-                
+
             # Try to match this item against the files
+            logging.debug(f"Attempting to match candidate item ID {item_id} (State: {item.get('state', 'Unknown')}) against torrent files...")
             matches = self._match_tv_content(files, item)
             if matches:
+                logging.info(f"Found related item ID {item_id} (State: {item.get('state', 'Unknown')}) matching files in torrent.")
                 related_items.append(item)
-                
+                processed_item_ids.add(item_id) # Mark as processed
+            #else: # Debug log for non-matches can be verbose
+                #logging.debug(f"No file match found for candidate item ID {item_id}")
+
+
+        logging.debug(f"Found {len(related_items)} related items in total.")
         return related_items

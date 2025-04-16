@@ -14,6 +14,7 @@ from pathlib import Path
 import errno # Add errno for file locking checks
 from apscheduler.triggers.interval import IntervalTrigger # Add this import
 import pytz # Add pytz for timezone handling
+import markdown
 
 # Import notification functions
 from .notifications import (
@@ -142,7 +143,7 @@ def cache_for_seconds(seconds):
         return wrapper
     return decorator
 
-base_bp = Blueprint('base', __name__)
+base_bp = Blueprint('base', __name__, template_folder='../templates', static_folder='../static')
 
 def get_current_branch():
     try:
@@ -462,6 +463,45 @@ def task_stream():
         'X-Accel-Buffering': 'no'  # Disable buffering in Nginx
     })
     return response
+
+# Helper function to safely create filename from path
+def path_to_filename(page_path):
+    if not page_path or page_path == '/':
+        return 'root_index' # Or just 'index', 'home', etc.
+    
+    # Remove leading/trailing slashes and replace others with underscores
+    filename = page_path.strip('/').replace('/', '_')
+    
+    # Basic sanitization (allow alphanumeric, underscore, hyphen)
+    filename = "".join(c for c in filename if c.isalnum() or c in ('_', '-')).rstrip('_')
+    
+    return filename if filename else 'root_index' # Fallback if sanitization resulted in empty string
+
+@base_bp.route('/api/help-content')
+def get_help_content():
+    page_path = request.args.get('page_path', '/')
+    help_dir = os.path.join(current_app.root_path, '..', 'help_content') # Adjust path if needed
+    
+    filename_base = path_to_filename(page_path)
+    specific_filepath = os.path.join(help_dir, f"{filename_base}.md")
+    default_filepath = os.path.join(help_dir, 'default.md')
+
+    filepath_to_use = default_filepath # Default to default.md
+    if os.path.exists(specific_filepath):
+        filepath_to_use = specific_filepath
+    elif not os.path.exists(default_filepath):
+         return jsonify(success=False, error="Help content directory or default file not found."), 500
+
+    try:
+        with open(filepath_to_use, 'r', encoding='utf-8') as f:
+            md_content = f.read()
+        
+        html_content = markdown.markdown(md_content, extensions=['fenced_code', 'tables'])
+        return jsonify(success=True, html=html_content)
+        
+    except Exception as e:
+        current_app.logger.error(f"Error reading/parsing help file {filepath_to_use}: {e}")
+        return jsonify(success=False, error="Could not load help content."), 500
 
 # Clear check-update cache on startup
 clear_cache()

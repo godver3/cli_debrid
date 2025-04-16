@@ -1003,6 +1003,11 @@
         {% endif %}
     </header>
 
+    <!-- Help Button (Desktop Only) -->
+    <button id="helpButton" class="icon-button help-button" data-tooltip="global.helpButton">
+        <i class="fas fa-question-circle"></i>
+    </button>
+
     <!-- Notifications Modal -->
     <div id="notificationsModal" class="modal">
         <div class="modal-content">
@@ -1027,6 +1032,19 @@
                     <!-- Notifications will be dynamically inserted here -->
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-overlay" class="help-overlay">  </div>
+    <div id="help-modal-box" class="help-modal-box">
+        <div class="help-modal-header">
+            <h2>Help & Information</h2>
+            <button class="help-modal-close" id="help-modal-close">&times;</button>
+        </div>
+        <div class="help-modal-body" id="help-modal-body">
+            <p>Loading help content...</p> 
+            <!-- Help content will be loaded here -->
         </div>
     </div>
 
