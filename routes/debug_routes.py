@@ -2232,17 +2232,24 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         if original_root_path and not original_root_path.is_dir():
             raise ValueError('Original Root Path must be valid if provided.')
 
+        # Read relevant settings
+        symlink_organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False) # Read the setting
         separate_anime = get_setting('Debug', 'enable_separate_anime_folders')
-        movies_folder = get_setting('Debug', 'movies_folder_name')
-        tv_shows_folder = get_setting('Debug', 'tv_shows_folder_name')
-        anime_movies_folder = get_setting('Debug', 'anime_movies_folder_name') if separate_anime else None
-        anime_tv_shows_folder = get_setting('Debug', 'anime_tv_shows_folder_name') if separate_anime else None
+        movies_folder = get_setting('Debug', 'movies_folder_name', 'Movies')
+        tv_shows_folder = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
+        anime_movies_folder = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies') if separate_anime else None
+        anime_tv_shows_folder = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows') if separate_anime else None
 
         ignored_extensions = {'.srt', '.sub', '.idx', '.nfo', '.txt', '.jpg', '.png', '.db', '.partial', '.!qB'}
-        search_folders = [movies_folder, tv_shows_folder]
+        
+        # Define base type folders
+        type_folders = [movies_folder, tv_shows_folder]
         if separate_anime:
-            if anime_movies_folder: search_folders.append(anime_movies_folder)
-            if anime_tv_shows_folder: search_folders.append(anime_tv_shows_folder)
+            if anime_movies_folder: type_folders.append(anime_movies_folder)
+            if anime_tv_shows_folder: type_folders.append(anime_tv_shows_folder)
+
+        # Define potential resolution folders
+        resolution_folders = ["2160p", "1080p"] if symlink_organize_by_resolution else [None] # Add None for the non-resolution case
 
         total_items_scanned = 0
         total_symlinks_processed = 0
@@ -2254,119 +2261,131 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
 
         update_progress(status='scanning', message='Starting directory scan...')
 
-        for folder_name in search_folders:
-            current_search_path = symlink_root_path / folder_name
-            if current_search_path.is_dir():
-                update_progress(message=f'Scanning {folder_name}...')
-                try:
-                    for item_path in current_search_path.rglob('*'):
-                        total_items_scanned += 1
-                        if total_items_scanned % 100 == 0: # Update progress periodically
-                            update_progress(
-                                total_items_scanned=total_items_scanned,
-                                total_symlinks_processed=total_symlinks_processed,
-                                total_files_processed=total_files_processed,
-                                items_found=items_found,
-                                parser_errors=parser_errors,
-                                metadata_errors=metadata_errors,
-                                message=f'Scanned {total_items_scanned} items...'
-                             )
-
-                        if item_path.suffix.lower() in ignored_extensions:
-                            continue
-
-                        if item_path.is_file() or item_path.is_symlink():
-                            if item_path.is_symlink():
-                                total_symlinks_processed += 1
-                            else:
-                                total_files_processed += 1
-
-                            parsed_data = parse_symlink(item_path)
-                            if not parsed_data:
-                                parser_errors += 1
-                                continue # Skip if initial parse fails
-
-                            # --- Determine original path and filename ---
-                            original_path_obj = None
-                            if item_path.is_symlink():
-                                try:
-                                    target_path_str = os.readlink(str(item_path))
-                                    if not os.path.isabs(target_path_str):
-                                        target_path_str = os.path.abspath(os.path.join(item_path.parent, target_path_str))
-                                    original_path_obj = Path(target_path_str)
-                                except Exception as e:
-                                    parsed_data['original_path_for_symlink'] = f"Error: Cannot read link target ({e})"
-                                    parsed_data['original_filename'] = item_path.name
-                            elif item_path.is_file():
-                                original_path_obj = item_path
-
-                            if original_path_obj and original_path_obj.is_file():
-                                parsed_data['original_path_for_symlink'] = str(original_path_obj)
-                                parsed_data['original_filename'] = original_path_obj.name
-                            elif 'original_path_for_symlink' not in parsed_data:
-                                if original_path_obj:
-                                     parsed_data['original_path_for_symlink'] = f"Error: Target not a file ({original_path_obj})"
-                                else:
-                                    parsed_data['original_path_for_symlink'] = "Error: Original path unknown"
-                                parsed_data['original_filename'] = item_path.name
-                            # --- End original path determination ---
-
-                            # --- Get version ---    
-                            filename_for_version = parsed_data.get('original_filename')
-                            if filename_for_version:
-                                try:
-                                    version_raw = parse_filename_for_version(filename_for_version)
-                                    parsed_data['version'] = version_raw.strip('*') if version_raw else 'Default'
-                                except Exception as e:
-                                    parsed_data['version'] = 'Default'
-                            else:
-                                parsed_data['version'] = 'Default'
-                            # --- End version --- 
-                                
-                            # --- Fetch metadata --- 
-                            if parsed_data['imdb_id']:
-                                metadata_args = {
-                                    'imdb_id': parsed_data['imdb_id'],
-                                    'item_media_type': parsed_data.get('media_type') # Re-add based on function signature
-                                }
-                                # Removed conditional adding of season/episode number
-                                # get_metadata likely handles this internally based on imdb_id
-                                try:
-                                    # Pass the original parsed_data as original_item if needed by get_metadata internal logic
-                                    metadata_args['original_item'] = parsed_data 
-                                    from metadata.metadata import get_metadata
-                                    metadata = get_metadata(**metadata_args)
-                                    if metadata:
-                                        parsed_data['title'] = metadata.get('title')
-                                        parsed_data['year'] = metadata.get('year')
-                                        # Update tmdb_id if get_metadata found it
-                                        parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
-                                        parsed_data['release_date'] = metadata.get('release_date')
-                                        if parsed_data['media_type'] == 'episode':
-                                            parsed_data['episode_title'] = metadata.get('episode_title')
-                                        genres = metadata.get('genres', [])
-                                        if isinstance(genres, list):
-                                            parsed_data['is_anime'] = any(g.lower() in ['animation', 'anime'] for g in genres)
-                                        
-                                        items_found += 1
-                                        # Add to the main list for final recovery
-                                        analysis_progress[task_id]['recoverable_items'].append(parsed_data)
-                                        # Update preview list for UI feedback during scan
-                                        if len(recoverable_items_preview) < 5:
-                                             recoverable_items_preview.append(parsed_data) 
-                                        update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
-                                    else:
-                                        metadata_errors += 1
-                                except Exception as e:
-                                    logging.error(f"Metadata error for {metadata_args}: {e}", exc_info=False) # Less verbose logging
-                                    metadata_errors += 1
-                except Exception as e:
-                    logging.error(f"Error scanning {current_search_path}: {e}", exc_info=True)
-                    update_progress(status='error', message=f'Error scanning {folder_name}: {e}')
-                    # Continue to next folder on error
-            else:
-                logging.warning(f"Directory not found: {current_search_path}")
+        # Iterate through potential resolution folders (will be just [None] if setting is off)
+        for res_folder in resolution_folders:
+            # Iterate through type folders
+            for type_folder in type_folders:
                 
+                # Construct the path to scan based on whether resolution folders are used
+                if res_folder:
+                    current_search_path = symlink_root_path / res_folder / type_folder
+                    scan_target_name = f'{res_folder}/{type_folder}'
+                else:
+                    current_search_path = symlink_root_path / type_folder
+                    scan_target_name = type_folder
+
+                if current_search_path.is_dir():
+                    update_progress(message=f'Scanning {scan_target_name}...')
+                    try:
+                        # Use rglob to scan recursively within the target directory
+                        for item_path in current_search_path.rglob('*'):
+                            total_items_scanned += 1
+                            if total_items_scanned % 100 == 0: # Update progress periodically
+                                update_progress(
+                                    total_items_scanned=total_items_scanned,
+                                    total_symlinks_processed=total_symlinks_processed,
+                                    total_files_processed=total_files_processed,
+                                    items_found=items_found,
+                                    parser_errors=parser_errors,
+                                    metadata_errors=metadata_errors,
+                                    message=f'Scanned {total_items_scanned} items...'
+                                 )
+
+                            if item_path.suffix.lower() in ignored_extensions:
+                                continue
+
+                            if item_path.is_file() or item_path.is_symlink():
+                                if item_path.is_symlink():
+                                    total_symlinks_processed += 1
+                                else:
+                                    total_files_processed += 1
+
+                                parsed_data = parse_symlink(item_path)
+                                if not parsed_data:
+                                    parser_errors += 1
+                                    continue # Skip if initial parse fails
+
+                                # --- Determine original path and filename ---
+                                original_path_obj = None
+                                if item_path.is_symlink():
+                                    try:
+                                        target_path_str = os.readlink(str(item_path))
+                                        if not os.path.isabs(target_path_str):
+                                            target_path_str = os.path.abspath(os.path.join(item_path.parent, target_path_str))
+                                        original_path_obj = Path(target_path_str)
+                                    except Exception as e:
+                                        parsed_data['original_path_for_symlink'] = f"Error: Cannot read link target ({e})"
+                                        parsed_data['original_filename'] = item_path.name
+                                elif item_path.is_file():
+                                    original_path_obj = item_path
+
+                                if original_path_obj and original_path_obj.is_file():
+                                    parsed_data['original_path_for_symlink'] = str(original_path_obj)
+                                    parsed_data['original_filename'] = original_path_obj.name
+                                elif 'original_path_for_symlink' not in parsed_data:
+                                    if original_path_obj:
+                                         parsed_data['original_path_for_symlink'] = f"Error: Target not a file ({original_path_obj})"
+                                    else:
+                                        parsed_data['original_path_for_symlink'] = "Error: Original path unknown"
+                                    parsed_data['original_filename'] = item_path.name
+                                # --- End original path determination ---
+
+                                # --- Get version ---    
+                                filename_for_version = parsed_data.get('original_filename')
+                                if filename_for_version:
+                                    try:
+                                        version_raw = parse_filename_for_version(filename_for_version)
+                                        parsed_data['version'] = version_raw.strip('*') if version_raw else 'Default'
+                                    except Exception as e:
+                                        parsed_data['version'] = 'Default'
+                                else:
+                                    parsed_data['version'] = 'Default'
+                                # --- End version --- 
+                                    
+                                # --- Fetch metadata --- 
+                                if parsed_data['imdb_id']:
+                                    metadata_args = {
+                                        'imdb_id': parsed_data['imdb_id'],
+                                        'item_media_type': parsed_data.get('media_type') # Re-add based on function signature
+                                    }
+                                    # Removed conditional adding of season/episode number
+                                    # get_metadata likely handles this internally based on imdb_id
+                                    try:
+                                        # Pass the original parsed_data as original_item if needed by get_metadata internal logic
+                                        metadata_args['original_item'] = parsed_data 
+                                        from metadata.metadata import get_metadata
+                                        metadata = get_metadata(**metadata_args)
+                                        if metadata:
+                                            parsed_data['title'] = metadata.get('title')
+                                            parsed_data['year'] = metadata.get('year')
+                                            # Update tmdb_id if get_metadata found it
+                                            parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
+                                            parsed_data['release_date'] = metadata.get('release_date')
+                                            if parsed_data['media_type'] == 'episode':
+                                                parsed_data['episode_title'] = metadata.get('episode_title')
+                                            genres = metadata.get('genres', [])
+                                            if isinstance(genres, list):
+                                                parsed_data['is_anime'] = any(g.lower() in ['animation', 'anime'] for g in genres)
+                                            
+                                            items_found += 1
+                                            # Add to the main list for final recovery
+                                            analysis_progress[task_id]['recoverable_items'].append(parsed_data)
+                                            # Update preview list for UI feedback during scan
+                                            if len(recoverable_items_preview) < 5:
+                                                 recoverable_items_preview.append(parsed_data) 
+                                            update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
+                                        else:
+                                            metadata_errors += 1
+                                    except Exception as e:
+                                        logging.error(f"Metadata error for {metadata_args}: {e}", exc_info=False) # Less verbose logging
+                                        metadata_errors += 1
+                    except Exception as e:
+                        logging.error(f"Error scanning {current_search_path}: {e}", exc_info=True)
+                        update_progress(status='error', message=f'Error scanning {scan_target_name}: {e}')
+                        # Continue to next folder on error
+                else:
+                    logging.warning(f"Directory not found or not accessible: {current_search_path}")
+                    
         update_progress(
             status='complete', 
             message='Analysis finished.', 

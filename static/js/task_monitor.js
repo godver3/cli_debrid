@@ -16,9 +16,9 @@ function updateCurrentTaskDisplay(tasks) {
     const taskTimeElement = currentTaskDisplay.querySelector('.current-task-time');
 
     if (tasks && tasks.length > 0) {
-        const nextTask = tasks.reduce((a, b) => a.next_run < b.next_run ? a : b);
-        taskNameElement.textContent = nextTask.name;
-        taskTimeElement.textContent = `in ${formatTime(nextTask.next_run)}`;
+        const nextTask = tasks.reduce((a, b) => (a.next_run ?? Infinity) < (b.next_run ?? Infinity) ? a : b);
+        taskNameElement.innerHTML = `<i class="fas fa-redo-alt" style="margin-right: 5px;"></i> ${nextTask.name}`;
+        taskTimeElement.textContent = '';
     } else {
         taskNameElement.textContent = 'No active tasks';
         taskTimeElement.textContent = '';
@@ -60,10 +60,11 @@ function updateTaskList(taskList, data) {
                     taskList.innerHTML = tasksHtml;
                 }
                 
-                // Update current task display with either running task or next scheduled task
-                const runningTask = data.tasks.find(t => t.running);
-                const nextTask = runningTask || data.tasks.reduce((a, b) => a.next_run < b.next_run ? a : b);
-                updateCurrentTaskDisplay([nextTask]);
+                // Update current task display - Pass the original unfiltered task list if available,
+                // or the filtered one otherwise. For accurate 'next task' display, ideally we'd get
+                // the unfiltered next task from the backend stream if possible.
+                // Assuming data.tasks is the filtered list, we update based on that.
+                updateCurrentTaskDisplay(data.tasks);
             } else {
                 const status = 'Program not running';
                 if (data.paused && data.pause_reason) {

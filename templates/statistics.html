@@ -7,14 +7,17 @@
     @import url('{{ url_for('static', filename='css/statistics.css') }}');
     .stat-item p[data-label="Active Downloads"].warning,
     .stat-item p[data-label="Daily Usage"].warning {
-        color: #ffa500;
+        color: #ffa500; /* Orange/Yellow for warning */
     }
     .stat-item p[data-label="Active Downloads"].critical,
     .stat-item p[data-label="Daily Usage"].critical {
-        color: #ff4444;
+        color: #ff4444; /* Red for critical */
     }
     .stats-box.recently-aired .show-title.uncollected {
-        color: #ff4444;
+        color: #ff4444; /* Red for uncollected */
+    }
+    .stats-box.recently-aired .show-title.checking_upgrade {
+        color: #00aeff; /* Orange/Yellow for checking upgrade */
     }
     .modal-content {
         background-color: #1e1e1e !important;
@@ -159,7 +162,18 @@
             const recentlyAiredList = document.querySelector('#recently_aired ul');
             if (recentlyAiredList && data.recently_aired) {
                 console.log('Updating recently aired items');
-                recentlyAiredList.innerHTML = data.recently_aired.map(item => `
+                recentlyAiredList.innerHTML = data.recently_aired.map(item => {
+                    // Determine the class based on display_status
+                    let statusClass = '';
+                    if (item.display_status === 'uncollected') {
+                        statusClass = ' uncollected';
+                    } else if (item.display_status === 'checking_upgrade') {
+                        statusClass = ' checking_upgrade';
+                    }
+                    // Determine if the rescrape button should be shown
+                    let showRescrape = item.display_status === 'collected' || item.display_status === 'checking_upgrade';
+
+                    return `
                     <li>
                         <div class="show-info clickable" 
                              data-title="${item.title}"
@@ -167,10 +181,10 @@
                              data-tmdb-id="${item.tmdb_id}"
                              data-season="${item.season_number}"
                              data-episode="${item.episode_number}">
-                            <span class="show-title${item.is_collected ? '' : ' uncollected'}">${item.title}</span>
+                            <span class="show-title${statusClass}">${item.title}</span>
                             <span class="air-time">${item.formatted_datetime}</span>
                         </div>
-                        ${item.is_collected ? `
+                        ${showRescrape ? `
                             <button class="rescrape-btn" 
                                 data-imdb-id="${item.imdb_id}"
                                 data-tmdb-id="${item.tmdb_id}"
@@ -181,7 +195,8 @@
                             </button>
                         ` : ''}
                     </li>
-                `).join('');
+                `;
+                }).join('');
 
                 // Re-attach event listeners to new buttons
                 recentlyAiredList.querySelectorAll('.rescrape-btn').forEach(button => {
@@ -591,10 +606,20 @@
                              data-tmdb-id="{{ item.tmdb_id }}"
                              data-season="{{ item.season_number }}"
                              data-episode="{{ item.episode_number }}">
-                            <span class="show-title{% if not item.is_collected %} uncollected{% endif %}">{{ item.title }}</span>
+                            {# Determine class based on display_status #}
+                            {% set status_class = '' %}
+                            {% if item.display_status == 'uncollected' %}
+                                {% set status_class = ' uncollected' %}
+                            {% elif item.display_status == 'checking_upgrade' %}
+                                {% set status_class = ' checking_upgrade' %}
+                            {% endif %}
+                            {# Determine if rescrape button should be shown #}
+                            {% set show_rescrape = item.display_status == 'collected' or item.display_status == 'checking_upgrade' %}
+                            
+                            <span class="show-title{{ status_class }}">{{ item.title }}</span>
                             <span class="air-time">{{ item.formatted_datetime }}</span>
                         </div>
-                        {% if item.is_collected %}
+                        {% if show_rescrape %}
                         <button class="rescrape-btn" 
                                 data-imdb-id="{{ item.imdb_id }}"
                                 data-tmdb-id="{{ item.tmdb_id }}"

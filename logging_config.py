@@ -88,6 +88,8 @@ class APSchedulerQueueJobFilter(logging.Filter):
     # of all your queue-related APScheduler jobs !!!
     QUEUE_JOB_NAMES = {
         "Wanted",
+        "Scraping",
+        "Adding",
         "task_send_notifications",
         "task_process_scraping_adding",
         "task_process_pending_rclone_paths",

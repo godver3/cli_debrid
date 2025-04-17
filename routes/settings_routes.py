@@ -1631,6 +1631,20 @@ def increment_pageview():
 def get_enabled_content_sources_route():
     try:
         enabled_sources = get_enabled_content_sources()
+        
+        # Manually add content_requestor and overseerr_webhook to the list for UI purposes
+        enabled_sources.append({
+            'id': 'content_requestor',
+            'type': 'Internal', # Assign a placeholder type
+            'display_name': 'Content Requestor'
+        })
+
+        enabled_sources.append({
+            'id': 'overseerr_webhook',
+            'type': 'Internal', # Assign a placeholder type
+            'display_name': 'Overseerr Webhook'
+        })
+        
         return jsonify({'success': True, 'sources': enabled_sources})
     except Exception as e:
         logging.error(f"Error getting enabled content sources: {str(e)}", exc_info=True)
@@ -1639,12 +1653,21 @@ def get_enabled_content_sources_route():
 @settings_bp.route('/api/save_content_source_order', methods=['POST'])
 def save_content_source_order():
     try:
-        source_order = request.json.get('order', [])
-        if not source_order:
-            return jsonify({'success': False, 'error': 'No order provided'}), 400
+        source_order_from_request = request.json.get('order', [])
+        if not isinstance(source_order_from_request, list):
+             return jsonify({'success': False, 'error': 'Invalid order format provided'}), 400
 
-        # Convert the order to a comma-separated string of display names
-        order_string = ','.join(source_order)
+        # Filter out 'content_requestor' as it's not a real content source to be saved
+        filtered_source_order = [source_id for source_id in source_order_from_request if source_id != 'content_requestor']
+        
+        if not filtered_source_order:
+            logging.info("Content source priority order is empty after filtering.")
+            # Decide if you want to save an empty string or handle differently
+            # Saving empty string for now:
+            order_string = ""
+        else:
+            # Join the filtered list into a comma-separated string
+            order_string = ','.join(filtered_source_order)
         
         # Save to config
         config = load_config()
@@ -1653,6 +1676,7 @@ def save_content_source_order():
         config['Queue']['content_source_priority'] = order_string
         save_config(config)
         
+        logging.info(f"Saved filtered content source priority: {order_string}")
         return jsonify({'success': True})
     except Exception as e:
         logging.error(f"Error saving content source order: {str(e)}", exc_info=True)

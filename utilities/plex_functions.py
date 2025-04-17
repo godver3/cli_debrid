@@ -15,6 +15,7 @@ from plexapi.server import PlexServer
 from plexapi.library import LibrarySection
 from database.database_reading import get_media_item_by_id
 import requests
+from plexapi.exceptions import NotFound
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -972,115 +973,6 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         logger.error(f"Error removing file from Plex: {str(e)}")
         return False
 
-def remove_symlink_from_plex(item_title: str, item_path: str, episode_title: str = None) -> bool:
-    """
-    Remove a symlinked file from Plex without touching the symlink itself.
-    Verifies removal of the specific media part.
-    """
-    logger.info(f"Attempting symlink removal steps for path '{item_path}' (Item: '{item_title}', Episode: {episode_title})")
-    max_retries = 2
-    retry_delay = 5
-
-    target_basename = os.path.basename(item_path).lower()
-
-    for attempt in range(max_retries):
-        target_media_id_to_remove = None
-        target_item_rating_key = None
-        target_item_type = None
-        target_section_key = None
-        parent_show_rating_key = None
-        plex = None
-
-        try:
-            if attempt > 0:
-                logger.info(f"Retry attempt {attempt + 1}/{max_retries} for symlink removal: {item_path}")
-                time.sleep(retry_delay)
-
-            if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-                plex_url = get_setting('File Management', 'plex_url_for_symlink', '').rstrip('/')
-                plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
-            else:
-                logger.error(f"Configuration mismatch: remove_symlink_from_plex called with file management type '{get_setting('File Management', 'file_collection_management')}'")
-                return False
-
-            plex = PlexServer(plex_url, plex_token, timeout=30)
-            headers = {'X-Plex-Token': plex_token, 'Accept': 'application/json'}
-
-            item_found = False
-            for section in plex.library.sections():
-                if item_found: break
-                try:
-                    search_title = item_title
-                    results = []
-                    if section.type == 'show' and episode_title:
-                        shows = section.search(title=item_title, libtype='show')
-                        for show in shows:
-                            if item_found: break
-                            episodes = show.episodes(title=episode_title)
-                            for episode in episodes:
-                                if item_found: break
-                                if episode.title == episode_title:
-                                    logger.debug(f"Found matching episode: {episode.title}")
-                                    if hasattr(episode, 'media'):
-                                        for media in episode.media:
-                                            if item_found: break
-                                            for part in media.parts:
-                                                if os.path.basename(part.file).lower() == target_basename:
-                                                    logger.info(f"Found matching part in Episode '{episode.title}' (MediaID: {media.id})")
-                                                    target_media_id_to_remove = media.id
-                                                    target_item_rating_key = episode.ratingKey
-                                                    target_item_type = 'episode'
-                                                    target_section_key = section.key
-                                                    item_found = True
-                                                    break
-                except Exception as e:
-                    logger.error(f"Error processing section {section.title}: {e}")
-                    continue
-
-            if item_found and target_media_id_to_remove and target_item_rating_key:
-                logger.info(f"Proceeding with removal sequence for ItemKey: {target_item_rating_key}, MediaID: {target_media_id_to_remove}")
-
-                delete_success = False
-                try:
-                    logger.info(f"Attempting DELETE: {media_item_url}")
-                    response = requests.delete(media_item_url, headers=headers, timeout=20)
-                    logger.info(f"DELETE media response status: {response.status_code}")
-                    if response.status_code in [200, 404]:
-                        delete_success = True
-                        logger.info(f"Media item {target_media_id_to_remove} deleted or already gone.")
-                    else:
-                        logger.warning(f"Unexpected status code {response.status_code} deleting media ID {target_media_id_to_remove}. Body: {response.text[:200]}...")
-                except requests.exceptions.RequestException as req_e:
-                    logger.error(f"Network error deleting media ID {target_media_id_to_remove}: {req_e}")
-
-                if delete_success:
-                    return True
-
-            else:
-                logger.info(f"Path '{item_path}' not found associated with '{item_title}' in Plex during search. Assuming removal unnecessary or already complete.")
-                return True
-
-        except plexapi.exceptions.Unauthorized:
-            logger.error("Plex Unauthorized: Please check your Plex token")
-            return False
-        except plexapi.exceptions.PlexApiException as plex_e:
-            logger.error(f"Plex API error during removal attempt {attempt + 1}: {plex_e}")
-            if attempt == max_retries - 1:
-                logger.error(f"Plex server or item not found after {max_retries} attempts.")
-                return False
-        except requests.exceptions.RequestException as req_e:
-             logger.error(f"Network error during Plex communication attempt {attempt + 1}: {req_e}")
-             if attempt == max_retries - 1:
-                 logger.error(f"Network error persisted after {max_retries} attempts.")
-                 return False
-        except Exception as e:
-            logger.error(f"Unexpected error during symlink removal attempt {attempt + 1}: {str(e)}", exc_info=True)
-            if attempt == max_retries - 1:
-                logger.error(f"Unexpected error persisted after {max_retries} attempts.")
-                return False
-            
-    logger.error(f"Failed to verify symlink removal for '{item_title}' (Path: '{item_path}') after {max_retries} attempts")
-    return False
 
 def get_section_type(section: LibrarySection) -> Optional[str]:
     """Return the type of the Plex library section."""
@@ -1093,21 +985,53 @@ def get_section_type(section: LibrarySection) -> Optional[str]:
 def find_plex_library_and_section(plex: PlexServer, item_path: str) -> Tuple[Optional[plexapi.library.Library], Optional[LibrarySection]]:
     """Find the Plex library and section containing the given item path."""
     try:
+        # Ensure item_path is absolute and symlinks are resolved
         resolved_item_path = Path(item_path).resolve()
         sections = plex.library.sections()
+        # Keep track of the best match (longest common path)
+        best_match_section = None
+        max_common_len = -1
+
         for section in sections:
+            # Ensure section.locations exists and is iterable
+            if not hasattr(section, 'locations') or not section.locations:
+                 logger.debug(f"Section '{section.title}' has no locations defined. Skipping.")
+                 continue
+
             for location in section.locations:
                 try:
+                    # Ensure location is absolute and symlinks are resolved
                     resolved_location = Path(location).resolve()
-                    if resolved_item_path == resolved_location:
-                        logger.debug(f"Found path '{item_path}' in section '{section.title}' location '{location}'")
-                        return plex.library, section
-                except ValueError:
-                    if resolved_item_path.drive == Path(location).drive:
-                         logger.warning(f"ValueError comparing paths: {item_path} and {location}")
+
+                    # Check if the item path is inside the location path
+                    # Use Path.is_relative_to() for robust containment check
+                    if resolved_item_path.is_relative_to(resolved_location):
+                         # Calculate how much of the path matches (number of parts)
+                         common_len = len(resolved_location.parts)
+                         # If this is a more specific match (longer path) than previous ones, update
+                         if common_len > max_common_len:
+                             max_common_len = common_len
+                             best_match_section = section
+                             logger.debug(f"Potential match: Path '{item_path}' (resolved: {resolved_item_path}) is relative to location '{location}' (resolved: {resolved_location}) in section '{section.title}'")
+                except ValueError as ve:
+                    # is_relative_to raises ValueError if paths aren't comparable (e.g., different drives on Windows)
+                    logger.debug(f"ValueError comparing paths: '{resolved_item_path}' and '{location}' (resolved: {resolved_location}). Skipping location. Error: {ve}")
                     continue
-        logger.warning(f"Could not find Plex section containing path: {item_path}")
-        return None, None
+                except Exception as path_err:
+                    logger.error(f"Error processing location '{location}' for section '{section.title}': {path_err}", exc_info=True)
+                    continue # Skip this problematic location
+
+        if best_match_section:
+             logger.info(f"Found best match: Path '{item_path}' belongs to section '{best_match_section.title}'")
+             return plex.library, best_match_section
+        else:
+            # This warning now correctly indicates no library root contained the item path
+            logger.warning(f"Could not find Plex section containing path: {item_path} (Resolved: {resolved_item_path})")
+            return None, None
+
+    except NotFound:
+         logger.error("Plex server connection issue: Library sections not found. Ensure Plex is running and connection details are correct.")
+         return None, None
     except Exception as e:
         logger.error(f"Error finding Plex section for path '{item_path}': {e}", exc_info=True)
         return None, None

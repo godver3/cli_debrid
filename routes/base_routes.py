@@ -395,6 +395,10 @@ def task_stream():
                             if isinstance(job.trigger, IntervalTrigger):
                                 interval = job.trigger.interval.total_seconds()
 
+                            # Skip tasks with interval < 120 seconds (2 minutes)
+                            if interval is not None and interval < 150:
+                                continue
+
                             next_run_timestamp = None
                             if job.next_run_time:
                                 # Ensure next_run_time is timezone-aware using scheduler's timezone

@@ -998,3 +998,39 @@ def remove_verification_by_media_item_id(media_item_id: int) -> int:
     finally:
         if conn:
             conn.close()
+
+# --- START: Test Function ---
+
+def test_requeue_plex_removal(item_path: str, item_title: str, episode_title: Optional[str] = None):
+    """
+    Manually adds or resets a specific item in the Plex removal queue for testing purposes.
+    Calls add_path_for_removal_verification which handles both insertion and reset.
+    """
+    logger.info(f"[TEST] Attempting to re-queue item for Plex removal verification:")
+    logger.info(f"[TEST]   Path: {item_path}")
+    logger.info(f"[TEST]   Title: {item_title}")
+    logger.info(f"[TEST]   Episode: {episode_title}")
+
+    success = add_path_for_removal_verification(
+        item_path=item_path,
+        item_title=item_title,
+        episode_title=episode_title
+    )
+
+    if success:
+        logger.info(f"[TEST] Successfully added/reset '{item_path}' in the Plex removal queue.")
+    else:
+        logger.error(f"[TEST] Failed to add/reset '{item_path}' in the Plex removal queue.")
+
+# Example usage (you would call this from another script or an interactive session):
+# if __name__ == "__main__":
+#     # Details for the item that was failing
+#     test_path = "/mnt/symlinked/TV Shows/Happy Face (2025)/Season 01/Happy Face (2025) - S01E06 - My Jesperson Girls - tt15977292 - 1080p - (Happy Face S01E06 Lorelai 1080p AMZN WEB-DL DDP5 1 Atmos H 264-RAWR).mkv"
+#     test_title = "Happy Face"
+#     test_episode = "My Jesperson Girls"
+#
+#     print("Running test requeue...")
+#     test_requeue_plex_removal(test_path, test_title, test_episode)
+#     print("Test finished.")
+
+# --- END: Test Function ---

@@ -53,7 +53,7 @@ from database.symlink_verification import (
 from utilities.plex_functions import (
     get_section_type, # Need this to determine search type
     find_plex_library_and_section, # Added import
-    remove_symlink_from_plex, # Added import
+    remove_file_from_plex, # Added import
 )
 from plexapi.exceptions import NotFound
 import pytz # Added import
@@ -130,8 +130,10 @@ class ProgramRunner:
         # to the corresponding processing methods in QueueManager.
         self.queue_processing_map = {
             'Wanted': 'process_wanted',
-            # 'Scraping': 'process_scraping', # Handled by combined task
-            # 'Adding': 'process_adding',     # Handled by combined task
+            # --- START REVERT ---
+            'Scraping': 'process_scraping', # Restore Scraping
+            'Adding': 'process_adding',     # Restore Adding
+            # --- END REVERT ---
             'Checking': 'process_checking',
             'Sleeping': 'process_sleeping',
             'Unreleased': 'process_unreleased',
@@ -145,8 +147,10 @@ class ProgramRunner:
         self.task_intervals = {
             # Queue Processing Tasks (intervals for individual queues are less critical now)
             'Wanted': 5,
-            # 'Scraping': 5, # Handled by combined task
-            # 'Adding': 5,   # Handled by combined task
+            # --- START REVERT ---
+            'Scraping': 5, # Restore Scraping interval (adjust if needed)
+            'Adding': 5,   # Restore Adding interval (adjust if needed)
+            # --- END REVERT ---
             'Checking': 180,
             'Sleeping': 1800,
             'Unreleased': 300,
@@ -154,7 +158,9 @@ class ProgramRunner:
             'Pending Uncached': 3600,
             'Upgrading': 3600,
             # Combined/High Frequency Tasks
-            'task_process_scraping_adding': 10, # Process scraping and adding every 10 seconds
+            # --- START REVERT ---
+            # 'task_process_scraping_adding': 10, # Remove combined task
+            # --- END REVERT ---
             'task_update_queue_views': 30,     # Update queue views every 30 seconds
             'task_process_pending_rclone_paths': 10, # Check pending rclone paths every 10 seconds
             'task_send_notifications': 15,       # Run every 15 seconds
@@ -201,15 +207,21 @@ class ProgramRunner:
         # 1. Initialize enabled_tasks with base/essential tasks
         self.enabled_tasks = {
             # Core Queue Processing (Individual queues are less important to enable here)
-            'Wanted', 
-            'Checking', 
-            'Sleeping', 
-            'Unreleased', 
+            'Wanted',
+            # --- START REVERT ---
+            'Scraping', # Restore Scraping
+            'Adding',   # Restore Adding
+            # --- END REVERT ---
+            'Checking',
+            'Sleeping',
+            'Unreleased',
             'Blacklisted',
             'Pending Uncached',
             'Upgrading',
             # Combined/High Frequency Tasks
-            'task_process_scraping_adding',
+            # --- START REVERT ---
+            # 'task_process_scraping_adding', # Remove combined task
+            # --- END REVERT ---
             'task_update_queue_views',
             'task_process_pending_rclone_paths',
             'task_send_notifications',
@@ -350,12 +362,14 @@ class ProgramRunner:
                  logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
         # 5. Ensure legacy individual Scraping/Adding tasks are removed *after* all logic
-        if 'Scraping' in self.enabled_tasks:
-            logging.info("Removing legacy 'Scraping' task from enabled tasks (handled by combined task).")
-            self.enabled_tasks.remove('Scraping')
-        if 'Adding' in self.enabled_tasks:
-            logging.info("Removing legacy 'Adding' task from enabled tasks (handled by combined task).")
-            self.enabled_tasks.remove('Adding')
+        # --- START REVERT: Comment out or remove this block ---
+        # if 'Scraping' in self.enabled_tasks:
+        #     logging.info("Removing legacy 'Scraping' task from enabled tasks (handled by combined task).")
+        #     self.enabled_tasks.remove('Scraping')
+        # if 'Adding' in self.enabled_tasks:
+        #     logging.info("Removing legacy 'Adding' task from enabled tasks (handled by combined task).")
+        #     self.enabled_tasks.remove('Adding')
+        # --- END REVERT ---
 
         # 6. Finalize original task intervals *after* content sources potentially added intervals
         self.original_task_intervals = self.task_intervals.copy()
@@ -367,8 +381,10 @@ class ProgramRunner:
         # Define queue processing map EARLIER
         self.queue_processing_map = {
             'Wanted': 'process_wanted',
-            # 'Scraping': 'process_scraping', # Handled by combined task
-            # 'Adding': 'process_adding',     # Handled by combined task
+            # --- START REVERT ---
+            'Scraping': 'process_scraping', # Restore Scraping
+            'Adding': 'process_adding',     # Restore Adding
+            # --- END REVERT ---
             'Checking': 'process_checking',
             'Sleeping': 'process_sleeping',
             'Unreleased': 'process_unreleased',
@@ -1591,9 +1607,10 @@ class ProgramRunner:
 
         jobs_to_pause = set()
         # Identify jobs that might hit Debrid APIs
-        # Now includes the combined task
+        # --- START REVERT: Replace combined task with individual ones ---
         debrid_related_ids = {
-            'Wanted', 'task_process_scraping_adding', 'Checking', 'Upgrading',
+            'Wanted', 'Scraping', 'Adding', 'Checking', 'Upgrading',
+        # --- END REVERT ---
             # Content sources that *might* trigger checks? Less likely direct Debrid hits.
             # task_reconcile_queues? Unlikely.
             # task_process_pending_rclone_paths? Depends on handle_rclone_file logic.
@@ -1720,7 +1737,9 @@ class ProgramRunner:
         """Task to refresh the download stats cache"""
         from database.statistics import get_cached_download_stats
         try:
-            get_cached_download_stats(force_refresh=True) # Explicitly force refresh
+            # *** START EDIT ***
+            get_cached_download_stats() # Removed unsupported force_refresh=True argument
+            # *** END EDIT ***
             logging.debug("Download stats cache refreshed")
         except Exception as e:
             logging.error(f"Error refreshing download stats cache: {str(e)}")
@@ -2569,13 +2588,16 @@ class ProgramRunner:
                     update_removal_status(item_id, 'Verified')
                     verified_count += 1
                 else:
-                    # Item still exists - log, attempt removal again, increment attempts
-                    logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex. Attempting removal again...")
-                    removal_successful = remove_symlink_from_plex(item_title, item_path, episode_title)
+                    # Item still exists - log, attempt removal again using remove_file_from_plex, increment attempts
+                    # --- START EDIT ---
+                    logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex. Attempting removal using remove_file_from_plex...")
+                    # Call remove_file_from_plex instead of remove_symlink_from_plex
+                    removal_successful = remove_file_from_plex(item_title, item_path, episode_title)
                     if removal_successful:
-                        logging.info(f"[VERIFY] Successfully triggered removal *again* for '{item_path}'. Will verify later.")
+                        logging.info(f"[VERIFY] Successfully triggered removal via remove_file_from_plex for '{item_path}'. Will verify later.")
                     else:
-                        logging.error(f"[VERIFY] Failed to trigger removal *again* for '{item_path}'.")
+                        logging.error(f"[VERIFY] Failed to trigger removal via remove_file_from_plex for '{item_path}'.")
+                    # --- END EDIT ---
 
                     logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}' as it still exists.")
                     increment_removal_attempt(item_id)
@@ -2605,8 +2627,10 @@ class ProgramRunner:
             # Actually call the function to populate the cache
             logging.info("Precomputing airing shows data...")
             start_time = time.time()
-            # Pass force_refresh=True to ensure it runs even if cache seems fresh
-            recently_aired, airing_soon = get_recently_aired_and_airing_soon(force_refresh=True)
+            # *** START EDIT ***
+            # Call the function without the unsupported force_refresh argument
+            recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+            # *** END EDIT ***
 
             duration = time.time() - start_time
             logging.info(f"Precomputed airing shows data in {duration:.2f}s. Found {len(recently_aired)} recently aired and {len(airing_soon)} airing soon shows.")
@@ -3045,130 +3069,6 @@ class ProgramRunner:
             logging.error(f"Unexpected error in task_update_queue_views: {e}", exc_info=True)
     # *** END EDIT ***
 
-    # *** START EDIT: Add combined Scraping/Adding task ***
-    def task_process_scraping_adding(self):
-        """
-        Checks Scraping and Adding queues and processes them. If both queues
-        contain items for the *same show AND same version*, Adding is
-        prioritized and run sequentially to prevent race conditions.
-        Otherwise, they run concurrently.
-        """
-        if self.queue_manager.is_paused():
-            # logging.debug("Skipping task_process_scraping_adding due to pause state.")
-            return
-
-        scraping_queue = self.queue_manager.queues.get('Scraping')
-        adding_queue = self.queue_manager.queues.get('Adding')
-
-        if not scraping_queue or not adding_queue:
-            logging.error("Scraping or Adding queue not found in QueueManager.")
-            return
-
-        # Get current contents
-        scraping_items = []
-        adding_items = []
-        try:
-            scraping_items = scraping_queue.get_contents()
-        except Exception as e:
-            logging.error(f"Error getting Scraping queue contents: {e}")
-
-        try:
-            adding_items = adding_queue.get_contents()
-        except Exception as e:
-            logging.error(f"Error getting Adding queue contents: {e}")
-
-        has_scraping_items = bool(scraping_items)
-        has_adding_items = bool(adding_items)
-
-        # Define the processing functions locally
-        def run_scraping():
-            try:
-                logging.debug("Starting Scraping processing.")
-                self.queue_manager.process_scraping()
-                logging.debug("Finished Scraping processing.")
-            except RateLimitError:
-                logging.warning("Rate limit exceeded during Scraping processing. Handling rate limit.")
-                self.handle_rate_limit() # Trigger rate limit handling
-            except Exception as e:
-                logging.error(f"Error in Scraping processing: {e}", exc_info=True)
-
-        def run_adding():
-            try:
-                logging.debug("Starting Adding processing.")
-                self.queue_manager.process_adding()
-                logging.debug("Finished Adding processing.")
-            except RateLimitError:
-                logging.warning("Rate limit exceeded during Adding processing. Handling rate limit.")
-                self.handle_rate_limit() # Trigger rate limit handling
-            except Exception as e:
-                logging.error(f"Error in Adding processing: {e}", exc_info=True)
-
-        # --- Concurrency Decision Logic ---
-        run_concurrently = False
-        if has_scraping_items and has_adding_items:
-            # Check for show AND version conflicts
-            try:
-                # Use a consistent identifier for missing/empty versions
-                def get_version_identifier(item):
-                    version = item.get('version')
-                    return version if version else 'UnknownVersion'
-
-                scraping_show_version_pairs = {
-                    (item['imdb_id'], get_version_identifier(item))
-                    for item in scraping_items
-                    if item.get('type') == 'episode' and item.get('imdb_id')
-                }
-                adding_show_version_pairs = {
-                    (item['imdb_id'], get_version_identifier(item))
-                    for item in adding_items
-                    if item.get('type') == 'episode' and item.get('imdb_id')
-                }
-
-                conflicting_pairs = scraping_show_version_pairs.intersection(adding_show_version_pairs)
-
-                if conflicting_pairs:
-                    # Conflict detected! Prioritize Adding sequentially.
-                    logging.info(f"Conflict detected: Same show/version found in Scraping and Adding queues {conflicting_pairs}. Prioritizing Adding queue processing sequentially.")
-                    run_adding() # Run adding directly
-                    # Do NOT run scraping in this cycle
-                else:
-                    # No conflict, safe to run concurrently
-                    logging.debug("No show/version conflicts found between Scraping and Adding queues. Processing concurrently.")
-                    run_concurrently = True
-            except Exception as e:
-                 logging.error(f"Error checking for show/version conflicts: {e}. Running sequentially as fallback.", exc_info=True)
-                 # Fallback to sequential (Adding first) on error
-                 run_adding()
-
-        elif has_scraping_items:
-            # Only scraping has items
-            logging.debug("Only Scraping queue has items. Processing.")
-            run_scraping()
-
-        elif has_adding_items:
-            # Only adding has items
-            logging.debug("Only Adding queue has items. Processing.")
-            run_adding()
-        # else: # No items
-
-        # --- Execute Concurrent Threads (if decided) ---
-        if run_concurrently:
-            logging.info("Both Scraping and Adding queues have items (no conflicts). Processing concurrently.")
-            scraping_thread = threading.Thread(target=run_scraping, name="ScrapingThread", daemon=True)
-            adding_thread = threading.Thread(target=run_adding, name="AddingThread", daemon=True)
-            scraping_thread.start()
-            adding_thread.start()
-
-            # Join threads with timeout
-            join_timeout = 60 # Timeout in seconds
-            scraping_thread.join(timeout=join_timeout)
-            if scraping_thread.is_alive(): logging.warning("Scraping thread did not finish within timeout.")
-            adding_thread.join(timeout=join_timeout)
-            if adding_thread.is_alive(): logging.warning("Adding thread did not finish within timeout.")
-            logging.debug("Concurrent Scraping/Adding threads finished or timed out.")
-
-    # *** END EDIT ***
-
     # *** START EDIT: Add Listener Method ***
     def _job_listener(self, event: apscheduler.events.JobExecutionEvent):
         """Listener called after a job executes. Adjusts interval based on duration."""
@@ -3442,7 +3342,10 @@ def generate_airtime_report():
         try:
             # Assume release_date and airtime are naive, localize them to the system's configured timezone
             naive_release_datetime = datetime.combine(release_date, airtime)
-            local_release_datetime = tz.localize(naive_release_datetime, is_dst=None) # Let pytz handle DST ambiguity
+            # *** START EDIT ***
+            # Use replace() for zoneinfo, which handles DST transitions (raises errors for invalid times, assumes standard time for ambiguous times by default)
+            local_release_datetime = naive_release_datetime.replace(tzinfo=tz) 
+            # *** END EDIT ***
 
             # Calculate scrape datetime by adding offset
             scrape_datetime_local = local_release_datetime + timedelta(minutes=airtime_offset_minutes)

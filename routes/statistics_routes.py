@@ -179,7 +179,8 @@ def get_recently_aired_and_airing_soon():
             airtime,
             imdb_id,
             tmdb_id,
-            CASE WHEN MAX(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) > 0 THEN 1 ELSE 0 END as is_collected
+            MAX(state) as state,  -- Get the state
+            MAX(upgrading_from) as upgrading_from -- Get upgrading_from if present
         FROM media_items
         WHERE type = 'episode' 
           AND release_date BETWEEN ? AND ?
@@ -219,7 +220,7 @@ def get_recently_aired_and_airing_soon():
         now_timestamp = now.timestamp()
         
         for result in results:
-            title, season, episode, release_date, airtime, imdb_id, tmdb_id, is_collected = result
+            title, season, episode, release_date, airtime, imdb_id, tmdb_id, state, upgrading_from = result
             try:
                 release_date = datetime.fromisoformat(release_date) if isinstance(release_date, str) else release_date
                 
@@ -241,6 +242,13 @@ def get_recently_aired_and_airing_soon():
                 air_datetime = datetime.combine(release_date.date(), airtime)
                 air_datetime = air_datetime.replace(tzinfo=local_tz) if hasattr(local_tz, 'localize') else air_datetime.replace(tzinfo=local_tz)
                 
+                # Determine display status
+                display_status = 'uncollected' # Default
+                if state in ['Collected', 'Upgrading']:
+                    display_status = 'collected'
+                elif state == 'Checking' and upgrading_from:
+                    display_status = 'checking_upgrade'
+                
                 # Create a key for grouping
                 show_key = f"{title}_{season}_{release_date.date()}"
                 
@@ -251,10 +259,16 @@ def get_recently_aired_and_airing_soon():
                         'episodes': set(),
                         'air_datetime': air_datetime,
                         'release_date': release_date.date(),
-                        'is_collected': bool(is_collected),
+                        'display_status': display_status, # Store first status found for the group
                         'imdb_id': imdb_id,
                         'tmdb_id': tmdb_id
                     }
+                
+                # If any episode in the group is collected or checking_upgrade, prioritize that status
+                if display_status == 'collected' and shows[show_key]['display_status'] != 'collected':
+                    shows[show_key]['display_status'] = 'collected'
+                elif display_status == 'checking_upgrade' and shows[show_key]['display_status'] == 'uncollected':
+                    shows[show_key]['display_status'] = 'checking_upgrade'
                 
                 shows[show_key]['episodes'].add(episode)
             
@@ -300,7 +314,7 @@ def get_recently_aired_and_airing_soon():
                     'title': f"{show['title']} S{show['season']:02d}{episode_range}",
                     'air_datetime': show['air_datetime'],
                     'sort_key': show['air_datetime'].isoformat(),
-                    'is_collected': show['is_collected'],
+                    'display_status': show['display_status'], # Use the determined status
                     'imdb_id': show['imdb_id'],
                     'tmdb_id': show['tmdb_id'],
                     'season_number': show['season'],

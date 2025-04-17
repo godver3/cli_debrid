@@ -806,6 +806,63 @@ def verify_database_health():
     logging.info("Database health check completed successfully")
     return True
 
+def migrate_upgrade_rationale():
+    """
+    Migrates rationale strings in torrent_additions table from
+    'Upgrading from version X to None' to 'Upgrading version X'.
+    """
+    conn = None
+    updated_count = 0
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Find entries with the specific rationale pattern
+        cursor.execute("""
+            SELECT id, rationale 
+            FROM torrent_additions 
+            WHERE rationale LIKE 'Upgrading from version % to None'
+        """)
+        
+        rows_to_update = []
+        for row_id, old_rationale in cursor.fetchall():
+            try:
+                # Extract the original version part
+                # Example: "Upgrading from version 1080p to None"
+                # prefix = "Upgrading from version " (23 chars)
+                # suffix = " to None" (8 chars)
+                version_part = old_rationale[23:-8] 
+                
+                # Construct the new rationale
+                new_rationale = f"Upgrading version {version_part}"
+                rows_to_update.append((new_rationale, row_id))
+            except Exception as e:
+                logging.warning(f"Could not process rationale migration for row ID {row_id}: {e}")
+
+        if rows_to_update:
+            logging.info(f"Found {len(rows_to_update)} torrent tracking entries to migrate rationale...")
+            cursor.executemany("""
+                UPDATE torrent_additions 
+                SET rationale = ? 
+                WHERE id = ?
+            """, rows_to_update)
+            conn.commit()
+            updated_count = cursor.rowcount
+            logging.info(f"Successfully migrated rationale for {updated_count} entries.")
+        else:
+            logging.info("No torrent tracking entries found needing rationale migration.")
+
+    except sqlite3.Error as e:
+        logging.error(f"Database error during rationale migration: {e}")
+        if conn:
+            conn.rollback()
+    except Exception as e:
+        logging.error(f"Unexpected error during rationale migration: {e}")
+    finally:
+        if conn:
+            conn.close()
+
 def main():
     # Remove global program_runner from here as well
     global metadata_process 
@@ -851,6 +908,9 @@ def main():
     if not verify_database_health():
         logging.error("Database health check failed. Please check the logs and resolve any issues.")
         return False
+    
+    # Run the rationale migration
+    migrate_upgrade_rationale()
     
     # Set up notification handlers
     setup_crash_handler()
