@@ -417,27 +417,20 @@ class QueueManager:
         if self.paused:
             logging.debug("Skipping Scraping queue processing: Queue is paused")
             return False
-            
-        # First check if the queue is empty before updating
-        if not self.queues["Scraping"].get_contents():
-            # Perform lightweight update only
-            self.queues["Scraping"].update()
-            
-            # Check again if still empty after update
-            if not self.queues["Scraping"].get_contents():
-                return False
-        else:
-            # Only perform full update if queue has items
-            self.queues["Scraping"].update()
-            
+
+        # Update the queue contents before processing
+        self.queues["Scraping"].update()
+
         # Now process items if any exist
         queue_contents = self.queues["Scraping"].get_contents()
-        
+
         if queue_contents:
+            # Process the queue safely (catches exceptions, including RateLimitError)
             result = self._process_queue_safely("Scraping", with_result=True)
             logging.debug(f"Scraping queue process result: {result}")
-            return result
-            
+            return result # Return True if items were processed, False otherwise
+
+        # Return False if queue was empty after update
         return False
 
     def process_adding(self):

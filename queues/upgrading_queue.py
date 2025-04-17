@@ -748,21 +748,30 @@ class UpgradingQueue:
                             logging.info(f"[{item_identifier}] Updated existing torrent tracking entry for hash {hash_value}")
                         else:
                             # Record new addition if no history exists
-                            record_torrent_addition(
-                                torrent_hash=hash_value,
-                                trigger_source='queue_upgrade',
-                                rationale=f"Upgrading from version {item.get('version')} to {best_result.get('version')}",
-                                item_data=item_data,
-                                trigger_details={
-                                    'source': 'upgrading_queue',
-                                    'queue_initiated': True,
-                                    'upgrade_check': True,
-                                    'current_version': item.get('version'),
-                                    'target_version': best_result.get('version'),
-                                    'score_improvement': best_result.get('score_breakdown', {}).get('total_score', 0)
-                                }
-                            )
-                            logging.info(f"[{item_identifier}] Recorded new torrent addition for hash {hash_value}")
+                            try:
+                                record_torrent_addition(
+                                    torrent_hash=hash_value,
+                                    trigger_source="queue_upgrade",
+                                    trigger_details={'selected_files': best_result.get('files')},
+                                    rationale=f"Upgrading version {item.get('version')}",
+                                    item_data=item
+                                )
+                                logging.info(f"Recorded upgrade torrent addition for {item['title']}.")
+                            except Exception as e:
+                                logging.error(f"Error recording upgrade torrent addition for {item['title']}: {e}", exc_info=True)
+
+                        if not best_result.get('download_link'):
+                            try:
+                                record_torrent_addition(
+                                    torrent_hash=hash_value,
+                                    trigger_source="queue_upgrade",
+                                    trigger_details={'selected_files': best_result.get('files')},
+                                    rationale=f"Upgrading version {item.get('version')}",
+                                    item_data=item
+                                )
+                                logging.info(f"Recorded upgrade torrent addition (no download link) for {item['title']}.")
+                            except Exception as e:
+                                logging.error(f"Error recording upgrade torrent addition (no download link) for {item['title']}: {e}", exc_info=True)
                     
                     # Ensure the upgrades_data entry is initialized
                     if item['id'] not in self.upgrades_data:

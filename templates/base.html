@@ -532,6 +532,13 @@
             const notificationsCloseBtn = notificationsModal.querySelector('.close');
             const notificationsContainer = document.getElementById('notifications-container');
             let notifications = [];
+            
+            // --- Release Notes Modal Elements ---
+            const releaseNotesButton = document.getElementById('releaseNotesButton');
+            const releaseNotesPopup = document.getElementById('releaseNotesPopup');
+            const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
+            const releaseNotesClose = document.getElementById('releaseNotesClose');
+            // --- End Release Notes Modal Elements ---
 
             // Fetch notifications
             async function fetchNotifications() {
@@ -633,16 +640,31 @@
             // Modal controls
             notificationsBtn.addEventListener('click', function() {
                 notificationsModal.style.display = 'block';
+                document.body.classList.add('modal-open'); // Add class to body
                 fetchNotifications(); // Refresh notifications when opening modal
             });
 
             notificationsCloseBtn.addEventListener('click', function() {
                 notificationsModal.style.display = 'none';
+                document.body.classList.remove('modal-open'); // Remove class from body
             });
 
             window.addEventListener('click', function(event) {
                 if (event.target == notificationsModal) {
                     notificationsModal.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class from body
+                }
+                // Close release notes if clicking overlay
+                if (event.target == releaseNotesOverlay) {
+                    releaseNotesPopup.style.display = 'none';
+                    releaseNotesOverlay.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class from body
+                }
+                // Close support modal if clicking outside
+                if (event.target == supportModal) {
+                    console.log('Closing support modal via outside click');
+                    supportModal.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Ensure removed for support modal too
                 }
             });
 
@@ -779,6 +801,7 @@
                     setTimeout(() => {
                         console.log('Attempting to show support modal now');
                         supportModal.style.display = 'block';
+                        document.body.classList.add('modal-open'); // Add class for support modal
                         markSupportModalSeen();
                     }, 2000);
                 }
@@ -792,23 +815,40 @@
                 supportModalClose.addEventListener('click', function() {
                     console.log('Closing support modal via close button');
                     supportModal.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class
                 });
             } else {
                 console.warn('Support modal close button not found');
             }
 
-            window.addEventListener('click', function(event) {
-                if (event.target == supportModal) {
-                    console.log('Closing support modal via outside click');
-                    supportModal.style.display = 'none';
-                }
-            });
-
-            // Add ESC key support
+            // Add ESC key support - Also remove modal-open class
             document.addEventListener('keydown', function(event) {
-                if (event.key === 'Escape' && supportModal.style.display === 'block') {
-                    console.log('Closing support modal via ESC key');
-                    supportModal.style.display = 'none';
+                if (event.key === 'Escape') {
+                     if (supportModal.style.display === 'block') {
+                        console.log('Closing support modal via ESC key');
+                        supportModal.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                     }
+                     if (notificationsModal.style.display === 'block') {
+                        console.log('Closing notifications modal via ESC key');
+                        notificationsModal.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                     }
+                     if (releaseNotesPopup.style.display === 'block') {
+                        console.log('Closing release notes modal via ESC key');
+                        releaseNotesPopup.style.display = 'none';
+                        releaseNotesOverlay.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                     }
+                     // Add for help modal if needed (assuming it's handled elsewhere)
+                     const helpModal = document.getElementById('help-modal-box');
+                     if (helpModal && helpModal.style.display === 'flex') { // Or however help modal is shown
+                         console.log('Closing help modal via ESC key');
+                         // Add code to hide help modal and remove 'modal-open'
+                         // helpModal.style.display = 'none'; // Example
+                         // document.getElementById('help-overlay').style.display = 'none'; // Example
+                         // document.body.classList.remove('modal-open'); // Example
+                     }
                 }
             });
 
@@ -825,6 +865,31 @@
                 });
             }
             // ---- End Mark All Read Button Logic ----
+
+            // --- Release Notes Modal Event Listeners ---
+            if (releaseNotesButton && releaseNotesPopup && releaseNotesOverlay && releaseNotesClose) {
+                releaseNotesButton.addEventListener('click', () => {
+                    // Assuming showReleaseNotesPopup() is defined elsewhere, 
+                    // we'll manually set display here for simplicity
+                    // If showReleaseNotesPopup handles display, integrate there.
+                    releaseNotesPopup.style.display = 'block';
+                    releaseNotesOverlay.style.display = 'block';
+                    document.body.classList.add('modal-open'); // Add class
+                    // Optionally load content if not already loaded
+                    // loadReleaseNotes(); 
+                });
+
+                releaseNotesClose.addEventListener('click', () => {
+                    releaseNotesPopup.style.display = 'none';
+                    releaseNotesOverlay.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class
+                });
+
+                // Click outside handled by the general window click listener above
+            } else {
+                console.warn('One or more release notes elements not found.');
+            }
+            // --- End Release Notes Modal Event Listeners ---
         });
     </script>
 </head>
@@ -851,7 +916,8 @@
                 {% if current_user.is_authenticated and not is_onboarding %}
                 <span class="username">Welcome, {{ current_user.username }}</span>
                 {% endif %}
-                {% if hide_support_message is not defined or not hide_support_message %}
+                {# Hide support icons on login page and if explicitly hidden #}
+                {% if request.endpoint != 'auth.login' and (hide_support_message is not defined or not hide_support_message) %}
                 <div class="support-icons">
                     <a href="https://github.com/sponsors/godver3" target="_blank" class="support-icon-link github" title="Support on GitHub">
                         <i class="fab fa-github"></i>
@@ -1003,10 +1069,13 @@
         {% endif %}
     </header>
 
+    {# Hide help button on login page #}
+    {% if request.endpoint != 'auth.login' %}
     <!-- Help Button (Desktop Only) -->
     <button id="helpButton" class="icon-button help-button" data-tooltip="global.helpButton">
         <i class="fas fa-question-circle"></i>
     </button>
+    {% endif %}
 
     <!-- Notifications Modal -->
     <div id="notificationsModal" class="modal">
