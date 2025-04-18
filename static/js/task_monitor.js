@@ -1,4 +1,11 @@
 function formatTime(seconds) {
+    // Ensure seconds is a non-negative number
+    if (typeof seconds !== 'number' || seconds < 0) {
+        return 'soon'; // Or some other default like 'N/A'
+    }
+    if (seconds < 1) {
+        return '<1s'; // Handle very small times like 0
+    }
     if (seconds < 60) {
         return `${Math.round(seconds)}s`;
     } else if (seconds < 3600) {
@@ -15,18 +22,50 @@ function updateCurrentTaskDisplay(tasks) {
     const taskNameElement = currentTaskDisplay.querySelector('.current-task-name');
     const taskTimeElement = currentTaskDisplay.querySelector('.current-task-time');
 
+    // Clear previous state
+    taskNameElement.textContent = '';
+    taskTimeElement.textContent = '';
+
     if (tasks && tasks.length > 0) {
-        const nextTask = tasks.reduce((a, b) => (a.next_run ?? Infinity) < (b.next_run ?? Infinity) ? a : b);
-        taskNameElement.innerHTML = `<i class="fas fa-redo-alt" style="margin-right: 5px;"></i> ${nextTask.name}`;
-        taskTimeElement.textContent = '';
+        let nextTask = null;
+        let minNextRun = Infinity;
+
+        // Find the task with the smallest non-null, non-negative next_run time
+        for (const task of tasks) {
+            // Ensure next_run is a valid number >= 0
+            if (typeof task.next_run === 'number' && task.next_run >= 0 && task.next_run < minNextRun) {
+                minNextRun = task.next_run;
+                nextTask = task;
+            }
+        }
+
+        if (nextTask) {
+            // Found a task with a scheduled next run
+            taskNameElement.textContent = nextTask.name;
+            // Use the found minimum time for formatting
+            taskTimeElement.textContent = `...in ${formatTime(minNextRun)}`; 
+        } else {
+            // No scheduled next run found, check for a running task
+            const runningTask = tasks.find(task => task.running === true);
+            if (runningTask) {
+                taskNameElement.textContent = runningTask.name;
+                taskTimeElement.textContent = '(Running)';
+            } else {
+                // No scheduled or running tasks, but the list is not empty
+                taskNameElement.textContent = 'No active tasks'; // Or maybe 'Queue Idle'?
+            }
+        }
     } else {
-        taskNameElement.textContent = 'No active tasks';
-        taskTimeElement.textContent = '';
+        // tasks array is null or empty
+        taskNameElement.textContent = 'No tasks';
     }
 }
 
 function updateTaskList(taskList, data) {
     if (data.success) {
+        // Determine the list of tasks to potentially display and use for current task calculation
+        const availableTasks = data.tasks || [];
+
         if (data.running) {
             if (data.paused && data.pause_reason) {
                 // Show pause reason at the top of the task list
@@ -37,51 +76,36 @@ function updateTaskList(taskList, data) {
                             <span>${data.pause_reason}</span>
                         </div>
                     </div>`;
+            } else {
+                 // Clear task list if not paused (will be repopulated below if tasks exist)
+                 taskList.innerHTML = '';
             }
             
-            if (data.tasks && data.tasks.length > 0) {
-                const tasksHtml = data.tasks
-                    .sort((a, b) => a.next_run - b.next_run)
+            if (availableTasks.length > 0) {
+                const tasksHtml = availableTasks
+                    .sort((a, b) => (a.next_run ?? Infinity) - (b.next_run ?? Infinity)) // Sort by next_run, handling nulls
                     .map(task => `
                         <div class="task-item ${task.running ? 'running' : ''}">
                             <div class="task-name">${task.name}</div>
                             <div class="task-timing">
-                                <span>${task.running ? 'Currently running' : `Next run: ${formatTime(task.next_run)}`}</span>
+                                <span>${task.running ? 'Currently running' : (typeof task.next_run === 'number' ? `Next run: ${formatTime(task.next_run)}` : 'Scheduled')}</span>
                                 <span>Interval: ${formatTime(task.interval)}</span>
                             </div>
                         </div>
                     `)
                     .join('');
                 
-                // If paused, append tasks after the pause message
-                if (data.paused && data.pause_reason) {
-                    taskList.innerHTML += tasksHtml;
-                } else {
-                    taskList.innerHTML = tasksHtml;
-                }
-                
-                // Update current task display - Pass the original unfiltered task list if available,
-                // or the filtered one otherwise. For accurate 'next task' display, ideally we'd get
-                // the unfiltered next task from the backend stream if possible.
-                // Assuming data.tasks is the filtered list, we update based on that.
-                updateCurrentTaskDisplay(data.tasks);
-            } else {
-                const status = 'Program not running';
-                if (data.paused && data.pause_reason) {
-                    taskList.innerHTML = `
-                        <div class="task-item paused">
-                            <div class="task-name">Queue Paused</div>
-                            <div class="task-timing">
-                                <span>${data.pause_reason}</span>
-                            </div>
-                        </div>
-                        <div class="no-tasks">${status}</div>`;
-                } else {
-                    taskList.innerHTML = `<div class="no-tasks">${status}</div>`;
-                }
-                updateCurrentTaskDisplay(null);
+                // Append tasks (after pause message if present)
+                taskList.innerHTML += tasksHtml;
+
+            } else if (!data.paused) { // Only show 'No tasks' if not paused and no tasks
+                taskList.innerHTML = '<div class="no-tasks">No tasks scheduled</div>';
             }
-        } else {
+            
+            // Update current task display using the available tasks
+            updateCurrentTaskDisplay(availableTasks);
+
+        } else { // Program not running
             taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
             updateCurrentTaskDisplay(null);
         }

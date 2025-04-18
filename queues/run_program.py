@@ -24,7 +24,7 @@ import traceback
 from datetime import datetime, timedelta, time as dt_time, timezone # Modified import
 import asyncio
 from utilities.plex_functions import run_get_collected_from_plex, run_get_recent_from_plex
-from routes.notifications import send_notifications
+from routes.notifications import send_notifications, _send_notifications, get_enabled_notifications
 import requests
 from pathlib import Path
 import pickle
@@ -1602,8 +1602,20 @@ class ProgramRunner:
 
     def handle_rate_limit(self):
         """Handle rate limit by pausing relevant jobs for a period."""
-        logging.warning("Rate limit exceeded. Pausing relevant Debrid-interacting jobs for 30 minutes.")
         pause_duration = 1800 # 30 minutes
+        logging.warning(f"Rate limit exceeded. Pausing relevant Debrid-interacting jobs for {pause_duration // 60} minutes.")
+
+        # --- Send Notification as Queue Pause ---
+        try:
+            enabled_notifications = get_enabled_notifications()
+            if enabled_notifications: # Only send if notifications are configured
+                # Construct the specific message for the pause reason
+                message = f"Queue paused for {pause_duration // 60} minutes due to Debrid rate limit."
+                # Call with 'queue_pause' category
+                _send_notifications(message, enabled_notifications, notification_category='queue_pause')
+        except Exception as e:
+            logging.error(f"Failed to send rate limit pause notification: {e}")
+        # --- End Send Notification ---
 
         jobs_to_pause = set()
         # Identify jobs that might hit Debrid APIs
