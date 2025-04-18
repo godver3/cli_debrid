@@ -189,7 +189,7 @@ class ProgramRunner:
             'task_update_tv_show_status': 172800,       # Run every 48 hours
             # 'task_purge_not_wanted_magnets_file': 604800, # Default: 1 week (Can be added if needed)
             # 'task_local_library_scan': 900, # Default: 15 mins (Can be added if needed)
-            'task_plex_full_scan': 3600, # Run every hour (Can be adjusted)
+            'task_plex_full_scan': 1800, # Run every hour (Can be adjusted)
             # NEW Load Adjustment Task
             'task_adjust_intervals_for_load': 120, # Run every 2 minutes
         }
