@@ -131,7 +131,7 @@ def format_notification_content(notifications, notification_type, notification_c
         'queue_resume': "✅",
         'queue_start': "▶️",
         'queue_stop': "⏹️",
-        'upgrade_failed': "❌"  # New emoji for failed upgrades
+        'upgrade_failed': "❌",
     }
 
     # For system notifications (stop/crash/start/pause/resume), we'll use a different format
@@ -566,9 +566,9 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
     # Store notification in JSON file first
     try:
         # Handle system operation notifications
-        if notification_category in ['program_crash', 'program_stop', 'program_start', 
+        if notification_category in ['program_crash', 'program_stop', 'program_start',
                                    'queue_pause', 'queue_resume', 'queue_start', 'queue_stop',
-                                   'rate_limit', 'scraping_error', 'content_error', 'database_error']:
+                                   'scraping_error', 'content_error', 'database_error']:
             title = {
                 'program_crash': "Program Crashed",
                 'program_stop': "Program Stopped",
@@ -577,7 +577,6 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 'queue_resume': "Queue Resumed",
                 'queue_start': "Queue Started",
                 'queue_stop': "Queue Stopped",
-                'rate_limit': "Rate Limit Warning",
                 'scraping_error': "Scraping Error",
                 'content_error': "Content Error",
                 'database_error': "Database Error"
@@ -591,7 +590,6 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 'queue_resume': 'success',
                 'queue_start': 'success',
                 'queue_stop': 'info',
-                'rate_limit': 'warning',
                 'scraping_error': 'error',
                 'content_error': 'error',
                 'database_error': 'error'
@@ -601,11 +599,10 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 'program_crash': "Program crashed unexpectedly",
                 'program_stop': "Program has been stopped",
                 'program_start': "Program has been started",
-                'queue_pause': "Queue processing has been paused",
+                'queue_pause': notifications,
                 'queue_resume': "Queue processing has been resumed",
                 'queue_start': "Queue processing has started",
                 'queue_stop': "Queue processing has stopped",
-                'rate_limit': "API rate limit warning",
                 'scraping_error': "Error occurred during scraping",
                 'content_error': "Error processing content",
                 'database_error': "Database operation failed"

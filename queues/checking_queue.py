@@ -399,7 +399,7 @@ class CheckingQueue:
                     is_cached = self.debrid_provider.is_cached_sync(
                         magnet_link,
                         skip_phalanx_db=True,  # Always skip PhalanxDB for direct verification
-                        remove_uncached=True,   # Remove uncached torrents after checking
+                        remove_uncached=False,   # <-- Changed from True to False
                         remove_cached=False     # Keep cached torrents
                     )
                     
