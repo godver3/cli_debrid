@@ -273,11 +273,53 @@
         font-size: 0.75em;
         margin-left: 0.5rem;
     }
+
+    .reset-notification-banner {
+        background-color: #ffc107; /* Warning yellow */
+        color: #333; /* Dark text for contrast */
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border-radius: 10px;
+        border: 1px solid #e0a800;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .reset-notification-banner p {
+        margin: 0;
+        flex-grow: 1;
+        padding-right: 1rem; /* Space between text and button */
+    }
+
+    .reset-notification-banner .dismiss-btn {
+        background: none;
+        border: none;
+        color: #333;
+        font-size: 1.2rem;
+        cursor: pointer;
+        padding: 0.25rem 0.5rem;
+        line-height: 1;
+    }
+
+    .reset-notification-banner .dismiss-btn:hover {
+        color: #000;
+    }
 </style>
 {% endblock %}
 
 {% block content %}
 <div id="taskTimingsContainer">
+
+    <!-- Reset Notification Banner -->
+    <div id="resetNotification" class="reset-notification-banner" style="display: none;"> <!-- Initially hidden -->
+        <p>
+            <i class="fas fa-exclamation-triangle"></i> <strong>Notice:</strong> As part of the update to version 0.6.34, all task toggles have been reset to their default states. Please review and save your preferred toggle settings.
+        </p>
+        <button class="dismiss-btn" onclick="dismissResetNotification()">&times;</button>
+    </div>
+    <!-- End Reset Notification Banner -->
+
     <div class="info-banner">
         <p><i class="fas fa-info-circle"></i> Task timings are only displayed while the program is running. When the program is stopped, no timing information will be available.</p>
     </div>
@@ -324,7 +366,39 @@ import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 window.showPopup = showPopup;
 window.POPUP_TYPES = POPUP_TYPES;
 
+const RESET_NOTIFICATION_KEY = 'taskToggleResetDismissed_0.6.34'; // Version specific key
+
+// Function to dismiss the reset notification
+window.dismissResetNotification = function() {
+    const banner = document.getElementById('resetNotification');
+    if (banner) {
+        banner.style.display = 'none';
+    }
+    try {
+        localStorage.setItem(RESET_NOTIFICATION_KEY, 'true');
+    } catch (e) {
+        console.warn("Could not save notification dismissal state to localStorage:", e);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    // Check if the reset notification should be shown
+    try {
+        if (localStorage.getItem(RESET_NOTIFICATION_KEY) !== 'true') {
+            const banner = document.getElementById('resetNotification');
+            if (banner) {
+                banner.style.display = 'flex'; // Show the banner
+            }
+        }
+    } catch (e) {
+        console.warn("Could not check notification dismissal state from localStorage:", e);
+        // Show banner if localStorage fails, as a safe default
+        const banner = document.getElementById('resetNotification');
+        if (banner) {
+            banner.style.display = 'flex';
+        }
+    }
+
     // Tab switching
     const tabs = document.querySelectorAll('.tab');
     tabs.forEach(tab => {
