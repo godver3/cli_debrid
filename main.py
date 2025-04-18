@@ -12,6 +12,7 @@ import webbrowser
 import socket
 import sqlite3
 from datetime import datetime
+import json
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -863,6 +864,56 @@ def migrate_upgrade_rationale():
         if conn:
             conn.close()
 
+def migrate_task_toggles():
+    """
+    Ensures task_toggles.json exists and contains the migration version marker.
+    If the file is missing or the marker is absent/incorrect, it resets the file.
+    """
+    MIGRATION_VERSION = "0.6.34"
+    VERSION_KEY = "_migration_version"
+    
+    try:
+        import os
+        import json
+        
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+        
+        needs_reset = False
+        current_data = {}
+
+        if os.path.exists(toggles_file_path):
+            try:
+                with open(toggles_file_path, 'r') as f:
+                    current_data = json.load(f)
+                if not isinstance(current_data, dict) or current_data.get(VERSION_KEY) != MIGRATION_VERSION:
+                    logging.info(f"Task toggles file found but missing or incorrect version marker ({current_data.get(VERSION_KEY)} != {MIGRATION_VERSION}). Resetting.")
+                    needs_reset = True
+            except json.JSONDecodeError:
+                logging.warning(f"Task toggles file exists but is corrupted. Resetting.")
+                needs_reset = True
+            except Exception as e:
+                 logging.error(f"Error reading task toggles file: {e}. Resetting.")
+                 needs_reset = True
+        else:
+            logging.info(f"Task toggles file not found. Creating with version {MIGRATION_VERSION}.")
+            needs_reset = True
+
+        if needs_reset:
+            try:
+                with open(toggles_file_path, 'w') as f:
+                    json.dump({VERSION_KEY: MIGRATION_VERSION}, f, indent=4)
+                    # Log SUCCESS only *after* successful dump and *before* exiting 'with'
+                    logging.info(f"Successfully reset task_toggles.json with version {MIGRATION_VERSION}.")
+            except Exception as e:
+                # This log will catch errors during open() or json.dump()
+                logging.error(f"Failed to write reset task toggles file: {e}")
+        # else:
+        #     logging.debug(f"Task toggles file already at migration version {MIGRATION_VERSION}. No reset needed.")
+
+    except Exception as e:
+        logging.error(f"Unexpected error during task toggles migration check: {e}")
+
 def main():
     # Remove global program_runner from here as well
     global metadata_process 
@@ -911,6 +962,7 @@ def main():
     
     # Run the rationale migration
     migrate_upgrade_rationale()
+    migrate_task_toggles()
     
     # Set up notification handlers
     setup_crash_handler()

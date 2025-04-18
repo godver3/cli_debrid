@@ -108,6 +108,16 @@
                 </div>
             </div>
 
+            <!-- Add Filter Logic Selection -->
+            <div class="filter-logic-section">
+                <label>Filter Logic:</label>
+                <input type="radio" id="filter-logic-and" name="filter_logic" value="AND" {% if filter_logic == 'AND' %}checked{% endif %}>
+                <label for="filter-logic-and">AND (All filters match)</label>
+                <input type="radio" id="filter-logic-or" name="filter_logic" value="OR" {% if filter_logic == 'OR' %}checked{% endif %}>
+                <label for="filter-logic-or">OR (Any filter matches)</label>
+            </div>
+            <!-- End Filter Logic Selection -->
+
             <div class="button-section">
                 <div class="filter-buttons">
                     <button type="submit">Apply</button>
@@ -137,6 +147,7 @@
             <thead>
                 <tr>
                     <th>Select</th>
+                    <th>Play</th>
                     <th>Delete</th>
                     <th>Rescrape</th>
                     {% for column in selected_columns %}
@@ -149,6 +160,11 @@
                     <tr>
                         <td>
                             <input type="checkbox" class="item-select" data-item-id="{{ item['id'] }}">
+                        </td>
+                        <td>
+                            <a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">
+                                ▶️
+                            </a>
                         </td>
                         <td>
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
@@ -178,6 +194,7 @@
         currentFilters: {{ filters|tojson|safe }},
         sortColumn: "{{ sort_column }}",
         sortOrder: "{{ sort_order }}",
+        filterLogic: {{ filter_logic|default('AND')|tojson|safe }},
         contentType: "{{ content_type }}"
     };
 </script>
@@ -208,7 +225,8 @@ document.addEventListener('DOMContentLoaded', function() {
         SORT_COLUMN: 'db_sort_column',
         SORT_ORDER: 'db_sort_order',
         SELECTED_COLUMNS: 'db_selected_columns',
-        CONTENT_TYPE: 'db_content_type'
+        CONTENT_TYPE: 'db_content_type',
+        FILTER_LOGIC: 'db_filter_logic'
     };
 
     // Function to validate and sanitize localStorage data
@@ -336,10 +354,11 @@ document.addEventListener('DOMContentLoaded', function() {
             column: row.querySelector('.filter-column').value,
             operator: row.querySelector('.filter-operator').value,
             value: row.querySelector('.filter-value').value
-        })).filter(f => f.column && f.value);
+        })).filter(f => f.column);
 
         const sortColumn = document.getElementById('sort-column').value;
         const sortOrder = document.getElementById('sort-order').value;
+        const filterLogic = document.querySelector('input[name="filter_logic"]:checked').value;
         
         // Validate content type before saving
         const validContentType = (currentContentType === 'movie' || currentContentType === 'episode') 
@@ -350,6 +369,7 @@ document.addEventListener('DOMContentLoaded', function() {
         localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
         localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
         localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
+        localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, filterLogic);
     }
 
     // Function to restore settings from localStorage
@@ -359,6 +379,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const sortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
         const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
         const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+        const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND';
 
         // Validate content type
         const validContentType = (savedContentType === 'movie' || savedContentType === 'episode') 
@@ -367,17 +388,35 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Restore filters
         if (savedFilters) {
-            const filters = JSON.parse(savedFilters);
-            const filtersContainer = document.getElementById('filters-container');
-            filtersContainer.innerHTML = '';
-            filters.forEach(filter => {
-                filtersContainer.appendChild(createFilterRow(filter));
-            });
+            try {
+                const filters = JSON.parse(savedFilters);
+                const filtersContainer = document.getElementById('filters-container');
+                filtersContainer.innerHTML = '';
+                filters.forEach(filter => {
+                    if (filter && typeof filter === 'object' && filter.hasOwnProperty('column') && filter.hasOwnProperty('operator') && filter.hasOwnProperty('value')) {
+                        filtersContainer.appendChild(createFilterRow(filter));
+                    } else {
+                         console.warn('Skipping invalid filter structure from localStorage:', filter);
+                    }
+                });
+            } catch (e) {
+                 console.error("Error parsing saved filters from localStorage:", e);
+                 localStorage.removeItem(STORAGE_KEYS.FILTERS);
+            }
         }
 
         // Restore sort settings
         if (sortColumn) document.getElementById('sort-column').value = sortColumn;
         if (sortOrder) document.getElementById('sort-order').value = sortOrder;
+        
+        // Restore filter logic
+        const logicRadio = document.querySelector(`input[name="filter_logic"][value="${savedFilterLogic}"]`);
+        if (logicRadio) {
+            logicRadio.checked = true;
+        } else {
+            document.getElementById('filter-logic-and').checked = true;
+            localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, 'AND');
+        }
         
         // Restore content type
         if (validContentType) {
@@ -397,7 +436,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         // Apply restored settings
-        if (savedFilters || sortColumn || sortOrder || validContentType || savedColumns) {
+        if (savedFilters || sortColumn || sortOrder || savedContentType || savedColumns || savedFilterLogic !== 'AND') {
             const filters = savedFilters ? JSON.parse(savedFilters) : [];
             const selectedColumnValues = savedColumns ? JSON.parse(savedColumns) : Array.from(document.getElementById('selected-columns').options).map(option => option.value);
             
@@ -406,7 +445,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 sort_column: sortColumn,
                 sort_order: sortOrder,
                 content_type: validContentType,
-                selected_columns: JSON.stringify(selectedColumnValues)
+                selected_columns: JSON.stringify(selectedColumnValues),
+                filter_logic: savedFilterLogic
+            });
+        } else {
+            updateContent('{{ url_for('database.index') }}', {
+                content_type: currentContentType || 'movie',
+                letter: currentLetter || 'A',
+                filter_logic: 'AND'
             });
         }
     }
@@ -424,52 +470,28 @@ document.addEventListener('DOMContentLoaded', function() {
             const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
                 column: row.querySelector('.filter-column').value,
                 operator: row.querySelector('.filter-operator').value,
-                value: row.querySelector('.filter-value').value
-            })).filter(f => f.column && f.value);
+                value: row.querySelector('.filter-value')?.value || ''
+            })).filter(f => f.column);
 
             const sortColumn = document.getElementById('sort-column').value;
             const sortOrder = document.getElementById('sort-order').value;
+            const filterLogic = document.querySelector('input[name="filter_logic"]:checked').value;
 
-            // If no filters and no sort settings, reset to default state
-            if (filters.length === 0 && !sortColumn) {
-                // Set default content type and letter
-                currentContentType = 'movie';
-                currentLetter = 'A';
-
-                // Update UI to reflect default selections
-                document.querySelectorAll('.content-type-link').forEach(link => {
-                    if (link.getAttribute('data-content-type') === 'movie') {
-                        link.classList.add('active');
-                    } else {
-                        link.classList.remove('active');
-                    }
-                });
-
-                document.querySelectorAll('.pagination-link').forEach(link => {
-                    if (link.getAttribute('data-letter') === 'A') {
-                        link.classList.add('active');
-                    } else {
-                        link.classList.remove('active');
-                    }
-                });
-
-                // Save the content type to localStorage
-                localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
-
-                // Update content with default settings
+            if (filters.length === 0 && !sortColumn && filterLogic === 'AND') {
                 updateContent('{{ url_for('database.index') }}', {
                     content_type: 'movie',
-                    letter: 'A'
+                    letter: 'A',
+                    filter_logic: 'AND'
                 });
                 return;
             }
 
-            // Otherwise proceed with normal filter/sort application
             const params = {
                 filters: JSON.stringify(filters),
                 sort_column: sortColumn,
                 sort_order: sortOrder,
-                content_type: currentContentType || 'movie'  // Always include content_type
+                content_type: currentContentType || 'movie',
+                filter_logic: filterLogic
             };
 
             saveSettings();
@@ -479,15 +501,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Modify clear filter function
     function clearFilterAndSort() {
-        // Clear localStorage settings
         localStorage.removeItem(STORAGE_KEYS.FILTERS);
         localStorage.removeItem(STORAGE_KEYS.SORT_COLUMN);
         localStorage.removeItem(STORAGE_KEYS.SORT_ORDER);
-        
-        // Clear all filters
+        localStorage.removeItem(STORAGE_KEYS.FILTER_LOGIC);
+
         document.getElementById('filters-container').innerHTML = '';
         
-        // Reset sort inputs
         const sortColumn = document.getElementById('sort-column');
         const sortOrder = document.getElementById('sort-order');
         if (sortColumn) {
@@ -497,14 +517,11 @@ document.addEventListener('DOMContentLoaded', function() {
             sortOrder.value = 'asc';
         }
 
-        // Set default content type to 'movie' and letter to 'A'
         currentContentType = 'movie';
         currentLetter = 'A';
         
-        // Save the content type to localStorage
         localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
 
-        // Update UI to reflect default selections
         const contentTypeLinks = document.querySelectorAll('.content-type-link');
         contentTypeLinks.forEach(function(link) {
             if (link.getAttribute('data-content-type') === 'movie') {
@@ -523,10 +540,10 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        // Update the content with default settings
         updateContent("{{ url_for('database.index') }}", {
             content_type: 'movie',
-            letter: 'A'
+            letter: 'A',
+            filter_logic: 'AND'
         });
     }
 
@@ -575,6 +592,19 @@ document.addEventListener('DOMContentLoaded', function() {
             display: flex;
             gap: 1rem;
             align-items: center;
+        }
+        .filter-logic-section {
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .filter-logic-section label {
+            margin-right: 0.5rem;
+        }
+        .filter-logic-section input[type="radio"] {
+            margin-right: 0.25rem;
         }
     `;
     document.head.appendChild(style);
@@ -761,7 +791,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const params = {
                 selected_columns: JSON.stringify(selectedColumnValues),
                 content_type: currentContentType,
-                letter: currentLetter
+                letter: currentLetter,
+                filter_logic: localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND'
             };
 
             // Get current filter and sort settings
@@ -805,6 +836,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table><thead><tr>';
         tableHTML += '<th>Select</th>';
+        tableHTML += '<th>Play</th>';
         tableHTML += '<th>Delete</th>';
         tableHTML += '<th>Rescrape</th>';
         selectedColumns.forEach(column => {
@@ -818,6 +850,7 @@ document.addEventListener('DOMContentLoaded', function() {
         items.forEach(item => {
             tableHTML += '<tr>';
             tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
+            tableHTML += `<td><a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">▶️</a></td>`;
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
             tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
             selectedColumns.forEach(column => {
@@ -862,6 +895,11 @@ document.addEventListener('DOMContentLoaded', function() {
         // Add default sort parameters if not present
         if (!params.sort_column) params.sort_column = '{{ sort_column }}';
         if (!params.sort_order) params.sort_order = '{{ sort_order }}';
+
+        // Add filter logic if not present
+        if (!params.filter_logic) {
+            params.filter_logic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
+        }
 
         // Add ajax parameter
         params.ajax = '1';
@@ -1005,21 +1043,34 @@ document.addEventListener('DOMContentLoaded', function() {
         if (sortOrder && data.sort_order) {
             sortOrder.value = data.sort_order;
         }
+
+        // Update filter logic radio buttons
+        const filterLogic = data.filter_logic || 'AND';
+        const logicRadio = document.querySelector(`input[name="filter_logic"][value="${filterLogic}"]`);
+        if (logicRadio) {
+            logicRadio.checked = true;
+        } else {
+            console.warn(`Unexpected filter_logic value received: ${data.filter_logic}. Defaulting to AND.`);
+            document.getElementById('filter-logic-and').checked = true;
+        }
     }
 
     function attachEventListeners() {
         document.querySelectorAll('.content-type-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                // Only proceed if clicking an inactive link
                 if (!this.classList.contains('active')) {
                     const newContentType = this.getAttribute('data-content-type');
-                    // Validate that it's a valid content type
                     if (newContentType === 'movie' || newContentType === 'episode') {
                         currentContentType = newContentType;
                         saveSettings();
-                        clearFilter();
-                        updateContent('{{ url_for('database.index') }}', { content_type: currentContentType });
+                        document.getElementById('filters-container').innerHTML = '';
+                        localStorage.removeItem(STORAGE_KEYS.FILTERS);
+
+                        updateContent('{{ url_for('database.index') }}', {
+                            content_type: currentContentType,
+                            filter_logic: localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND'
+                        });
                     } else {
                         console.error('Invalid content type:', newContentType);
                         showPopup({
@@ -1035,16 +1086,27 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.pagination-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                // Only proceed if clicking an inactive link
                 if (!this.classList.contains('active')) {
                     currentLetter = this.getAttribute('data-letter');
-                    clearFilter();
-                    updateContent('{{ url_for('database.index') }}', { 
+                    saveSettings();
+                    document.getElementById('filters-container').innerHTML = '';
+                    localStorage.removeItem(STORAGE_KEYS.FILTERS);
+
+                    updateContent('{{ url_for('database.index') }}', {
                         letter: currentLetter,
-                        content_type: (currentContentType === 'movie' || currentContentType === 'episode') 
-                            ? currentContentType 
-                            : 'movie'  
+                        content_type: (currentContentType === 'movie' || currentContentType === 'episode')
+                            ? currentContentType : 'movie',
+                        filter_logic: localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND'
                     });
+                }
+            });
+        });
+
+        document.querySelectorAll('input[name="filter_logic"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const filterForm = document.getElementById('filter-form');
+                if (filterForm) {
+                    filterForm.requestSubmit();
                 }
             });
         });
@@ -1195,13 +1257,6 @@ document.addEventListener('DOMContentLoaded', function() {
         .finally(() => {
             Loading.hide();
         });
-    }
-
-    function clearFilter() {
-        const filterColumn = document.getElementById('filter-column');
-        const filterValue = document.getElementById('filter-value');
-        if (filterColumn) filterColumn.value = '';
-        if (filterValue) filterValue.value = '';
     }
 
     // Add bulk action handlers
@@ -1545,72 +1600,32 @@ document.addEventListener('DOMContentLoaded', function() {
 
         showPopup({
             type: POPUP_TYPES.CONFIRM,
-            title: 'Confirm Bulk Rescrape',
-            message: `
-                <div>Are you sure you want to delete and rescrape ${selectedItems.length} item(s)?</div>
-                <div>This will delete all files from disk, remove them from Plex, and move the items to the Wanted queue for rescraping.</div>
-            `,
+            title: 'Confirm Rescrape',
+            message: 'Are you sure you want to delete these items and move them to the Wanted queue for rescraping? This will delete the files from disk and remove them from Plex.',
             confirmText: 'Delete & Rescrape',
             cancelText: 'Cancel',
             onConfirm: async () => {
-                Loading.show(`Processing ${selectedItems.length} items for rescraping...`);
-                let totalProcessed = 0;
-                let errors = [];
-
-                // Process items in smaller batches to avoid overwhelming the server
-                const BATCH_SIZE = 10;
-                for (let i = 0; i < selectedItems.length; i += BATCH_SIZE) {
-                    const batch = selectedItems.slice(i, i + BATCH_SIZE);
-                    const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-                    const totalBatches = Math.ceil(selectedItems.length / BATCH_SIZE);
-                    
-                    Loading.updateMessage(`Processing batch ${batchNumber}/${totalBatches}...`);
-
-                    // Process each item in the batch concurrently
-                    const batchResults = await Promise.allSettled(
-                        batch.map(itemId =>
-                            fetch('{{ url_for('debug.rescrape_item') }}', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({ item_id: itemId })
-                            }).then(response => response.json())
-                        )
-                    );
-
-                    // Process results
-                    batchResults.forEach((result, index) => {
-                        const itemId = batch[index];
-                        if (result.status === 'fulfilled' && result.value.success) {
-                            totalProcessed++;
-                        } else {
-                            const error = result.status === 'fulfilled' 
-                                ? result.value.error || 'Unknown error'
-                                : result.reason.message;
-                            errors.push(`Item ${itemId}: ${error}`);
-                        }
+                Loading.show();
+                try {
+                    const result = await processBatchedItems(selectedItems, 'delete');
+                    showPopup({
+                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: result.message,
+                        title: result.warning ? 'Partial Success' : 'Success',
                     });
-
-                    // Small delay between batches
-                    await new Promise(resolve => setTimeout(resolve, 100));
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } catch (error) {
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error',
+                    });
+                } finally {
+                    Loading.hide();
                 }
-
-                Loading.hide();
-
-                // Show results
-                showPopup({
-                    type: errors.length > 0 ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                    title: errors.length > 0 ? 'Partial Success' : 'Success',
-                    message: errors.length > 0
-                        ? `Processed ${totalProcessed}/${selectedItems.length} items with ${errors.length} errors. First few errors: ${errors.slice(0, 3).join('; ')}`
-                        : `Successfully processed ${totalProcessed} items`,
-                });
-
-                // Reload the page after a short delay
-                setTimeout(() => {
-                    window.location.reload();
-                }, 2000);
             },
         });
     });
@@ -1619,34 +1634,44 @@ document.addEventListener('DOMContentLoaded', function() {
     attachEventListeners();
     attachDeleteListeners();
     attachRescrapeListeners();
-});
 
-Loading.init();
+    // Reinitialize tooltips after initial load/updates
+    initializeDatabaseTooltips();
 
-// Stats panel functionality
-document.addEventListener('DOMContentLoaded', function() {
-    const statsPanel = document.querySelector('.stats-panel');
-    const statsToggle = document.querySelector('.stats-toggle');
-    
-    // Check if panel was open in previous session
-    const isPanelOpen = localStorage.getItem('statsPanelOpen') === 'true';
-    if (isPanelOpen) {
-        statsPanel.classList.add('active');
-    }
-    
-    statsToggle.addEventListener('click', function() {
-        statsPanel.classList.toggle('active');
-        // Save state to localStorage
-        localStorage.setItem('statsPanelOpen', statsPanel.classList.contains('active'));
-    });
-    
-    // Close panel when clicking outside
-    document.addEventListener('click', function(e) {
-        if (!statsPanel.contains(e.target) && !statsToggle.contains(e.target) && statsPanel.classList.contains('active')) {
-            statsPanel.classList.remove('active');
-            localStorage.setItem('statsPanelOpen', 'false');
+}); // End of main DOMContentLoaded listener for the module script
+</script>
+
+<script>
+    // Initialize loading overlay globally
+    Loading.init();
+
+    // Stats panel functionality (separate from the module script)
+    document.addEventListener('DOMContentLoaded', function() {
+        const statsPanel = document.querySelector('.stats-panel');
+        const statsToggle = document.querySelector('.stats-toggle');
+
+        // Check if panel was open in previous session
+        const isPanelOpen = localStorage.getItem('statsPanelOpen') === 'true';
+        if (isPanelOpen) {
+            statsPanel.classList.add('active');
         }
+
+        if (statsToggle && statsPanel) { // Ensure elements exist before adding listener
+            statsToggle.addEventListener('click', function() {
+                statsPanel.classList.toggle('active');
+                // Save state to localStorage
+                localStorage.setItem('statsPanelOpen', statsPanel.classList.contains('active'));
+            });
+        }
+
+        // Close panel when clicking outside
+        document.addEventListener('click', function(e) {
+            // Check if panel exists and is active before trying to close
+            if (statsPanel && statsPanel.classList.contains('active') && !statsPanel.contains(e.target) && statsToggle && !statsToggle.contains(e.target)) {
+                statsPanel.classList.remove('active');
+                localStorage.setItem('statsPanelOpen', 'false');
+            }
+        });
     });
-});
 </script>
 {% endblock %}

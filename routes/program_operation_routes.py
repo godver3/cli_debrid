@@ -758,28 +758,51 @@ def disable_task():
 @program_operation_bp.route('/save_task_toggles', methods=['POST'])
 @admin_required
 def save_task_toggles():
-    """Save the current state of task toggles to a JSON file."""
+    """Save the current state of task toggles to a JSON file, preserving metadata."""
+    MIGRATION_VERSION_KEY = "_migration_version"
     try:
-        import os
-        import json
-        
         # Get task states from request
         data = request.json
         if not data or 'task_states' not in data:
             return jsonify({'success': False, 'error': 'No task states provided'})
         
-        task_states = data['task_states']
-        
-        # Get the user_db_content directory from environment variable
+        new_task_states = data['task_states']
+        if not isinstance(new_task_states, dict):
+             return jsonify({'success': False, 'error': 'task_states must be an object'})
+
+        # Get the file path
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
         
-        # Save to JSON file
-        with open(toggles_file_path, 'w') as f:
-            json.dump(task_states, f, indent=4)
-        
-        logging.info(f"Task toggle states saved to {toggles_file_path}")
-        return jsonify({'success': True, 'message': 'Task toggle states saved successfully'})
+        current_data = {}
+        migration_version = None
+
+        # Read existing file to preserve metadata
+        if os.path.exists(toggles_file_path):
+            try:
+                with open(toggles_file_path, 'r') as f:
+                    current_data = json.load(f)
+                    if isinstance(current_data, dict) and MIGRATION_VERSION_KEY in current_data:
+                        migration_version = current_data[MIGRATION_VERSION_KEY]
+            except (json.JSONDecodeError, OSError) as e:
+                logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
+                # Proceed with saving new state, potentially losing metadata
+
+        # Prepare data to save: merge new states with preserved metadata
+        data_to_save = new_task_states.copy() # Start with the new states
+        if migration_version is not None:
+            data_to_save[MIGRATION_VERSION_KEY] = migration_version # Add back the metadata tag
+
+        # Save the combined data to JSON file
+        try:
+            with open(toggles_file_path, 'w') as f:
+                json.dump(data_to_save, f, indent=4)
+            logging.info(f"Task toggle states saved to {toggles_file_path}")
+            return jsonify({'success': True, 'message': 'Task toggle states saved successfully'})
+        except OSError as e:
+             logging.error(f"Error writing task toggles file: {str(e)}")
+             return jsonify({'success': False, 'error': f"Failed to write file: {str(e)}"})
+
     except Exception as e:
         logging.error(f"Error saving task toggles: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})

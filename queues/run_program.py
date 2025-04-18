@@ -245,6 +245,10 @@ class ProgramRunner:
             'task_update_tv_show_status',
             # NEW Load Adjustment Task
             'task_adjust_intervals_for_load',
+            # --- START EDIT: Add 'task_verify_plex_removals' back to default set ---
+            # 'task_plex_full_scan', # Removed from default set
+            'task_verify_plex_removals' # Added back to default set
+            # --- END EDIT ---
         }
         logging.info("Initialized base enabled tasks.")
 
@@ -267,8 +271,10 @@ class ProgramRunner:
                 for task_name, enabled in saved_states.items():
                     normalized_name = self._normalize_task_name(task_name)
                     # Check if the task from the JSON file actually exists in our defined intervals
-                    if normalized_name not in self.task_intervals:
-                        logging.warning(f"Task '{normalized_name}' found in task_toggles.json but not defined in task_intervals. Skipping toggle.")
+                    # --- START EDIT: Check against original_task_intervals which is more complete early on ---
+                    if normalized_name not in self.original_task_intervals and normalized_name not in self.task_intervals:
+                    # --- END EDIT ---
+                        logging.warning(f"Task '{normalized_name}' found in task_toggles.json but not defined in task_intervals/original_task_intervals. Skipping toggle.")
                         continue
 
                     if enabled:
@@ -290,6 +296,25 @@ class ProgramRunner:
         logging.info("Content source processing complete.")
 
         # 4. Apply remaining get_setting() checks for specific tasks
+        # --- START EDIT: Add file_collection_management check before other settings ---
+        file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local') # Default for safety
+        logging.info(f"File management mode: {file_management_mode}")
+
+        # Enable 'task_plex_full_scan' only if mode is NOT Symlinked/Local
+        # Check against toggle state first
+        plex_scan_task = 'task_plex_full_scan'
+        is_plex_scan_toggled_off = saved_states.get(self._normalize_task_name(plex_scan_task), True) is False
+        if file_management_mode != 'Symlinked/Local':
+            if not is_plex_scan_toggled_off and plex_scan_task not in self.enabled_tasks:
+                self.enabled_tasks.add(plex_scan_task)
+                logging.info(f"Enabled '{plex_scan_task}' as mode is not Symlinked/Local and not toggled off.")
+        else:
+            # Ensure it's disabled if mode IS Symlinked/Local, unless manually toggled ON
+            is_plex_scan_toggled_on = saved_states.get(self._normalize_task_name(plex_scan_task), False) is True
+            if plex_scan_task in self.enabled_tasks and not is_plex_scan_toggled_on:
+                self.enabled_tasks.remove(plex_scan_task)
+                logging.info(f"Disabled '{plex_scan_task}' as mode is Symlinked/Local and not toggled on.")
+
         if get_setting('File Management', 'file_collection_management') == 'Plex':
             # Enable Plex file checking if either setting is true and not explicitly disabled by toggle
             if get_setting('Plex', 'update_plex_on_file_discovery') or get_setting('Plex', 'disable_plex_library_checks'):
@@ -310,29 +335,31 @@ class ProgramRunner:
                       logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
 
         if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-             # Enable symlink/removal tasks if configured and not toggled off
+             # Enable symlink task if configured and not toggled off (Removal task handled above)
             if get_setting('File Management', 'plex_url_for_symlink') and get_setting('File Management', 'plex_token_for_symlink'):
                 symlink_task = 'task_verify_symlinked_files'
-                removal_task = 'task_verify_plex_removals'
                 is_symlink_toggled_off = saved_states.get(self._normalize_task_name(symlink_task), True) is False
-                is_removal_toggled_off = saved_states.get(self._normalize_task_name(removal_task), True) is False
+                # --- START EDIT: Removed reference to removal_task toggle check here ---
+                # is_removal_toggled_off = saved_states.get(self._normalize_task_name(removal_task), True) is False
+                # --- END EDIT ---
 
                 if not is_symlink_toggled_off and symlink_task not in self.enabled_tasks:
                     self.enabled_tasks.add(symlink_task)
                     logging.info("Enabled symlink verification task based on settings.")
-                if not is_removal_toggled_off and removal_task not in self.enabled_tasks:
-                    self.enabled_tasks.add(removal_task)
-                    logging.info("Enabled Plex removal verification task based on settings.")
             else:
                  # Disable if settings are off and not toggled on
                  is_symlink_toggled_on = saved_states.get(self._normalize_task_name('task_verify_symlinked_files'), False) is True
-                 is_removal_toggled_on = saved_states.get(self._normalize_task_name('task_verify_plex_removals'), False) is True
+                 # --- START EDIT: Removed reference to removal_task toggle check here ---
+                 # is_removal_toggled_on = saved_states.get(self._normalize_task_name('task_verify_plex_removals'), False) is True
+                 # --- END EDIT ---
                  if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
                      self.enabled_tasks.remove('task_verify_symlinked_files')
                      logging.info("Disabled symlink verification task as settings are off.")
-                 if 'task_verify_plex_removals' in self.enabled_tasks and not is_removal_toggled_on:
-                     self.enabled_tasks.remove('task_verify_plex_removals')
-                     logging.info("Disabled Plex removal verification task as settings are off.")
+                 # --- START EDIT: Removed removal task disable logic here (handled above) ---
+                 # if 'task_verify_plex_removals' in self.enabled_tasks and not is_removal_toggled_on:
+                 #     self.enabled_tasks.remove('task_verify_plex_removals')
+                 #     logging.info("Disabled Plex removal verification task as settings are off.")
+                 # --- END EDIT ---
 
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
