@@ -1708,3 +1708,47 @@ body.modal-open {
         justify-content: center;
     }
 }
+
+/* START EDIT: Modify Pause Status Banner Styles for Bottom Position */
+.pause-status-banner {
+    background-color: #ffc107; /* Warning color */
+    color: #333; /* Dark text for contrast */
+    padding: 8px 15px;
+    text-align: center;
+    font-weight: bold;
+    position: fixed;
+    /* top: 50px; */ /* Remove top positioning */
+    bottom: 0; /* Position at the bottom */
+    left: 0;
+    right: 0;
+    z-index: 999; /* Ensure it's above most content but below modals if needed */
+    box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.2); /* Shadow on the top edge */
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    transform: translateY(0); /* Start in visible position */
+    opacity: 1;
+    font-size: 0.9em;
+    height: 30px; /* Fixed height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px 8px 0 0; /* Round top corners */
+}
+
+.pause-status-banner.hidden {
+    transform: translateY(100%); /* Slide down when hidden */
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Remove body padding adjustment as banner is now at the bottom */
+/* body.has-visible-section {
+    padding-top: 80px; 
+} */
+
+/* Remove mobile padding adjustment */
+/* @media (max-width: 1045px) {
+    body.has-visible-section {
+        padding-top: 80px !important; 
+    }
+} */
+/* END EDIT */

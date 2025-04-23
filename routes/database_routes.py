@@ -16,12 +16,14 @@ from time import sleep
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from database.torrent_tracking import get_torrent_history
 from utilities.web_scraper import get_media_meta
+from queues.config_manager import get_content_source_display_names
+# import math # Removed unused import
 database_bp = Blueprint('database', __name__)
 
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
-    # Initialize data dictionary with default values
+    # Initialize data dictionary with default values (removed pagination fields)
     data = {
         'items': [],
         'all_columns': [],
@@ -32,7 +34,7 @@ def index():
         'alphabet': list(string.ascii_uppercase),
         'current_letter': 'A',
         'content_type': 'movie',
-        'filter_logic': 'AND', # Default filter logic
+        'filter_logic': 'AND',
         'column_values': {},
         'operators': [
             {'value': 'contains', 'label': 'Contains'},
@@ -42,9 +44,11 @@ def index():
             {'value': 'ends_with', 'label': 'Ends With'},
             {'value': 'greater_than', 'label': 'Greater Than'},
             {'value': 'less_than', 'label': 'Less Than'},
-            {'value': 'is_null', 'label': 'Is Null'},        # Added
-            {'value': 'is_not_null', 'label': 'Is Not Null'} # Added
-        ]
+            {'value': 'is_null', 'label': 'Is Null'},
+            {'value': 'is_not_null', 'label': 'Is Not Null'}
+        ],
+        'content_source_display_map': {}
+        # Removed 'page', 'per_page', 'total_items', 'total_pages'
     }
 
     # Get collection counts
@@ -55,6 +59,14 @@ def index():
         'total_shows': counts['total_shows'],
         'total_episodes': counts['total_episodes']
     }
+
+    # Get content source display names mapping
+    try:
+        content_source_display_map = get_content_source_display_names()
+        data['content_source_display_map'] = content_source_display_map
+    except Exception as e:
+        logging.error(f"Error fetching content source display names: {e}")
+        content_source_display_map = {}
 
     conn = None
     try:
@@ -70,7 +82,7 @@ def index():
         # Define the default columns
         default_columns = [
             'imdb_id', 'title', 'year', 'release_date', 'state', 'type',
-            'season_number', 'episode_number', 'collected_at', 'version'
+            'season_number', 'episode_number', 'collected_at', 'version', 'content_source'
         ]
 
         # Get or set selected columns
@@ -133,7 +145,16 @@ def index():
 
         # Construct the SQL query
         query_columns = list(set(selected_columns + ['id']))
-        query = f"SELECT {', '.join(query_columns)} FROM media_items"
+        # Ensure 'content_source' is always fetched if it's selected or used for filtering/display
+        if 'content_source' in selected_columns or any(f.get('column') == 'content_source' for f in filters):
+             if 'content_source' not in query_columns:
+                 query_columns.append('content_source')
+
+        # Create the comma-separated list of quoted columns first
+        columns_quoted_str = ', '.join([f'"{col}"' for col in query_columns])
+        # Now use this string in the main f-string
+        query = f"SELECT {columns_quoted_str} FROM media_items"
+
         where_clauses = []
         params = []
 
@@ -142,10 +163,28 @@ def index():
             for filter_item in filters:
                 column = filter_item.get('column')
                 raw_value = filter_item.get('value')
-                value = raw_value # Keep empty string as is
                 operator = filter_item.get('operator', 'contains')
 
+                # Special handling for content_source filtering (filter by ID)
+                if column == 'content_source' and column in all_columns:
+                    value = raw_value # The value from the filter dropdown IS the source_id
+                    if operator == 'equals':
+                        where_clauses.append(f'"{column}" = ?')
+                        params.append(value)
+                    elif operator == 'not_equals':
+                        # Need to handle NULLs correctly if 'None' is a selectable option
+                        if value == "None":
+                            where_clauses.append(f'"{column}" IS NOT NULL')
+                        else:
+                            where_clauses.append(f'("{column}" IS NULL OR "{column}" != ?)')
+                            params.append(value)
+                    # Add other operators for content_source if needed, filtering by ID
+                    continue # Skip default filter processing for content_source
+
+                # --- Keep existing filter logic for other columns ---
                 if column and column in all_columns:
+                    value = raw_value # Keep empty string as is
+
                     # Handle operators that don't need a value first
                     if operator == 'is_null':
                         where_clauses.append(f'"{column}" IS NULL')
@@ -155,7 +194,6 @@ def index():
                         continue # Skip value processing for IS NOT NULL
 
                     # Proceed with operators requiring a value (or specific handling for "None")
-                    # Special handling for "None" string with equals/not_equals
                     if value == "None" and operator == 'equals':
                         where_clauses.append(f'("{column}" IS NULL OR "{column}" = ? OR "{column}" = ?)')
                         params.extend(['', 'None'])
@@ -185,7 +223,6 @@ def index():
                                 where_clauses.append(f'"{column}" LIKE ?')
                                 params.append(f"{value}%")
                             elif operator == 'ends_with':
-                                # Corrected ends_with: LIKE %value, not %value%
                                 where_clauses.append(f'"{column}" LIKE ?')
                                 params.append(f"%{value}")
                             elif operator == 'greater_than':
@@ -202,23 +239,29 @@ def index():
                                 except (ValueError, TypeError):
                                     where_clauses.append(f'"{column}" < ?')
                                     params.append(value)
+            # --- End existing filter logic ---
 
             # Combine filter clauses based on the selected logic
             if where_clauses:
                 filter_combination_operator = f" {filter_logic} "
                 query += " WHERE (" + filter_combination_operator.join(where_clauses) + ")" # Group filters
-                content_type = 'all' # Reset content type/letter if specific filters are applied
-                current_letter = ''
+                # If filters are applied, don't reset content_type/letter if they were also specified
+                if 'content_type' not in request.args:
+                    content_type = 'all'
+                if 'letter' not in request.args:
+                    current_letter = ''
         # Apply content type and letter filters only if no column filters were specified
         else:
             non_filter_clauses = []
             if content_type != 'all':
-                non_filter_clauses.append("type = ?")
+                non_filter_clauses.append("\"type\" = ?") # Quote column name
                 params.append(content_type)
 
             if current_letter:
                 if current_letter == '#':
-                    non_filter_clauses.append("(title LIKE '0%' OR title LIKE '1%' OR title LIKE '2%' OR title LIKE '3%' OR title LIKE '4%' OR title LIKE '5%' OR title LIKE '6%' OR title LIKE '7%' OR title LIKE '8%' OR title LIKE '9%' OR title LIKE '[%' OR title LIKE '(%' OR title LIKE '{%')")
+                    numeric_likes = " OR ".join([f"title LIKE '{i}%'" for i in range(10)])
+                    symbol_likes = " OR ".join([f"title LIKE '{s}%'" for s in ['[', '(', '{']])
+                    non_filter_clauses.append(f"({numeric_likes} OR {symbol_likes})")
                 elif current_letter.isalpha():
                     non_filter_clauses.append("title LIKE ?")
                     params.append(f"{current_letter}%")
@@ -227,7 +270,7 @@ def index():
                 query += " WHERE " + " AND ".join(non_filter_clauses) # Always AND for type/letter
 
         # Construct the ORDER BY clause safely
-        order_clause = f"ORDER BY {sort_column} {sort_order}"
+        order_clause = f"ORDER BY \"{sort_column}\" {sort_order}" # Quote column name
         query += f" {order_clause}"
 
         # Log the query and parameters for debugging
@@ -242,29 +285,49 @@ def index():
         logging.debug(f"Fetched {len(items)} items from the database")
 
         # Convert items to a list of dictionaries, always including 'id'
-        items = [dict(zip(query_columns, item)) for item in items]
+        items_dict_list = [dict(zip(query_columns, item)) for item in items]
+
+        # --- BEGIN Replace content_source ID with display name ---
+        if 'content_source' in query_columns:
+            for item_dict in items_dict_list:
+                source_id = item_dict.get('content_source')
+                # Use the map to get the display name, fallback to the ID itself
+                item_dict['content_source'] = content_source_display_map.get(source_id, source_id)
+        # --- END Replace content_source ID with display name ---
 
         # Get unique values for each column for filter dropdowns
         column_values = {}
         for column in all_columns:
-            # Only fetch distinct values for specific columns to avoid large queries
-            if column in ['state', 'type', 'version']:
-                cursor.execute(f"SELECT DISTINCT {column} FROM media_items ORDER BY {column}")
-                # Convert Python None to string "None" for frontend representation
+            # Special handling for content_source: use display map
+            if column == 'content_source':
+                 # We provide the map separately; don't query distinct values
+                 # But we might want to know *which* source IDs are *actually* present
+                 # to only show relevant filter options. Let's query distinct IDs.
+                try:
+                    cursor.execute(f"SELECT DISTINCT \"{column}\" FROM media_items WHERE \"{column}\" IS NOT NULL")
+                    distinct_source_ids = [row[0] for row in cursor.fetchall()]
+                    # Store the actual IDs present for the frontend filter logic
+                    column_values[column] = distinct_source_ids
+                except Exception as e:
+                    logging.error(f"Error fetching distinct content_source IDs: {e}")
+                    column_values[column] = [] # Fallback to empty list
+            elif column in ['state', 'type', 'version']: # Keep existing logic for others
+                cursor.execute(f"SELECT DISTINCT \"{column}\" FROM media_items ORDER BY \"{column}\"") # Quote column names
                 values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
                 column_values[column] = values
 
         # Update data dictionary instead of creating new one
         data.update({
-            'items': items,
+            'items': items_dict_list, # Use the modified list
             'selected_columns': selected_columns,
             'filters': filters,
             'sort_column': sort_column,
             'sort_order': sort_order,
             'current_letter': current_letter,
             'content_type': content_type,
-            'filter_logic': filter_logic, # Pass logic back to template
+            'filter_logic': filter_logic,
             'column_values': column_values,
+            # content_source_display_map is already in data
         })
 
         if request.args.get('ajax') == '1':

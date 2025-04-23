@@ -233,6 +233,18 @@ SETTINGS_SCHEMA = {
             "description": "Number of times to wake items before blacklisting",
             "default": "24"
         },
+        "sleep_duration_minutes": {
+             "type": "integer",
+             "description": "Duration in minutes an item sleeps before the next wake attempt",
+             "default": 30,
+             "min": 1
+         },
+        "blacklist_final_scrape_delay_hours": {
+            "type": "integer",
+            "description": "Hours to wait before performing one final scrape attempt after an item would normally be blacklisted. Set to 0 to disable.",
+            "default": 0,
+            "min": 0
+        },
         "movie_airtime_offset": {
             "type": "string",
             "description": "Hours after midnight to start scraping for new movies",
@@ -264,6 +276,18 @@ SETTINGS_SCHEMA = {
             "description": "End time for scheduled queue pause (HH:MM format)",
             "default": "00:00",
             "validate": "time"  # Assuming a validation function for time exists or will be added
+        },
+        "main_loop_sleep_seconds": {
+            "type": "float",
+            "description": "Minimum sleep time (in seconds) for the main program loop. Higher values reduce CPU usage but might slightly delay task checks. Default: 5.0.",
+            "default": 5.0,
+            "min": 0.1
+        },
+        "item_process_delay_seconds": {
+            "type": "float",
+            "description": "Artificial delay (in seconds) after processing each item in Scraping/Adding queues to reduce peak CPU usage. Default: 0.0 (no delay).",
+            "default": 0.0,
+            "min": 0.0
         }
     },
     "Scraping": {
@@ -678,6 +702,17 @@ SETTINGS_SCHEMA = {
             "description": "Emby or Jellyfin API key/token for authentication",
             "default": "",
             "sensitive": True
+        },
+        "enable_tracemalloc": {
+            "type": "boolean",
+            "description": "Enable Python's tracemalloc for detailed memory usage tracking per task. Adds overhead, use only for debugging memory leaks.",
+            "default": False
+        },
+        "tracemalloc_sample_rate": {
+            "type": "integer",
+            "description": "Sample rate for tracemalloc (1 in X tasks). Lower values give more frequent data but increase overhead significantly. Default: 100.",
+            "default": 100,
+            "min": 1
         },
     },
     "Scrapers": {

@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 from utilities.post_processing import handle_state_change
 from cli_battery.app.direct_api import DirectAPI
 import sqlite3
+import time
 
 def add_collected_items(media_items_batch, recent=False):
     from routes.debug_routes import move_item_to_wanted
@@ -188,8 +189,13 @@ def add_collected_items(media_items_batch, recent=False):
 
         # --- End Pre-fetch Airtime Logic ---
 
-        for item in filtered_media_items_batch:
+        logging.info(f"Starting processing of {len(filtered_media_items_batch)} filtered media items.")
+        start_time_batch = time.time()
+
+        for index, item in enumerate(filtered_media_items_batch):
             item_identifier = generate_identifier(item)
+            start_time_item = time.time()
+            logging.debug(f"Processing item {index + 1}/{len(filtered_media_items_batch)}: {item_identifier}")
             try:
                 locations = item.get('location', [])
                 if isinstance(locations, str):
@@ -222,6 +228,7 @@ def add_collected_items(media_items_batch, recent=False):
                     if filename in existing_file_map:
                         existing_item = existing_file_map[filename]
                         item_id = existing_item['id']
+                        logging.debug(f"Item {item_identifier} (ID: {item_id}) exists in DB. State: {existing_item['state']}")
                         
                         if existing_item['state'] not in ['Collected', 'Upgrading']:
                             if existing_item['release_date'] in ['Unknown', 'unknown', 'None', 'none', None, '']:
@@ -292,27 +299,38 @@ def add_collected_items(media_items_batch, recent=False):
                                   location, is_upgrade, item.get('resolution'), item_id))
 
                             # Add post-processing call after state update
+                            start_handle_state = time.time()
                             if new_state == 'Collected':
                                 handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()))
                             elif new_state == 'Upgrading':
                                 handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()))
+                            logging.debug(f"handle_state_change for item {item_id} took {time.time() - start_handle_state:.4f} seconds.")
 
-                            if not existing_item.get('collected_at'):
-                                cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
-                                updated_item = cursor.fetchone()
-                                cursor.close()
-                                
+                            cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
+                            updated_item = cursor.fetchone()
+                            cursor.close()
+                            
+                            if updated_item: # Ensure we got the updated item
                                 updated_item_dict = dict(updated_item)
-                                updated_item_dict['is_upgrade'] = is_upgrade
+                                updated_item_dict['is_upgrade'] = is_upgrade # Pass the upgrade flag
                                 if is_upgrade:
-                                    notification_state = 'Upgraded'
+                                    notification_state = 'Upgraded' # Set state for notification if upgrade
                                 else:
-                                    notification_state = 'Collected'
-                                updated_item_dict['new_state'] = notification_state
-                                updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at', existing_item.get('collected_at', collected_at))
+                                    notification_state = 'Collected' # Otherwise, it's collected
+                                updated_item_dict['new_state'] = notification_state # Add the determined state
+                                # Ensure original_collected_at is set correctly for the notification context
+                                updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at') or existing_item.get('collected_at') or collected_at
+                                start_notification_time = time.time()
                                 add_to_collected_notifications(updated_item_dict)
+                                logging.debug(f"add_to_collected_notifications for item {item_id} took {time.time() - start_notification_time:.4f} seconds.")
+                            else:
+                                logging.warning(f"Could not fetch updated item with ID {item_id} after update for notification.")
+                        else:
+                             logging.debug(f"Item {item_identifier} (ID: {item_id}) is already '{existing_item['state']}'. Skipping state update and notification.")
 
                     else:
+                        # --- NEW ITEM INSERT ---
+                        start_insert_time = time.time()
                         parsed_info = parser_approximation(filename)
                         version = parsed_info['version']
 
@@ -345,12 +363,20 @@ def add_collected_items(media_items_batch, recent=False):
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
                                 datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), location, False, item.get('country', '').lower(), item.get('resolution')
                             ))
+                        logging.debug(f"Inserting new item {item_identifier} took {time.time() - start_insert_time:.4f} seconds.")
 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
                 continue
+            finally:
+                logging.debug(f"Finished processing item {item_identifier} in {time.time() - start_time_item:.4f} seconds.")
 
+        logging.info(f"Finished processing main batch loop in {time.time() - start_time_batch:.4f} seconds.")
+
+        # --- Post-loop cleanup ---
         if not recent:
+            logging.info("Starting post-loop cleanup for missing files.")
+            start_cleanup_time = time.time()
             cursor = conn.execute('''
                 SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
                 FROM media_items
@@ -403,6 +429,7 @@ def add_collected_items(media_items_batch, recent=False):
                             WHERE id = ?
                         ''', (item['id'],))
             cursor.close()
+            logging.info(f"Finished post-loop cleanup in {time.time() - start_cleanup_time:.4f} seconds.")
 
         conn.commit()
     except Exception as e:

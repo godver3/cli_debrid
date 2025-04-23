@@ -951,10 +951,12 @@ document.addEventListener('DOMContentLoaded', function() {
                                 } else {
                                     throw new Error(verifyData.error || 'Invalid Plex token');
                                 }
-                            } else if (pollData.error) {
+                            } else if (pollData.error && pollData.error !== 'waiting_for_auth') {
+                                // Only treat errors other than 'waiting_for_auth' as terminal
                                 clearInterval(pollInterval);
                                 throw new Error(pollData.error);
                             }
+                            // If pollData.error is 'waiting_for_auth', we simply continue polling
                         } catch (error) {
                             clearInterval(pollInterval);
                             console.error('Error during polling:', error);

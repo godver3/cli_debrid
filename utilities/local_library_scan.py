@@ -33,7 +33,6 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         item_episode_log = item.get('episode_number', '[Unknown Episode]')
         item_version_log = item.get('version', '[Unknown Version]')
         logging.info(f"[SymlinkPath] Generating path for: Title='{item_title_log}', Type={item_type_log}, S={item_season_log}, E={item_episode_log}, Version='{item_version_log}'")
-        logging.debug(f"[SymlinkPath] Full item data received: {item}")
         logging.debug(f"[SymlinkPath] Original file received: {original_file}")
         # --- END Enhanced Logging ---
         

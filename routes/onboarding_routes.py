@@ -263,11 +263,17 @@ def onboarding_step(step):
     elif step_num == 4:
         config = load_config()
         can_proceed = 'Content Sources' in config and bool(config['Content Sources'])
+        # Get the dictionary of version configurations
+        versions_dict = config.get('Scraping', {}).get('versions', {})
+        # Extract the names (keys) into a list
+        configured_versions = list(versions_dict.keys())
         return render_template('onboarding_step_4.html', 
                                current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
-                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
+                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, 
+                               configured_versions=configured_versions,
+                               is_onboarding=True)
 
     elif step_num == 5:
         # Library Management step
@@ -301,8 +307,11 @@ def update_can_proceed():
     step = data.get('step')
     can_proceed = data.get('can_proceed')
     
-    if step in [1, 2, 3, '3a', 4]:
-        session[f'onboarding_step_{step}_can_proceed'] = can_proceed
+    # Convert step to string to match the check list
+    step_str = str(step)
+    
+    if step_str in ['1', '2', '3', '3a', '4', '5']:
+        session[f'onboarding_step_{step_str}_can_proceed'] = can_proceed
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Invalid step'}), 400
@@ -377,7 +386,26 @@ def add_onboarding_content_source():
     if not source_type or not source_config:
         return jsonify({'success': False, 'error': 'Invalid content source data'}), 400
 
+    # --- Convert versions list to dictionary format --- START
+    # if 'versions' in source_config:
+    #     if isinstance(source_config['versions'], list):
+    #         source_config['versions'] = {v: True for v in source_config['versions']}
+    #     elif not isinstance(source_config['versions'], dict):
+    #         # Import logging if not already imported at the top
+    #         import logging 
+    #         logging.warning(f"Onboarding: Invalid 'versions' format for {source_type}: {source_config['versions']}. Resetting to empty dict.")
+    #         source_config['versions'] = {}
+    # --- Convert versions list to dictionary format --- END
+
     try:
+        # Ensure 'versions' is present and is a list if it exists in source_config
+        if 'versions' in source_config and not isinstance(source_config['versions'], list):
+             # If it's not a list (e.g., the frontend somehow sent it wrong),
+             # default to an empty list or handle error as appropriate.
+             # For now, let's ensure it's at least an empty list if present but not list.
+             logging.warning(f"Onboarding: Received non-list 'versions' for {source_type}. Ensuring list format.")
+             source_config['versions'] = list(source_config.get('versions', [])) # Attempt conversion or default
+
         new_source_id = add_content_source(source_type, source_config)
         
         # Mark onboarding as complete
@@ -388,6 +416,9 @@ def add_onboarding_content_source():
 
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
+        # Log the error including traceback for better debugging
+        import traceback
+        logging.error(f"Error in add_onboarding_content_source: {str(e)}\\n{traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/content_sources/get', methods=['GET'])

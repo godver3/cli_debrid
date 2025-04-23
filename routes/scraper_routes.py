@@ -171,6 +171,14 @@ def add_torrent_to_debrid():
         version = request.form.get('version')
         tmdb_id = request.form.get('tmdb_id')
         original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
+        # --- START EDIT: Get current_score from form data ---
+        current_score_str = request.form.get('current_score', '0') # Default to '0'
+        try:
+            current_score = float(current_score_str)
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid current_score value received: '{current_score_str}'. Defaulting to 0.")
+            current_score = 0.0
+        # --- END EDIT ---
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
 
@@ -427,7 +435,8 @@ def add_torrent_to_debrid():
                     'filled_by_file': filled_by_file,
                     'original_scraped_torrent_title': original_scraped_torrent_title,
                     'release_date': release_date,
-                    'genres': json.dumps(genres)  # JSON encode the genres list
+                    'genres': json.dumps(genres),  # JSON encode the genres list
+                    'current_score': current_score
                 }
 
                 # Add TV show specific fields if this is a TV show
@@ -457,6 +466,7 @@ def add_torrent_to_debrid():
                                 # Create episode-specific item
                                 episode_item = item.copy()
                                 episode_item['episode_number'] = episode_num
+                                episode_item['current_score'] = current_score # Use the score passed for the pack
                                 
                                 # Get episode-specific release date and title
                                 first_aired = episode_data.get('first_aired')
@@ -1219,6 +1229,9 @@ def check_cache_status():
                         try:
                             cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
                             logging.debug(f"Found cache status in PhalanxDB for hash {torrent_hash}: {cache_status}")
+                            # If found in PhalanxDB, return early (assuming PhalanxDB is reliable)
+                            if cache_status is not None:
+                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
                         except Exception as e:
                             logging.error(f"Error checking PhalanxDB cache: {str(e)}")
                 
@@ -1230,10 +1243,12 @@ def check_cache_status():
                         file_hash = f"FILE_HASH_{hashlib.sha1(file_param.encode()).hexdigest()}"
                         
                         # Check if this file hash is already cached
-                        cache_status = cache_manager.get_cache_status(file_hash)
-                        if cache_status is not None:
-                            logging.debug(f"File hash {file_hash} found in cache with status: {cache_status}")
-                            return jsonify({'status': 'cached' if cache_status['is_cached'] else 'not_cached', 'index': index}), 200
+                        # Add check for cache_manager being None
+                        if cache_manager: 
+                            cache_status = cache_manager.get_cache_status(file_hash)
+                            if cache_status is not None:
+                                logging.debug(f"File hash {file_hash} found in cache with status: {cache_status}")
+                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
             
             elif torrent_url:
                 # Try to get hash from torrent URL
@@ -1245,6 +1260,9 @@ def check_cache_status():
                         try:
                             cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
                             logging.debug(f"Found cache status in PhalanxDB for torrent hash {torrent_hash}: {cache_status}")
+                            # If found in PhalanxDB, return early
+                            if cache_status is not None:
+                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
                         except Exception as e:
                             logging.error(f"Error checking PhalanxDB cache: {str(e)}")
                 except Exception as e:
@@ -1264,15 +1282,15 @@ def check_cache_status():
                 is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True)
                 
                 # Update PhalanxDB with new cache status if enabled
-                if _phalanx_cache_manager and torrent_hash:
+                if cache_manager and torrent_hash: # Check cache_manager is not None
                     try:
-                        _phalanx_cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
                         logging.debug(f"Updated PhalanxDB cache status for hash {torrent_hash}: {bool(is_cached)}")
                     except Exception as e:
                         logging.error(f"Error updating PhalanxDB cache: {str(e)}")
                 
                 # Update cache status for file hash if it was a URL
-                if file_hash:
+                if cache_manager and file_hash: # Check cache_manager is not None
                     cache_manager.update_cache_status(file_hash, bool(is_cached))
                     logging.debug(f"Updated cache status for file hash {file_hash}: {bool(is_cached)}")
                     
@@ -1281,9 +1299,9 @@ def check_cache_status():
                 is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True)
                 
                 # Update PhalanxDB with new cache status if enabled
-                if _phalanx_cache_manager and torrent_hash:
+                if cache_manager and torrent_hash: # Check cache_manager is not None
                     try:
-                        _phalanx_cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
                         logging.debug(f"Updated PhalanxDB cache status for torrent hash {torrent_hash}: {bool(is_cached)}")
                     except Exception as e:
                         logging.error(f"Error updating PhalanxDB cache: {str(e)}")
@@ -1314,12 +1332,15 @@ def check_cache_status():
         hashes_to_check = []
         
         # Get results for all hashes at once
-        phalanx_results = cache_manager.get_multi_cache_status(hashes)
-        for hash_value, status in phalanx_results.items():
-            if status is not None:
-                cache_status[hash_value] = 'Yes' if status['is_cached'] else 'No'
-            else:
-                hashes_to_check.append(hash_value)
+        if cache_manager: # Check cache_manager is not None
+            phalanx_results = cache_manager.get_multi_cache_status(hashes)
+            for hash_value, status in phalanx_results.items():
+                if status is not None:
+                    cache_status[hash_value] = 'Yes' if status.get('is_cached') else 'No' # Use .get() for safety
+                else:
+                    hashes_to_check.append(hash_value)
+        else:
+             hashes_to_check = hashes # If no cache manager, check all hashes with debrid
                 
         if hashes_to_check:
             logging.info(f"Need to check {len(hashes_to_check)} hashes with debrid provider")
@@ -1337,9 +1358,9 @@ def check_cache_status():
                         is_cached = debrid_provider.is_cached(hash_value)
                         cache_status[hash_value] = 'Yes' if is_cached else 'No'
                         # Update PhalanxDB
-                        if _phalanx_cache_manager:
+                        if cache_manager: # Check cache_manager is not None
                             try:
-                                _phalanx_cache_manager.update_cache_status(hash_value, bool(is_cached))
+                                cache_manager.update_cache_status(hash_value, bool(is_cached))
                                 logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(is_cached)}")
                             except Exception as e:
                                 logging.error(f"Error updating PhalanxDB cache: {str(e)}")
@@ -1348,9 +1369,9 @@ def check_cache_status():
                         if isinstance(bulk_result, bool):
                             for hash_value in hashes_to_check:
                                 cache_status[hash_value] = 'Yes' if bulk_result else 'No'
-                                if _phalanx_cache_manager:
+                                if cache_manager: # Check cache_manager is not None
                                     try:
-                                        _phalanx_cache_manager.update_cache_status(hash_value, bool(bulk_result))
+                                        cache_manager.update_cache_status(hash_value, bool(bulk_result))
                                         logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(bulk_result)}")
                                     except Exception as e:
                                         logging.error(f"Error updating PhalanxDB cache: {str(e)}")
@@ -1358,10 +1379,10 @@ def check_cache_status():
                             for hash_value in hashes_to_check:
                                 result = bulk_result.get(hash_value, 'N/A')
                                 cache_status[hash_value] = 'Yes' if result is True else 'No' if result is False else 'N/A'
-                                if result is not None:
-                                    if _phalanx_cache_manager:
+                                if result is not None and result != 'N/A': # Check before updating
+                                    if cache_manager: # Check cache_manager is not None
                                         try:
-                                            _phalanx_cache_manager.update_cache_status(hash_value, bool(result))
+                                            cache_manager.update_cache_status(hash_value, bool(result))
                                             logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(result)}")
                                         except Exception as e:
                                             logging.error(f"Error updating PhalanxDB cache: {str(e)}")
@@ -1370,9 +1391,9 @@ def check_cache_status():
                             try:
                                 is_cached = debrid_provider.is_cached(hash_value)
                                 cache_status[hash_value] = 'Yes' if is_cached else 'No'
-                                if _phalanx_cache_manager:
+                                if cache_manager: # Check cache_manager is not None
                                     try:
-                                        _phalanx_cache_manager.update_cache_status(hash_value, bool(is_cached))
+                                        cache_manager.update_cache_status(hash_value, bool(is_cached))
                                         logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(is_cached)}")
                                     except Exception as e:
                                         logging.error(f"Error updating PhalanxDB cache: {str(e)}")
@@ -1399,10 +1420,10 @@ def check_cache_status():
                         result_str = 'Yes' if cache_result is True else 'No' if cache_result is False else 'N/A'
                         cache_status[hash_value] = result_str
                         
-                        if cache_result is not None:
-                            if _phalanx_cache_manager:
+                        if cache_result is not None and cache_result != 'N/A': # Check before updating
+                            if cache_manager: # Check cache_manager is not None
                                 try:
-                                    _phalanx_cache_manager.update_cache_status(hash_value, bool(cache_result))
+                                    cache_manager.update_cache_status(hash_value, bool(cache_result))
                                     logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(cache_result)}")
                                 except Exception as e:
                                     logging.error(f"Error updating PhalanxDB cache: {str(e)}")
@@ -1423,26 +1444,20 @@ def check_cache_status():
                 for hash_value in hashes_to_check:
                     cache_status[hash_value] = 'N/A'
                 
-        # First check PhalanxDB for all hashes at once with multi-status
-        if _phalanx_cache_manager:
+        # Removed redundant PhalanxDB checks here as they are now handled earlier
+        # Ensure PhalanxDB updates only happen if cache_manager exists
+        if cache_manager:
             try:
-                multi_status = _phalanx_cache_manager.get_multi_cache_status(hashes)
-                if multi_status:
-                    for hash_value, status in multi_status.items():
-                        if status.get('is_cached'):
-                            cache_status[hash_value] = True
-                            logging.debug(f"Found cached status in PhalanxDB for hash {hash_value}")
+                for hash_value, status_str in cache_status.items():
+                    if status_str in ['Yes', 'No']: # Only update if we have a definitive status
+                        is_cached = status_str == 'Yes'
+                        # Check if this hash already exists in PhalanxDB to avoid redundant updates
+                        existing_status = cache_manager.get_cache_status(hash_value)
+                        if existing_status is None or existing_status.get('is_cached') != is_cached:
+                            cache_manager.update_cache_status(hash_value, is_cached)
+                            logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {is_cached}")
             except Exception as e:
-                logging.error(f"Error checking PhalanxDB multi-status: {str(e)}")
-
-        # Update PhalanxDB with new cache statuses if enabled
-        if _phalanx_cache_manager:
-            try:
-                for hash_value, is_cached in cache_status.items():
-                    _phalanx_cache_manager.update_cache_status(hash_value, bool(is_cached))
-                    logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(is_cached)}")
-            except Exception as e:
-                logging.error(f"Error updating PhalanxDB cache: {str(e)}")
+                logging.error(f"Error updating PhalanxDB cache after debrid check: {str(e)}")
 
         return jsonify({'cache_status': cache_status})
     except Exception as e:

@@ -118,7 +118,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         # If conversion failed, check if we can proceed with Jackett
         if not imdb_id:
             if not has_enabled_jackett or 'UFC' not in title.upper():
-                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}. This is only supported for UFC content with Jackett enabled.")
+                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}. This is only supported for UFC content with Jackett enabled. A metadata refresh might resolve this.")
                 return {}
             else:
                 logging.info(f"No IMDb ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")

@@ -466,12 +466,18 @@
                             <label class="settings-title">Versions:</label>
                             <div class="version-checkboxes">
                                 {% set scraping_versions = settings.get('Scraping', {}).get('versions', {}) %}
-                                {% for version in scraping_versions.keys() %}
+                                {% set source_versions = value %}
+                                {% for version_name in scraping_versions.keys() %}
                                 <label>
-                                    <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version }}"
-                                        data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version }}"
-                                        {% if value is iterable and not value is string and version in value %}checked{% endif %}>
-                                    {{ version }}
+                                    <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version_name }}"
+                                        data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version_name }}"
+                                        {% if source_versions is mapping and version_name in source_versions and source_versions[version_name] %}
+                                            checked
+                                        {% elif source_versions is iterable and not source_versions is string and not source_versions is mapping and version_name in source_versions %}
+                                            checked
+                                        {% endif %}
+                                        >
+                                    {{ version_name }}
                                 </label>
                                 {% endfor %}
                             </div>

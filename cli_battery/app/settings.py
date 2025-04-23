@@ -4,6 +4,7 @@ import os
 import sys
 from datetime import timedelta
 from functools import cached_property
+import tempfile
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -63,9 +64,29 @@ class Settings:
             'log_level': self.log_level,
             'Trakt': self.Trakt
         }
-        os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-        with open(self.config_file, 'w') as f:
-            json.dump(config, f, indent=4)
+        try:
+            # Ensure the directory exists
+            config_dir = os.path.dirname(self.config_file)
+            os.makedirs(config_dir, exist_ok=True)
+
+            # Use atomic write
+            with tempfile.NamedTemporaryFile('w', dir=config_dir, delete=False) as temp_f:
+                json.dump(config, temp_f, indent=4)
+                temp_path = temp_f.name # Store the temporary file path
+            # Atomically rename the temporary file to the final config file path
+            os.rename(temp_path, self.config_file)
+            logger.debug(f"Settings saved successfully to {self.config_file}")
+
+        except IOError as e:
+            logger.error(f"IOError saving settings to {self.config_file}: {e}")
+            # Clean up the temporary file if rename failed
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception as e:
+            logger.error(f"Unexpected error saving settings: {e}")
+            # Clean up the temporary file if rename failed
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def load(self):
         if os.path.exists(self.config_file):
@@ -113,14 +134,27 @@ class Settings:
         settings = self.get_all()
         try:
             # Ensure the directory exists
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            
-            with open(self.config_file, 'w') as f:
-                json.dump(settings, f, indent=4)
+            config_dir = os.path.dirname(self.config_file)
+            os.makedirs(config_dir, exist_ok=True)
+
+            # Use atomic write
+            with tempfile.NamedTemporaryFile('w', dir=config_dir, delete=False) as temp_f:
+                json.dump(settings, temp_f, indent=4)
+                temp_path = temp_f.name # Store the temporary file path
+            # Atomically rename the temporary file to the final config file path
+            os.rename(temp_path, self.config_file)
+            logger.debug(f"Settings saved successfully via save_settings to {self.config_file}")
+
         except IOError as e:
-            logger.error(f"Error saving settings to file: {str(e)}")
+            logger.error(f"Error saving settings to file via save_settings: {str(e)}")
+            # Clean up the temporary file if rename failed
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
         except Exception as e:
-            logger.error(f"Unexpected error while saving settings: {str(e)}")
+            logger.error(f"Unexpected error while saving settings via save_settings: {str(e)}")
+            # Clean up the temporary file if rename failed
+            if 'temp_path' in locals() and os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def toggle_provider(self, provider_name, enable):
         for provider in self.providers:

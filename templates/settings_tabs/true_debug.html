@@ -148,6 +148,15 @@
                        {% if settings.get('Debug', {}).get('ignore_wanted_queue_throttling') %}checked{% endif %}>
                 <p class="settings-description">Ignore Wanted Queue throttling limits. Allows Wanted queue to move all eligible items to Scraping regardless of Scraping queue size. USE WITH CAUTION.</p>
             </div>
+
+            <!-- Tracemalloc Sample Rate -->
+            <div class="settings-form-group">
+                <label for="debug-tracemalloc_sample_rate" class="settings-title">Tracemalloc Sample Rate:</label>
+                <input type="number" id="debug-tracemalloc_sample_rate" name="Debug.tracemalloc_sample_rate"
+                       value="{{ settings.get('Debug', {}).get('tracemalloc_sample_rate', 100) }}" class="settings-input"
+                       min="1" data-section="Debug" data-key="tracemalloc_sample_rate">
+                <p class="settings-description">Sample rate for tracemalloc (1 in X tasks). Lower values give more frequent data but increase overhead significantly. Default: 100.</p>
+            </div>
         </div>
     </div>
 </div>

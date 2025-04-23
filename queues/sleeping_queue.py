@@ -68,7 +68,13 @@ class SleepingQueue:
         #logging.debug("Processing sleeping queue")
         current_time = datetime.now()
         default_wake_limit = int(get_setting("Queue", "wake_limit", default=24))
-        sleep_duration = timedelta(minutes=30)
+        # Read sleep duration from settings, default to 30 minutes
+        sleep_duration_minutes = int(get_setting("Queue", "sleep_duration_minutes", default=30))
+        # Ensure a minimum duration to prevent potential issues with very small values
+        if sleep_duration_minutes < 10:
+            sleep_duration_minutes = 10
+            logging.warning("Sleep duration setting was less than 10 minutes, using 10 minutes instead.")
+        sleep_duration = timedelta(minutes=sleep_duration_minutes) # Use the setting
 
         items_to_wake = []
         items_to_blacklist = []
@@ -128,17 +134,15 @@ class SleepingQueue:
         for item in items:
             item_id = item['id']
             item_identifier = queue_manager.generate_identifier(item)
-            
-            # Call move_to_blacklisted, which handles the actual blacklisting or fallback
-            queue_manager.move_to_blacklisted(item, "Sleeping")
-            
-            # REMOVE ITEM IS NO LONGER NEEDED HERE - move_to_blacklisted handles removal from source queue
-            # self.remove_item(item)
-            
-            # Adjust log message to reflect the action initiated, not necessarily the final state
-            logging.info(f"Initiated blacklist/fallback process for item {item_identifier} from Sleeping queue")
-        
-        logging.debug(f"Finished processing blacklist/fallback attempts for {len(items)} items from Sleeping queue")
+
+            # Call the new method in queue_manager
+            queue_manager.initiate_final_check_or_blacklist(item, "Sleeping")
+
+            # REMOVE ITEM IS NO LONGER NEEDED HERE - initiate_final_check_or_blacklist handles removal via _move_item_to_queue or move_to_blacklisted
+
+            logging.info(f"Initiated final check or blacklist process for item {item_identifier} from Sleeping queue")
+
+        logging.debug(f"Finished processing final check/blacklist attempts for {len(items)} items from Sleeping queue")
 
     def clean_up_sleeping_data(self):
         # Remove sleeping times for items no longer in the queue

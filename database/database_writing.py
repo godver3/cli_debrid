@@ -409,11 +409,12 @@ def add_media_item(item: dict) -> int:
 
 @retry_on_db_lock()
 def update_version_name(old_version: str, new_version: str) -> int:
-    """Update all media items with a specific version name to use a new version name.
+    """Update all media items with a specific version name to use a new version name,
+    preserving any trailing characters (like asterisks).
     
     Args:
-        old_version: The current version name to update
-        new_version: The new version name to set
+        old_version: The current version name prefix to update
+        new_version: The new version name prefix to set
         
     Returns:
         int: Number of items updated
@@ -421,18 +422,25 @@ def update_version_name(old_version: str, new_version: str) -> int:
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
-        cursor = conn.execute('''
+        
+        # Construct the LIKE pattern to match versions starting with old_version
+        like_pattern = f"{old_version}%" 
+        
+        # Use SQLite's SUBSTR and LENGTH to preserve trailing characters
+        cursor = conn.execute("""
             UPDATE media_items
-            SET version = ?, last_updated = ?
-            WHERE version = ?
-        ''', (new_version, datetime.now(), old_version))
+            SET version = ? || SUBSTR(version, LENGTH(?) + 1), 
+                last_updated = ?
+            WHERE version LIKE ?
+        """, (new_version, old_version, datetime.now(), like_pattern))
+        
         updated_count = cursor.rowcount
         conn.commit()
-        logging.info(f"Updated version from '{old_version}' to '{new_version}' for {updated_count} media items")
+        logging.info(f"Updated version prefix from '{old_version}' to '{new_version}' for {updated_count} media items (preserving suffixes)")
         return updated_count
     except Exception as e:
         conn.rollback()
-        logging.error(f"Error updating version name from '{old_version}' to '{new_version}': {str(e)}")
+        logging.error(f"Error updating version name prefix from '{old_version}' to '{new_version}': {str(e)}")
         return 0
     finally:
         conn.close()

@@ -3,6 +3,14 @@ import logging
 import os
 import json
 from typing import List, Dict, Optional, Tuple, Set, Any
+try:
+    import tracemalloc
+    tracemalloc_available = True
+except ImportError:
+    tracemalloc_available = False
+    tracemalloc = None # Define tracemalloc as None if import failed
+import time
+from utilities.settings import get_setting
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -18,37 +26,84 @@ def search_tv_shows(search_term):
     conn.close()
     return items
 
-def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None):
-    conn = get_db_connection()
-    query = 'SELECT * FROM media_items WHERE 1=1'
-    params = []
-    if state:
-        if isinstance(state, (list, tuple)):
-            placeholders = ','.join(['?' for _ in state])
-            query += f' AND state IN ({placeholders})'
-            params.extend(state)
+def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
+    tracemalloc_enabled = get_setting('Debug', 'enable_tracemalloc', False)
+    mem_before, peak_before = 0, 0
+    start_time = time.time()
+    items = []
+
+    # Only attempt tracemalloc operations if it was imported and enabled
+    if tracemalloc_available and tracemalloc_enabled:
+        if tracemalloc.is_tracing():
+            try:
+                mem_before, peak_before = tracemalloc.get_traced_memory()
+            except Exception as e_mem:
+                logging.error(f"[Tracemalloc DB] Error getting memory before get_all_media_items: {e_mem}")
+                # Disable further tracemalloc attempts for this call if get_traced_memory fails
+                tracemalloc_enabled = False 
         else:
-            query += ' AND state = ?'
-            params.append(state)
-    if media_type:
-        query += ' AND type = ?'
-        params.append(media_type)
-    if imdb_id:
-        query += ' AND imdb_id = ?'
-        params.append(imdb_id)
-    if tmdb_id:
-        query += ' AND tmdb_id = ?'
-        params.append(tmdb_id)
+            # If tracing is not active, disable tracemalloc for this function call
+            tracemalloc_enabled = False
+
+    conn = None
     try:
+        conn = get_db_connection()
+        query = 'SELECT * FROM media_items WHERE 1=1'
+        params = []
+        if state:
+            if isinstance(state, (list, tuple)):
+                placeholders = ','.join(['?' for _ in state])
+                query += f' AND state IN ({placeholders})'
+                params.extend(state)
+            else:
+                query += ' AND state = ?'
+                params.append(state)
+        if media_type:
+            query += ' AND type = ?'
+            params.append(media_type)
+        if imdb_id:
+            query += ' AND imdb_id = ?'
+            params.append(imdb_id)
+        if tmdb_id:
+            query += ' AND tmdb_id = ?'
+            params.append(tmdb_id)
+
+        if limit is not None and isinstance(limit, int) and limit > 0:
+            query += ' LIMIT ?'
+            params.append(limit)
+
         cursor = conn.execute(query, params)
-        items = cursor.fetchall()
-        return [dict(item) for item in items]
+        db_rows = cursor.fetchall()
+        items = [dict(item) for item in db_rows]
+
     except Exception as e:
         logging.error(f"Error executing get_all_media_items query: {e}")
         logging.debug(f"Query: {query}, Params: {params}")
-        return []
+        items = []
     finally:
-        conn.close()
+        if conn:
+            conn.close()
+
+    duration = time.time() - start_time
+    # Check again if tracemalloc is available and was enabled for this call
+    if tracemalloc_available and tracemalloc_enabled and tracemalloc.is_tracing():
+        try:
+            mem_after, peak_after = tracemalloc.get_traced_memory()
+            mem_delta = mem_after - mem_before
+            peak_delta = peak_after - peak_before
+
+            log_level = logging.INFO if abs(mem_delta / (1024*1024)) < 5 else logging.WARNING
+            logging.log(log_level,
+                        f"[Tracemalloc DB] get_all_media_items completed in {duration:.3f}s. "
+                        f"Returned Items: {len(items)}. "
+                        f"Mem Delta: {mem_delta / (1024*1024):+.2f}MB ({mem_before / (1024*1024):.2f} -> {mem_after / (1024*1024):.2f}MB). "
+                        f"Peak Delta During Call: {peak_delta / (1024*1024):+.2f}MB.")
+
+        except Exception as e_mem:
+            logging.error(f"[Tracemalloc DB] Error getting memory after get_all_media_items: {e_mem}")
+    # else: Tracemalloc not available or not enabled, no memory logging needed
+
+    return items
 
 def get_media_item_presence(imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
@@ -597,6 +652,22 @@ def get_media_item_ids(imdb_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         if conn:
             conn.close()
 
+def get_item_count_by_state(state: str) -> int:
+    """Get the total count of items in a specific state."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
+        cursor = conn.execute(query, (state,))
+        result = cursor.fetchone()
+        return result['count'] if result else 0
+    except Exception as e:
+        logging.error(f"Error getting item count for state '{state}': {e}")
+        return 0
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -619,5 +690,6 @@ __all__ = [
     'check_existing_media_item',
     'get_wake_count',
     'get_show_episode_identifiers_from_db',
-    'get_media_item_ids'
+    'get_media_item_ids',
+    'get_item_count_by_state'
 ]

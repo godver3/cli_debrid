@@ -35,6 +35,7 @@ from routes.notifications import (
     register_startup_handler,
     send_program_stop_notification
 )
+from database import schema_management
 
 if sys.platform.startswith('win'):
     app_name = "cli_debrid"  # Replace with your app's name
@@ -958,20 +959,46 @@ def main():
     # Verify database health before proceeding
     if not verify_database_health():
         logging.error("Database health check failed. Please check the logs and resolve any issues.")
-        return False
+        return
     
-    # Run the rationale migration
+    # Run specific data migrations first if they don't depend on full schema being present
+    # (Keep these if they are safe before full schema verify/migrate)
     migrate_upgrade_rationale()
     migrate_task_toggles()
-    
-    # Set up notification handlers
+
+    # Ensure the main schema (including notifications table) is verified and migrated
+    try:
+        logging.info("Running database schema verification and migration...")
+        # This call implicitly runs migrate_schema() which creates the notifications table
+        schema_management.verify_database() 
+        logging.info("Database schema verification and migration completed.")
+    except Exception as e:
+        logging.critical(f"Database verification/migration failed: {e}", exc_info=True)
+        return # Stop if DB setup fails
+
+    # Initialize statistics tables/indexes AFTER main schema is verified
+    try:
+        from database.statistics import get_cached_download_stats # Moved import local
+        from database.statistics import update_statistics_summary # Moved import local
+        # create_statistics_indexes() # Already called within verify_database via migrate_schema potentially, or needs specific call
+        # schema_management.create_statistics_summary_table() # Already called within verify_database via migrate_schema potentially
+        logging.info("Initializing statistics summary...")
+        update_statistics_summary()
+        logging.info("Statistics summary initialized.")
+        # Initialize download stats cache
+        logging.info("Initializing download stats cache...")
+        get_cached_download_stats()
+        logging.info("Download stats cache initialized successfully")
+    except Exception as e:
+        logging.error(f"Error during statistics summary/cache initialization: {e}")
+
+    # Set up notification handlers NOW THAT DB IS READY
     setup_crash_handler()
     register_shutdown_handler()
-    register_startup_handler()
+    register_startup_handler() # This should now succeed
 
     from utilities.settings import ensure_settings_file, get_setting, set_setting
-    from database import verify_database
-    from database.statistics import get_cached_download_stats
+    # from database import verify_database # No longer needed here
     from database.not_wanted_magnets import validate_not_wanted_entries
     from queues.config_manager import load_config, save_config
 
@@ -1142,7 +1169,7 @@ def main():
             save_config(config)
             logging.info("Added/fixed require_physical_release setting in existing versions")
 
-    # Add migration for notification settings
+    # Add migration for notification settings (can run later, doesn't affect DB structure)
     if 'Notifications' in config:
         notifications_updated = False
         default_notify_on = {
@@ -1307,19 +1334,23 @@ def main():
         versions_updated = False
         for version_name, version_config in config['Scraping']['versions'].items():
             if 'year_match_weight' not in version_config:
-                version_config['year_match_weight'] = 3.0
+                version_config['year_match_weight'] = 3 # Default to int
                 versions_updated = True
-                logging.info(f"Adding default year_match_weight 3.0 to version {version_name}")
-            # Convert to float if it's an integer or string
-            elif not isinstance(version_config['year_match_weight'], float):
+                logging.info(f"Adding default year_match_weight 3 to version {version_name}")
+            # Convert to int if it's not already an int
+            elif not isinstance(version_config['year_match_weight'], int):
                 try:
-                    version_config['year_match_weight'] = float(version_config['year_match_weight'])
+                    # Round float before converting to int
+                    if isinstance(version_config['year_match_weight'], float):
+                        version_config['year_match_weight'] = int(round(version_config['year_match_weight']))
+                    else: # Handle strings or other types
+                        version_config['year_match_weight'] = int(round(float(version_config['year_match_weight'])))
                     versions_updated = True
-                    logging.info(f"Converting year_match_weight to float for version {version_name}")
+                    logging.info(f"Converting year_match_weight to int for version {version_name}")
                 except (ValueError, TypeError):
-                    version_config['year_match_weight'] = 3.0 # Reset to default if conversion fails
+                    version_config['year_match_weight'] = 3 # Reset to default int if conversion fails
                     versions_updated = True
-                    logging.warning(f"Invalid year_match_weight value in version {version_name}, resetting to 3.0")
+                    logging.warning(f"Invalid year_match_weight value in version {version_name}, resetting to 3")
 
         if versions_updated:
             save_config(config)
@@ -1340,33 +1371,19 @@ def main():
     #logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
 
     ensure_settings_file()
-    verify_database()
+    # verify_database() # No longer needed here
     validate_not_wanted_entries()
 
-    # Initialize download stats cache
-    try:
-        #logging.info("Initializing download stats cache...")
-        get_cached_download_stats()
-        #logging.info("Download stats cache initialized successfully")
-    except Exception as e:
-        logging.error(f"Error initializing download stats cache: {str(e)}")
+    # Initialize download stats cache # Moved earlier
+    # ...
 
-    try:
-        from database.schema_management import create_statistics_summary_table
-        from database.statistics import update_statistics_summary
-        from database.schema_management import create_statistics_indexes
-        create_statistics_indexes()  # Explicitly create statistics indexes
-        create_statistics_summary_table()
-        
-        # Now update statistics summary
-        update_statistics_summary()
-    except Exception as e:
-        logging.error(f"Error during statistics summary initialization: {e}")
+    # Initialize statistics summary # Moved earlier
+    # ...
 
-    # Add delay to ensure server is ready
-    time.sleep(2)
+    # Add delay to ensure server is ready # Maybe less critical now
+    time.sleep(1) # Reduced delay slightly
 
-    # Fix notification settings if needed
+    # Fix notification settings if needed (can run later)
     fix_notification_settings()
 
     # Validate Plex tokens on startup
@@ -1376,7 +1393,7 @@ def main():
             logging.error(f"Invalid Plex token for user {username}")
 
     # Add the update_media_locations call here
-    # update_media_locations()
+    # update_media_locations() # Keep commented unless needed at startup
 
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -1487,13 +1504,10 @@ if __name__ == "__main__":
             print("\ncli_debrid is initialized.")
 
             # Instantiate ProgramRunner and attach to Flask app context
-            # This makes it available via current_app.program_runner in routes
             program_runner_instance = ProgramRunner()
             app.program_runner = program_runner_instance
-            # Note: program_runner_instance.start() is called within main() via run_program()
             
             def run_flask():
-                # Pass the app instance to start_server if it needs it, or it uses the imported app
                 if not start_server(): 
                     return False
                 return True
@@ -1502,10 +1516,9 @@ if __name__ == "__main__":
                 stop_program()
                 sys.exit(1)
                 
-            # Get port dynamically for the message
             port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
             print(f"The web UI is available at http://localhost:{port}")
-            main()
+            main() # Call the main function which now handles DB setup correctly
     except KeyboardInterrupt:
         stop_global_profiling()
         print("Program stopped.")

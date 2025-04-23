@@ -19,6 +19,8 @@ from routes.notifications import (
 import re
 import time
 from content_checkers.trakt import fetch_liked_trakt_lists_details
+from database.database_writing import update_version_name # Ensure this is imported
+import sys
 
 settings_bp = Blueprint('settings', __name__)
 
@@ -824,8 +826,18 @@ def delete_version():
 @settings_bp.route('/versions/import_defaults', methods=['POST'])
 def import_default_versions():
     try:
-        # Read the default versions from the JSON file
-        with open('optional_default_versions.json', 'r') as f:
+        # Determine the base path depending on whether the app is frozen
+        if getattr(sys, 'frozen', False):
+            # If the application is run as a bundle/frozen executable (e.g., PyInstaller)
+            base_path = os.path.dirname(sys.executable)
+        else:
+            # If running as a normal script
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # Assumes settings_routes.py is one level down from the project root
+
+        default_versions_path = os.path.join(base_path, 'optional_default_versions.json')
+        
+        # Read the default versions from the JSON file using the absolute path
+        with open(default_versions_path, 'r') as f:
             default_versions = json.load(f)
         
         if not isinstance(default_versions, dict) or 'versions' not in default_versions:
@@ -856,8 +868,10 @@ def import_default_versions():
         
         return jsonify({'success': True, 'message': 'Default versions imported successfully'})
     except FileNotFoundError:
-        return jsonify({'success': False, 'error': 'Default versions file not found'}), 404
+        logging.error(f"Default versions file not found at path: {default_versions_path}")
+        return jsonify({'success': False, 'error': f'Default versions file not found'}), 404
     except json.JSONDecodeError:
+        logging.error(f"Invalid JSON in default versions file at path: {default_versions_path}")
         return jsonify({'success': False, 'error': 'Invalid JSON in default versions file'}), 400
     except Exception as e:
         logging.error(f"Error importing default versions: {str(e)}", exc_info=True)
@@ -878,26 +892,55 @@ def rename_version():
         if old_name in versions:
             # Update version name in config
             versions[new_name] = versions.pop(old_name)
-            save_config(config)
-            
+            # Don't save yet, more updates needed
+
             # Update version name in database
-            from database.database_writing import update_version_name
-            updated_count = update_version_name(old_name, new_name)
-            logging.info(f"Updated {updated_count} media items in database from version '{old_name}' to '{new_name}'")
-            
+            updated_db_count = update_version_name(old_name, new_name)
+            logging.info(f"Updated {updated_db_count} media items in database from version prefix '{old_name}' to '{new_name}'")
+
             # Update fallback_version references in other versions
             for v_name, v_config in versions.items():
-                # Check if the version is not the one being renamed AND its fallback matches the old name
                 if v_name != new_name and v_config.get('fallback_version') == old_name:
                     versions[v_name]['fallback_version'] = new_name
                     logging.info(f"Updated fallback_version for version '{v_name}' from '{old_name}' to '{new_name}'")
-            
-            # Save config again with updated fallbacks (if any)
+
+            # --- New Logic: Update Content Source Version Assignments ---
+            content_sources = config.get('Content Sources', {})
+            updated_sources_count = 0
+            for source_id, source_config in content_sources.items():
+                if isinstance(source_config, dict) and 'versions' in source_config:
+                    source_versions = source_config['versions']
+                    
+                    # Handle dictionary format {version_name: enabled_boolean}
+                    if isinstance(source_versions, dict):
+                        if old_name in source_versions:
+                            enabled_status = source_versions.pop(old_name) # Remove old, get status
+                            source_versions[new_name] = enabled_status # Add new with same status
+                            updated_sources_count += 1
+                            logging.info(f"Updated version assignment for Content Source '{source_id}': '{old_name}' -> '{new_name}' (dict format)")
+                    
+                    # Handle list format [version_name, ...] - Less common now but good to support
+                    elif isinstance(source_versions, list):
+                         if old_name in source_versions:
+                             source_versions.remove(old_name)
+                             if new_name not in source_versions: # Avoid duplicates
+                                 source_versions.append(new_name)
+                             updated_sources_count += 1
+                             logging.info(f"Updated version assignment for Content Source '{source_id}': '{old_name}' -> '{new_name}' (list format)")
+                             
+            if updated_sources_count > 0:
+                 logging.info(f"Updated version assignments in {updated_sources_count} Content Source(s).")
+            # --- End New Logic ---
+
+            # Save config with all updates (version rename, fallbacks, content sources)
             save_config(config)
-            
+
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Version not found'}), 404
+    else:
+        # Handle case where Scraping or versions section is missing
+        return jsonify({'success': False, 'error': 'Scraping versions configuration not found'}), 404
 
 @settings_bp.route('/versions/duplicate', methods=['POST'])
 def duplicate_version():
