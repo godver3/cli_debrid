@@ -4,6 +4,20 @@ import time
 import os
 import sqlite3
 import plexapi # Added import
+# *** START EDIT: Import tracemalloc ***
+try:
+    import tracemalloc
+    tracemalloc_available = True
+except ImportError:
+    tracemalloc = None # Define as None if import fails
+    tracemalloc_available = False
+# *** END EDIT ***
+# *** START EDIT: Add psutil import ***
+try:
+    import psutil
+except ImportError:
+    psutil = None # Handle missing import gracefully
+# *** END EDIT ***
 # *** START EDIT ***
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -113,7 +127,7 @@ class ProgramRunner:
         self.queue_manager = QueueManager()
         
         # Verify queue initialization
-        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']
+        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'Final_Check']
         missing_queues = [q for q in expected_queues if q not in self.queue_manager.queues]
         if missing_queues:
             logging.error(f"Missing queues during initialization: {missing_queues}")
@@ -130,16 +144,15 @@ class ProgramRunner:
         # to the corresponding processing methods in QueueManager.
         self.queue_processing_map = {
             'Wanted': 'process_wanted',
-            # --- START REVERT ---
-            'Scraping': 'process_scraping', # Restore Scraping
-            'Adding': 'process_adding',     # Restore Adding
-            # --- END REVERT ---
+            'Scraping': 'process_scraping',
+            'Adding': 'process_adding',
             'Checking': 'process_checking',
             'Sleeping': 'process_sleeping',
             'Unreleased': 'process_unreleased',
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
-            'Upgrading': 'process_upgrading'
+            'Upgrading': 'process_upgrading',
+            'Final_Check': 'process_final_check'
         }
         # --- END EDIT ---
 
@@ -147,20 +160,16 @@ class ProgramRunner:
         self.task_intervals = {
             # Queue Processing Tasks (intervals for individual queues are less critical now)
             'Wanted': 5,
-            # --- START REVERT ---
-            'Scraping': 5, # Restore Scraping interval (adjust if needed)
-            'Adding': 5,   # Restore Adding interval (adjust if needed)
-            # --- END REVERT ---
+            'Scraping': 5,
+            'Adding': 5,
             'Checking': 180,
-            'Sleeping': 1800,
+            'Sleeping': 300,
             'Unreleased': 300,
             'Blacklisted': 7200,
             'Pending Uncached': 3600,
             'Upgrading': 3600,
+            'Final_Check': 900,
             # Combined/High Frequency Tasks
-            # --- START REVERT ---
-            # 'task_process_scraping_adding': 10, # Remove combined task
-            # --- END REVERT ---
             'task_update_queue_views': 30,     # Update queue views every 30 seconds
             'task_process_pending_rclone_paths': 10, # Check pending rclone paths every 10 seconds
             'task_send_notifications': 15,       # Run every 15 seconds
@@ -208,22 +217,18 @@ class ProgramRunner:
         self.enabled_tasks = {
             # Core Queue Processing (Individual queues are less important to enable here)
             'Wanted',
-            # --- START REVERT ---
-            'Scraping', # Restore Scraping
-            'Adding',   # Restore Adding
-            # --- END REVERT ---
+            'Scraping',
+            'Adding',
             'Checking',
             'Sleeping',
             'Unreleased',
             'Blacklisted',
             'Pending Uncached',
             'Upgrading',
+            'Final_Check',
             # Combined/High Frequency Tasks
-            # --- START REVERT ---
-            # 'task_process_scraping_adding', # Remove combined task
-            # --- END REVERT ---
             'task_update_queue_views',
-            'task_process_pending_rclone_paths',
+            #'task_process_pending_rclone_paths',
             'task_send_notifications',
             # Essential Periodic Tasks
             'task_check_service_connectivity',
@@ -246,8 +251,7 @@ class ProgramRunner:
             # NEW Load Adjustment Task
             'task_adjust_intervals_for_load',
             # --- START EDIT: Add 'task_verify_plex_removals' back to default set ---
-            # 'task_plex_full_scan', # Removed from default set
-            'task_verify_plex_removals' # Added back to default set
+            'task_verify_plex_removals'
             # --- END EDIT ---
         }
         logging.info("Initialized base enabled tasks.")
@@ -408,16 +412,15 @@ class ProgramRunner:
         # Define queue processing map EARLIER
         self.queue_processing_map = {
             'Wanted': 'process_wanted',
-            # --- START REVERT ---
-            'Scraping': 'process_scraping', # Restore Scraping
-            'Adding': 'process_adding',     # Restore Adding
-            # --- END REVERT ---
+            'Scraping': 'process_scraping',
+            'Adding': 'process_adding',
             'Checking': 'process_checking',
             'Sleeping': 'process_sleeping',
             'Unreleased': 'process_unreleased',
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
-            'Upgrading': 'process_upgrading'
+            'Upgrading': 'process_upgrading',
+            'Final_Check': 'process_final_check'
         }
 
         # Log the final set of enabled tasks right before starting the scheduling process
@@ -425,6 +428,47 @@ class ProgramRunner:
 
         # Schedule initial tasks
         self._schedule_initial_tasks()
+
+        # *** START EDIT: Modify tracemalloc conditional start in __init__ ***
+        # Track if tracemalloc is enabled via setting AND if it was imported
+        self._tracemalloc_enabled = tracemalloc_available and get_setting('Debug', 'enable_tracemalloc', False)
+        if self._tracemalloc_enabled:
+            # This check is redundant now due to the above, but safe
+            if tracemalloc_available and tracemalloc:
+                 logging.warning("Tracemalloc memory tracking is enabled. This adds overhead.")
+                 try:
+                     tracemalloc.start(10) # Start tracking with a stack depth of 10
+                 except Exception as e_start:
+                     logging.error(f"Failed to start tracemalloc: {e_start}")
+                     self._tracemalloc_enabled = False # Disable if start fails
+            else:
+                 # Should not happen if _tracemalloc_enabled is True, but log just in case
+                 logging.warning("Tracemalloc setting enabled but module not available. Disabling.")
+                 self._tracemalloc_enabled = False
+        # *** END EDIT ***
+
+        # *** START EDIT: Add task execution counter and sample rate for tracemalloc ***
+        self.task_execution_count = 0
+        # Read sample rate from settings, default to 100 (sample 1 in every 100 tasks)
+        self.tracemalloc_sample_rate = int(get_setting('Debug', 'tracemalloc_sample_rate', 100))
+        # Ensure sample rate is at least 1 to avoid division by zero or weird behavior
+        if self.tracemalloc_sample_rate < 1:
+            logging.warning(f"Invalid tracemalloc_sample_rate ({self.tracemalloc_sample_rate}), defaulting to 1.")
+            self.tracemalloc_sample_rate = 1
+        # *** END EDIT ***
+
+        # *** START EDIT: Add variable to store previous snapshot ***
+        self.previous_tracemalloc_snapshot = None
+        # *** END EDIT ***
+        # *** START EDIT: Log tracemalloc status with sample rate ***
+        if self._tracemalloc_enabled:
+            logging.warning(f"Tracemalloc memory tracking is ENABLED (Sample Rate: 1/{self.tracemalloc_sample_rate}). This adds overhead.")
+            # Check again if it's actually tracing (might have failed to start)
+            if not (tracemalloc_available and tracemalloc and tracemalloc.is_tracing()):
+                 logging.error("Tracemalloc was enabled but is not tracing. Check for startup errors.")
+                 self._tracemalloc_enabled = False # Ensure flag reflects reality
+        # *** END EDIT ***
+        # ... rest of __init__ ...
 
     # *** START EDIT: New method to get task target ***
     def _get_task_target(self, task_name: str):
@@ -513,9 +557,14 @@ class ProgramRunner:
                         id=job_id,
                         name=job_id,
                         replace_existing=True,
-                        misfire_grace_time=max(60, interval_seconds // 4)
+                        misfire_grace_time=max(60, interval_seconds // 4),
+                        # *** START EDIT: Allow 2 concurrent instances ***
+                        max_instances=1
+                        # *** END EDIT ***
                     )
-                    logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (wrapped for duration measurement).")
+                    # *** START EDIT: Updated log message ***
+                    logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=2, wrapped for duration measurement).")
+                    # *** END EDIT ***
                     return True
                 except Exception as e:
                     logging.error(f"Error scheduling task '{job_id}': {e}", exc_info=True)
@@ -579,6 +628,49 @@ class ProgramRunner:
                 logging.info("Program running...")
             else:
                 logging.info("Program running...is your fridge?")
+
+        # *** START EDIT: Add psutil memory logging ***
+        if psutil:
+            try:
+                process = psutil.Process(os.getpid())
+                mem_info = process.memory_info()
+                rss_mb = mem_info.rss / (1024 * 1024)
+                vms_mb = mem_info.vms / (1024 * 1024)
+                logging.info(f"[Memory Usage] RSS: {rss_mb:.2f}MB | VMS: {vms_mb:.2f}MB")
+            except Exception as e:
+                logging.error(f"Error getting memory usage with psutil: {e}")
+        else:
+            # Log less frequently if psutil is missing
+            if random_number < 10: # Log warning occasionally
+                 logging.warning("psutil not installed, cannot report detailed memory usage in heartbeat.")
+        # *** END EDIT ***
+
+        # *** START EDIT: Add tracemalloc snapshot comparison in heartbeat ***
+        # Check if enabled AND available before using
+        if self._tracemalloc_enabled and tracemalloc_available and tracemalloc and tracemalloc.is_tracing():
+            try:
+                current_snapshot = tracemalloc.take_snapshot()
+                if self.previous_tracemalloc_snapshot:
+                    # Compare the current snapshot to the previous one
+                    stats = current_snapshot.compare_to(self.previous_tracemalloc_snapshot, 'lineno')
+
+                    # Log the top 10 differences (lines allocating the most *new* memory)
+                    logging.info("[Tracemalloc Heartbeat] Top 10 memory differences since last heartbeat:")
+                    total_diff = 0
+                    for i, stat in enumerate(stats[:10], 1):
+                        total_diff += stat.size_diff
+                        # Limit traceback line length for cleaner logs
+                        trace_line = stat.traceback.format()[-1]
+                        trace_line = trace_line[:150] + '...' if len(trace_line) > 150 else trace_line
+                        logging.info(f"  {i}: {trace_line} | Diff: {stat.size_diff / 1024:+.1f} KiB | Count Diff: {stat.count_diff:+} | New Size: {stat.size / 1024:.1f} KiB")
+                    logging.info(f"[Tracemalloc Heartbeat] Total Diff in Top 10: {total_diff / 1024:+.1f} KiB")
+
+                # Store the current snapshot for the next comparison
+                self.previous_tracemalloc_snapshot = current_snapshot
+
+            except Exception as e_trace_hb:
+                logging.error(f"[Tracemalloc Heartbeat] Error processing snapshot comparison: {e_trace_hb}")
+        # *** END EDIT ***
 
     def get_content_sources(self, force_refresh=False):
         if self.content_sources is None or force_refresh:
@@ -709,21 +801,30 @@ class ProgramRunner:
             except Exception as e:
                 logging.error(f"Error checking service connectivity: {str(e)}")
                 
-            logging.warning(f"Service connectivity check failed. Retry {self.connectivity_retry_count}/5")
+            # --- START EDIT: Remove the stop condition ---
+            # Log the retry count without stopping
+            logging.warning(f"Service connectivity check failed. Retry attempt {self.connectivity_retry_count}")
+            # --- END EDIT ---
             if failed_services and len(failed_services) > 0:
                 failed_services_str = ", ".join(failed_services)
-                self.pause_reason = f"Connectivity failure - {failed_services_str} unavailable (Retry {self.connectivity_retry_count}/5)"
+                # --- START EDIT: Update pause reason without retry limit ---
+                self.pause_reason = f"Connectivity failure - {failed_services_str} unavailable (Retry attempt {self.connectivity_retry_count})"
+                # --- END EDIT ---
             else:
-                self.pause_reason = f"Connectivity failure - waiting for services to be available (Retry {self.connectivity_retry_count}/5)"
+                # --- START EDIT: Update pause reason without retry limit ---
+                self.pause_reason = f"Connectivity failure - waiting for services to be available (Retry attempt {self.connectivity_retry_count})"
+                # --- END EDIT ---
 
-            # After 5 minutes (5 retries), stop the program
-            if self.connectivity_retry_count >= 5:
-                logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
-                with app.app_context():
-                    stop_result = stop_program()
-                    logging.info(f"Program stop result: {stop_result}")
-                self.connectivity_failure_time = None
-                self.connectivity_retry_count = 0
+            # --- START EDIT: Remove the block that stops the program after 5 retries ---
+            # # After 5 minutes (5 retries), stop the program
+            # if self.connectivity_retry_count >= 5:
+            #     logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
+            #     with app.app_context():
+            #         stop_result = stop_program()
+            #         logging.info(f"Program stop result: {stop_result}")
+            #     self.connectivity_failure_time = None
+            #     self.connectivity_retry_count = 0
+            # --- END EDIT ---
 
     def pause_queue(self):
         # *** START EDIT: Pause ALL running jobs ***
@@ -1123,8 +1224,17 @@ class ProgramRunner:
                         logging.info("Scheduled pause period ended. Resuming queue.")
                         self.resume_queue() # Resumes scheduler jobs
 
+                    # --- START EDIT: Fetch and use main loop sleep setting ---
                     # Main loop sleep
-                    time.sleep(5) # Check status every 5 seconds
+                    try:
+                        main_loop_sleep_seconds = float(get_setting('Queue', 'main_loop_sleep_seconds', 5.0))
+                    except (ValueError, TypeError):
+                        main_loop_sleep_seconds = 5.0
+                    # Ensure sleep is not too low
+                    if main_loop_sleep_seconds < 0.1:
+                        main_loop_sleep_seconds = 0.1
+                    time.sleep(main_loop_sleep_seconds) # Check status based on setting
+                    # --- END EDIT ---
 
                 except Exception as loop_error:
                      logging.error(f"Error in main monitoring loop: {loop_error}", exc_info=True)
@@ -3200,27 +3310,106 @@ class ProgramRunner:
          # --- End of moved logic ---
     # *** END EDIT ***
 
-    # *** START EDIT: Add Wrapper Method ***
+    # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling ***
     def _run_and_measure_task(self, func, args, kwargs):
-        """Wraps a task function to measure and return its execution duration."""
+        """Wraps a task function to measure execution duration and track memory usage with tracemalloc if enabled and sampling condition met."""
         start_time = time.time()
         task_name_for_log = getattr(func, '__name__', 'unknown_function')
-        # Add args/kwargs to log for better context? Be careful with sensitive data.
-        # logging.debug(f"Executing wrapped task: '{task_name_for_log}'")
+
+        mem_before = 0
+        mem_after = 0
+        run_tracemalloc_sample = False # Flag to indicate if we run tracemalloc this time
+
+        # Determine if we should sample this execution
+        # Check if enabled AND available AND actually tracing
+        if self._tracemalloc_enabled and tracemalloc_available and tracemalloc and tracemalloc.is_tracing():
+            self.task_execution_count += 1
+            # Check if the current count is a multiple of the sample rate
+            if self.task_execution_count % self.tracemalloc_sample_rate == 0:
+                run_tracemalloc_sample = True
+                # Log when a sample is being taken for visibility
+                logging.info(f"[Tracemalloc] Sampling task '{task_name_for_log}' (Execution #{self.task_execution_count})")
+
+        # Get memory usage before if sampling this execution
+        # Check available again just before use
+        if run_tracemalloc_sample and tracemalloc_available and tracemalloc:
+            try:
+                mem_before, _ = tracemalloc.get_traced_memory()
+            except Exception as e_mem:
+                logging.error(f"[Tracemalloc] Error getting memory before task '{task_name_for_log}': {e_mem}")
+                run_tracemalloc_sample = False # Don't try 'after' if 'before' failed
+        elif run_tracemalloc_sample:
+             # Should not happen if checks above are correct, but log defensively
+             logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available/tracing at point of memory check.")
+             run_tracemalloc_sample = False
+
+
         try:
             # Execute the original task function
             func(*args, **kwargs)
-            # Duration calculation happens after successful execution
-            duration = time.time() - start_time
-            # Log duration for debugging
-            # logging.debug(f"Task '{task_name_for_log}' completed successfully in {duration:.3f}s")
+            duration = time.time() - start_time # Measure duration regardless
+
+            # Get memory usage after and log delta if sampling this execution
+            # Check available again just before use
+            if run_tracemalloc_sample and tracemalloc_available and tracemalloc:
+                try:
+                    mem_after, _ = tracemalloc.get_traced_memory()
+                    mem_delta = mem_after - mem_before
+                    mem_delta_mb = mem_delta / (1024 * 1024)
+                    mem_before_mb = mem_before / (1024 * 1024)
+                    mem_after_mb = mem_after / (1024 * 1024)
+
+                    log_level = logging.INFO if abs(mem_delta_mb) < 1 else logging.WARNING # Log higher if delta > 1MB
+                    # Added [Tracemalloc Sample] prefix for clarity
+                    logging.log(log_level, f"Task '{task_name_for_log}' completed in {duration:.3f}s. [Tracemalloc Sample] Mem Before: {mem_before_mb:.2f}MB, Mem After: {mem_after_mb:.2f}MB, Delta: {mem_delta_mb:+.2f}MB")
+
+                    # If memory increased significantly during the sample, log top allocations
+                    if mem_delta > 1024 * 1024: # Log top allocations if increase > 1MB (adjust threshold if needed)
+                        snapshot = tracemalloc.take_snapshot()
+                        # Log top allocations from the end snapshot. Comparing snapshots adds complexity.
+                        top_stats = snapshot.statistics('lineno')
+                        logging.warning(f"[Tracemalloc] Task '{task_name_for_log}' sample showed positive memory delta > 1MB. Top 5 allocations at end:")
+                        for i, stat in enumerate(top_stats[:5], 1):
+                            # Limit traceback line length for cleaner logs
+                            trace_line = stat.traceback.format()[-1]
+                            trace_line = trace_line[:200] + '...' if len(trace_line) > 200 else trace_line
+                            logging.warning(f"  {i}: {trace_line} - Size: {stat.size / 1024:.1f} KiB, Count: {stat.count}")
+
+                except Exception as e_mem:
+                    logging.error(f"[Tracemalloc] Error getting memory after task '{task_name_for_log}': {e_mem}")
+            elif run_tracemalloc_sample:
+                # Log if we intended to sample but tracemalloc became unavailable
+                 logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available at point of 'after' memory check.")
+
+
+            # Optional: Log normal duration if not sampling (can be noisy)
+            # else:
+            #    logging.debug(f"Task '{task_name_for_log}' completed successfully in {duration:.3f}s (No tracemalloc sample this time)")
+
             return duration # Return duration for the listener
+
         except Exception as e:
-            # Log the error
             duration = time.time() - start_time
             logging.error(f"Error during execution of wrapped task '{task_name_for_log}' after {duration:.3f}s: {e}", exc_info=True)
-            # Re-raise the exception so APScheduler handles it as an error
-            raise
+
+            # Log memory even on error if sampling this execution
+            # Check available again just before use
+            if run_tracemalloc_sample and tracemalloc_available and tracemalloc:
+                 try:
+                     mem_after, _ = tracemalloc.get_traced_memory()
+                     # Note: mem_before might be 0 if the 'before' call failed
+                     mem_delta = mem_after - mem_before
+                     mem_delta_mb = mem_delta / (1024 * 1024)
+                     mem_before_mb = mem_before / (1024 * 1024)
+                     mem_after_mb = mem_after / (1024 * 1024)
+                     logging.error(f"[Tracemalloc] Memory state after error in '{task_name_for_log}'. Mem Before: {mem_before_mb:.2f}MB, Mem After: {mem_after_mb:.2f}MB, Delta: {mem_delta_mb:+.2f}MB")
+                 except Exception as e_mem_err:
+                     logging.error(f"[Tracemalloc] Error getting memory after task error in '{task_name_for_log}': {e_mem_err}")
+            elif run_tracemalloc_sample:
+                 # Log if we intended to sample but tracemalloc became unavailable
+                 logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available at point of error memory check.")
+
+            raise # Re-raise the exception
     # *** END EDIT ***
 
 def process_overseerr_webhook(data):
@@ -3331,8 +3520,17 @@ def generate_airtime_report():
     current_datetime_local = datetime.now(_get_local_timezone()) # Use local timezone
     report = []
 
-    movie_airtime_offset_min = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
-    episode_airtime_offset_min = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
+    # --- START EDIT: Add try-except for float conversions ---
+    try:
+        movie_airtime_offset_min = float(get_setting("Queue", "movie_airtime_offset", "19")) * 60
+    except (ValueError, TypeError):
+        movie_airtime_offset_min = 19.0 * 60
+
+    try:
+        episode_airtime_offset_min = float(get_setting("Queue", "episode_airtime_offset", "0")) * 60
+    except (ValueError, TypeError):
+        episode_airtime_offset_min = 0.0 * 60
+    # --- END EDIT ---
 
     logging.info(f"Movie airtime offset: {movie_airtime_offset_min / 60} hours")
     logging.info(f"Episode airtime offset: {episode_airtime_offset_min / 60} hours")

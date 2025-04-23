@@ -160,10 +160,12 @@ import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
     const SETTINGS_SCHEMA = {{ SETTINGS_SCHEMA | tojson | safe }};
+    const CONFIGURED_VERSIONS = {{ configured_versions | tojson | safe }};
     
     initializeAddContentSourceButton();
     initializeDeleteButtons();
     refreshContentSourcesList();
+    startContentSourcesRefresh();
 
     function initializeAddContentSourceButton() {
         const addButton = document.querySelector('#add-content-source-btn');
@@ -240,7 +242,7 @@ document.addEventListener('DOMContentLoaded', function() {
             cancelText: 'Cancel',
             onConfirm: (formData) => {
                 formData.enabled = true; // Always set enabled to true for new content sources
-                formData.versions = ['Default']; // Automatically set 'Default' version
+                formData.versions = CONFIGURED_VERSIONS.length > 0 ? CONFIGURED_VERSIONS : ['Default']; // Use configured versions, fallback to Default
                 addContentSource(sourceType, formData);
             }
         });
@@ -441,12 +443,6 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshContentSourcesList();
         setInterval(refreshContentSourcesList, 5000); // Refresh every 5 seconds
     }
-
-    // Call this function when the page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        startContentSourcesRefresh();
-        // ... other initialization code ...
-    });
 });
 </script>
 

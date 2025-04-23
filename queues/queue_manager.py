@@ -7,7 +7,7 @@ import os
 import time
 
 from database.database_writing import update_media_item_state
-from database.database_reading import get_media_item_by_id
+from database.database_reading import get_media_item_by_id, get_item_count_by_state
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
 
@@ -20,6 +20,9 @@ from queues.unreleased_queue import UnreleasedQueue
 from queues.blacklisted_queue import BlacklistedQueue
 from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
+from queues.final_check_queue import FinalCheckQueue
+from queues.base_queue import BaseQueue
+from utilities.settings import get_setting
 
 # Get the item tracker logger
 item_tracker_logger = logging.getLogger('item_tracker')
@@ -225,50 +228,6 @@ class QueueTimer:
         
         return current_items
 
-class BaseQueue:
-    """Base interface for all queue classes"""
-    
-    def update(self):
-        """Update the queue contents"""
-        raise NotImplementedError("Each queue must implement update method")
-        
-    def process(self, queue_manager):
-        """Process items in the queue"""
-        raise NotImplementedError("Each queue must implement process method")
-        
-    def get_contents(self):
-        """Get all items in the queue"""
-        raise NotImplementedError("Each queue must implement get_contents method")
-        
-    def add_item(self, item):
-        """Add an item to the queue"""
-        raise NotImplementedError("Each queue must implement add_item method")
-        
-    def remove_item(self, item):
-        """Remove an item from the queue"""
-        raise NotImplementedError("Each queue must implement remove_item method")
-        
-    def contains_item_id(self, item_id):
-        """Check if the queue contains an item with the given ID (optimized)"""
-        # Default implementation, queues should override this with more efficient implementations
-        return any(i['id'] == item_id for i in self.get_contents())
-        
-    def _record_item_entered(self, queue_manager, item):
-        """Record that an item entered this queue"""
-        if hasattr(queue_manager, 'queue_timer') and item and 'id' in item:
-            queue_name = self.__class__.__name__.replace('Queue', '')
-            item_id = item['id']
-            item_identifier = queue_manager.generate_identifier(item)
-            queue_manager.queue_timer.item_entered_queue(item_id, queue_name, item_identifier)
-            
-    def _record_item_exited(self, queue_manager, item):
-        """Record that an item exited this queue"""
-        if hasattr(queue_manager, 'queue_timer') and item and 'id' in item:
-            queue_name = self.__class__.__name__.replace('Queue', '')
-            item_id = item['id']
-            item_identifier = queue_manager.generate_identifier(item)
-            queue_manager.queue_timer.item_exited_queue(item_id, queue_name, item_identifier)
-
 class QueueManager:
     _instance = None
 
@@ -290,7 +249,8 @@ class QueueManager:
             "Unreleased": UnreleasedQueue(),
             "Blacklisted": BlacklistedQueue(),
             "Pending Uncached": PendingUncachedQueue(),
-            "Upgrading": UpgradingQueue()
+            "Upgrading": UpgradingQueue(),
+            "Final_Check": FinalCheckQueue()
         }
         self.paused = False
         
@@ -324,15 +284,29 @@ class QueueManager:
         Update all queues efficiently, logging only significant changes
         """
         for queue_name, queue in self.queues.items():
-            before_count = len(queue.get_contents())
-            queue.update()
-            after_count = len(queue.get_contents())
-            
-            # Only log if there was an actual change in the queue size
-            if before_count != after_count:
-                logging.debug(f"Queue {queue_name} updated: {before_count} -> {after_count} items")
+            # For in-memory queues, check current content length
+            if queue_name in ["Scraping", "Adding", "Checking", "Sleeping", "Pending Uncached", "Upgrading", "Final_Check"]: # Add other in-memory queues if any
+                before_count = len(queue.get_contents())
+                queue.update()
+                after_count = len(queue.get_contents())
+                if before_count != after_count:
+                     logging.debug(f"Queue {queue_name} updated: {before_count} -> {after_count} items")
+            elif queue_name in ["Wanted", "Unreleased", "Blacklisted"]:
+                 # For DB-based queues, update is a no-op or handles internal logic
+                 # Logging count changes for these would require DB queries before/after, which is less efficient here.
+                 # We rely on their process() methods or direct DB access for counts elsewhere.
+                 queue.update() # Call update even if it's simple
+                 # logging.debug(f"Called update() for DB-backed queue {queue_name}") # Optional debug log
+            else:
+                 # Handle any other queue types if necessary
+                 queue.update()
 
     def get_queue_contents(self):
+        """
+        Get current IN-MEMORY queue contents.
+        Note: For queues managing state in the database (Wanted, Unreleased, Blacklisted),
+        this will return an empty list as items are not stored in memory.
+        """
         contents = OrderedDict()
         for state, queue in self.queues.items():
             contents[state] = queue.get_contents()
@@ -349,23 +323,51 @@ class QueueManager:
         else:
             raise ValueError(f"Unknown item type: {item['type']}")
 
-    def get_item_queue(self, item: Dict[str, Any]) -> str:
-        """Find which queue contains the specified item"""
-        item_id = item['id']
-        
-        # First check if we can find by ID (faster)
-        for queue_name, queue in self.queues.items():
-            # We assume each queue implements a fast way to check for item existence
-            if queue.contains_item_id(item_id):
-                return queue_name
-            
-        # Fallback to traditional search if queue doesn't implement contains_item_id
-        for queue_name, queue in self.queues.items():
-            if any(i['id'] == item_id for i in queue.get_contents()):
-                return queue_name
-                
-        return None  # or raise an exception if the item should always be in a queue
-        
+    def get_item_queue(self, item: Dict[str, Any]) -> Optional[str]:
+        """Find which queue contains the specified item by checking the item's current state in the database."""
+        item_id = item.get('id')
+        if not item_id:
+            logging.warning("get_item_queue called with item missing 'id'.")
+            return None
+
+        try:
+            # Fetch the current state directly from the database
+            # Assumes item state corresponds to queue name (e.g., 'Wanted' state -> WantedQueue)
+            from database.database_reading import get_media_item_by_id # Local import
+            db_item = get_media_item_by_id(item_id)
+            if db_item:
+                current_state = db_item.get('state')
+                if current_state in self.queues:
+                    # Verify if the corresponding queue claims to contain the item (handles in-memory queues too)
+                    if self.queues[current_state].contains_item_id(item_id):
+                         logging.debug(f"Item {item_id} found in state '{current_state}', verified in {current_state}Queue.")
+                         return current_state
+                    else:
+                         # This case might happen if DB state is updated but in-memory queue (like Scraping) hasn't updated yet.
+                         logging.warning(f"Item {item_id} state is '{current_state}' in DB, but not found in {current_state}Queue's contains_item_id check.")
+                         # Fallback to iterating through queues that might hold it temporarily
+                         for queue_name, queue in self.queues.items():
+                             # Check queues that might hold items temporarily or manage state differently
+                             if queue_name in ["Scraping", "Adding", "Checking", "Upgrading"]: # Add others if necessary
+                                 if queue.contains_item_id(item_id):
+                                     logging.warning(f"Item {item_id} found in {queue_name}Queue despite DB state '{current_state}'. Returning '{queue_name}'.")
+                                     return queue_name
+                             # If still not found after checking temporary queues
+                             logging.error(f"Item {item_id} state is '{current_state}' but not found in any likely queue after fallback check.")
+                             return None # Or return current_state cautiously?
+                elif current_state:
+                     logging.warning(f"Item {item_id} has state '{current_state}' in DB, which does not correspond to a known queue.")
+                     return None # State exists but no matching queue
+                else:
+                     logging.warning(f"Item {item_id} found in DB but has no 'state' attribute.")
+                     return None # Item exists but no state?
+            else:
+                logging.warning(f"Item {item_id} not found in database for get_item_queue.")
+                return None # Item not in DB
+        except Exception as e:
+            logging.error(f"Error getting item state from DB for get_item_queue (ID: {item_id}): {e}", exc_info=True)
+            return None
+
     def _process_queue_safely(self, queue_name, with_result=False):
         """
         Process a queue safely with pause checking and error handling
@@ -422,13 +424,13 @@ class QueueManager:
         self.queues["Scraping"].update()
 
         # Now process items if any exist
-        queue_contents = self.queues["Scraping"].get_contents()
-
-        if queue_contents:
+        queue_items = self.queues["Scraping"].items
+        if queue_items:
+            item_to_process = queue_items[0] # Peek at the first item
             # Process the queue safely (catches exceptions, including RateLimitError)
-            result = self._process_queue_safely("Scraping", with_result=True)
-            logging.debug(f"Scraping queue process result: {result}")
-            return result # Return True if items were processed, False otherwise
+            result = self._process_queue_safely("Scraping", with_result=True) # process method handles the single item
+            logging.debug(f"Scraping queue process result for one item: {result}")
+            return result # Return True if item was processed, False otherwise
 
         # Return False if queue was empty after update
         return False
@@ -452,6 +454,10 @@ class QueueManager:
         result = self._process_queue_safely("Upgrading")
         if not self.paused:
             self.queues["Upgrading"].clean_up_upgrade_times()
+
+    def process_final_check(self):
+        """Process the Final Check queue."""
+        self._process_queue_safely("Final_Check")
 
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
         self.queues["Blacklisted"].blacklist_item(item, self)
@@ -580,7 +586,7 @@ class QueueManager:
 
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
-        logging.debug(f"Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
+        logging.debug(f"[move_to_blacklisted] Initiating move for item {item_identifier} from {from_queue} to Blacklisted state via blacklist_item method")
         
         # Log initiation of move
         self.item_tracker.info({
@@ -588,14 +594,13 @@ class QueueManager:
             'item_id': item.get('id'),
             'item_identifier': item_identifier,
             'from_queue': from_queue,
-            'to_queue': 'Blacklisted'
+            'to_queue': 'Blacklisted (or Fallback)' # Indicate possibility of fallback
         })
         
-        # Record exit from source queue *before* calling blacklist_item
+        # Record exit from source queue
         time_in_from_queue_seconds = None
         if from_queue and from_queue in self.queues and item and 'id' in item:
             self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
-            # Calculate time spent in the from_queue
             item_timing = self.queue_timer.get_item_timing(item['id'])
             if from_queue in item_timing:
                 entry_time, exit_time = item_timing[from_queue]
@@ -603,7 +608,6 @@ class QueueManager:
                     time_in_from_queue_seconds = exit_time - entry_time
 
         # Call the specific blacklisting method which contains the fallback logic
-        # blacklist_item now handles DB update, adding to its list, and recording its own entry time.
         blacklisted_queue = self.queues["Blacklisted"]
         blacklisted_queue.blacklist_item(item, self) # Pass self (QueueManager)
 
@@ -629,8 +633,8 @@ class QueueManager:
 
         # Log completion of the move operation initiated here
         log_data = {
-            'event': 'MOVE_COMPLETED', # Or 'FALLBACK_APPLIED' if we could detect it? blacklist_item doesn't return status.
-            'item_id': item.get('id'), 
+            'event': 'MOVE_COMPLETED',
+            'item_id': item.get('id'),
             'item_identifier': item_identifier,
             'from_queue': from_queue,
             'final_state': 'Blacklisted or Wanted (via Fallback)', # Reflect uncertainty
@@ -689,28 +693,25 @@ class QueueManager:
         
         for queue_name in critical_queues:
             if queue_name in self.queues:
-                # Use the length of the internal list directly if available and efficient
-                # Assuming each queue object has an efficient way to check emptiness
-                # For example, checking the length of an internal list `self.queues[queue_name].items`
-                # If not, fall back to get_contents(), but prefer direct length check.
-                # Placeholder: Let's assume a simple length check on a hypothetical 'items' attribute
-                # Replace with the actual way queues store items if different.
                 try:
-                    # Attempt to check the length of the internal list directly
-                    # This is a guess based on common queue implementations. Adjust if needed.
-                    if hasattr(self.queues[queue_name], 'items') and len(self.queues[queue_name].items) > 0:
-                        return False # Found items in a critical queue
-                    # Fallback if 'items' attribute doesn't exist or another method is used
+                    # Check in-memory queues directly
+                    if hasattr(self.queues[queue_name], 'items'):
+                        if len(self.queues[queue_name].items) > 0:
+                            logging.debug(f"Critical queue '{queue_name}' is not empty (checked items list).")
+                            return False
+                    # Fallback check using get_contents (should work for Scraping, Adding, Checking)
                     elif len(self.queues[queue_name].get_contents()) > 0:
-                         return False # Found items in a critical queue
+                        logging.debug(f"Critical queue '{queue_name}' is not empty (checked get_contents()).")
+                        return False
                 except AttributeError:
                     # Fallback if direct length check fails
-                    if len(self.queues[queue_name].get_contents()) > 0:
-                        return False # Found items in a critical queue
+                     if len(self.queues[queue_name].get_contents()) > 0:
+                         logging.debug(f"Critical queue '{queue_name}' is not empty (checked get_contents() after AttributeError).")
+                         return False
             else:
                  logging.warning(f"Critical queue '{queue_name}' not found in QueueManager. Assuming empty.")
 
-        # If we checked all critical queues and found no items
+        logging.debug("All critical queues (Scraping, Adding, Checking) are empty.")
         return True
 
     def _move_item_to_queue(self, item, from_queue, to_queue_name, new_state, new_version=None, **additional_params):
@@ -742,9 +743,8 @@ class QueueManager:
         
         # Record exit from source queue if applicable
         time_in_from_queue_seconds = None
-        if from_queue and from_queue in self.queues and item and 'id' in item:
+        if from_queue and from_queue in self.queues:
             self.queue_timer.item_exited_queue(item['id'], from_queue, item_identifier)
-            # Try to get timing immediately after exit
             item_timing = self.queue_timer.get_item_timing(item['id'])
             if from_queue in item_timing:
                 entry_time, exit_time = item_timing[from_queue]
@@ -879,3 +879,70 @@ class QueueManager:
         if hasattr(self, 'queue_timer'):
             return self.queue_timer.get_current_queue_items()
         return {}
+
+    def initiate_final_check_or_blacklist(self, item: Dict[str, Any], from_queue: str):
+        """
+        Checks the delay setting and moves item to Final_Check or directly
+        calls move_to_blacklisted (which includes fallback logic).
+        """
+        item_identifier = self.generate_identifier(item)
+        delay_hours = get_setting("Queue", "blacklist_final_scrape_delay_hours", 0)
+
+        if delay_hours > 0:
+            logging.info(f"Item {item_identifier} reached blacklist condition in {from_queue}. Moving to Final_Check queue for {delay_hours} hours.")
+            # Use internal move method - no need to record exit/entry again here as _move does it
+            self._move_item_to_queue(item, from_queue, "Final_Check", "Final_Check")
+        else:
+            logging.info(f"Item {item_identifier} reached blacklist condition in {from_queue}. Final check delay is 0, proceeding to blacklist/fallback.")
+            # Call the original method that handles fallback etc.
+            self.move_to_blacklisted(item, from_queue)
+
+    def log_queue_summary(self):
+        """Logs a summary of the number of items in each queue."""
+        summary = ["Queue Summary:"]
+        total_items = 0
+        for queue_name, queue in self.queues.items():
+            count = 0
+            try:
+                 # Get count from DB for refactored queues
+                if queue_name in ["Wanted", "Unreleased", "Blacklisted"]:
+                    count = get_item_count_by_state(queue_name)
+                # Get count from memory for others
+                else:
+                    count = len(queue.get_contents()) # Safe for Scraping, Adding, etc.
+
+                if count > 0:
+                     summary.append(f"  {queue_name}: {count} items")
+                     total_items += count
+            except Exception as e:
+                 summary.append(f"  {queue_name}: Error getting count - {e}")
+
+        if total_items == 0:
+            summary.append("  All queues are empty.")
+
+        logging.info("\n".join(summary))
+
+    def get_all_queue_contents(self):
+        """
+        Get current IN-MEMORY queue contents from all managed queues.
+
+        Note: For queues managing state primarily in the database
+        (e.g., Wanted, Unreleased, Blacklisted), this will return an
+        empty list as items are not stored in the queue object's memory.
+        To get items in those states, query the database directly
+        (e.g., using `database.database_reading.get_all_media_items(state=...)`).
+
+        Returns:
+            OrderedDict: A dictionary where keys are queue names (states)
+                         and values are lists of item dictionaries currently
+                         held in that queue's memory.
+        """
+        contents = OrderedDict()
+        for state, queue in self.queues.items():
+            try:
+                # Attempt to get contents, handle potential errors gracefully
+                contents[state] = queue.get_contents()
+            except Exception as e:
+                logging.error(f"Error getting contents for queue {state}: {e}")
+                contents[state] = [] # Return empty list on error for this queue
+        return contents

@@ -26,6 +26,9 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('tmdb_id', torrent.tmdb_id || '');
             formData.append('genres', torrent.genres || '');
             formData.append('original_scraped_torrent_title', torrent.original_title || ''); // Add the original torrent title
+            // --- START EDIT: Add current_score to form data ---
+            formData.append('current_score', torrent.score_breakdown?.total_score || '0'); // Add the score, default to 0 if missing
+            // --- END EDIT ---
 
             fetch('/scraper/add_to_debrid', {
                 method: 'POST',

@@ -488,6 +488,19 @@ def delete_scraper(scraper_id):
         return True
     return False
 
+def get_content_source_display_names():
+    """
+    Returns a dictionary mapping content source IDs to their display names.
+    Falls back to source_id if display_name is missing or empty.
+    """
+    config = load_config()
+    display_name_map = {}
+    for source_id, source_config in config.get('Content Sources', {}).items():
+        display_name = source_config.get('display_name', '').strip()
+        # Use source_id as fallback if display_name is empty
+        display_name_map[source_id] = display_name if display_name else source_id
+    return display_name_map
+
 def save_version_settings(version, settings):
     config = load_config()
     if 'Scraping' not in config:

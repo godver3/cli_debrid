@@ -7,6 +7,7 @@ import logging
 import json
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
+import time # Add time import
 
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
@@ -175,6 +176,13 @@ class AddingQueue:
             logging.error(f"Error getting Wanted queue contents: {e}")
         # --- END EDIT ---
 
+        # --- START EDIT: Fetch setting from Queue section ---
+        try:
+            delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
+        except (ValueError, TypeError):
+            delay_seconds = 0.0
+        # --- END EDIT ---
+
         for item in items_to_process:
             item_identifier = f"{item.get('title')} ({item.get('type')})"
             item_id = item.get('id')
@@ -182,8 +190,10 @@ class AddingQueue:
                 logging.warning(f"Skipping item without ID in AddingQueue: {item.get('title')}")
                 continue
             logging.info(f"Processing item {item_id}: {item_identifier}")
+            processed_this_item = False # Flag for applying delay
 
             try:
+                # --- Load scrape_results ---
                 results = item.get('scrape_results', [])
                 if isinstance(results, str):
                     try:
@@ -197,40 +207,49 @@ class AddingQueue:
                     logging.error(f"Scrape results are not in the expected format (list of dicts) for {item_identifier}")
                     self._handle_failed_item(item, "Invalid scrape results structure", queue_manager)
                     continue
-                    
+
                 if not results:
                     logging.info(f"No scrape results found for {item_identifier}")
                     self._handle_failed_item(item, "No results found", queue_manager)
                     continue
-                    
+
                 logging.info(f"Found {len(results)} scrape results for {item_identifier}")
 
+                # Add original_scraped_torrent_title to results if missing (important for later matching)
                 for result in results:
-                    result['original_scraped_torrent_title'] = result.get('original_title')
-                
+                     if 'original_scraped_torrent_title' not in result:
+                         result['original_scraped_torrent_title'] = result.get('original_title')
+
+                # --- Select Torrent (cached/uncached logic) ---
                 if get_setting('Scraping', 'uncached_content_handling', 'None') == 'None':
                     accept_uncached = False
                 elif get_setting('Scraping', 'uncached_content_handling') == 'Full':
                     accept_uncached = True
+                else: # Hybrid mode is the default if not None or Full
+                    accept_uncached = False # Start with cached only for hybrid
 
                 torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached, item=item)
-                
-                if not torrent_info and not magnet and get_setting('Scraping', 'hybrid_mode'):
-                    logging.info(f"No cached results found, trying uncached results")
+
+                if not torrent_info and not magnet and get_setting('Scraping', 'hybrid_mode', True): # Check hybrid setting explicitly
+                    logging.info(f"No cached results found, trying uncached results (Hybrid Mode)")
+                    accept_uncached = True # Now accept uncached
                     torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached=True, item=item)
-                
-                updated_item = get_media_item_by_id(item['id'])
+
+                updated_item = get_media_item_by_id(item['id']) # Check state after processing
                 if updated_item and updated_item.get('state') == 'Pending Uncached':
                     logging.info(f"Item {item_id} moved to Pending Uncached state. Skipping further processing in Adding queue.")
-                    continue
-                
-                if (not torrent_info or not magnet) and (not updated_item or updated_item.get('state') != 'Pending Uncached'):
-                    logging.error(f"No valid torrent info or magnet found for {item_identifier}")
+                    self.remove_item(item) # Remove from memory queue
+                    continue # Move to next item
+
+                if (not torrent_info or not magnet): # Check again after potential uncached attempt
+                    logging.error(f"No valid torrent info or magnet found for {item_identifier} after checking cache/uncached modes.")
+                    # Try to get torrent_id for potential removal in handle_failed_item
                     if torrent_info and torrent_info.get('id'):
                        item['torrent_id'] = torrent_info.get('id')
-                    self._handle_failed_item(item, "No valid results found", queue_manager)
+                    self._handle_failed_item(item, "No valid results found after cache/uncached processing", queue_manager)
                     continue
-                    
+
+                # --- Process Files and Match ---
                 files = torrent_info.get('files', [])
 
                 filename_filter_out_list = get_setting('Debug', 'filename_filter_out_list', '')
@@ -254,15 +273,16 @@ class AddingQueue:
                     logging.info(f"Filtered {len(files) - len(filtered_files)} files out of {len(files)} total files")
                     files = filtered_files
 
+                # --- Apply XEM Mapping for Matching ---
                 target_season = item.get('season_number')
                 target_episode = item.get('episode_number')
-                best_result_for_mapping = results[0] if results else None
+                best_result_for_mapping = results[0] if results else None # Best result is used for mapping hint
                 scene_mapping_applied = False
                 primary_absolute_season = item.get('season_number')
                 primary_absolute_episode = item.get('episode_number')
                 primary_scene_season = None
                 primary_scene_episode = None
-                
+
                 if item.get('type') == 'episode' and best_result_for_mapping:
                     scene_mapping = best_result_for_mapping.get('xem_scene_mapping')
                     if scene_mapping:
@@ -288,21 +308,76 @@ class AddingQueue:
                 
                 if not matches:
                     logging.error(f"No matching files found in torrent for {item_identifier}")
-                    item['torrent_id'] = torrent_info.get('id')
+                    item['torrent_id'] = torrent_info.get('id') # Ensure torrent_id is set for removal
                     self._handle_failed_item(item, "No matching files found in torrent", queue_manager)
                     continue
                     
                 matched_file = matches[0][0]
                 logging.info(f"Best matching file for {item_identifier}: {matched_file}")
                 
-                original_scraped_torrent_title = torrent_info.get('original_scraped_torrent_title')
-                resolution = None
-                if results and isinstance(results[0], dict):
-                    best_result = results[0]
-                    resolution = best_result.get('resolution')
-                    logging.debug(f"Extracted resolution {resolution} from best result for {item_identifier}")
+                # --- START: Extract Score and Update DB ---
+                current_score = 0 # Default score
+                chosen_result_info = None
 
-                update_media_item(item['id'], original_scraped_torrent_title=original_scraped_torrent_title, resolution=resolution)
+                # Find the result corresponding to the chosen torrent_info (match by magnet or hash)
+                chosen_hash = torrent_info.get('hash', '').lower()
+                chosen_magnet = magnet.lower() if magnet else ''
+
+                for result in results:
+                    result_magnet = result.get('magnet', '').lower()
+                    # Attempt to extract hash from result magnet for comparison
+                    from debrid.common import extract_hash_from_magnet
+                    result_hash = extract_hash_from_magnet(result_magnet) if result_magnet else None
+
+                    # Match primarily by hash if available, fallback to full magnet URI
+                    if chosen_hash and result_hash and chosen_hash == result_hash:
+                        chosen_result_info = result
+                        break
+                    elif chosen_magnet and result_magnet and chosen_magnet == result_magnet:
+                        chosen_result_info = result
+                        break
+
+                score_breakdown_debug = None # Variable for logging
+                if chosen_result_info:
+                    score_breakdown_debug = chosen_result_info.get('score_breakdown', {})
+                    current_score = score_breakdown_debug.get('total_score', 0) # Use the debug var here too
+                    logging.info(f"Extracted score {current_score:.2f} for the chosen torrent.")
+                    # Extract other info from the chosen result
+                    original_scraped_torrent_title = chosen_result_info.get('original_scraped_torrent_title') or chosen_result_info.get('original_title')
+                    resolution = chosen_result_info.get('resolution')
+                else:
+                    # Fallback: Try to get info from the first result if no match found (less accurate)
+                    if results:
+                         first_result = results[0]
+                         score_breakdown_debug = first_result.get('score_breakdown', {})
+                         current_score = score_breakdown_debug.get('total_score', 0) # Use the debug var here too
+                         original_scraped_torrent_title = first_result.get('original_scraped_torrent_title') or first_result.get('original_title')
+                         resolution = first_result.get('resolution')
+                         logging.warning(f"Could not definitively match chosen torrent to scrape results. Using score {current_score:.2f} from the first result as fallback.")
+                    else:
+                         original_scraped_torrent_title = None
+                         resolution = None
+                         logging.warning(f"Could not find any result to extract score from for {item_identifier}. Defaulting score to 0.")
+
+
+                # Update the item in the database with score and other details BEFORE moving state
+                update_data = {
+                    'current_score': current_score,
+                    'original_scraped_torrent_title': original_scraped_torrent_title,
+                    'resolution': resolution
+                }
+                # --- DEBUG LOGGING START ---
+                logging.info(f"DEBUG: Preparing to update item {item_id}. Current Score Type: {type(current_score)}, Value: {current_score}")
+                if score_breakdown_debug is not None:
+                    logging.info(f"DEBUG: Score breakdown type: {type(score_breakdown_debug)}")
+                    logging.info(f"DEBUG: Score breakdown content keys: {list(score_breakdown_debug.keys())}")
+                    logging.info(f"DEBUG: Score breakdown total_score value: {score_breakdown_debug.get('total_score')}")
+                else:
+                    logging.warning(f"DEBUG: Score breakdown was None before update for item {item_id}")
+                # --- DEBUG LOGGING END ---
+                logging.info(f"Updating item {item_id} with score and details: {update_data}")
+                update_media_item(item['id'], **update_data)
+                # --- END: Extract Score and Update DB ---
 
                 logging.info(f"Moving {item_identifier} to checking queue")
                 queue_manager.move_to_checking(
@@ -315,8 +390,9 @@ class AddingQueue:
                 )
                 
                 logging.info(f"Removing successfully processed item {item_id} from adding queue")
-                self.remove_item(item)
+                self.remove_item(item) # Remove from memory
                 
+                # --- Process Related Items ---
                 if item.get('type') == 'episode':
                     # Get Scraping items
                     scraping_items = []
@@ -331,7 +407,7 @@ class AddingQueue:
                     # --- START EDIT: Pass Wanted items to find_related_items ---
                     related_items = self.media_matcher.find_related_items(
                         files,
-                        scraping_items,
+                        scraping_items, # Still pass scraping items
                         wanted_items, # Pass the wanted_items list fetched earlier
                         item
                     )
@@ -342,8 +418,9 @@ class AddingQueue:
                     
                     for related in related_items:
                         related_identifier = f"{related.get('title')} S{related.get('season_number')}E{related.get('episode_number')}"
-                        related_item_state = related.get('state', 'Unknown') # Get state for logging/logic
+                        related_item_state = related.get('state', 'Unknown')
 
+                        # --- Apply XEM mapping to related items ---
                         related_item_for_matching = related.copy()
                         
                         if scene_mapping_applied and primary_scene_season is not None and primary_scene_episode is not None:
@@ -362,32 +439,45 @@ class AddingQueue:
                                 logging.warning(f"Cannot infer scene mapping for related item {related_identifier} (season mismatch or missing episode). Using absolute S{related_absolute_season}E{related_absolute_episode}.")
                         related_matches = self.media_matcher.match_content(files, related_item_for_matching)
                         if related_matches:
-                            resolution = None
-                            if results and isinstance(results[0], dict):
-                                best_result = results[0]
-                                resolution = best_result.get('resolution')
-                                logging.debug(f"Passing resolution {resolution} to related episode {related_identifier}")
+                            # --- START: Update related item score/details ---
+                            # Use the same score/details derived from the chosen torrent for the primary item
+                            related_update_data = {
+                                'current_score': current_score,
+                                'original_scraped_torrent_title': original_scraped_torrent_title,
+                                'resolution': resolution
+                            }
+                            logging.info(f"Updating related item {related['id']} with score and details: {related_update_data}")
+                            update_media_item(related['id'], **related_update_data)
+                            # --- END: Update related item score/details ---
 
-                            update_media_item(related['id'], original_scraped_torrent_title=original_scraped_torrent_title, resolution=resolution)
                             related_file = related_matches[0][0]
                             logging.info(f"Moving related episode {related_identifier} (from {related_item_state}) to checking")
                             queue_manager.move_to_checking(
                                 item=related,
-                                from_queue=related_item_state, # Use the actual state of the related item
+                                from_queue=related_item_state,
                                 title=torrent_title,
                                 link=magnet,
                                 filled_by_file=related_file,
                                 torrent_id=torrent_info.get('id')
                             )
-                            
+                            # Note: move_to_checking handles removing the related item from its original queue (Scraping or Wanted)
+
                 success = True
                 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
+                # Try to get torrent_id for potential removal in handle_failed_item
                 if 'torrent_info' in locals() and torrent_info and torrent_info.get('id'):
                     item['torrent_id'] = torrent_info.get('id')
                 self._handle_failed_item(item, f"Processing error: {str(e)}", queue_manager)
                 
+            # --- START EDIT: Add delay within the loop ---
+            finally: # Use finally to ensure delay happens even after errors if item was processed
+                if processed_this_item and delay_seconds > 0:
+                    logging.debug(f"Adding Queue: Applying {delay_seconds}s delay after processing item {item_id}.")
+                    time.sleep(delay_seconds)
+            # --- END EDIT ---
+
         return success
 
     def _process_results_with_mode(self, results: List[Dict], item_identifier: str, accept_uncached: bool, item: Dict) -> Tuple[Optional[Dict], Optional[str]]:

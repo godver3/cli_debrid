@@ -1,9 +1,16 @@
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Dict, Any
 from .core import get_db_connection
 import sqlite3
+
+# Helper function for JSON serialization
+def datetime_serializer(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 def create_torrent_tracking_table():
     """Creates the torrent tracking table if it doesn't exist."""
@@ -74,10 +81,10 @@ def record_torrent_addition(
         ''', (
             torrent_hash,
             trigger_source,
-            json.dumps(trigger_details) if trigger_details else None,
+            json.dumps(trigger_details, default=datetime_serializer) if trigger_details else None,
             rationale,
-            json.dumps(item_data),
-            json.dumps(additional_metadata) if additional_metadata else None
+            json.dumps(item_data, default=datetime_serializer),
+            json.dumps(additional_metadata, default=datetime_serializer) if additional_metadata else None
         ))
         conn.commit()
         return cursor.lastrowid
@@ -237,9 +244,9 @@ def update_torrent_tracking(
         # Build the update query and parameters
         update_fields = ['item_data = ?', 'trigger_details = ?', 'additional_metadata = ?']
         params = [
-            json.dumps(existing_item_data),
-            json.dumps(existing_trigger_details),
-            json.dumps(existing_additional_metadata)
+            json.dumps(existing_item_data, default=datetime_serializer),
+            json.dumps(existing_trigger_details, default=datetime_serializer),
+            json.dumps(existing_additional_metadata, default=datetime_serializer)
         ]
         
         # Add trigger_source and rationale if provided

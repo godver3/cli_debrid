@@ -466,7 +466,7 @@
                     physicalDate = 'Unknown';
                 }
                 releaseInfo = ` - Release Date: ${releaseDate} <span class="physical-release">(Physical: ${physicalDate})</span>`;
-            } else if (releaseDate) {
+            } else if (releaseDate && releaseDate !== 'Unknown') { // Only show if there's a known release date
                 releaseInfo = ` - Release Date: ${releaseDate}`;
             }
 
@@ -502,6 +502,24 @@
             if (queueName === 'Wanted' && item.formatted_scrape_time) {
                 itemContent += ` - Scrape Time: ${item.formatted_scrape_time}`;
             }
+
+            // --- START EDIT: Use final_check_display_time ---
+            if (queueName === 'Final_Check') {
+                let enteredTime = 'Unknown';
+                // Use the pre-processed display time from the backend
+                if (item.final_check_display_time) {
+                    try {
+                        // Backend now sends a pre-formatted string 'YYYY-MM-DD HH:MM:SS'
+                        // Convert it to local time string for display
+                        enteredTime = new Date(item.final_check_display_time).toLocaleString(); // Assume UTC from DB
+                    } catch (e) {
+                        console.warn("Could not parse final_check_display_time:", item.final_check_display_time, e);
+                        enteredTime = item.final_check_display_time; // Display raw string if parsing fails
+                    }
+                }
+                itemContent += ` - Time Added: ${enteredTime}`;
+            }
+            // --- END EDIT ---
 
             itemContent += `</div>`;
             return itemContent;
@@ -632,12 +650,13 @@
                         
                         // Full update of all queues
                         let hasContent = false;
-                        let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Sleeping', 'Unreleased', 'Blacklisted'];
+                        let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Sleeping', 'Unreleased', 'Blacklisted'];
                         
                         queueContents.innerHTML = '';
                         
                         queueOrder.forEach(queueName => {
-                            if (data.contents[queueName] && data.contents[queueName].length > 0) {
+                            // Check if the queue exists in the data.contents object AND has items
+                            if (data.contents && data.contents[queueName] && data.contents[queueName].length > 0) {
                                 hasContent = true;
                                 let queueDiv = document.createElement('div');
                                 queueDiv.className = 'queue';

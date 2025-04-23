@@ -26,7 +26,7 @@ def should_retry_error(exception: Exception) -> bool:
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type((api.exceptions.RequestException, RealDebridAPIError)),
+    retry=retry_if_exception_type((api.exceptions.RequestException, RealDebridAPIError, RateLimitError)),
     retry_error_callback=lambda retry_state: None  # Return None on final failure
 )
 def make_request(

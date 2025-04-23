@@ -148,9 +148,9 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             
             # Clean up the title
             title = raw_title
-            if title.startswith('📂'):
+            if title and title.startswith('📂'):
                 title = title[1:].strip()
-            if title.startswith('[ ') and title.endswith(' ]'):
+            if title and title.startswith('[ ') and title.endswith(' ]'):
                 title = title[2:-2].strip()
             
             # Initialize metadata values

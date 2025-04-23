@@ -140,6 +140,11 @@
             <p>No pagination data available</p>
         {% endif %}
     </div>
+    {# --- START Numerical Pagination --- #}
+    <div class="numerical-pagination" id="numerical-pagination">
+        {# Pagination controls will be rendered here by JavaScript #}
+    </div>
+    {# --- END Numerical Pagination --- #}
 </div>
 <div class="table-container">
     {% if items %}
@@ -195,7 +200,8 @@
         sortColumn: "{{ sort_column }}",
         sortOrder: "{{ sort_order }}",
         filterLogic: {{ filter_logic|default('AND')|tojson|safe }},
-        contentType: "{{ content_type }}"
+        contentType: "{{ content_type }}",
+        contentSourceDisplayMap: {{ content_source_display_map|tojson|safe }}
     };
 </script>
 
@@ -206,15 +212,13 @@ import { initializeDatabaseTooltips } from '/static/js/tooltips.js';
 document.addEventListener('DOMContentLoaded', function() {
     // Get data from window object
     const templateData = window.templateData;
+    const contentSourceDisplayMap = templateData.contentSourceDisplayMap || {};
 
     // Initialize state variables at the top
     let currentContentType = templateData.contentType;
-    // Validate content type on initialization
     if (currentContentType !== 'movie' && currentContentType !== 'episode') {
         currentContentType = 'movie';
-        console.log('Corrected invalid initial content type:', templateData.contentType);
     }
-    
     let currentLetter = '{{ current_letter }}';
     let lastChecked = null;
     let allSelected = false;
@@ -291,7 +295,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Value input/select
         const valueContainer = document.createElement('div');
         valueContainer.className = 'filter-value-container';
-        updateValueInput(valueContainer, filter?.column, filter?.value);
+        updateValueInput(valueContainer, filter?.column, filter?.value, contentSourceDisplayMap);
 
         // Remove button
         const removeBtn = document.createElement('button');
@@ -308,15 +312,41 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Add event listeners
         columnSelect.addEventListener('change', () => {
-            updateValueInput(valueContainer, columnSelect.value);
+            updateValueInput(valueContainer, columnSelect.value, '', contentSourceDisplayMap);
         });
 
         return row;
     }
 
-    function updateValueInput(container, column, value = '') {
-        if (templateData.columnValues[column]) {
-            // Create dropdown for columns with predefined values
+    function updateValueInput(container, column, value = '', displayMap = {}) {
+        container.innerHTML = '';
+
+        if (column === 'content_source' && templateData.columnValues[column]) {
+            const select = document.createElement('select');
+            select.className = 'filter-value';
+            let optionsHTML = '<option value="">Select Source</option>';
+
+            const availableSourceIds = templateData.columnValues[column] || [];
+
+            if (availableSourceIds.includes("None") || availableSourceIds.includes("")) {
+                 optionsHTML += `<option value="None" ${value === "None" ? 'selected' : ''}>None</option>`;
+            }
+
+            availableSourceIds.forEach(sourceId => {
+                 if (sourceId === "None" || sourceId === "") return;
+
+                const displayName = displayMap[sourceId] || sourceId;
+                optionsHTML += `
+                    <option value="${sourceId}" ${value === sourceId ? 'selected' : ''}>
+                        ${displayName}
+                    </option>
+                `;
+            });
+
+            select.innerHTML = optionsHTML;
+            container.appendChild(select);
+        }
+        else if (templateData.columnValues[column]) {
             const select = document.createElement('select');
             select.className = 'filter-value';
             select.innerHTML = `
@@ -327,15 +357,13 @@ document.addEventListener('DOMContentLoaded', function() {
                     </option>
                 `).join('')}
             `;
-            container.innerHTML = '';
             container.appendChild(select);
-        } else {
-            // Create text input for other columns
+        }
+        else {
             const input = document.createElement('input');
             input.type = 'text';
             input.className = 'filter-value';
             input.value = value || '';
-            container.innerHTML = '';
             container.appendChild(input);
         }
     }
@@ -462,44 +490,54 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('filters-container').appendChild(createFilterRow());
     });
 
-    // Modify existing filter form event listener
+    // Filter form submit (no page reset)
     const filterForm = document.getElementById('filter-form');
     if (filterForm) {
         filterForm.addEventListener('submit', function(e) {
             e.preventDefault();
-            const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
-                column: row.querySelector('.filter-column').value,
-                operator: row.querySelector('.filter-operator').value,
-                value: row.querySelector('.filter-value')?.value || ''
-            })).filter(f => f.column);
+            saveSettings();
 
+            // --- Corrected filter extraction ---
+            const filterRows = document.querySelectorAll('.filter-row');
+            const filters = Array.from(filterRows).map(row => {
+                return { // Explicit return
+                    column: row.querySelector('.filter-column').value,
+                    operator: row.querySelector('.filter-operator').value,
+                    value: row.querySelector('.filter-value')?.value || ''
+                };
+            }).filter(f => f.column);
+            // --- End correction ---
+
+            // --- Get other parameters ---
             const sortColumn = document.getElementById('sort-column').value;
             const sortOrder = document.getElementById('sort-order').value;
-            const filterLogic = document.querySelector('input[name="filter_logic"]:checked').value;
+            const filterLogic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
+            const selectedColumnValues = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
 
-            if (filters.length === 0 && !sortColumn && filterLogic === 'AND') {
-                updateContent('{{ url_for('database.index') }}', {
-                    content_type: 'movie',
-                    letter: 'A',
-                    filter_logic: 'AND'
-                });
-                return;
-            }
-
+            // --- Construct params ---
             const params = {
                 filters: JSON.stringify(filters),
                 sort_column: sortColumn,
                 sort_order: sortOrder,
                 content_type: currentContentType || 'movie',
-                filter_logic: filterLogic
+                selected_columns: JSON.stringify(selectedColumnValues),
+                filter_logic: filterLogic,
+                letter: currentLetter || ''
             };
 
-            saveSettings();
+            // --- Call updateContent ---
             updateContent('{{ url_for('database.index') }}', params);
-        });
-    }
 
-    // Modify clear filter function
+        }); // Close addEventListener
+    } // Close if (filterForm)
+
+    // Clear filter button (no page reset)
+    document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
+        e.preventDefault();
+        clearFilterAndSort();
+    });
+
+    // Revert clearFilterAndSort
     function clearFilterAndSort() {
         localStorage.removeItem(STORAGE_KEYS.FILTERS);
         localStorage.removeItem(STORAGE_KEYS.SORT_COLUMN);
@@ -540,7 +578,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
-        updateContent("{{ url_for('database.index') }}", {
+        updateContent('{{ url_for('database.index') }}', {
             content_type: 'movie',
             letter: 'A',
             filter_logic: 'AND'
@@ -786,34 +824,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Save selected columns to localStorage
             localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(selectedColumnValues));
-
-            // Update the content with new columns
-            const params = {
-                selected_columns: JSON.stringify(selectedColumnValues),
-                content_type: currentContentType,
-                letter: currentLetter,
-                filter_logic: localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND'
-            };
-
-            // Get current filter and sort settings
-            const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
-                column: row.querySelector('.filter-column').value,
-                operator: row.querySelector('.filter-operator').value,
-                value: row.querySelector('.filter-value').value
-            })).filter(f => f.column && f.value);
-
-            if (filters.length > 0) {
-                params.filters = JSON.stringify(filters);
-            }
-
-            const sortColumn = document.getElementById('sort-column').value;
-            const sortOrder = document.getElementById('sort-order').value;
-            if (sortColumn) {
-                params.sort_column = sortColumn;
-                params.sort_order = sortOrder;
-            }
-
-            updateContent('{{ url_for('database.index') }}', params);
+            saveSettings();
             
             // Hide the column selector
             columnSelector.classList.add('hidden');
@@ -905,12 +916,11 @@ document.addEventListener('DOMContentLoaded', function() {
         params.ajax = '1';
 
         const queryString = new URLSearchParams(params).toString();
-        url += '?' + queryString;
+        const fetchUrl = `{{ url_for('database.index') }}?${queryString}`; // Use base URL
 
-        // Set updating content flag to true
         setUpdatingContent(true);
 
-        fetch(url)
+        fetch(fetchUrl)
             .then(response => response.json())
             .then(data => {
                 if (data.error) {
@@ -936,13 +946,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
                 }
 
-                // Update current states
+                // Update other states
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
-
-                // Update templateData with new selected columns and column values
                 templateData.selectedColumns = data.selected_columns;
                 templateData.columnValues = data.column_values;
+                templateData.contentSourceDisplayMap = data.content_source_display_map || {};
 
                 // Update sort column dropdown with new selected columns
                 const sortColumnSelect = document.getElementById('sort-column');
@@ -960,15 +969,22 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Update existing filter dropdowns with new columns
                 document.querySelectorAll('.filter-row').forEach(row => {
                     const columnSelect = row.querySelector('.filter-column');
-                    const currentValue = columnSelect.value;
+                    const valueContainer = row.querySelector('.filter-value-container');
+                    const currentValueInput = valueContainer.querySelector('.filter-value');
+                    const currentFilterValue = currentValueInput ? currentValueInput.value : '';
+
+                    // Update column dropdown options
+                    const currentColumnValue = columnSelect.value;
                     columnSelect.innerHTML = `
                         <option value="">Select Column</option>
                         ${data.selected_columns.map(column => `
-                            <option value="${column}" ${currentValue === column ? 'selected' : ''}>
+                            <option value="${column}" ${currentColumnValue === column ? 'selected' : ''}>
                                 ${column}
                             </option>
                         `).join('')}
                     `;
+                    // Re-trigger value input update based on the (potentially unchanged) selected column
+                    updateValueInput(valueContainer, currentColumnValue, currentFilterValue, templateData.contentSourceDisplayMap);
                 });
 
                 // Update UI to reflect current state
@@ -1063,14 +1079,26 @@ document.addEventListener('DOMContentLoaded', function() {
                     const newContentType = this.getAttribute('data-content-type');
                     if (newContentType === 'movie' || newContentType === 'episode') {
                         currentContentType = newContentType;
+                        currentLetter = ''; // Reset letter
                         saveSettings();
-                        document.getElementById('filters-container').innerHTML = '';
-                        localStorage.removeItem(STORAGE_KEYS.FILTERS);
-
-                        updateContent('{{ url_for('database.index') }}', {
+                        const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                            column: row.querySelector('.filter-column').value,
+                            operator: row.querySelector('.filter-operator').value,
+                            value: row.querySelector('.filter-value').value
+                        })).filter(f => f.column);
+                        const currentSortColumn = document.getElementById('sort-column').value;
+                        const currentSortOrder = document.getElementById('sort-order').value;
+                        const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+                        const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+                        const params = {
                             content_type: currentContentType,
-                            filter_logic: localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND'
-                        });
+                            letter: currentLetter,
+                            selected_columns: JSON.stringify(currentSelectedColumns),
+                            filter_logic: currentFilterLogic
+                        };
+                        if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+                        if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+                        updateContent('{{ url_for('database.index') }}', params);
                     } else {
                         console.error('Invalid content type:', newContentType);
                         showPopup({
@@ -1089,15 +1117,24 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!this.classList.contains('active')) {
                     currentLetter = this.getAttribute('data-letter');
                     saveSettings();
-                    document.getElementById('filters-container').innerHTML = '';
-                    localStorage.removeItem(STORAGE_KEYS.FILTERS);
-
-                    updateContent('{{ url_for('database.index') }}', {
+                    const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                        column: row.querySelector('.filter-column').value,
+                        operator: row.querySelector('.filter-operator').value,
+                        value: row.querySelector('.filter-value').value
+                    })).filter(f => f.column);
+                    const currentSortColumn = document.getElementById('sort-column').value;
+                    const currentSortOrder = document.getElementById('sort-order').value;
+                    const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+                    const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+                    const params = {
+                        content_type: currentContentType || 'movie',
                         letter: currentLetter,
-                        content_type: (currentContentType === 'movie' || currentContentType === 'episode')
-                            ? currentContentType : 'movie',
-                        filter_logic: localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND'
-                    });
+                        selected_columns: JSON.stringify(currentSelectedColumns),
+                        filter_logic: currentFilterLogic
+                    };
+                    if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+                    if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+                    updateContent('{{ url_for('database.index') }}', params);
                 }
             });
         });
@@ -1106,10 +1143,38 @@ document.addEventListener('DOMContentLoaded', function() {
             radio.addEventListener('change', function() {
                 const filterForm = document.getElementById('filter-form');
                 if (filterForm) {
-                    filterForm.requestSubmit();
+                     saveSettings();
+                     filterForm.requestSubmit();
                 }
             });
         });
+
+        // Sort Column/Order Change
+        const sortColumnSelect = document.getElementById('sort-column');
+        const sortOrderSelect = document.getElementById('sort-order');
+        const handleSortChange = () => {
+            saveSettings();
+            const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                column: row.querySelector('.filter-column').value,
+                operator: row.querySelector('.filter-operator').value,
+                value: row.querySelector('.filter-value').value
+            })).filter(f => f.column);
+            const currentSortColumn = document.getElementById('sort-column').value;
+            const currentSortOrder = document.getElementById('sort-order').value;
+            const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+            const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+            const params = {
+                content_type: currentContentType || 'movie',
+                letter: currentLetter || '',
+                selected_columns: JSON.stringify(currentSelectedColumns),
+                filter_logic: currentFilterLogic
+            };
+            if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+            if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+            updateContent('{{ url_for('database.index') }}', params);
+        };
+        if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
+        if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
     }
 
     function attachDeleteListeners() {
@@ -1637,8 +1702,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Reinitialize tooltips after initial load/updates
     initializeDatabaseTooltips();
+    updateBulkActionButtons();
 
-}); // End of main DOMContentLoaded listener for the module script
+});
+
 </script>
 
 <script>

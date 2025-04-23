@@ -1,5 +1,5 @@
 import logging
-from .core import get_db_connection
+from .core import get_db_connection, initialize_notifications_table
 from .torrent_tracking import create_torrent_tracking_table
 import sqlite3
 import os
@@ -19,6 +19,10 @@ def create_database():
 def migrate_schema():
     conn = get_db_connection()
     try:
+        # Initialize notifications table (idempotent)
+        initialize_notifications_table(conn)
+        logging.info("Checked/Initialized notifications table.")
+
         # Check if the column exists
         cursor = conn.cursor()
         
@@ -206,6 +210,12 @@ def migrate_schema():
         if 'no_early_release' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN no_early_release BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added no_early_release column to media_items table.")
+        if 'current_score' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN current_score REAL DEFAULT 0')
+            logging.info("Successfully added current_score column to media_items table.")
+        if 'final_check_add_timestamp' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN final_check_add_timestamp TIMESTAMP')
+            logging.info("Successfully added final_check_add_timestamp column to media_items table.")
 
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
@@ -237,11 +247,57 @@ def migrate_schema():
             WHERE filled_by_file IS NOT NULL
         ''')
 
+        # Add new table for tracking tv shows
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tv_shows (
+                imdb_id TEXT PRIMARY KEY,
+                tmdb_id TEXT UNIQUE,
+                title TEXT,
+                year INTEGER,
+                status TEXT,
+                is_complete INTEGER NOT NULL DEFAULT 0,
+                total_episodes INTEGER,
+                last_status_check TEXT,
+                added_at TEXT,
+                last_updated TEXT
+            )
+        ''')
+
+        # Optional: Add indexes for tv_shows if needed
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tv_shows_tmdb_id ON tv_shows (tmdb_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tv_shows_status ON tv_shows (status)')
+
+        # Add new table for tracking tv_show_version_status (logic adjusted previously)
+        # Create the table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tv_show_version_status (
+                imdb_id TEXT NOT NULL,
+                version_identifier TEXT NOT NULL, -- Will store the 'version' key value
+                is_complete_and_present INTEGER NOT NULL DEFAULT 0, -- 1 for true, 0 for false
+                present_episode_count INTEGER NOT NULL DEFAULT 0,
+                is_up_to_date INTEGER NOT NULL DEFAULT 0,
+                last_checked TEXT NOT NULL,
+                PRIMARY KEY (imdb_id, version_identifier),
+                FOREIGN KEY (imdb_id) REFERENCES tv_shows(imdb_id) ON DELETE CASCADE
+            )
+        ''')
+
+        # Check if the tv_show_version_status table exists and add missing columns
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tv_show_version_status'")
+        if cursor.fetchone():
+            # Check if the 'is_up_to_date' column exists
+            cursor.execute("PRAGMA table_info(tv_show_version_status)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'is_up_to_date' not in columns:
+                cursor.execute('ALTER TABLE tv_show_version_status ADD COLUMN is_up_to_date INTEGER NOT NULL DEFAULT 0')
+                logging.info("Successfully added is_up_to_date column to tv_show_version_status table.")
+            # Add checks for other columns here if needed in the future
+
         conn.commit()
-        # logging.info("Schema migration completed successfully. Unique constraint removed.")
+        logging.info("Schema migration checks completed successfully.")
     except Exception as e:
         conn.rollback()
-        logging.error(f"Unexpected error during schema migration: {str(e)}")
+        logging.error(f"Unexpected error during schema migration: {str(e)}", exc_info=True)
     finally:
         conn.close()
 
@@ -343,7 +399,9 @@ def create_tables():
                 physical_release_date DATE,
                 plex_verified BOOLEAN DEFAULT FALSE,
                 upgrading_from_version TEXT,
-                no_early_release BOOLEAN DEFAULT FALSE
+                no_early_release BOOLEAN DEFAULT FALSE,
+                current_score REAL DEFAULT 0,
+                final_check_add_timestamp TIMESTAMP
             )
         ''')
 

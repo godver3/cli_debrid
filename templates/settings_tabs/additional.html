@@ -45,6 +45,12 @@
                                 <option value="{{ choice }}" {% if settings.get(section, {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
                             {% endfor %}
                         </select>
+                    {% elif value.type == 'integer' %}
+                         <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
+                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                data-section="{{ section }}" data-key="{{ key }}"
+                                {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                                {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
                     {% else %}
                         <input type="{{ value.type }}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
@@ -281,6 +287,12 @@
                         <input type="time" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '00:00') }}" class="settings-input"
                                data-section="{{ section }}" data-key="{{ key }}">
+                    {% elif value.type == 'integer' %}
+                         <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
+                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                data-section="{{ section }}" data-key="{{ key }}"
+                                {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                                {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
                     {% else %}
                         <input type="{{ value.type }}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"

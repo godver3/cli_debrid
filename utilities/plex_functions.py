@@ -521,6 +521,7 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                 t_fetch_show_start = time.perf_counter()
                 unique_show_keys_to_fetch = set()
                 show_details_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+                shows_processed_count = 0
 
                 for episode_meta in all_raw_episodes:
                     show_key = episode_meta.get('grandparentRatingKey')
@@ -542,13 +543,24 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                         logger.info(f"Fetching details for {len(fetch_detail_tasks)} shows concurrently...")
                         show_detail_results = await asyncio.gather(*fetch_detail_tasks)
                         logger.info("Finished fetching show details.")
+
+                        if progress_callback:
+                            progress_callback('scanning', f'Processing details for {len(fetch_detail_tasks)} shows...', {
+                                'shows_processed': shows_processed_count,
+                                'total_shows': stats["unique_shows_found"],
+                                'total_movies': stats["total_raw_movies_fetched"],
+                                'movies_processed': stats["movies_processed_count"]
+                            })
+
                         successful_fetches = 0
                         for show_detail in show_detail_results:
                             if show_detail and 'ratingKey' in show_detail:
                                 show_details_cache[show_detail['ratingKey']] = show_detail
                                 successful_fetches += 1
+                                shows_processed_count += 1
+
                         stats["show_detail_fetches_succeeded"] = successful_fetches
-                        logger.info(f"Successfully fetched details for {successful_fetches}/{len(unique_show_keys_to_fetch)} shows.")
+                        logger.info(f"Successfully fetched details for {successful_fetches}/{len(unique_show_keys_to_fetch)} shows. Processed count: {shows_processed_count}")
                 else:
                      logger.info("No new show details needed.")
                 t_fetch_show_end = time.perf_counter()
@@ -556,7 +568,13 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                 logger.info(f"Show detail fetching phase took {stats['time_fetch_show_details']:.2f}s.")
 
                 # 4c. Process episodes using the populated cache
-                if progress_callback: progress_callback('scanning', f'Processing {len(all_raw_episodes)} episodes...')
+                if progress_callback:
+                    progress_callback('scanning', f'Processing {len(all_raw_episodes)} episodes...', {
+                        'shows_processed': shows_processed_count,
+                        'total_shows': stats["unique_shows_found"],
+                        'total_movies': stats["total_raw_movies_fetched"],
+                        'movies_processed': stats["movies_processed_count"]
+                    })
                 logger.info(f"Starting processing for {len(all_raw_episodes)} episodes...")
                 t_process_ep_start = time.perf_counter()
                 processing_tasks = []
@@ -625,6 +643,8 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             progress_callback('complete', 'Scan complete', {
                 'total_movies': stats["total_raw_movies_fetched"],
                 'movies_processed': stats["movies_processed_count"],
+                'total_shows': stats["unique_shows_found"],
+                'shows_processed': shows_processed_count,
                 'total_episodes': stats["total_raw_episodes_fetched"],
                 'episodes_processed': stats["episodes_processed_count"],
                 'movies_found': stats["file_entries_generated_movies"],

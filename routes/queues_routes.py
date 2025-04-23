@@ -9,6 +9,7 @@ from cli_battery.app.limiter import limiter
 from utilities.settings import get_setting
 import json
 import time
+from database.database_reading import get_all_media_items, get_item_count_by_state
 
 queues_bp = Blueprint('queues', __name__)
 queue_manager = QueueManager()
@@ -285,21 +286,39 @@ def process_item_for_response(item, queue_name):
         elif queue_name == 'Sleeping':
             if 'wake_count' not in item or item['wake_count'] is None:
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])
+        elif queue_name == 'Final_Check':
+            # --- START EDIT: Use final_check_add_timestamp or fallback ---
+            # Determine the timestamp to display
+            display_timestamp = item.get('final_check_add_timestamp') or item.get('last_updated')
+            
+            # Add it to the item under a specific key for the frontend
+            item['final_check_display_time'] = display_timestamp
+            # --- END EDIT ---
+            pass # No other specific action needed here other than ensuring it flows through
         
         # Ensure all values are JSON serializable
         for key, value in item.items():
             if isinstance(value, datetime):
-                item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+                # Format the specific timestamp if it's a datetime object
+                if key == 'final_check_display_time':
+                    item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
+                # Format other datetime objects as before
+                elif key not in ['scraping_versions']: # Avoid trying to format complex objects
+                    item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
             elif value == float('inf'):
                 item[key] = "Infinity"
             elif value == float('-inf'):
                 item[key] = "-Infinity"
             elif not isinstance(value, (str, int, float, bool, list, dict, type(None))):
-                item[key] = str(value)
+                # Convert sets to lists if necessary
+                if isinstance(value, set):
+                     item[key] = list(value)
+                else:
+                     item[key] = str(value) # Fallback to string conversion
                 
         return item
     except Exception as e:
-        logging.error(f"Error processing item in queue {queue_name}: {str(e)}")
+        logging.error(f"Error processing item in queue {queue_name}: {str(e)}", exc_info=True) # Added exc_info
         # Return a safe version of the item
         return {
             'id': item.get('id', 'unknown'),
@@ -310,16 +329,17 @@ def process_item_for_response(item, queue_name):
 @queues_bp.route('/api/queue-stream')
 @user_required
 def queue_stream():
-    """Stream queue updates with a fixed limit of 500 items per queue."""
+    """Stream queue updates, fetching limited DB data for large queues."""
     ITEMS_LIMIT = 500  # Fixed limit of 500 items per queue
+    # --- START EDIT: Define queues that need DB fetching ---
+    DB_FETCH_QUEUES = {"Wanted", "Blacklisted", "Unreleased", "Final_Check"}
+    # --- END EDIT ---
 
     def generate():
         while True:
             try:
-                # Get queue contents directly. The QueueManager updates in-memory lists
-                # during move operations, which should be reflected here.
-                # The main application loop handles periodic DB sync via queue.update().
-                queue_contents = queue_manager.get_queue_contents()
+                # Get queue contents (only fetches in-memory queues now)
+                in_memory_queue_contents = queue_manager.get_queue_contents()
                 program_running = program_is_running()
                 program_initializing = program_is_initializing()
                 
@@ -339,45 +359,66 @@ def queue_stream():
                             'current_phase': status.get('current_phase', None)
                         }
                 
-                # Process all queues with their specific logic
+                # --- START EDIT: Fetch DB queues and counts ---
+                final_contents = {}
                 queue_counts = {}
                 hidden_counts = {}
-                for queue_name, items in queue_contents.items():
-                    # Store total count
-                    total_count = len(items)
-                    queue_counts[queue_name] = total_count
-                    
-                    # Calculate hidden items
-                    hidden_count = max(0, total_count - ITEMS_LIMIT)
-                    if hidden_count > 0:
-                        hidden_counts[queue_name] = hidden_count
-                    
-                    # Apply fixed limit to items
-                    limited_items = items[:ITEMS_LIMIT]
-                    
-                    # Process each item in the queue
-                    processed_items = [process_item_for_response(item, queue_name) for item in limited_items]
-                    queue_contents[queue_name] = processed_items
-                    
-                    # Pre-consolidate data for specific queues
-                    if queue_name == 'Blacklisted':
-                        items, _ = consolidate_items(processed_items)
-                        queue_contents[queue_name] = items
-                    elif queue_name == 'Unreleased':
-                        items, _ = consolidate_items(processed_items)
-                        queue_contents[queue_name] = items
+
+                # Process in-memory queues first
+                for queue_name, items in in_memory_queue_contents.items():
+                    if queue_name not in DB_FETCH_QUEUES:
+                        total_count = len(items)
+                        queue_counts[queue_name] = total_count
+                        hidden_count = max(0, total_count - ITEMS_LIMIT)
+                        if hidden_count > 0:
+                            hidden_counts[queue_name] = hidden_count
+
+                        limited_items = items[:ITEMS_LIMIT]
+                        processed_items = [process_item_for_response(item, queue_name) for item in limited_items]
+                        final_contents[queue_name] = processed_items
+
+                # Process database-backed queues
+                for queue_name in DB_FETCH_QUEUES:
+                    try:
+                        # Get total count from DB
+                        total_count = get_item_count_by_state(queue_name)
+                        queue_counts[queue_name] = total_count
+                        hidden_count = max(0, total_count - ITEMS_LIMIT)
+                        if hidden_count > 0:
+                            hidden_counts[queue_name] = hidden_count
+
+                        # Fetch limited items from DB
+                        limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
+                        limited_items = [dict(item) for item in limited_items_raw] # Convert rows
+
+                        processed_items = [process_item_for_response(item, queue_name) for item in limited_items]
+
+                        # Apply consolidation if needed
+                        if queue_name in ['Blacklisted', 'Unreleased']:
+                            processed_items, _ = consolidate_items(processed_items) # Use original consolidate function
+
+                        final_contents[queue_name] = processed_items
+
+                    except Exception as db_err:
+                         logging.error(f"Error fetching data for DB queue '{queue_name}': {db_err}")
+                         final_contents[queue_name] = [] # Provide empty list on error
+                         queue_counts[queue_name] = 0
+                         hidden_counts[queue_name] = 0
+                # --- END EDIT ---
 
                 data = {
-                    "contents": queue_contents,
+                    # --- START EDIT: Use final_contents ---
+                    "contents": final_contents,
+                    # --- END EDIT ---
                     "queue_counts": queue_counts,
                     "hidden_counts": hidden_counts,
                     "program_running": program_running,
                     "program_initializing": program_initializing,
-                    "initialization_status": initialization_status
+                    "initialization_status": initialization_status # Include initialization status here
                 }
-                
+
                 yield f"data: {json.dumps(data, default=str)}\n\n"
-                    
+
             except Exception as e:
                 logging.error(f"Error in queue stream: {str(e)}")
                 try:

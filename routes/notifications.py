@@ -9,12 +9,13 @@ from datetime import datetime
 import time
 from threading import Timer, Lock
 import sys
-import json
-from pathlib import Path
-import os
-import uuid
-import errno
 from utilities.settings import get_setting
+from database.core import (
+    add_db_notification,
+    get_db_notifications,
+    mark_db_notification_read,
+    mark_all_db_notifications_read
+)
 
 # Global notification buffer
 notification_buffer = []
@@ -23,12 +24,6 @@ safety_valve_timer = None
 buffer_lock = Lock()
 BUFFER_TIMEOUT = 10  # seconds to wait before sending notifications
 SAFETY_VALVE_TIMEOUT = 60  # seconds maximum to wait before forcing send
-
-# Constants
-MAX_NOTIFICATIONS = 20
-NOTIFICATION_FILE = Path(os.getenv('USER_DB_CONTENT', '/user/db_content')) / 'notifications.json'
-LOCK_FILE = NOTIFICATION_FILE.with_suffix('.lock')
-LOCK_TIMEOUT = 5
 
 def safe_format_date(date_value):
     if not date_value:
@@ -146,6 +141,45 @@ def format_notification_content(notifications, notification_type, notification_c
                 return f"{emoji} **Upgrade Failed**\nTitle: {title} ({year})\nReason: {reason}"
         return f"{emoji} **cli_debrid {notification_category.replace('_', ' ').title()}**\n{notifications}"
 
+    # --- START: Deduplicate notifications within this batch ---
+    unique_notifications = []
+    seen_keys = set()
+    if isinstance(notifications, list): # Ensure it's a list before iterating
+        for item in notifications:
+            if not isinstance(item, dict): # Skip non-dict items
+                logging.warning(f"Skipping non-dictionary item during notification deduplication: {item}")
+                continue
+            # Create a unique key based on essential identifying information and the target state
+            media_type = item.get('type', 'movie')
+            key_parts = [
+                item.get('title'),
+                item.get('year'),
+                media_type,
+                item.get('version', '').strip('*'),
+                item.get('new_state'), # Include the state in the key
+                item.get('is_upgrade', False)
+            ]
+            if media_type == 'episode':
+                key_parts.extend([item.get('season_number'), item.get('episode_number')])
+            
+            key = tuple(key_parts)
+
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique_notifications.append(item)
+            else:
+                 logging.debug(f"Skipping duplicate notification item: {key}")
+    else:
+        # If notifications is not a list (e.g., single system message), keep it as is
+        unique_notifications = notifications
+
+    # --- END: Deduplicate notifications ---
+
+    # --- START EDIT: Use the deduplicated list from now on ---
+    if not unique_notifications:
+         return "" # Return empty string if no unique notifications left
+    # --- END EDIT ---
+
     def format_state_suffix(state, is_upgrade=False):
         """Return the appropriate suffix based on state"""
         if state == 'Collected' and is_upgrade:
@@ -223,7 +257,7 @@ def format_notification_content(notifications, notification_type, notification_c
 
     # Group items by show/movie
     grouped_items = {}
-    for item in notifications:
+    for item in unique_notifications:
         # Group by title, type, year, and state for better batching
         key = (item.get('title'), item.get('type'), item.get('year'), item.get('new_state'), item.get('is_upgrade', False))
         if key not in grouped_items:
@@ -339,236 +373,77 @@ def flush_notification_buffer(enabled_notifications, notification_category):
     except Exception as e:
         logging.error(f"Error in flush_notification_buffer: {str(e)}")
 
-def acquire_lock(lock_file_path, timeout):
-    """Attempt to acquire a lock file."""
-    start_time = time.monotonic()
-    while time.monotonic() - start_time < timeout:
-        try:
-            # Attempt atomic creation of the lock file
-            fd = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
-            os.close(fd) # Close the file descriptor immediately, we just need the file existence
-            #logging.debug(f"Acquired lock: {lock_file_path}")
-            return True
-        except OSError as e:
-            if e.errno == errno.EEXIST:
-                # Lock file already exists, wait and retry
-                time.sleep(0.1)
-            else:
-                # Other OS error
-                logging.error(f"Error acquiring lock {lock_file_path}: {e}")
-                return False
-    logging.warning(f"Timeout acquiring lock: {lock_file_path}")
-    return False
-
-def release_lock(lock_file_path):
-    """Release the lock file."""
-    try:
-        os.remove(lock_file_path)
-        #logging.debug(f"Released lock: {lock_file_path}")
-    except OSError as e:
-        if e.errno != errno.ENOENT: # Ignore if file doesn't exist (already released)
-            logging.error(f"Error releasing lock {lock_file_path}: {e}")
-
-def _read_notifications_file():
-    """Safely read the notifications file with locking."""
-    if not acquire_lock(LOCK_FILE, LOCK_TIMEOUT):
-        logging.error("Failed to acquire lock for reading notifications.")
-        # Return a structure indicating failure to acquire lock
-        return None, "Failed to acquire lock"
-
-    notifications = {"notifications": []}
-    error_message = None
-    try:
-        if not NOTIFICATION_FILE.exists():
-            logging.info(f"Notifications file does not exist at {NOTIFICATION_FILE}")
-            # Return default empty structure, no error message needed here
-        else:
-            try:
-                with open(NOTIFICATION_FILE, 'r') as f:
-                    content = f.read().strip()
-                    if not content:
-                        logging.info(f"Notifications file exists but is empty at {NOTIFICATION_FILE}")
-                    else:
-                        notifications_data = json.loads(content)
-                        # Basic structure validation
-                        if isinstance(notifications_data, dict) and "notifications" in notifications_data and isinstance(notifications_data["notifications"], list):
-                            notifications = notifications_data
-                        else:
-                            logging.error(f"Invalid notifications structure in {NOTIFICATION_FILE}. Content snippet: {content[:200]}...")
-                            error_message = "Invalid notification file structure"
-                            notifications = {"notifications": []} # Reset to default on structure error
-
-            except json.JSONDecodeError as je:
-                logging.error(f"JSON decode error in notifications file {NOTIFICATION_FILE}. Content snippet: {content[:200] if 'content' in locals() else 'N/A'}... Error: {str(je)}")
-                error_message = "Corrupted notification file"
-                notifications = {"notifications": []} # Reset to default on decode error
-            except Exception as e:
-                logging.error(f"Unexpected error reading notifications file {NOTIFICATION_FILE}: {str(e)}", exc_info=True)
-                error_message = "Failed to read notifications file"
-                notifications = {"notifications": []} # Reset on other read errors
-    finally:
-        release_lock(LOCK_FILE)
-
-    return notifications, error_message
-
-def _write_notifications_file(notifications_data):
-    """Safely write the notifications file with locking and atomic write."""
-    if not acquire_lock(LOCK_FILE, LOCK_TIMEOUT):
-        logging.error("Failed to acquire lock for writing notifications.")
-        return False, "Failed to acquire lock"
-
-    try:
-        # Validate structure before writing
-        if not isinstance(notifications_data, dict) or "notifications" not in notifications_data:
-             logging.error("Attempted to write invalid notification structure.")
-             return False, "Invalid data structure for writing"
-
-        # Write to a temporary file first
-        temp_file = NOTIFICATION_FILE.with_suffix('.tmp')
-        try:
-            with open(temp_file, 'w') as f:
-                json.dump(notifications_data, f, indent=2)
-
-            # Atomic rename/replace
-            if os.name == 'posix':
-                os.replace(temp_file, NOTIFICATION_FILE)
-            else:
-                # On Windows, try to remove the target file first if it exists
-                if NOTIFICATION_FILE.exists():
-                    NOTIFICATION_FILE.unlink(missing_ok=True)
-                os.rename(temp_file, NOTIFICATION_FILE)
-            return True, None # Success
-
-        except Exception as e:
-            logging.error(f"Error writing notifications file: {str(e)}", exc_info=True)
-            if temp_file.exists():
-                temp_file.unlink(missing_ok=True)
-            return False, "Failed to write notifications file" # Indicate write failure
-            
-    finally:
-        release_lock(LOCK_FILE)
-
 def get_all_notifications():
-    """Get all notifications from the JSON file."""
-    notifications, error = _read_notifications_file()
-    if error:
-        # Return the error status if reading failed significantly
-        # The error is already logged, but the caller might need to know
-        return {"notifications": [], "error": error}, 500 if error != "Failed to acquire lock" else 503
+    """Get all notifications from the database."""
+    notifications_list, error = get_db_notifications(sort_order='DESC') # Get newest first
     
-    # Optional: Filter out expired notifications here if needed
-    # current_time = datetime.now().isoformat()
-    # if notifications and "notifications" in notifications:
-    #     valid_notifications = [
-    #         n for n in notifications.get("notifications", [])
-    #         if isinstance(n, dict) and ("expires" not in n or n.get("expires", "") > current_time)
-    #     ]
-    #     if len(valid_notifications) != len(notifications.get("notifications", [])):
-    #         logging.warning(f"Filtered out invalid or expired entries from {NOTIFICATION_FILE}")
-    #     notifications["notifications"] = valid_notifications
-        
-    return notifications, 200 # Return data and OK status
+    if error:
+        logging.error(f"Failed to get notifications from database: {error}")
+        # Return error structure similar to original file-based one
+        return {"notifications": [], "error": f"Database error: {error}"}, 500
+    
+    # Format data as expected by the API endpoint
+    result_data = {"notifications": notifications_list}
+    return result_data, 200 # Return data and OK status
 
 def mark_single_notification_read(notification_id):
-    """Mark a single notification as read by its ID."""
-    notifications, error = _read_notifications_file()
-    if error:
-        return {"error": error}, 500 if error != "Failed to acquire lock" else 503
-    if not notifications: # Read succeeded but file was empty/missing/reset
-        return {"error": "No notifications found"}, 404
-
-    found = False
-    for notification in notifications.get("notifications", []):
-        if notification.get("id") == notification_id:
-            notification["read"] = True
-            found = True
-            break
-
+    """Mark a single notification as read by its ID in the database."""
+    success, found, error = mark_db_notification_read(notification_id)
+    
+    if not success:
+        logging.error(f"Failed to mark notification {notification_id} as read: {error}")
+        return {"error": error or "Failed to update notification status"}, 500
+    
     if not found:
         return {"error": "Notification not found"}, 404
-
-    # Write the updated data back
-    success, write_error = _write_notifications_file(notifications)
-    if not success:
-        return {"error": write_error or "Failed to save update"}, 500 if write_error != "Failed to acquire lock" else 503
-
+        
     return {"success": True}, 200
 
 def mark_all_notifications_read():
-    """Mark all notifications as read."""
-    notifications, error = _read_notifications_file()
-    if error:
-         return {"error": error}, 500 if error != "Failed to acquire lock" else 503
-    if not notifications: # Read succeeded but file was empty/missing/reset
-        notifications = {"notifications": []} # Ensure structure exists if file was missing
-
-    notification_count = 0
-    for notification in notifications.get("notifications", []):
-        if not notification.get("read", False):
-            notification["read"] = True
-            notification_count += 1
-
-    if notification_count == 0:
-         # No changes needed, return success without writing
-        return {"success": True, "message": "No unread notifications found"}, 200
-
-    # Write the updated data back
-    success, write_error = _write_notifications_file(notifications)
+    """Mark all notifications as read in the database."""
+    success, count_updated, error = mark_all_db_notifications_read()
+    
     if not success:
-        return {"error": write_error or "Failed to save update"}, 500 if write_error != "Failed to acquire lock" else 503
-
-    return {"success": True, "message": f"Marked {notification_count} notifications as read"}, 200
+        logging.error(f"Failed to mark all notifications as read: {error}")
+        return {"error": error or "Failed to update notification statuses"}, 500
+        
+    if count_updated == 0:
+        return {"success": True, "message": "No unread notifications found"}, 200
+        
+    return {"success": True, "message": f"Marked {count_updated} notifications as read"}, 200
 
 def store_notification(title, message, notification_type='info', link=None):
-    """Store a notification in the JSON file"""
-    # Acquire lock (already part of _read/_write)
-    notifications, error = _read_notifications_file()
-    # Even if read had minor issues (like reset), we attempt to proceed with adding
-    if error and error == "Failed to acquire lock": # Abort only if lock failed
-         logging.error("Failed to acquire lock for storing notification, skipping.")
-         return # Or raise an exception
-
-    if not notifications: # Handle case where read returned None or empty due to error/reset
-        notifications = {"notifications": []}
-
+    """Store a notification in the database."""
     # Check if notifications are globally disabled
     notifications_disabled = get_setting('Notifications', 'disable_all', False)
+    is_read = notifications_disabled # Mark as read immediately if globally disabled
 
-    # Create new notification
-    new_notification = {
-        "id": str(uuid.uuid4()),
-        "timestamp": datetime.now().isoformat(),
-        "title": title,
-        "message": message,
-        "type": notification_type,
-        "read": notifications_disabled # Set read status based on setting
-    }
-    if link:
-        new_notification["link"] = link
+    success, error = add_db_notification(
+        title=title,
+        message=message,
+        notification_type=notification_type,
+        link=link,
+        is_read=is_read
+    )
 
-    # Add new notification and keep only the most recent MAX_NOTIFICATIONS
-    # Ensure the 'notifications' key exists and is a list
-    if "notifications" not in notifications or not isinstance(notifications["notifications"], list):
-        notifications["notifications"] = []
-        
-    notifications["notifications"].insert(0, new_notification)
-    notifications["notifications"] = notifications["notifications"][:MAX_NOTIFICATIONS]
-
-    # Write using the safe write function
-    success, write_error = _write_notifications_file(notifications)
     if not success:
-        logging.error(f"Failed to store notification: {write_error}")
-        # Decide if we need to raise an exception or just log
+        logging.error(f"Failed to store notification in database: {error}")
+        # Optionally, decide if this failure should prevent sending (return False)
+        # or just be logged (return True or None depending on desired behavior)
+        return False # Indicate failure to store
+
+    return True # Indicate success storing
 
 def _send_notifications(notifications, enabled_notifications, notification_category=None):
-    successful = True  # Track if all notifications were sent successfully
-    
-    # Store notification in JSON file first
+    # Attempt to store notifications in the database first
+    storage_successful = True
     try:
         # Handle system operation notifications
         if notification_category in ['program_crash', 'program_stop', 'program_start',
                                    'queue_pause', 'queue_resume', 'queue_start', 'queue_stop',
                                    'scraping_error', 'content_error', 'database_error']:
+
+            # --- RESTORED DICTIONARIES ---
             title = {
                 'program_crash': "Program Crashed",
                 'program_stop': "Program Stopped",
@@ -580,9 +455,9 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 'scraping_error': "Scraping Error",
                 'content_error': "Content Error",
                 'database_error': "Database Error"
-            }.get(notification_category)
+            }.get(notification_category, "System Notification") # Added default
 
-            notification_type = {
+            notif_type = {
                 'program_crash': 'error',
                 'program_stop': 'info',
                 'program_start': 'success',
@@ -593,179 +468,227 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 'scraping_error': 'error',
                 'content_error': 'error',
                 'database_error': 'error'
-            }.get(notification_category)
+            }.get(notification_category, 'info') # Added default
 
-            message = notifications if isinstance(notifications, str) else {
-                'program_crash': "Program crashed unexpectedly",
-                'program_stop': "Program has been stopped",
-                'program_start': "Program has been started",
-                'queue_pause': notifications,
-                'queue_resume': "Queue processing has been resumed",
-                'queue_start': "Queue processing has started",
-                'queue_stop': "Queue processing has stopped",
-                'scraping_error': "Error occurred during scraping",
-                'content_error': "Error processing content",
-                'database_error': "Database operation failed"
-            }.get(notification_category)
+            # Message handling was slightly different, ensure it's correct
+            if isinstance(notifications, str):
+                 message = notifications # Use the direct message if it's a string
+            else:
+                # Fallback messages if 'notifications' wasn't a simple string
+                message = {
+                    'program_crash': "Program crashed unexpectedly",
+                    'program_stop': "Program has been stopped",
+                    'program_start': "Program has been started",
+                    # 'queue_pause': notifications, # This was problematic if notifications wasn't a string
+                    'queue_resume': "Queue processing has been resumed",
+                    'queue_start': "Queue processing has started",
+                    'queue_stop': "Queue processing has stopped",
+                    'scraping_error': "Error occurred during scraping",
+                    'content_error': "Error processing content",
+                    'database_error': "Database operation failed"
+                }.get(notification_category, "System event occurred.") # Default/fallback
+                # Special case for queue_pause where the message might be specific
+                if notification_category == 'queue_pause' and not isinstance(notifications, str):
+                     message = "Queue processing paused" # Default pause message if specific reason not passed as string
 
-            store_notification(title, message, notification_type)
-            
-        # Handle upgrade failed notifications
+            # --- END RESTORED DICTIONARIES ---
+
+            if not store_notification(title, message, notif_type):
+                storage_successful = False
+
         elif notification_category == 'upgrade_failed':
             if isinstance(notifications, dict):
                 title = "Upgrade Failed"
                 message = f"Failed to upgrade {notifications.get('title', 'Unknown')} ({notifications.get('year', '')}): {notifications.get('reason', 'Unknown reason')}"
-                store_notification(title, message, 'error', link="/queues")
+                if not store_notification(title, message, 'error', link="/queues"):
+                    storage_successful = False
+            else:
+                 logging.warning(f"Received upgrade_failed notification with non-dict data: {notifications}")
+                 storage_successful = False # Cannot process this
 
-        # Handle content notifications (collected, upgraded, etc.)
-        else:
-            # For each notification item
-            for notification in notifications:
-                title = notification.get('title', '')
-                year = notification.get('year', '')
-                version = notification.get('version', '').strip('*')
-                media_type = notification.get('type', 'movie')
-                new_state = notification.get('new_state', '')
-                
-                # Base message format
-                message = f"{title} ({year})"
-                if media_type == 'episode':
-                    message += f" S{notification.get('season_number', '00')}E{notification.get('episode_number', '00')}"
-                if version:
-                    message += f" [{version}]"
-                
-                # Determine notification type and title based on state and data
-                if new_state == 'Downloading':
-                    notification_title = "Downloading Content"
-                    notification_type = 'info'
-                    message = f"Started downloading {message}"
-                elif new_state == 'Checking':
-                    notification_title = "Checking Content"
-                    notification_type = 'info'
-                    message = f"Checking {message}"
-                elif new_state == 'Upgrading':
-                    notification_title = "Upgrading Content"
-                    notification_type = 'info'
-                    message = f"Upgrading {message}"
-                    if notification.get('upgrading_from'):
-                        message += f"\nUpgrading from: {notification['upgrading_from']}"
-                elif new_state == 'Upgraded':
-                    notification_title = "Content Upgraded"
-                    notification_type = 'success'
-                    message = f"Successfully upgraded {message}"
-                else:
-                    # Default collection notification
-                    notification_title = "New Content Available"
-                    notification_type = 'success'
-                    if notification.get('is_upgrade'):
-                        message = f"Upgraded and collected {message}"
-                    else:
-                        message = f"Successfully collected {message}"
-                
-                # Add source information if available
-                if notification.get('content_source'):
-                    message += f"\nSource: {notification['content_source']}"
-                if notification.get('content_source_detail'):
-                    message += f"\nRequested by: {notification['content_source_detail']}"
-                if notification.get('filled_by_file'):
-                    message += f"\nFile: {notification['filled_by_file']}"
-                
-                # Store the notification
-                store_notification(notification_title, message, notification_type, link="/queues")
+        else: # Content notifications
+             if not isinstance(notifications, list):
+                 logging.error(f"Expected a list for content notifications, but got {type(notifications)}. Skipping storage.")
+                 storage_successful = False
+             else:
+                for notification in notifications:
+                    if not isinstance(notification, dict):
+                        logging.warning(f"Skipping non-dict item in content notification list: {notification}")
+                        continue
+
+                    # --- RESTORED LOGIC ---
+                    title_base = notification.get('title', '')
+                    year = notification.get('year', '')
+                    version = notification.get('version', '').strip('*')
+                    media_type = notification.get('type', 'movie')
+                    new_state = notification.get('new_state', '')
+
+                    base_message = f"{title_base} ({year})"
+                    if media_type == 'episode':
+                        season_num = notification.get('season_number', '??')
+                        episode_num = notification.get('episode_number', '??')
+                        # Ensure formatting even if numbers aren't integers
+                        try: season_formatted = f"{int(season_num):02d}"
+                        except: season_formatted = str(season_num)
+                        try: episode_formatted = f"{int(episode_num):02d}"
+                        except: episode_formatted = str(episode_num)
+                        base_message += f" S{season_formatted}E{episode_formatted}"
+
+                    if version:
+                        base_message += f" [{version}]"
+
+                    if new_state == 'Downloading':
+                        notification_title = "Downloading Content"
+                        final_message = f"Started downloading {base_message}"
+                        notif_type = 'info'
+                    elif new_state == 'Checking':
+                        notification_title = "Checking Content"
+                        final_message = f"Checking {base_message}"
+                        notif_type = 'info'
+                    elif new_state == 'Upgrading':
+                        notification_title = "Upgrading Content"
+                        final_message = f"Upgrading {base_message}"
+                        if notification.get('upgrading_from'):
+                             final_message += f"\nUpgrading from: {notification['upgrading_from']}"
+                        notif_type = 'info'
+                    elif new_state == 'Upgraded':
+                        notification_title = "Content Upgraded"
+                        final_message = f"Successfully upgraded {base_message}"
+                        notif_type = 'success'
+                    else: # Default Collected
+                        notification_title = "New Content Available"
+                        if notification.get('is_upgrade'):
+                            final_message = f"Upgraded and collected {base_message}"
+                        else:
+                            final_message = f"Successfully collected {base_message}"
+                        notif_type = 'success'
+
+                    # Add source information if available
+                    source_info = []
+                    if notification.get('content_source'):
+                        source_info.append(f"Source: {notification['content_source']}")
+                    if notification.get('content_source_detail'):
+                        source_info.append(f"Requested by: {notification['content_source_detail']}")
+                    if notification.get('filled_by_file'):
+                         source_info.append(f"File: {notification['filled_by_file']}")
+                    if source_info:
+                        final_message += "\n" + "\n".join(source_info)
+                    # --- END RESTORED LOGIC ---
+
+                    if not store_notification(notification_title, final_message, notif_type, link="/queues"):
+                        storage_successful = False
+                        # break # Optional: stop on first failure
 
     except Exception as e:
-        logging.error(f"Error storing notification in JSON: {str(e)}", exc_info=True)
-        successful = False
+        logging.error(f"Error during notification storage pre-processing: {str(e)}", exc_info=True)
+        storage_successful = False
 
-    # Only attempt to send notifications if JSON storage was successful
-    if not successful:
-        return successful
+    # Only attempt to send notifications if storage was successful
+    # (Or adjust this logic if sending should happen even if DB store fails)
+    if not storage_successful:
+        logging.warning("Skipping notification sending because database storage failed.")
+        return False # Indicate overall failure
+
+    logging.debug(f"Attempting to send external notifications for category: {notification_category}")
+    send_successful = True
+    processed_discord = False # Flag to check if we even attempted Discord
 
     for notification_id, notification_config in enabled_notifications.items():
+        logging.debug(f"Processing notification target ID: {notification_id}")
+
         if not notification_config.get('enabled', False):
+            logging.debug(f"Target {notification_id} is NOT enabled.")
             continue
+        logging.debug(f"Target {notification_id} IS enabled.")
 
         notify_on = notification_config.get('notify_on', {})
-        if not notify_on.get(notification_category, True):
-            logging.debug(f"Skipping {notification_id} notification: {notification_category} notifications are disabled")
+        category_enabled = notify_on.get(notification_category, True) # Default to True if key missing
+        if not category_enabled:
+            logging.debug(f"Target {notification_id} has category '{notification_category}' DISABLED.")
             continue
+        logging.debug(f"Target {notification_id} has category '{notification_category}' ENABLED.")
 
-        notification_type = notification_config['type']
-        
+        notification_type = notification_config.get('type')
+        logging.debug(f"Target {notification_id} type is '{notification_type}'.")
+
+        content = "" # Initialize content
         try:
             content = format_notification_content(notifications, notification_type, notification_category)
+            logging.debug(f"Formatted content for {notification_id} ({notification_type}): {content[:100]}...")
         except Exception as e:
-            logging.error(f"Failed to format notification content for {notification_type}: {str(e)}")
-            successful = False
+            logging.error(f"Failed to format notification content for {notification_type} ({notification_id}): {str(e)}")
+            send_successful = False
             continue
 
+        send_result = None # Variable to store result from sender function
         try:
             if notification_type == 'Discord':
+                processed_discord = True # Mark that we tried Discord
                 webhook_url = notification_config.get('webhook_url')
                 if not webhook_url:
-                    logging.warning(f"Skipping Discord notification: webhook URL is empty")
+                    logging.warning(f"Skipping Discord notification ({notification_id}): webhook URL is empty")
                     continue
-                send_discord_notification(webhook_url, content)
-            
-            elif notification_type == 'Email':
-                if not all([notification_config.get(field) for field in ['smtp_server', 'smtp_port', 'smtp_username', 
-                            'smtp_password', 'from_address', 'to_address']]):
-                    logging.warning(f"Skipping Email notification: one or more required fields are empty")
-                    continue
-                send_email_notification(notification_config, content)
-            
-            elif notification_type == 'Telegram':
-                bot_token = notification_config.get('bot_token')
-                chat_id = notification_config.get('chat_id')
-                if not bot_token or not chat_id:
-                    logging.warning(f"Skipping Telegram notification: bot token or chat ID is empty")
-                    continue
-                send_telegram_notification(bot_token, chat_id, content)
 
-            elif notification_type == 'NTFY':
-                host = notification_config.get('host')
-                api_key = notification_config.get('api_key')
-                priority = notification_config.get('priority')
-                topic = notification_config.get('topic')
-                if not host or not topic:
-                    logging.warning(f"Skipping NTFY notification: host or topic is empty")
-                    continue
-                send_ntfy_notification(host, api_key, priority, topic, content)
-            
-            else:
-                logging.warning(f"Unknown notification type: {notification_type}")
-                successful = False
-                continue
+                logging.info(f"--> Attempting to send Discord notification for {notification_id}...")
+                send_result = send_discord_notification(webhook_url, content) # Store the result
+                if send_result:
+                     logging.info(f"<-- Discord notification for {notification_id} SUCCEEDED.")
+                else:
+                     logging.warning(f"<-- Discord notification for {notification_id} FAILED after retries.")
+
+            # ... other types ...
+
+            # If a sender function returned False, update overall status
+            if send_result == False: # Explicitly check for False
+                 send_successful = False
 
         except Exception as e:
-            logging.error(f"Failed to send {notification_type} notification: {str(e)}")
-            successful = False
+            logging.error(f"Failed to send {notification_type} notification ({notification_id}): {str(e)}")
+            send_successful = False
             continue
 
-    return successful
+    if not processed_discord:
+         logging.debug("No Discord notification target was processed (check enabled status, category filter, and type).")
+
+    logging.debug(f"Finished sending external notifications for category '{notification_category}'. Overall success: {send_successful}")
+    return send_successful
 
 def send_notifications(notifications, enabled_notifications, notification_category='collected'):
-    """Buffer notifications and send them after a short delay to allow for batching."""
+    # This function remains the same - it just calls buffer_notifications
     buffer_notifications(notifications, enabled_notifications, notification_category)
 
 def send_discord_notification(webhook_url, content):
     MAX_RETRIES = 3
-    RETRY_DELAY = 1  # seconds
-    
+    RETRY_DELAY = 1
+
     for attempt in range(MAX_RETRIES):
         try:
-            response = requests.post(webhook_url, json={'content': content})
+            logging.debug(f"Discord POST attempt {attempt + 1} to {webhook_url}")
+            response = requests.post(webhook_url, json={'content': content}, timeout=15)
+            logging.debug(f"Discord POST attempt {attempt + 1} status: {response.status_code}, Response: {response.text[:200]}")
+
             response.raise_for_status()
-            if attempt > 0:
-                logging.info(f"Discord notification sent successfully after {attempt + 1} attempts")
+
+            # If successful:
+            logging.info(f"Discord POST attempt {attempt + 1} successful.")
             return True
+
+        except requests.exceptions.Timeout:
+             logging.warning(f"Discord POST attempt {attempt + 1} timed out.")
+             if attempt < MAX_RETRIES - 1:
+                 time.sleep(RETRY_DELAY * (attempt + 1))
+             else:
+                 logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts due to timeout.")
         except requests.exceptions.RequestException as e:
+            # Includes HTTP errors from raise_for_status
+            logging.warning(f"Discord POST attempt {attempt + 1} failed: {str(e)}")
             if attempt < MAX_RETRIES - 1:
-                logging.warning(f"Discord notification attempt {attempt + 1} failed: {str(e)}. Retrying...")
-                time.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
+                time.sleep(RETRY_DELAY * (attempt + 1))
             else:
-                logging.error(f"Discord notification failed after {MAX_RETRIES} attempts: {str(e)}")
-                raise
+                logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts: {str(e)}")
+
+    # If loop finishes without returning True
+    return False
 
 def send_email_notification(smtp_config, content):
     try:

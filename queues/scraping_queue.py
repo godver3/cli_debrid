@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Any, List
 from datetime import datetime, date, timedelta
 import json
+import time
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
@@ -482,6 +483,18 @@ class ScrapingQueue:
                 if processed_an_item_this_cycle:
                     processed_count += 1
 
+            # --- START EDIT: Fetch setting from Queue section ---
+            if processed_an_item_this_cycle:
+                # --- START EDIT: Add try-except for float conversion ---
+                try:
+                    delay_seconds = float(get_setting('Queue', 'item_process_delay_seconds', 0.0))
+                except (ValueError, TypeError):
+                    delay_seconds = 0.0
+                # --- END EDIT ---
+                if delay_seconds > 0:
+                    time.sleep(delay_seconds)
+            # --- END EDIT ---
+
         # Return True if there are more items potentially left to process in the queue
         # Or if we actually processed an item in this call (even if it resulted in removal)
         return len(self.items) > 0 or processed_an_item_this_cycle
@@ -692,23 +705,19 @@ class ScrapingQueue:
                 logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
                 queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
                 self.reset_not_wanted_check(item['id'])
-                # Remove item from current queue explicitly after moving
-                self.remove_item(item)
+                self.remove_item(item) # Remove from current queue
             elif item['type'] == 'movie':
                 logging.info(f"No results found for old movie {item_identifier}. Blacklisting item.")
-                queue_manager.move_to_blacklisted(item, "Scraping")
+                queue_manager.move_to_blacklisted(item, "Scraping") # Direct blacklist
                 self.reset_not_wanted_check(item['id'])
-                # Remove item from current queue explicitly after moving
-                self.remove_item(item)
+                self.remove_item(item) # Remove from current queue
             else:
                 logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Blacklisting item.")
-                queue_manager.move_to_blacklisted(item, "Scraping")
+                queue_manager.move_to_blacklisted(item, "Scraping") # Direct blacklist
                 self.reset_not_wanted_check(item['id'])
-                 # Remove item from current queue explicitly after moving
-                self.remove_item(item)
-        else:
-            logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping.")
-
+                self.remove_item(item) # Remove from current queue
+        else: # Item is NOT old, check wake limits
+            logging.warning(f"No results found for {item_identifier}. Checking wake count limits before moving to Sleeping or Final_Check/Blacklisted.")
             # Get wake count settings for this item's version
             version_settings = get_setting('Scraping', 'versions', {}).get(item.get('version', ''), {})
             # Fetch the global default wake limit, using 5 as an ultimate fallback
@@ -717,27 +726,28 @@ class ScrapingQueue:
             max_wake_count = version_settings.get('max_wake_count', global_default_wake_limit)
 
             # Get current wake count from DB
-            # from database import get_wake_count # Already imported at top
             from database import get_wake_count
             current_wake_count = get_wake_count(item['id'])
 
             moved = False # Flag to track if moved
             if max_wake_count <= 0:
-                logging.info(f"Item {item_identifier} version '{item.get('version')}' has max_wake_count <= 0 ({max_wake_count}). Blacklisting immediately.")
-                queue_manager.move_to_blacklisted(item, "Scraping")
+                logging.info(f"Item {item_identifier} version '{item.get('version')}' has max_wake_count <= 0 ({max_wake_count}). Initiating final check or blacklist.")
+                queue_manager.initiate_final_check_or_blacklist(item, "Scraping") # <--- CHANGED
                 moved = True
             elif current_wake_count >= max_wake_count:
-                logging.info(f"Item {item_identifier} reached max wake count ({current_wake_count}/{max_wake_count}). Blacklisting.")
-                queue_manager.move_to_blacklisted(item, "Scraping")
+                logging.info(f"Item {item_identifier} reached max wake count ({current_wake_count}/{max_wake_count}). Initiating final check or blacklist.")
+                queue_manager.initiate_final_check_or_blacklist(item, "Scraping") # <--- CHANGED
                 moved = True
             else:
                 logging.info(f"Item {item_identifier} (Wake count: {current_wake_count}/{max_wake_count}) moving to Sleeping queue.")
-                queue_manager.move_to_sleeping(item, "Scraping") # This call handles wake count increment if needed
+                queue_manager.move_to_sleeping(item, "Scraping")
                 moved = True
 
             self.reset_not_wanted_check(item['id'])
-             # Remove item from current queue explicitly only if it was successfully moved
-            if moved and self.contains_item_id(item.get('id')):
+             # Remove item from current queue explicitly only if it was successfully moved *by this function*
+             # The initiate_final_check_or_blacklist handles removal internally now.
+             # So, only remove if moved to Sleeping.
+            if moved and self.contains_item_id(item.get('id')) and max_wake_count > 0 and current_wake_count < max_wake_count:
                  self.remove_item(item)
 
     def is_item_old(self, item: Dict[str, Any]) -> bool:

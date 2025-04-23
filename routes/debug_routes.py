@@ -519,6 +519,7 @@ def direct_plex_scan():
         
         def progress_callback(status_type, message, counts=None):
             """Callback function to update progress"""
+            logging.debug(f"Scan {scan_id}: progress_callback called with status={status_type}, message='{message}', counts={counts}") # Add logging
             update = {
                 'status': status_type,
                 'message': message,
@@ -527,7 +528,8 @@ def direct_plex_scan():
             if counts:
                 update.update(counts)
             scan_progress[scan_id].update(update)
-            
+            logging.debug(f"Scan {scan_id}: scan_progress updated to: {scan_progress[scan_id]}") # Add logging
+
             if status_type == 'error':
                 scan_progress[scan_id]['errors'].append(message)
         
@@ -623,15 +625,37 @@ def direct_plex_scan():
             except Exception as e:
                 error_msg = str(e)
                 logging.error(f"Error during Plex scan: {error_msg}", exc_info=True)
+                # Ensure final counts are added even in case of error, if available
+                final_counts = {
+                   'shows_processed': scan_progress[scan_id].get('shows_processed', 0),
+                   'total_shows': scan_progress[scan_id].get('total_shows', 0),
+                   'movies_processed': scan_progress[scan_id].get('movies_processed', 0),
+                   'total_movies': scan_progress[scan_id].get('total_movies', 0),
+                   'episodes_found': scan_progress[scan_id].get('episodes_found', 0)
+                }
                 scan_progress[scan_id].update({
                     'status': 'error',
                     'message': f"Error during scan: {error_msg}",
                     'success': False,
                     'complete': True,
                     'phase': 'error',
-                    'errors': [error_msg]
+                    'errors': [error_msg],
+                    **final_counts # Also add counts on error
                 })
             finally:
+                # Ensure final counts are included in the final completion message if status wasn't error
+                if scan_progress.get(scan_id) and scan_progress[scan_id].get('status') not in ['error', 'starting']:
+                    final_counts = {
+                        'shows_processed': scan_progress[scan_id].get('shows_processed', 0),
+                        'total_shows': scan_progress[scan_id].get('total_shows', 0),
+                        'movies_processed': scan_progress[scan_id].get('movies_processed', 0),
+                        'total_movies': scan_progress[scan_id].get('total_movies', 0),
+                        'episodes_found': scan_progress[scan_id].get('episodes_found', 0)
+                    }
+                    # Update the existing final status with the counts
+                    scan_progress[scan_id].update(final_counts)
+                    logging.info(f"Ensured final counts ({final_counts}) are in completion status for scan {scan_id}")
+
                 # Clean up after 5 minutes
                 threading.Timer(300, lambda: scan_progress.pop(scan_id, None)).start()
         
@@ -650,31 +674,68 @@ def direct_plex_scan():
 def plex_scan_progress(scan_id):
     """SSE endpoint for tracking Plex scan progress."""
     def generate():
+        logging.info(f"[Server SSE {scan_id}] Connection established.") # Added log
         while True:
-            if scan_id not in scan_progress:
-                # Check if it's in analysis_progress as a fallback (might be analysis task)
-                if scan_id in analysis_progress:
-                     progress = analysis_progress[scan_id]
-                     yield f"data: {json.dumps(progress)}\\n\\n"
-                     if progress.get('complete', False):
-                         break
-                else:
-                    yield f"data: {json.dumps({'status': 'error', 'message': 'Scan or task not found'})}\\n\\n"
-                    break
+            try: # Added try block for better error handling inside loop
+                if scan_id not in scan_progress:
+                    # Check if it's in analysis_progress as a fallback (might be analysis task)
+                    if scan_id in analysis_progress:
+                         progress = analysis_progress[scan_id]
+                         yield f"data: {json.dumps(progress)}\n\n"
+                         if progress.get('complete', False):
+                             logging.info(f"[Server SSE {scan_id}] Analysis task complete=true detected.") # Added log
+                             # Add a small delay AFTER sending the final message
+                             logging.info(f"[Server SSE {scan_id}] Sleeping for 0.5s before break.") # Added log
+                             time.sleep(0.5) # Sleep for 500ms 
+                             logging.info(f"[Server SSE {scan_id}] Breaking loop after sleep.") # Added log
+                             break # THEN break the loop
+                    else:
+                        logging.info(f"[Server SSE {scan_id}] Scan/Task ID not found.") # Added log
+                        yield f"data: {json.dumps({'status': 'error', 'message': 'Scan or task not found'})}\n\n"
+                        break
+                    
+                else: # Scan progress found
+                    progress = scan_progress[scan_id]
+                    logging.debug(f"[Server SSE {scan_id}] Current progress: {progress}") # Added debug log
+                    
+                    # Add error details to progress if any exist
+                    if progress.get('errors'):
+                        progress['error_details'] = progress['errors']
+                    
+                    data_to_send = json.dumps(progress)
+                    logging.info(f"[Server SSE {scan_id}] Yielding data: {data_to_send[:200]}...") # Added log (truncated)
+                    yield f"data: {data_to_send}\n\n"
+                    
+                    logging.debug(f"[Server SSE {scan_id}] Checking complete flag...") # Added debug log
+                    if progress.get('complete', False): # Use .get() for safety
+                        logging.info(f"[Server SSE {scan_id}] Scan task complete=true detected.") # Added log
+                        # Add a small delay AFTER sending the final message
+                        # to give the client time to process it before the connection closes.
+                        logging.info(f"[Server SSE {scan_id}] Sleeping for 0.5s before break.") # Added log
+                        time.sleep(0.5) # Sleep for 500ms 
+                        logging.info(f"[Server SSE {scan_id}] Breaking loop after sleep.") # Added log
+                        break # THEN break the loop
+                    
+                    logging.debug(f"[Server SSE {scan_id}] Sleeping for 1s before next iteration.") # Added debug log
+                    time.sleep(1)
+                    
+                # except Exception as e: # Removed specific except block here to simplify
+                #     logging.error(f"[Server SSE {scan_id}] Error inside generate loop: {e}", exc_info=True)
+                #     try:
+                #         yield f"data: {json.dumps({'status': 'error', 'message': f'Server error: {e}', 'complete': True})}\n\n"
+                #     except Exception as yield_err:
+                #         logging.error(f"[Server SSE {scan_id}] Failed to yield error message: {yield_err}")
+                #     break # Exit loop on error
                 
-            else: # Scan progress found
-                progress = scan_progress[scan_id]
-                
-                # Add error details to progress if any exist
-                if progress.get('errors'):
-                    progress['error_details'] = progress['errors']
-                
-                yield f"data: {json.dumps(progress)}\\n\\n"
-                
-                if progress.get('complete', False): # Use .get() for safety
-                    break
-                
-            time.sleep(1)
+            except Exception as e:
+                logging.error(f"[Server SSE {scan_id}] Error inside generate loop: {e}", exc_info=True)
+                try:
+                    yield f"data: {json.dumps({'status': 'error', 'message': f'Server error: {e}', 'complete': True})}\n\n"
+                except Exception as yield_err:
+                    logging.error(f"[Server SSE {scan_id}] Failed to yield error message: {yield_err}")
+                break # Exit loop on error
+        
+        logging.info(f"[Server SSE {scan_id}] Generate loop finished.") # Added log
     
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
@@ -1242,7 +1303,9 @@ def run_task():
         'task_verify_symlinked_files': program_runner.task_verify_symlinked_files,
         'task_verify_plex_removals': program_runner.task_verify_plex_removals,
         'task_process_pending_rclone_paths': program_runner.task_process_pending_rclone_paths,
-        'task_update_tv_show_status': program_runner.task_update_tv_show_status
+        'task_update_tv_show_status': program_runner.task_update_tv_show_status,
+        'task_heartbeat': program_runner.task_heartbeat,
+        'final_check_queue': queue_manager.process_final_check
     }
 
     if task_name not in tasks:
@@ -1312,7 +1375,9 @@ def get_available_tasks():
         {'id': 'task_verify_symlinked_files', 'display_name': 'Verify Symlinked Files'},
         {'id': 'task_verify_plex_removals', 'display_name': 'Verify Plex Removals'},
         {'id': 'task_process_pending_rclone_paths', 'display_name': 'Process Pending Rclone Paths'},
-        {'id': 'task_update_tv_show_status', 'display_name': 'Update TV Show Status'}
+        {'id': 'task_update_tv_show_status', 'display_name': 'Update TV Show Status'},
+        {'id': 'task_heartbeat', 'display_name': 'Heartbeat'},
+        {'id': 'final_check_queue', 'display_name': 'Final Check Queue'}
     ]
     
     # Get content sources from program runner for content source tasks

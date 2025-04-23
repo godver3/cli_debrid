@@ -667,8 +667,9 @@ class RealDebridProvider(DebridProvider):
             except Exception as e:
                 logging.warning(f"Could not get torrent info before removal: {str(e)}")
 
+            # Make the deletion request (retries handled by make_request)
             removal_response = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
-            
+
             # Update status and tracking
             self.update_status(torrent_id, TorrentStatus.REMOVED)
             
