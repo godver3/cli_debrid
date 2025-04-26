@@ -370,6 +370,28 @@ function initializeHelpModal() {
     });
 }
 
+// --- START: Top Overlay Body Padding Logic ---
+function updateBodyPaddingForTopOverlays() {
+    const taskMonitor = document.getElementById('taskMonitorContainer');
+    const rateLimits = document.querySelector('.rate-limits-section'); // Use querySelector for class
+    
+    // Check if either element exists and is visible (has the 'visible' class)
+    const isTaskMonitorVisible = taskMonitor && taskMonitor.classList.contains('visible');
+    const isRateLimitsVisible = rateLimits && rateLimits.classList.contains('show');
+
+    if (isTaskMonitorVisible || isRateLimitsVisible) {
+        document.body.classList.add('has-top-overlay');
+    } else {
+        document.body.classList.remove('has-top-overlay');
+    }
+    // Add a small delay for smoother transition start if needed, but CSS transition should handle it
+    // setTimeout(() => { /* Add/remove class */ }, 10); 
+}
+
+// Expose the function globally if task_monitor.js is not a module importing this
+window.updateBodyPaddingForTopOverlays = updateBodyPaddingForTopOverlays; 
+// --- END: Top Overlay Body Padding Logic ---
+
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Add this line near the beginning of the DOMContentLoaded handler
@@ -752,6 +774,30 @@ document.addEventListener('DOMContentLoaded', function() {
     fetchNotifications();
 
     initializeHelpModal();
+
+    // --- START: Rate Limits Toggle Logic ---
+    const rateLimitsToggle = document.getElementById('rateLimitsSectionToggle');
+    const rateLimitsSection = document.querySelector('.rate-limits-section');
+
+    if (rateLimitsToggle && rateLimitsSection) {
+        rateLimitsToggle.addEventListener('click', () => {
+            const isVisible = rateLimitsSection.classList.toggle('visible');
+            updateBodyPaddingForTopOverlays(); // Update body padding
+            // If rate limits info needs fetching on toggle:
+            // if (isVisible && typeof fetchRateLimitInfo === 'function') {
+            //     fetchRateLimitInfo();
+            // }
+        });
+        
+        // Ensure initial state is correct if visibility is persisted somehow (e.g., localStorage)
+        // Example: if (localStorage.getItem('rateLimitsVisible') === 'true') { ... }
+        // For now, assume it starts hidden.
+        updateBodyPaddingForTopOverlays(); // Initial check
+
+    } else {
+        console.warn('Rate limits toggle button or section not found.');
+    }
+    // --- END: Rate Limits Toggle Logic ---
 });
 
 // Add resize listener to handle screen size changes

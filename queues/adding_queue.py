@@ -321,10 +321,17 @@ class AddingQueue:
 
                 # Find the result corresponding to the chosen torrent_info (match by magnet or hash)
                 chosen_hash = torrent_info.get('hash', '').lower()
-                chosen_magnet = magnet.lower() if magnet else ''
+                if magnet and magnet.startswith('magnet:'):
+                    chosen_magnet = magnet.lower()
+                else:
+                    chosen_magnet = magnet or ''
 
                 for result in results:
-                    result_magnet = result.get('magnet', '').lower()
+                    result_magnet_raw = result.get('magnet', '')
+                    if result_magnet_raw.startswith('magnet:'):
+                        result_magnet = result_magnet_raw.lower()
+                    else:
+                        result_magnet = result_magnet_raw
                     # Attempt to extract hash from result magnet for comparison
                     from debrid.common import extract_hash_from_magnet
                     result_hash = extract_hash_from_magnet(result_magnet) if result_magnet else None

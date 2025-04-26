@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, current_app, request, make_response, Response
 import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import sys
 import traceback
@@ -15,6 +15,7 @@ import errno # Add errno for file locking checks
 from apscheduler.triggers.interval import IntervalTrigger # Add this import
 import pytz # Add pytz for timezone handling
 import markdown
+import threading
 
 # Import notification functions
 from .notifications import (
@@ -381,82 +382,84 @@ def task_stream():
         while True:
             try:
                 program_runner = get_program_runner()
-                # Use scheduler's timezone if available, else UTC
                 tz = program_runner.scheduler.timezone if program_runner and hasattr(program_runner, 'scheduler') else pytz.utc
                 current_time_dt = datetime.now(tz)
 
-                if program_runner is not None and program_runner.is_running() and hasattr(program_runner, 'scheduler'):
-                    tasks_info = []
-                    # Use scheduler lock for safety when iterating jobs
-                    with program_runner.scheduler_lock:
-                        jobs = program_runner.scheduler.get_jobs()
-                        for job in jobs:
-                            interval = None
-                            if isinstance(job.trigger, IntervalTrigger):
-                                interval = job.trigger.interval.total_seconds()
+                running_tasks_list = []
+                is_paused = False
+                pause_reason = None
+                tasks_info = []
+                program_running_state = False
 
-                            # Skip tasks with interval < 120 seconds (2 minutes)
-                            if interval is not None and interval < 150:
-                                continue
+                if program_runner is not None:
+                    program_running_state = program_runner.is_running()
 
-                            next_run_timestamp = None
-                            if job.next_run_time:
-                                # Ensure next_run_time is timezone-aware using scheduler's timezone
-                                next_run_aware = job.next_run_time.astimezone(tz)
-                                next_run_timestamp = next_run_aware.timestamp()
+                    # Read the set of currently executing tasks directly
+                    try:
+                        with program_runner._running_task_lock: # Use lock for safe read of the set
+                             # Convert set to list for JSON serialization
+                             running_tasks_list = list(program_runner.currently_executing_tasks)
+                    except Exception as read_err:
+                         logging.error(f"Error reading currently_executing_tasks: {read_err}", exc_info=True)
+                         running_tasks_list = [] # Default to empty list on error
 
-                            # Enabled = job has a next run time (is not paused indefinitely)
-                            enabled = job.next_run_time is not None
-
-                            # Running status is difficult to get accurately, omitting for now
-                            # running = False # Placeholder
-
-                            # Calculate time until next run in seconds
-                            time_until_next = None
-                            if enabled and next_run_timestamp:
-                                time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
-
-
-                            tasks_info.append({
-                                'name': job.id,
-                                # 'last_run': Not easily available from APScheduler job object
-                                'next_run': time_until_next, # Time until next run in seconds
-                                'next_run_timestamp': next_run_timestamp, # Actual timestamp
-                                'interval': interval,
-                                'enabled': enabled,
-                                #'running': running # Omitted for now
-                            })
-
-                    tasks_info.sort(key=lambda x: x['name'])
-
-                    # Use the runner's pause state and reason
+                    # Get pause state
                     is_paused = program_runner.queue_paused
                     pause_reason = program_runner.pause_reason
 
-                    data = {
-                        'success': True,
-                        'running': True, # ProgramRunner itself is running
-                        'tasks': tasks_info,
-                        'paused': is_paused,
-                        'pause_reason': pause_reason
-                    }
-                else:
-                    data = {
-                        'success': True,
-                        'running': False, # ProgramRunner is not running or scheduler missing
-                        'tasks': [],
-                        'paused': False,
-                        'pause_reason': None
-                    }
+                    # Get task list if scheduler is running
+                    if program_running_state and hasattr(program_runner, 'scheduler'):
+                         # Use scheduler lock for safety when iterating jobs
+                        with program_runner.scheduler_lock:
+                            jobs = program_runner.scheduler.get_jobs()
+                            for job in jobs:
+                                interval = None
+                                if isinstance(job.trigger, IntervalTrigger):
+                                    interval = job.trigger.interval.total_seconds()
+
+                                # Skip tasks with interval < 120 seconds (2 minutes)
+                                if interval is not None and interval < 150:
+                                    continue
+
+                                next_run_timestamp = None
+                                if job.next_run_time:
+                                    next_run_aware = job.next_run_time.astimezone(tz)
+                                    next_run_timestamp = next_run_aware.timestamp()
+
+                                enabled = job.next_run_time is not None
+
+                                time_until_next = None
+                                if enabled and next_run_timestamp:
+                                    time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
+
+                                tasks_info.append({
+                                    'name': job.id,
+                                    'next_run': time_until_next,
+                                    'next_run_timestamp': next_run_timestamp,
+                                    'interval': interval,
+                                    'enabled': enabled,
+                                })
+
+                        tasks_info.sort(key=lambda x: x['name'])
+
+
+                # Construct the data payload using the list of running tasks
+                data = {
+                    'success': True,
+                    'running': program_running_state,
+                    'tasks': tasks_info,
+                    'paused': is_paused,
+                    'pause_reason': pause_reason,
+                    'running_tasks_list': running_tasks_list
+                }
 
                 yield f"data: {json.dumps(data, default=str)}\n\n"
 
             except Exception as e:
-                logging.error(f"Error in task stream: {str(e)}", exc_info=True) # Log stack trace
-                # Ensure we yield an error structure consistent with the success case
-                yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_reason': None, 'error': str(e)})}\n\n"
+                logging.error(f"Error in task stream generate loop: {str(e)}", exc_info=True)
+                yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_reason': None, 'running_tasks_list': [], 'error': str(e)})}\n\n" # Send empty list on error
 
-            time.sleep(1)  # Check for updates every second
+            time.sleep(1) # Stream updates every 1 second
 
     response = Response(generate(), mimetype='text/event-stream')
     response.headers.update({
@@ -464,7 +467,7 @@ def task_stream():
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'X-Accel-Buffering': 'no'  # Disable buffering in Nginx
+        'X-Accel-Buffering': 'no'
     })
     return response
 

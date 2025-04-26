@@ -195,6 +195,10 @@
             opacity: 1; /* Override opacity when notifications are disabled */
         }
 
+        body[data-notifications-disabled="true"] .notification.unread {
+            border-left: none; /* Remove the unread indicator border when disabled */
+        }
+
         .notification-header {
             display: flex;
             justify-content: space-between;
@@ -1233,65 +1237,5 @@
     </div>
     
     {% block scripts %}{% endblock %}
-
-    {# START EDIT: Add Task Stream Listener for Pause State #}
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const pauseBanner = document.getElementById('pauseStatusBanner');
-            const pauseReasonText = document.getElementById('pauseReasonText');
-            
-            // Ensure elements exist before proceeding
-            if (!pauseBanner || !pauseReasonText) {
-                console.error('Pause status banner elements not found.');
-                return;
-            }
-
-            // Connect to the task stream
-            const eventSource = new EventSource('/base/api/task-stream');
-
-            eventSource.onmessage = function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    
-                    if (data.success) {
-                        const isPaused = data.paused;
-                        const reason = data.pause_reason;
-
-                        if (isPaused) {
-                            pauseReasonText.textContent = `Queue Paused: ${reason || 'Unknown reason'}`;
-                            pauseBanner.classList.remove('hidden');
-                            document.body.classList.add('has-visible-section'); // Adjust padding if needed
-                        } else {
-                            pauseBanner.classList.add('hidden');
-                             // Only remove class if no other sections are visible (needs coordination if other banners exist)
-                            // For now, let's assume only this banner uses this class for simplicity
-                            document.body.classList.remove('has-visible-section'); 
-                        }
-                    } else {
-                        console.error('Task stream reported an error:', data.error);
-                        // Optionally hide banner on stream error or show a generic error
-                        pauseBanner.classList.add('hidden');
-                        document.body.classList.remove('has-visible-section');
-                    }
-                } catch (error) {
-                    console.error('Error parsing task stream data:', error);
-                     // Hide banner on parsing error
-                    pauseBanner.classList.add('hidden');
-                    document.body.classList.remove('has-visible-section');
-                }
-            };
-
-            eventSource.onerror = function(error) {
-                console.error('EventSource failed:', error);
-                // Hide banner if stream connection fails
-                pauseBanner.classList.add('hidden');
-                document.body.classList.remove('has-visible-section');
-                // Optionally try to reconnect or display a connection error message
-                eventSource.close(); // Close the connection
-                // Consider adding a retry mechanism here if needed
-            };
-        });
-    </script>
-    {# END EDIT #}
 </body>
 </html>

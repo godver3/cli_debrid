@@ -55,7 +55,7 @@ body.transitions-enabled {
     transition: padding-top 0.3s ease;
 }
 
-body.has-visible-section {
+body.has-top-overlay {
     padding-top: 90px;
 }
 
@@ -1165,19 +1165,51 @@ h2 {
     border-radius: 8px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     width: 300px;
-    max-height: 400px;
+    /* max-height: 400px; */ /* Control via transitions */
     overflow-y: auto;
     margin-top: 5px;
     padding: 0;
-    opacity: 1;
-    transition: opacity 0.3s ease, transform 0.3s ease;
+    /* opacity: 1; */ /* Control via transitions */
+    /* transition: opacity 0.3s ease, transform 0.3s ease; */ /* Control via transitions */
+
+    /* --- START: Minimal Visibility Control --- */
+    /* Hide by default using max-height, opacity, and collapse margins/padding/border */
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden; /* Crucial for max-height transition */
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0; /* Collapse margin when hidden */
+    border-width: 0; /* Collapse border when hidden */
+    pointer-events: none; /* Prevent interaction when hidden */
+    /* Define transitions for smooth open/close */
+    transition: max-height 0.3s ease-out, opacity 0.3s ease-out, padding 0.3s ease-out, margin-top 0.3s ease-out, border-width 0.3s ease-out;
+    /* --- END: Minimal Visibility Control --- */
 }
 
+/* --- START: Rule to Show Dropdown --- */
+/* Show dropdown ONLY when the container is visible AND the dropdown has the 'dropdown-visible' class */
+.task-monitor-container.visible .task-monitor-dropdown.dropdown-visible {
+    max-height: 400px; /* Restore max height */
+    opacity: 1; /* Make visible */
+    /* Restore visual elements */
+    padding: 0; /* Assuming inner elements have padding */
+    margin-top: 5px; /* Restore original margin */
+    border: 1px solid #333; /* Restore border if needed */
+    pointer-events: auto; /* Allow interaction */
+    overflow-y: auto; /* Re-enable vertical scroll */
+}
+/* --- END: Rule to Show Dropdown --- */
+
+/* IMPORTANT: Remove or comment out the old rule that hid the dropdown when the container was hidden */
+/* Ensure this block is removed or commented out: */
+/*
 .task-monitor-container.hidden .task-monitor-dropdown,
 .task-monitor-container.hidden .current-task-display {
     transform: translateY(-20px);
     opacity: 0;
 }
+*/
 
 .task-monitor-toggle {
     position: fixed;
@@ -1197,9 +1229,23 @@ h2 {
     align-items: center;
 }
 
-/* Add a gap between toggles */
-.rate-limits-section-toggle + .task-monitor-toggle {
-    margin-right: 8px;
+/* Adjust toggle positions if necessary */
+.rate-limits-section-toggle {
+    position: fixed;
+    top: 50px;
+    right: calc(45px + 28px + 8px + env(safe-area-inset-right, 0px));
+    background-color: #1a1a1a;
+    color: #888;
+    border: none;
+    padding: 8px;
+    border-radius: 0 0 4px 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 1000;
+    width: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
 .task-monitor-toggle:hover {
@@ -1434,19 +1480,36 @@ h2 {
     background-color: rgba(var(--warning-rgb, 255, 165, 0), 0.1);
 }
 
-.current-task-display.paused .current-task-name {
-    color: rgb(var(--warning-rgb, 255, 0, 0));
-    font-weight: 600;
-}
-
-.current-task-display.paused .current-task-time {
-    color: rgb(var(--warning-rgb, 255, 0, 0));
-    font-weight: 500;
-}
-
 .current-task-display.paused {
     background-color: rgba(var(--warning-rgb, 255, 0, 0), 0.1);
     border-left: 3px solid rgb(var(--warning-rgb, 255, 0, 0));
+}
+
+.current-task-display.running {
+    background-color: rgb(0, 99, 3); /* Light green background */
+    border-left: 3px solid #4CAF50; /* Green border */
+    /* Ensure transitions if desired */
+    transition: background-color 0.3s ease, border-left-color 0.3s ease;
+}
+
+.current-task-display.running .current-task-name {
+    color: #66bb6a; /* Brighter green text */
+    font-weight: 600; /* Slightly bolder */
+}
+
+.current-task-display.running .current-task-time {
+    color: #81c784; /* Softer green for time */
+    font-style: italic;
+}
+
+/* Optional: Style for running task in the dropdown list */
+.task-item.running { /* You would need to add this class in updateTaskList JS */
+    background-color: rgba(76, 175, 80, 0.1);
+    border-left: 3px solid rgb(76, 175, 80);
+}
+
+.task-item.running .task-name {
+    color: #66bb6a;
 }
 
 /* Update indicator */
@@ -1483,19 +1546,35 @@ h2 {
 header:hover ~ .rate-limits-section {
     opacity: 0;
     pointer-events: none;
-    transform: translate(-50%, -100%);
-    transition: all 0.5s ease 0.3s;
+    /* Ensure horizontal centering and vertical hiding */
+    transform: translateX(-50%) translateY(-100%); 
+    /* Match the main transition timing, add delay */
+    transition: transform 0.3s ease 0.3s, opacity 0.3s ease 0.3s; 
 }
 
 .rate-limits-section {
-    opacity: 1;
-    transform: translate(-50%, 0);
-    transition: all 0.5s ease;
+    /* opacity: 1; */ /* Removed debugging override */
+    /* transform: translate(-50%, 0); */ /* Removed conflicting transform */
+    /* transition: all 0.5s ease; */ /* Removed conflicting transition */
     z-index: 998;
     position: fixed;
     top: 50px;
     left: 50%;
     width: auto;
+    opacity: 0; /* Start hidden */
+    pointer-events: none;
+    transition: transform 0.3s ease, opacity 0.3s ease; /* Define transition */
+    transform-origin: top;
+    /* Apply horizontal centering AND initial vertical hiding */
+    transform: translateX(-50%) translateY(-100%); 
+}
+
+/* Add this class for visibility control via JS */
+.rate-limits-section.visible {
+    /* Maintain horizontal centering, move vertically into view */
+    transform: translateX(-50%) translateY(0); 
+    opacity: 1;
+    pointer-events: auto;
 }
 
 /* Mobile-specific styles */
@@ -1717,11 +1796,10 @@ body.modal-open {
     text-align: center;
     font-weight: bold;
     position: fixed;
-    /* top: 50px; */ /* Remove top positioning */
     bottom: 0; /* Position at the bottom */
     left: 0;
     right: 0;
-    z-index: 999; /* Ensure it's above most content but below modals if needed */
+    z-index: 997; /* Example: Lower than rate-limits section */
     box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.2); /* Shadow on the top edge */
     transition: transform 0.3s ease, opacity 0.3s ease;
     transform: translateY(0); /* Start in visible position */
@@ -1752,3 +1830,25 @@ body.modal-open {
     }
 } */
 /* END EDIT */
+
+.task-list-header {
+    padding: 8px 15px;
+    font-weight: bold;
+    color: #aaa; /* Lighter gray */
+    background-color: #2a2a2a; /* Slightly different background */
+    border-bottom: 1px solid #333;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    position: sticky; /* Make headers sticky if desired */
+    top: 35px; /* Adjust based on main header height if sticky */
+    z-index: 1; /* Ensure it stays above task items */
+}
+
+/* Add margin between sections if both exist */
+.task-list-header + .task-list-header {
+    margin-top: 10px;
+}
+
+.task-list {
+    padding: 0; /* Remove default padding if headers handle spacing */
+}

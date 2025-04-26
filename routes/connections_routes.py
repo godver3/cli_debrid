@@ -261,42 +261,73 @@ def check_phalanx_db_connection():
     if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
         return None # Return None if the service is disabled
 
-    # Try both localhost and phalanx_db hostname
-    hosts = ['localhost', 'phalanx_db']
+    host = 'localhost'
     port = 8888
-    
-    for host in hosts:
-        try:
-            url = f'http://{host}:{port}'
-            response = requests.get(url, timeout=2)
-            
-            # A 404 with "Cannot GET /" is actually a success case here
-            # as it means we can reach the service
-            if response.status_code == 404 and "Cannot GET /" in response.text:
-                return {
-                    'name': 'Phalanx DB',
-                    'connected': True,
-                    'error': None,
-                    'details': {
-                        'url': url,
-                        'host': host,
-                        'port': port
-                    }
+    url = f'http://{host}:{port}'
+
+    try:
+        response = requests.get(url, timeout=5) # Increased timeout to 5s
+
+        # A 404 with "Cannot GET /" is actually a success case here
+        # as it means we can reach the service
+        if response.status_code == 404 and "Cannot GET /" in response.text:
+            return {
+                'name': 'Phalanx DB',
+                'connected': True,
+                'error': None,
+                'details': {
+                    'url': url,
+                    'host': host,
+                    'port': port
                 }
-        except (requests.Timeout, requests.ConnectionError, Exception) as e:
-            continue
+            }
+        else:
+            # Handle cases where the service responds but not with the expected 404
+            return {
+                'name': 'Phalanx DB',
+                'connected': False,
+                'error': f'Unexpected response: Status {response.status_code}',
+                'details': {
+                    'url': url,
+                    'host': host,
+                    'port': port,
+                    'response_text': response.text[:200] # Include beginning of response text
+                }
+            }
             
-    # If we get here, none of the connection attempts worked
-    return {
-        'name': 'Phalanx DB',
-        'connected': False,
-        'error': 'Could not connect to service on any host',
-        'details': {
-            'tried_hosts': hosts,
-            'port': port,
-            'urls': [f'http://{host}:{port}' for host in hosts]
+    except requests.Timeout:
+        return {
+            'name': 'Phalanx DB',
+            'connected': False,
+            'error': 'Connection timed out (5s)',
+            'details': {
+                'url': url,
+                'host': host,
+                'port': port
+            }
         }
-    }
+    except requests.ConnectionError:
+        return {
+            'name': 'Phalanx DB',
+            'connected': False,
+            'error': f'Connection refused on {host}',
+            'details': {
+                'url': url,
+                'host': host,
+                'port': port
+            }
+        }
+    except Exception as e:
+         return {
+            'name': 'Phalanx DB',
+            'connected': False,
+            'error': f'Error connecting to {host}: {str(e)}',
+            'details': {
+                'url': url,
+                'host': host,
+                'port': port
+            }
+        }
 
 def check_scraper_connection(scraper_id, scraper_config):
     """Check connection to a specific scraper."""

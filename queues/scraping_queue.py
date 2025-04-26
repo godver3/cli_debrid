@@ -105,6 +105,15 @@ class ScrapingQueue:
             # Sort by release date, newest first. Unknown dates are handled by date.min
             self.items.sort(key=get_release_date_key, reverse=True)
 
+        # Final sort: Ensure episodes are processed in order (S/E ascending) within their priority groups
+        self.items.sort(key=lambda item: (
+            # Preserve primary sort orders (source priority, type, release date implicitly handled by sorting earlier)
+            # Then sort episodes explicitly by show/season/episode
+            item.get('imdb_id', ''), # Group by show
+            item.get('season_number') if item.get('type') == 'episode' and item.get('season_number') is not None else float('inf'), # Sort episodes by season (handle None)
+            item.get('episode_number') if item.get('type') == 'episode' and item.get('episode_number') is not None else float('inf') # Then by episode number (handle None)
+        ))
+
     def get_contents(self):
         return self.items
 
@@ -158,6 +167,20 @@ class ScrapingQueue:
             item_id_being_processed = item_to_process['id'] # Store ID for later check
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
+
+            # --- START: Check if related item is in Adding Queue --- 
+            item_imdb_id = item_to_process.get('imdb_id')
+            if item_imdb_id: # Only check if IMDb ID exists
+                try:
+                    adding_queue = queue_manager.queues.get("Adding")
+                    if adding_queue and adding_queue.get_contents(): # Check if Adding queue exists and has items
+                        is_in_adding = any(adding_item.get('imdb_id') == item_imdb_id for adding_item in adding_queue.get_contents())
+                        if is_in_adding:
+                            logging.info(f"Deferring processing for {item_identifier} (IMDb: {item_imdb_id}) - related item found in Adding Queue.")
+                            return False # Defer processing, keep item in queue
+                except Exception as e:
+                    logging.error(f"Error checking Adding Queue for {item_identifier}: {e}")
+            # --- END: Check if related item is in Adding Queue ---
 
             try:
                 logging.info(f"Starting to process scraping results for {item_identifier}")
