@@ -5,7 +5,7 @@ from routes.extensions import initialize_app
 from queues.config_manager import load_config 
 from utilities.settings import get_setting
 import threading
-from queues.run_program import ProgramRunner
+from queues.run_program import ProgramRunner, _setup_scheduler_listeners
 from flask_login import login_required
 from requests.exceptions import RequestException
 from routes.api_tracker import api
@@ -464,6 +464,12 @@ def start_program():
         return jsonify({"status": "error", "message": error_message, "failed_services": failed_services})
 
     program_runner = ProgramRunner()
+    try:
+        _setup_scheduler_listeners(program_runner)
+    except Exception as e:
+        logging.error(f"Failed to set up scheduler listeners during API start: {e}", exc_info=True)
+        # Decide if we should abort startup? For now, log and continue.
+
     # Start the program runner in a separate thread to avoid blocking the Flask server
     threading.Thread(target=program_runner.start).start()
     current_app.config['PROGRAM_RUNNING'] = True
@@ -630,13 +636,15 @@ def get_task_timings():
         hours, remainder = divmod(int(time_until_next_run), 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        # Create a human-readable display name (reuse existing logic block)
+        # Create a human-readable display name
         display_name = task_name # Default
         normalized_task_name_for_display = program_runner._normalize_task_name(task_name) # Normalize for consistent lookup
 
         if normalized_task_name_for_display in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
                        'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
             display_name = normalized_task_name_for_display
+        elif normalized_task_name_for_display == 'final_check_queue': # Specific check for final_check_queue
+            display_name = "Final Check"
         elif normalized_task_name_for_display.endswith('_wanted'):
             source_name = normalized_task_name_for_display.replace('task_', '').replace('_wanted', '')
             source_config = content_sources.get(source_name) # Use normalized name lookup
@@ -648,12 +656,11 @@ def get_task_timings():
         elif normalized_task_name_for_display.startswith('task_'):
              display_name = ' '.join(word.capitalize() for word in normalized_task_name_for_display.replace('task_', '').split('_'))
         # Keep original task_name as fallback if no rule matched
-        else:
-             display_name = task_name
+        # (The else block is implicitly handled by the default display_name = task_name assignment)
 
 
         all_tasks_data[task_name] = {
-            "display_name": display_name,
+            "display_name": display_name, # This will now be "Final Check" for the relevant task
             "next_run_in": {
                 "hours": hours,
                 "minutes": minutes,
@@ -678,7 +685,7 @@ def get_task_timings():
     for task, timing in all_tasks_data.items():
         normalized_task_name = program_runner._normalize_task_name(task) # Normalize for consistent checks
         if normalized_task_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
-                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
+                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'final_check_queue']:
             # Use the original task name (which might be non-normalized if that's the key)
             # Or better, use the normalized name as the key for consistency
             grouped_timings["queues"][normalized_task_name] = timing

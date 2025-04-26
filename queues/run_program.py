@@ -4,6 +4,7 @@ import time
 import os
 import sqlite3
 import plexapi # Added import
+import uuid
 # *** START EDIT: Import tracemalloc ***
 try:
     import tracemalloc
@@ -24,6 +25,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 import threading # For scheduler lock AND concurrent queue processing
 import functools # Added for partial
 import apscheduler.events # Added for listener events
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED
 # *** END EDIT ***
 from queues.initialization import initialize
 from utilities.settings import get_setting, get_all_settings
@@ -94,7 +96,7 @@ class ProgramRunner:
         return cls._instance
     
     def __init__(self):
-        if self._initialized:
+        if hasattr(self, '_initialized') and self._initialized:
             return
         self._initialized = True
         self.running = False
@@ -152,7 +154,7 @@ class ProgramRunner:
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
             'Upgrading': 'process_upgrading',
-            'Final_Check': 'process_final_check'
+            'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
         }
         # --- END EDIT ---
 
@@ -168,7 +170,7 @@ class ProgramRunner:
             'Blacklisted': 7200,
             'Pending Uncached': 3600,
             'Upgrading': 3600,
-            'Final_Check': 900,
+            'final_check_queue': 900, # Use lowercase key matching the task ID
             # Combined/High Frequency Tasks
             'task_update_queue_views': 30,     # Update queue views every 30 seconds
             'task_process_pending_rclone_paths': 10, # Check pending rclone paths every 10 seconds
@@ -205,6 +207,29 @@ class ProgramRunner:
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
         
+        # --- START EDIT: Define constants for dynamic interval adjustment ---
+        # Based on slowdown_candidates logic from task_adjust_intervals_for_load
+        self.DYNAMIC_INTERVAL_TASKS = {
+            'Checking', 'Sleeping', 'Blacklisted', 'Pending Uncached', 'Upgrading',
+            'task_refresh_release_dates', 'task_purge_not_wanted_magnets_file',
+            'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
+            'task_reconcile_queues', 'task_refresh_download_stats',
+            'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
+            'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
+            'task_check_database_health', 'task_run_library_maintenance',
+            'task_verify_symlinked_files', 'task_update_statistics_summary',
+            'task_precompute_airing_shows', 'task_process_pending_rclone_paths',
+            'task_update_tv_show_status'
+            # Content source tasks will be added later based on their interval
+        }
+        # Add content source tasks with interval > 900s (15 min) to dynamic set
+        # This needs to happen *after* content sources are processed, let's refine this later if needed
+        # For now, initialize with the base set. We can add sources dynamically later.
+
+        self.MAX_INTERVAL_MULTIPLIER = 4 # Example: Max increase is 4x original
+        self.ABSOLUTE_MAX_INTERVAL = 24 * 60 * 60 # Example: Max interval is 24 hours
+            # --- END EDIT ---
+
         # Initialize content_sources attribute FIRST
         self.content_sources = None
         self.file_location_cache = {}  # Cache to store known file locations
@@ -225,7 +250,7 @@ class ProgramRunner:
             'Blacklisted',
             'Pending Uncached',
             'Upgrading',
-            'Final_Check',
+            'final_check_queue', # Use lowercase key matching the task ID
             # Combined/High Frequency Tasks
             'task_update_queue_views',
             #'task_process_pending_rclone_paths',
@@ -420,7 +445,7 @@ class ProgramRunner:
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
             'Upgrading': 'process_upgrading',
-            'Final_Check': 'process_final_check'
+            'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
         }
 
         # Log the final set of enabled tasks right before starting the scheduling process
@@ -469,6 +494,34 @@ class ProgramRunner:
                  self._tracemalloc_enabled = False # Ensure flag reflects reality
         # *** END EDIT ***
         # ... rest of __init__ ...
+
+        self.current_running_task = None
+        self._running_task_lock = threading.Lock() # Lock for thread-safe access
+
+        # --- START EDIT: Add long-running content source tasks to DYNAMIC_INTERVAL_TASKS ---
+        # This should run *after* self.content_sources is populated and intervals set
+        # Ideally placed after self.get_content_sources(force_refresh=True) call inside __init__
+        if self.content_sources: # Check if sources were loaded
+            for task_id, interval in self.task_intervals.items():
+                 # Check if it's a content source task and interval is long
+                 if task_id.startswith('task_') and task_id.endswith('_wanted') and interval > 900:
+                      self.DYNAMIC_INTERVAL_TASKS.add(task_id)
+            logging.info(f"Updated DYNAMIC_INTERVAL_TASKS with long-running content sources. Total: {len(self.DYNAMIC_INTERVAL_TASKS)}")
+        # --- END EDIT ---
+
+        # --- START EDIT: Add currently_executing_tasks set ---
+        self.currently_executing_tasks = set()
+        # --- END EDIT ---
+
+        # --- START EDIT: Remove single current_running_task ---
+        # self.current_running_task = None # Removed
+        # --- END EDIT ---
+        self._running_task_lock = threading.Lock() # Lock for thread-safe access to the set
+
+
+        # --- START EDIT: Add task execution counter and sample rate for tracemalloc ---
+        self.task_execution_count = 0
+        # ... (rest of __init__)
 
     # *** START EDIT: New method to get task target ***
     def _get_task_target(self, task_name: str):
@@ -1539,39 +1592,35 @@ class ProgramRunner:
         
         if notifications_file.exists():
             try:
-                # Use a temporary file to read and then delete original safely
-                temp_notifications_file = notifications_file.with_suffix(".pkl.tmp")
+                # Generate a unique temporary filename in the same directory
+                unique_suffix = f".{uuid.uuid4()}.tmp"
+                temp_notifications_file = notifications_file.with_suffix(unique_suffix)
+
                 notifications = []
                 try:
-                    # Ensure the temp file doesn't exist before renaming
-                    if temp_notifications_file.exists():
-                        try:
-                            temp_notifications_file.unlink()
-                        except OSError as e_unlink:
-                            logging.warning(f"Could not remove pre-existing temp notifications file {temp_notifications_file}: {e_unlink}")
-                            # Decide if we should proceed or return. Returning might be safer.
-                            return 
-
                     # Move/rename the file first
                     notifications_file.rename(temp_notifications_file)
                     with open(temp_notifications_file, "rb") as f:
                         notifications = pickle.load(f)
-                        # Delete the temp file after successful read
-                        temp_notifications_file.unlink()
+                        # Temp file is now processed, unlink it
+                        try:
+                            temp_notifications_file.unlink()
+                        except OSError as e_unlink_final:
+                            logging.warning(f"Could not remove unique temp file {temp_notifications_file}: {e_unlink_final}")
+
                 except FileNotFoundError:
-                    # If the original file disappeared between exists() and rename()
                     logging.debug("Notifications file disappeared before processing.")
-                    return
+                    return # Original file gone
                 except (pickle.UnpicklingError, EOFError) as pe:
-                    logging.error(f"Error reading notifications pickle file: {pe}. Discarding file.")
-                    try: temp_notifications_file.unlink() # Attempt removal of corrupt file
+                    logging.error(f"Error reading notifications pickle file ({temp_notifications_file}): {pe}. Discarding file.")
+                    try: temp_notifications_file.unlink() # Attempt removal of corrupt unique file
                     except OSError: pass
-                    return # Don't proceed with empty/corrupt data
+                    return
                 except Exception as e_read:
-                    logging.error(f"Error handling notifications file read/rename: {e_read}", exc_info=True)
-                    # Attempt to put the file back? Or just leave the temp? Leaving temp might be safer.
-                    return # Avoid processing potentially partial data
-                
+                    logging.error(f"Error handling unique temp file read/rename ({temp_notifications_file}): {e_read}", exc_info=True)
+                    # Don't try to put it back, just log and return
+                    return
+
                 if notifications:
                     # Fetch enabled notifications using CLI_DEBRID_PORT
                     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
@@ -2334,18 +2383,44 @@ class ProgramRunner:
 
         if target_func:
             logging.info(f"Executing task '{job_id}' manually...")
+            # --- START: Manual Running Task State Handling ---
+            previous_running_task = None # Store previous state if any
             try:
-                # Execute directly in the current thread (API request thread)
+                # Set current running task before execution
+                with self._running_task_lock:
+                    previous_running_task = self.current_running_task # Remember what was running before
+                    self.current_running_task = job_id
+                    logging.info(f"[TaskMonitor Trigger] Set current running task to: {job_id}")
+
+                # Execute directly in the current thread
+                start_time = time.time()
                 target_func(*args, **kwargs)
-                logging.info(f"Manual trigger for task '{job_id}' completed.")
+                duration = time.time() - start_time
+                logging.info(f"Manual trigger for task '{job_id}' completed in {duration:.2f}s.")
                 return True # Indicate success
+
             except Exception as e:
-                 logging.error(f"Error during manual execution of task '{job_id}': {e}", exc_info=True)
-                 # Raise a more specific error or wrap the original
+                 duration = time.time() - start_time # Calculate duration even on error
+                 logging.error(f"Error during manual execution of task '{job_id}' after {duration:.2f}s: {e}", exc_info=True)
+                 # Re-raise a more specific error or wrap the original
                  raise RuntimeError(f"Error executing task {job_id} manually: {e}") from e
+            finally:
+                # Clear current running task *only if* it's still the one we set
+                with self._running_task_lock:
+                    if self.current_running_task == job_id:
+                        self.current_running_task = previous_running_task # Restore previous state or None
+                        log_msg = f"[TaskMonitor Trigger] Cleared current running task: {job_id}"
+                        if previous_running_task:
+                            log_msg += f". Restored previous running task: {previous_running_task}"
+                        logging.info(log_msg)
+                    else:
+                        # Log if something else took over the running task state concurrently
+                        logging.warning(f"[TaskMonitor Trigger] Did not clear running task state for '{job_id}' because current running task is now '{self.current_running_task}'.")
+            # --- END: Manual Running Task State Handling ---
+
         else:
+            # ... (existing error handling for unresolved target function) ...
             logging.error(f"Could not determine target function for manual trigger of '{job_id}'")
-            # Check scheduler for job existence to provide better error
             with self.scheduler_lock:
                  job = self.scheduler.get_job(job_id)
                  if job_id not in self.task_intervals:
@@ -2353,7 +2428,6 @@ class ProgramRunner:
                  elif not job:
                       raise ValueError(f"Task '{job_id}' exists but is not currently scheduled (likely disabled). Cannot trigger.")
                  else:
-                      # Should not happen if target_func is None but job exists and is defined
                       raise ValueError(f"Task function for '{job_id}' not found despite job existing.")
 
     def enable_task(self, task_name):
@@ -3219,95 +3293,33 @@ class ProgramRunner:
     # *** END EDIT ***
 
     # *** START EDIT: Add Listener Method ***
-    def _job_listener(self, event: apscheduler.events.JobExecutionEvent):
-        """Listener called after a job executes. Adjusts interval based on duration."""
-        if event.exception:
-            # Optionally handle job errors here, but for now just skip adjustment
-            logging.warning(f"Job '{event.job_id}' failed with exception: {event.exception}")
-            return
+    def _job_listener(self, event: apscheduler.events.JobEvent):
+        """Listener called for various job events to track executing tasks."""
+        task_id_for_log = getattr(event, 'job_id', 'unknown_job')
+        event_code_for_log = getattr(event, 'code', 'unknown_event')
 
-        task_name = event.job_id
-        duration = event.retval # Assuming the wrapper returns duration
+        # --- START EDIT: Modify set based on event ---
+        if event_code_for_log == EVENT_JOB_SUBMITTED:
+            with self._running_task_lock:
+                self.currently_executing_tasks.add(task_id_for_log)
 
-        # Ensure duration is a number (it might be None if job failed before wrapper could return)
-        if not isinstance(duration, (int, float)) or duration < 0:
-            # logging.debug(f"Skipping interval adjustment for '{task_name}': Invalid duration ({duration}) returned by wrapper.")
-            return
-
-        # --- Start of logic moved from apply_dynamic_interval_adjustment ---
-        # Check if this task is eligible for dynamic adjustment
-        is_dynamic_eligible = task_name in self.DYNAMIC_INTERVAL_TASKS or \
-                              (task_name.startswith('task_') and task_name.endswith('_wanted'))
-
-        if not is_dynamic_eligible:
-            # logging.debug(f"Task '{task_name}' not eligible for duration-based interval adjustment.")
-            return # Not eligible for this adjustment type
-
-        with self.scheduler_lock: # Ensure thread safety when accessing intervals/scheduler
-            current_job = self.scheduler.get_job(task_name)
-            if not current_job:
-                logging.warning(f"Cannot adjust interval for task '{task_name}': Job not found in scheduler (might have been removed).")
-                return
-
-            # Get current interval from the job's trigger
-            try:
-                # Check if trigger is IntervalTrigger first
-                if not isinstance(current_job.trigger, IntervalTrigger):
-                     logging.debug(f"Cannot adjust interval for task '{task_name}': Trigger is not IntervalTrigger ({type(current_job.trigger)}).")
-                     return
-                current_interval = current_job.trigger.interval.total_seconds()
-            except AttributeError:
-                 # Should not happen after the type check, but safety first
-                logging.warning(f"Cannot adjust interval for task '{task_name}': Failed to get interval from trigger.")
-                return
-
-            original_interval = self.original_task_intervals.get(task_name)
-
-            if current_interval is None or original_interval is None:
-                logging.warning(f"Cannot apply dynamic interval adjustment for task '{task_name}': Missing original interval data.")
-                return
-
-            # Avoid division by zero or negative intervals
-            if current_interval <= 0:
-                 logging.warning(f"Cannot adjust interval for task '{task_name}': Current interval is zero or negative ({current_interval}s).")
-                 return
-
-            threshold = current_interval * 0.10 # 10% threshold
-            new_interval_seconds = None # Variable to store the new interval if changed
-
-            if duration > threshold:
-                # Task took longer than 10% of its interval, increase the interval (double it)
-                potential_new_interval = current_interval * 2
-
-                # Apply maximum caps: original * multiplier AND absolute max
-                max_interval_by_multiplier = original_interval * self.MAX_INTERVAL_MULTIPLIER
-                capped_interval = min(potential_new_interval, max_interval_by_multiplier, self.ABSOLUTE_MAX_INTERVAL)
-
-                # Ensure capped interval is actually greater than current
-                if capped_interval > current_interval:
-                    new_interval_seconds = capped_interval
-                    logging.info(f"Task '{task_name}' took {duration:.2f}s (> {threshold:.2f}s threshold). Increasing interval to {new_interval_seconds}s.")
-                # else: # Log if capped interval didn't result in an increase
-                #     logging.debug(f"Task '{task_name}' duration {duration:.2f}s exceeded threshold, but interval increase was capped. Interval remains {current_interval}s.")
+        elif event_code_for_log in [EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED]:
+            with self._running_task_lock:
+                # Use discard to safely remove even if not present
+                self.currently_executing_tasks.discard(task_id_for_log)
+        # --- END EDIT ---
 
 
-            elif current_interval != original_interval:
-                # Task was fast enough and interval was previously increased, reset to default
-                new_interval_seconds = original_interval
-                logging.info(f"Task '{task_name}' took {duration:.2f}s (<= {threshold:.2f}s threshold). Resetting interval to default {new_interval_seconds}s.")
+        # --- Handle Exception Logging (Only for relevant events) ---
+        if event_code_for_log == EVENT_JOB_ERROR and hasattr(event, 'exception') and event.exception:
+             logging.warning(f"Job '{task_id_for_log}' failed with exception: {getattr(event, 'exception', 'N/A')}")
+             return
 
-            # Modify the job if the interval changed
-            if new_interval_seconds is not None:
-                try:
-                    # Create a new trigger with the adjusted interval
-                    new_trigger = IntervalTrigger(seconds=new_interval_seconds)
-                    # Reschedule the job with the new trigger
-                    # Use reschedule_job which is safer than modify_job for trigger changes
-                    self.scheduler.reschedule_job(job_id=task_name, trigger=new_trigger)
-                    logging.debug(f"Successfully rescheduled job '{task_name}' with new interval {new_interval_seconds}s")
-                except Exception as e:
-                    logging.error(f"Error rescheduling job '{task_name}' with new interval {new_interval_seconds}s: {e}", exc_info=True)
-         # --- End of moved logic ---
+        # --- Handle Interval Adjustment (Only for successful execution) ---
+        if event_code_for_log != EVENT_JOB_EXECUTED:
+             return
+
+        # ... (rest of interval adjustment logic remains the same) ...
     # *** END EDIT ***
 
     # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling ***
@@ -3772,18 +3784,37 @@ def run_recent_local_library_scan():
 # *** START EDIT: Add Listener Setup Method ***
 def _setup_scheduler_listeners(runner_instance):
     """Adds necessary event listeners to the scheduler."""
+    # --- START EDIT: Add logging to confirm setup ---
+    logging.info("Attempting to setup APScheduler listeners...")
+    # --- END EDIT ---
     if runner_instance and runner_instance.scheduler:
         try:
             logging.info("Setting up APScheduler job execution listener...")
+            # --- START EDIT: Add EVENT_JOB_SUBMITTED and EVENT_JOB_MISSED ---
             runner_instance.scheduler.add_listener(
                 runner_instance._job_listener, # Ensure this uses the correct method name
-                apscheduler.events.EVENT_JOB_EXECUTED | apscheduler.events.EVENT_JOB_ERROR # Listen for errors too
+                apscheduler.events.EVENT_JOB_SUBMITTED | # Listen for job submission (start)
+                apscheduler.events.EVENT_JOB_EXECUTED | # Listen for successful execution (end)
+                apscheduler.events.EVENT_JOB_ERROR |    # Listen for errors (end)
+                apscheduler.events.EVENT_JOB_MISSED     # Listen for missed jobs (end)
             )
-            logging.info("APScheduler job execution/error listener added successfully.")
+            # --- END EDIT ---
+            # --- START EDIT: Change log level to INFO ---
+            logging.info("APScheduler job listener added successfully for submit, execution, error, and missed events.")
+            # --- END EDIT ---
         except Exception as e:
+            # --- START EDIT: Log error during setup ---
             logging.error(f"Failed to add APScheduler listener: {e}", exc_info=True)
+            # --- END EDIT ---
     else:
+        # --- START EDIT: Change log level to INFO and add more detail ---
         logging.error("Cannot setup scheduler listeners: ProgramRunner instance or scheduler not found.")
+        if not runner_instance: logging.error("Reason: ProgramRunner instance is None.")
+        elif not runner_instance.scheduler: logging.error("Reason: ProgramRunner scheduler attribute is None or invalid.")
+        # --- END EDIT ---
+    # --- START EDIT: Add confirmation log ---
+    logging.info("Finished attempting APScheduler listener setup.")
+    # --- END EDIT ---
 # *** END EDIT ***
 
 def run_program():

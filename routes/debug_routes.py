@@ -55,6 +55,8 @@ import time
 import json
 from flask import Response, stream_with_context
 # Import Plex debug functions
+# Import sqlite3 for error handling and add_media_item
+import sqlite3
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -1269,77 +1271,53 @@ def run_task():
     if not task_name:
         return jsonify({'success': False, 'error': 'Task name is required'}), 400
 
-    program_runner = ProgramRunner()
-    queue_manager = QueueManager()
+    program_runner = ProgramRunner() # Get the singleton instance
 
-    tasks = {
-        'wanted': queue_manager.process_wanted,
-        'scraping': queue_manager.process_scraping,
-        'adding': queue_manager.process_adding,
-        # Updated 'checking' to pass program_runner
-        'checking': lambda: queue_manager.process_checking(program_runner),
-        'sleeping': queue_manager.process_sleeping,
-        'unreleased': queue_manager.process_unreleased,
-        'blacklisted': queue_manager.process_blacklisted,
-        'pending_uncached': queue_manager.process_pending_uncached,
-        'upgrading': queue_manager.process_upgrading,
-        'task_plex_full_scan': program_runner.task_plex_full_scan,
-        'task_debug_log': program_runner.task_debug_log,
-        'task_refresh_release_dates': program_runner.task_refresh_release_dates,
-        'task_purge_not_wanted_magnets_file': program_runner.task_purge_not_wanted_magnets_file,
-        'task_generate_airtime_report': program_runner.task_generate_airtime_report,
-        'task_check_service_connectivity': program_runner.task_check_service_connectivity,
-        'task_send_notifications': program_runner.task_send_notifications,
-        'task_check_trakt_early_releases': program_runner.task_check_trakt_early_releases,
-        'task_reconcile_queues': program_runner.task_reconcile_queues,
-        'task_check_plex_files': program_runner.task_check_plex_files,
-        'task_update_show_ids': program_runner.task_update_show_ids,
-        'task_update_show_titles': program_runner.task_update_show_titles,
-        'task_update_movie_ids': program_runner.task_update_movie_ids,
-        'task_update_movie_titles': program_runner.task_update_movie_titles,
-        'task_get_plex_watch_history': program_runner.task_get_plex_watch_history,
-        'task_check_database_health': program_runner.task_check_database_health,
-        'task_run_library_maintenance': program_runner.task_run_library_maintenance,
-        'task_verify_symlinked_files': program_runner.task_verify_symlinked_files,
-        'task_verify_plex_removals': program_runner.task_verify_plex_removals,
-        'task_process_pending_rclone_paths': program_runner.task_process_pending_rclone_paths,
-        'task_update_tv_show_status': program_runner.task_update_tv_show_status,
-        'task_heartbeat': program_runner.task_heartbeat,
-        'final_check_queue': queue_manager.process_final_check
-    }
-
-    if task_name not in tasks:
-        return jsonify({'success': False, 'error': 'Invalid task name'}), 400
-
-    # Get the display name for the task
-    display_name = task_name  # Default to raw task name
-    
-    # Check if it's a content source task
-    if task_name.endswith('_wanted'):
-        source_name = task_name.replace('task_', '').replace('_wanted', '')
-        content_sources = program_runner.get_content_sources()
-        
-        if source_name in content_sources:
-            source_config = content_sources[source_name]
-            if isinstance(source_config, dict) and source_config.get('display_name'):
-                display_name = f"Content Source: {source_config['display_name']}"
-            else:
-                display_name = f"Content Source: {' '.join(word.capitalize() for word in source_name.split('_'))}"
-    else:
-        # For standard tasks, format the name nicely
-        if task_name in ['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading']:
-            display_name = task_name.capitalize()
-        else:
-            # Remove task_ prefix and format with spaces
-            display_name = task_name.replace('task_', '').replace('_', ' ')
-            display_name = ' '.join(word.capitalize() for word in display_name.split())
-
+    # --- START: Use trigger_task instead of direct execution ---
     try:
-        result = tasks[task_name]()
-        return jsonify({'success': True, 'message': f'Task "{display_name}" executed successfully', 'result': result}), 200
+        # Use the trigger_task method which handles state management
+        # The method already normalizes the name internally
+        program_runner.trigger_task(task_name)
+
+        # Format display name (can reuse logic if needed, but trigger_task handles execution)
+        display_name = task_name # Keep it simple for now or reuse formatting logic
+        try:
+            # Attempt nice formatting for the message
+             normalized_name = program_runner._normalize_task_name(task_name)
+             if normalized_name.startswith('task_'):
+                 display_name = ' '.join(word.capitalize() for word in normalized_name.replace('task_', '').split('_'))
+             elif normalized_name in program_runner.queue_processing_map:
+                 display_name = normalized_name.capitalize()
+             # Add content source display name logic if desired
+        except Exception:
+            display_name = task_name # Fallback
+
+        return jsonify({'success': True, 'message': f'Task "{display_name}" triggered successfully'}), 200
+    except ValueError as ve: # Catch specific errors from trigger_task
+         logging.warning(f"Failed to trigger task '{task_name}': {ve}")
+         return jsonify({'success': False, 'error': str(ve)}), 400 # Return specific error
+    except RuntimeError as re: # Catch the wrapped execution error from trigger_task
+        logging.error(f"Error executing triggered task {task_name}: {re}", exc_info=True)
+        # Extract original error if possible, otherwise use RuntimeError message
+        error_msg = str(re.__cause__) if re.__cause__ else str(re)
+        return jsonify({'success': False, 'error': f'Error executing task "{task_name}": {error_msg}'}), 500
     except Exception as e:
-        logging.error(f"Error executing task {task_name}: {str(e)}")
-        return jsonify({'success': False, 'error': f'Error executing task "{display_name}": {str(e)}'}), 500
+        logging.error(f"Unexpected error triggering task {task_name}: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'Unexpected error triggering task "{task_name}": {str(e)}'}), 500
+    # --- END: Use trigger_task ---
+
+    # --- REMOVE OLD DIRECT EXECUTION LOGIC ---
+    # queue_manager = QueueManager()
+    # tasks = { ... } # Dictionary no longer needed here
+    # if task_name not in tasks:
+    #     return jsonify({'success': False, 'error': 'Invalid task name'}), 400
+    # try:
+    #     result = tasks[task_name]()
+    #     return jsonify({'success': True, 'message': f'Task "{display_name}" executed successfully', 'result': result}), 200
+    # except Exception as e:
+    #     logging.error(f"Error executing task {task_name}: {str(e)}")
+    #     return jsonify({'success': False, 'error': f'Error executing task "{display_name}": {str(e)}'}), 500
+    # --- END REMOVED LOGIC ---
 
 @debug_bp.route('/get_available_tasks', methods=['GET'])
 @admin_required
@@ -2264,6 +2242,21 @@ def parse_symlink(symlink_path: Path):
 def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id):
     """The actual analysis logic, run in a background thread."""
     global analysis_progress
+
+    # --- Create a temporary directory for recovery files ---
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    temp_recovery_dir = os.path.join(db_content_dir, 'tmp_recovery')
+    try:
+        os.makedirs(temp_recovery_dir, exist_ok=True)
+    except OSError as e:
+        logging.error(f"Failed to create temporary recovery directory {temp_recovery_dir}: {e}")
+        # Handle error: update progress and exit thread? For now, log and continue, recovery will fail later.
+        pass 
+    # --- End temporary directory creation ---
+
+    # Generate a unique temporary file path for this task
+    recovery_file_path = os.path.join(temp_recovery_dir, f"recovery_{task_id}.jsonl")
+
     analysis_progress[task_id] = {
         'status': 'starting',
         'message': 'Initializing analysis...',
@@ -2273,8 +2266,9 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         'items_found': 0,
         'parser_errors': 0,
         'metadata_errors': 0,
-        'recoverable_items_preview': [], # Store first few recoverable items
-        'recoverable_items': [], # Store all recoverable items (populated on completion)
+        'recoverable_items_preview': [], # Keep the preview list
+        # 'recoverable_items': [], # REMOVED - Will use file instead
+        'recovery_file_path': None, # Will be set on completion
         'complete': False
     }
 
@@ -2288,7 +2282,12 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         else:
             logging.warning(f"Task ID {task_id} not found in progress dict during update.")
 
+    # Use a try/finally block to ensure file closure and cleanup logic
+    recovery_file = None
     try:
+        # Open the recovery file in append mode with UTF-8 encoding
+        recovery_file = open(recovery_file_path, 'a', encoding='utf-8')
+
         symlink_root_path = Path(symlink_root_path_str)
         original_root_path = Path(original_root_path_str) if original_root_path_str else None
 
@@ -2433,11 +2432,21 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                                                 parsed_data['is_anime'] = any(g.lower() in ['animation', 'anime'] for g in genres)
                                             
                                             items_found += 1
-                                            # Add to the main list for final recovery
-                                            analysis_progress[task_id]['recoverable_items'].append(parsed_data)
+                                            
+                                            # --- Write item to recovery file ---
+                                            try:
+                                                recovery_file.write(json.dumps(parsed_data) + '\n')
+                                            except Exception as write_err:
+                                                logging.error(f"Error writing item to recovery file {recovery_file_path}: {write_err}")
+                                                # Maybe mark the task as failed? For now, log and continue.
+                                                # update_progress(status='error', message=f'Error writing recovery file: {write_err}')
+                                            # --- End write item ---
+
                                             # Update preview list for UI feedback during scan
                                             if len(recoverable_items_preview) < 5:
-                                                 recoverable_items_preview.append(parsed_data) 
+                                                 recoverable_items_preview.append(parsed_data)
+                                            
+                                            # Update progress (only preview list is stored in memory now)
                                             update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
                                         else:
                                             metadata_errors += 1
@@ -2451,11 +2460,13 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                 else:
                     logging.warning(f"Directory not found or not accessible: {current_search_path}")
                     
+        # Analysis complete, update final status and store recovery file path
         update_progress(
-            status='complete', 
-            message='Analysis finished.', 
+            status='complete',
+            message='Analysis finished.',
             complete=True,
-            recoverable_items=analysis_progress[task_id]['recoverable_items'], # Include full list in final update
+            # recoverable_items=analysis_progress[task_id]['recoverable_items'], # REMOVED
+            recovery_file_path=recovery_file_path if items_found > 0 else None, # Store file path if items were found
             total_items_scanned=total_items_scanned,
             total_symlinks_processed=total_symlinks_processed,
             total_files_processed=total_files_processed,
@@ -2468,7 +2479,16 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         logging.error(f"Analysis thread error for task {task_id}: {e}", exc_info=True)
         update_progress(status='error', message=f'Analysis failed: {e}', complete=True)
     finally:
-        # Optional: Clean up the progress entry after some time? 
+        # Ensure the recovery file is closed
+        if recovery_file:
+            try:
+                recovery_file.close()
+            except Exception as close_err:
+                 logging.error(f"Error closing recovery file {recovery_file_path}: {close_err}")
+        
+        # Clean up the progress entry from memory after 5 minutes (to allow recovery)
+        # But only remove if it wasn't an error or if recovery isn't needed?
+        # Let's keep it for now for potential debugging. Consider cleanup strategy later.
         # threading.Timer(300, lambda: analysis_progress.pop(task_id, None)).start()
         pass
 
@@ -2520,99 +2540,160 @@ def analysis_progress_stream(task_id):
 @debug_bp.route('/perform_recovery', methods=['POST'])
 @admin_required
 def perform_recovery():
-    """Recovers all items found during a specific analysis task."""
-    from database import get_db_connection, add_or_update_media_item
+    """Recovers all items found during a specific analysis task by reading from its recovery file."""
+    from database import add_media_item
 
     data = request.get_json()
     task_id = data.get('task_id')
 
     if not task_id:
         return jsonify({'success': False, 'error': 'Missing task_id.'}), 400
-    
-    # Retrieve the full list of items from the completed analysis task
+
+    # Retrieve the analysis results (contains the file path)
     if task_id not in analysis_progress or not analysis_progress[task_id].get('complete'):
         return jsonify({'success': False, 'error': f'Analysis task {task_id} not found or not complete.'}), 404
-    
-    items_to_recover = analysis_progress[task_id].get('recoverable_items')
-    if not items_to_recover or not isinstance(items_to_recover, list):
-        return jsonify({'success': False, 'error': f'No recoverable items found for task {task_id}.'}), 404
 
-    conn = get_db_connection()
+    analysis_result = analysis_progress[task_id]
+    recovery_file_path = analysis_result.get('recovery_file_path')
+    expected_items = analysis_result.get('items_found', 0) # Get expected count
+
+    if not recovery_file_path:
+        # Check if items_found was 0, meaning no file was expected
+        if expected_items == 0:
+             return jsonify({'success': True, 'message': 'Analysis found no items to recover.', 'successful_recoveries': 0, 'failed_recoveries': 0}), 200
+        else:
+            return jsonify({'success': False, 'error': f'Recovery file path not found for completed task {task_id}. Analysis might have failed partially?'}), 404
+
+    if not os.path.exists(recovery_file_path):
+         return jsonify({'success': False, 'error': f'Recovery file not found at {recovery_file_path}. It might have been deleted or analysis failed.'}), 404
+
+    # Removed: conn = None - add_media_item handles its own connection
+    recovery_file = None
     successful_recoveries = 0
     failed_recoveries = 0
     errors = []
+    COMMIT_BATCH_SIZE = 500 # Commit every 500 items - Note: add_media_item commits individually
 
     try:
-        for item_data in items_to_recover:
+        # Removed: conn = get_db_connection()
+        recovery_file = open(recovery_file_path, 'r', encoding='utf-8')
+
+        logging.info(f"Starting recovery from file: {recovery_file_path} for task {task_id}")
+
+        for line_num, line in enumerate(recovery_file):
+            item_data = None # Reset for each line
             try:
+                line = line.strip()
+                if not line: # Skip empty lines
+                    continue
+
+                item_data = json.loads(line)
+
                 now_iso = datetime.now().isoformat()
-                # Prepare data for database insertion
-                db_item = {
+
+                # Prepare data ONLY with valid DB columns
+                db_item_for_insert = {
                     'imdb_id': item_data.get('imdb_id'),
                     'tmdb_id': item_data.get('tmdb_id'),
                     'title': item_data.get('title'),
                     'year': item_data.get('year'),
                     'release_date': item_data.get('release_date'),
                     'state': 'Collected', # Mark as collected
-                    'media_type': item_data.get('media_type'),
+                    'type': item_data.get('media_type'), # Source key is 'media_type', DB column is 'type'
                     'season_number': item_data.get('season_number'),
                     'episode_number': item_data.get('episode_number'),
                     'episode_title': item_data.get('episode_title'),
-                    'last_collected_date': now_iso, # Updated
-                    'collected_at': now_iso, # Added
-                    'original_collected_at': now_iso, # Added
-                    'symlink_path': item_data.get('symlink_path'),
+                    'collected_at': now_iso,
+                    'original_collected_at': now_iso,
                     'original_path_for_symlink': item_data.get('original_path_for_symlink'),
                     'version': item_data.get('version', 'Default'),
-                    'original_filename': item_data.get('original_filename'),
-                    'filled_by_file': item_data.get('original_filename'), # Added
-                    'manually_added': True, # Indicate it was recovered
-                    'last_updated': now_iso, # Updated
-                    'metadata_updated': now_iso, # Added
-                    'date_added': now_iso, # Updated
+                    'filled_by_file': item_data.get('original_filename'),
+                    # 'last_updated': now_iso, # Let add_media_item handle this
+                    'metadata_updated': now_iso,
                     'wake_count': 0,
-                    'attempts': 0,
-                    'is_anime': item_data.get('is_anime', False)
+                    # 'attempts': 0, # Removed - Not a DB column
+                    # 'is_anime': item_data.get('is_anime', False), # Removed - Not a DB column (trigger_is_anime exists but not populated here)
+                    'location_on_disk': item_data.get('symlink_path')
+                    # Note: 'manually_added' and 'date_added' were also removed as they are not DB columns
                 }
 
                 # Filter out None values before passing to db function
-                db_item_filtered = {k: v for k, v in db_item.items() if v is not None}
+                db_item_filtered = {k: v for k, v in db_item_for_insert.items() if v is not None}
 
-                if not db_item_filtered.get('imdb_id') or not db_item_filtered.get('media_type'):
-                    raise ValueError(f"Missing essential data (imdb_id or media_type) for item: {item_data.get('symlink_path')}")
+                # Validate essential keys after filtering
+                if not db_item_filtered.get('imdb_id') or not db_item_filtered.get('type'):
+                    raise ValueError(f"Missing essential data (imdb_id or type) after filtering")
 
-                # Call the database function (ensure it handles potential duplicates gracefully)
-                add_or_update_media_item(conn, **db_item_filtered)
-                successful_recoveries += 1
-                logging.info(f"Successfully recovered item: {db_item_filtered.get('title')} ({db_item_filtered.get('year')}) - {db_item_filtered.get('imdb_id')}")
+                # Call add_media_item and handle potential IntegrityError
+                try:
+                    # Pass the explicitly constructed and filtered dictionary
+                    item_id = add_media_item(db_item_filtered)
+                    if item_id:
+                        successful_recoveries += 1
+                    else:
+                        # add_media_item returning None suggests an issue other than IntegrityError
+                        raise Exception("add_media_item failed to return an ID")
+                except sqlite3.IntegrityError:
+                     failed_recoveries += 1
+                     item_desc = f"item on line {line_num + 1} (Path: {item_data.get('symlink_path', 'Unknown')})"
+                     error_msg = f"Skipped recovery for {item_desc}: Item likely already exists (UNIQUE constraint violation)."
+                     errors.append(error_msg)
+                     logging.warning(error_msg) # Log as warning, not error
 
+            except json.JSONDecodeError as json_err:
+                 failed_recoveries += 1
+                 error_msg = f"Failed to parse JSON on line {line_num + 1}: {json_err}"
+                 errors.append(error_msg)
+                 logging.error(error_msg)
+            except ValueError as val_err:
+                failed_recoveries += 1
+                item_desc = f"item on line {line_num + 1} (Path: {item_data.get('symlink_path', 'Unknown') if item_data else 'Unknown'})"
+                error_msg = f"Validation error for {item_desc}: {val_err}"
+                errors.append(error_msg)
+                logging.error(error_msg)
             except Exception as e:
                 failed_recoveries += 1
-                error_msg = f"Failed to recover item {item_data.get('symlink_path', 'Unknown')}: {str(e)}"
+                item_desc = f"item on line {line_num + 1} (Path: {item_data.get('symlink_path', 'Unknown') if item_data else 'Unknown'})"
+                error_msg = f"Failed to recover {item_desc}: {str(e)}"
                 errors.append(error_msg)
-                logging.error(error_msg, exc_info=True)
-                # Optionally rollback transaction for this item? Depends on desired behavior.
+                logging.error(error_msg, exc_info=True) # Log full trace for unexpected errors
 
-        # Commit changes if all items processed (or handle per item)
-        conn.commit()
+        # Removed final commit logic
+        logging.info(f"Recovery processing complete for task {task_id}. Total successful: {successful_recoveries}, Failed/Skipped: {failed_recoveries}")
 
-    except Exception as conn_err:
-        # Error getting the initial connection
-        failed_recoveries = len(items_to_recover) # Mark all as failed if connection fails
-        error_msg = f"Database connection error during recovery: {str(conn_err)}"
+    except Exception as outer_err:
+        # Error opening file or other outer-level issues
+        error_msg = f"Error during recovery process: {str(outer_err)}"
         errors.append(error_msg)
         logging.error(error_msg, exc_info=True)
+        # Can't determine success/failure counts accurately here, maybe set failed to expected?
+        failed_recoveries = expected_items - successful_recoveries # Estimate failures
     finally:
-        if conn:
+        if recovery_file:
             try:
-                conn.close()
+                recovery_file.close()
             except Exception as close_err:
-                logging.error(f"Error closing DB connection after recovery: {close_err}")
+                 logging.error(f"Error closing recovery file {recovery_file_path}: {close_err}")
+        # Removed: conn close logic
+
+        # Clean up the recovery file only if there were no errors during the file processing/db interaction
+        if recovery_file_path and os.path.exists(recovery_file_path) and not errors:
+            try:
+                os.remove(recovery_file_path)
+                logging.info(f"Successfully deleted recovery file: {recovery_file_path}")
+            except Exception as del_err:
+                logging.error(f"Failed to delete recovery file {recovery_file_path}: {del_err}")
+                # Add a note about manual deletion maybe?
+                errors.append(f"Note: Failed to automatically delete recovery file {os.path.basename(recovery_file_path)}. Please delete it manually.")
+        elif errors:
+             logging.warning(f"Recovery file {recovery_file_path} was not deleted due to errors during the recovery process.")
+             errors.append(f"Note: Recovery file {os.path.basename(recovery_file_path)} was kept due to errors. Please review and delete it manually.")
+
 
     return jsonify({
-        'success': failed_recoveries == 0,
+        'success': failed_recoveries == 0, # Success only if no errors/skips? Or should skipped items be okay? Let's stick with failed_recoveries == 0 for now.
         'successful_recoveries': successful_recoveries,
-        'failed_recoveries': failed_recoveries,
+        'failed_recoveries': failed_recoveries, # Includes skipped items due to IntegrityError
         'errors': errors
     })
 

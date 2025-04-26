@@ -229,7 +229,7 @@ def api_queue_contents():
         "initialization_status": initialization_status
     })
 
-def process_item_for_response(item, queue_name):
+def process_item_for_response(item, queue_name, currently_processing_upgrade_id=None):
     try:
         # Add scraping version settings to each item
         scraping_versions = get_setting('Scraping', 'versions', {})
@@ -244,6 +244,10 @@ def process_item_for_response(item, queue_name):
         
         item['scraping_versions'] = scraping_versions
         
+        # --- START EDIT: Add processing flag ---
+        item['is_processing'] = (queue_name == 'Upgrading' and item['id'] == currently_processing_upgrade_id)
+        # --- END EDIT ---
+        
         if queue_name == 'Upgrading':
             upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
             if upgrade_info:
@@ -256,7 +260,7 @@ def process_item_for_response(item, queue_name):
                     item['time_added'] = str(time_added)
             else:
                 item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_found.get(item['id'], 0)
+            item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_data.get(item['id'], {}).get('count', 0)
         elif queue_name == 'Wanted':
             if 'scrape_time' in item:
                 if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
@@ -331,9 +335,7 @@ def process_item_for_response(item, queue_name):
 def queue_stream():
     """Stream queue updates, fetching limited DB data for large queues."""
     ITEMS_LIMIT = 500  # Fixed limit of 500 items per queue
-    # --- START EDIT: Define queues that need DB fetching ---
     DB_FETCH_QUEUES = {"Wanted", "Blacklisted", "Unreleased", "Final_Check"}
-    # --- END EDIT ---
 
     def generate():
         while True:
@@ -342,6 +344,12 @@ def queue_stream():
                 in_memory_queue_contents = queue_manager.get_queue_contents()
                 program_running = program_is_running()
                 program_initializing = program_is_initializing()
+                
+                # --- START EDIT: Get currently processing upgrade ID ---
+                currently_processing_upgrade_id = None
+                if 'Upgrading' in queue_manager.queues:
+                    currently_processing_upgrade_id = queue_manager.queues['Upgrading'].get_currently_processing_item_id()
+                # --- END EDIT ---
                 
                 # Get initialization status
                 initialization_status = None
@@ -374,7 +382,9 @@ def queue_stream():
                             hidden_counts[queue_name] = hidden_count
 
                         limited_items = items[:ITEMS_LIMIT]
-                        processed_items = [process_item_for_response(item, queue_name) for item in limited_items]
+                        # --- START EDIT: Pass ID to processing function ---
+                        processed_items = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in limited_items]
+                        # --- END EDIT ---
                         final_contents[queue_name] = processed_items
 
                 # Process database-backed queues
@@ -391,7 +401,9 @@ def queue_stream():
                         limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
                         limited_items = [dict(item) for item in limited_items_raw] # Convert rows
 
-                        processed_items = [process_item_for_response(item, queue_name) for item in limited_items]
+                        # --- START EDIT: Pass ID to processing function ---
+                        processed_items = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in limited_items]
+                        # --- END EDIT ---
 
                         # Apply consolidation if needed
                         if queue_name in ['Blacklisted', 'Unreleased']:
@@ -407,14 +419,15 @@ def queue_stream():
                 # --- END EDIT ---
 
                 data = {
-                    # --- START EDIT: Use final_contents ---
                     "contents": final_contents,
-                    # --- END EDIT ---
                     "queue_counts": queue_counts,
                     "hidden_counts": hidden_counts,
                     "program_running": program_running,
                     "program_initializing": program_initializing,
-                    "initialization_status": initialization_status # Include initialization status here
+                    "initialization_status": initialization_status,
+                    # --- START EDIT: Include the ID in the stream data (optional, but could be useful for global indicators) ---
+                    "currently_processing_upgrade_id": currently_processing_upgrade_id
+                    # --- END EDIT ---
                 }
 
                 yield f"data: {json.dumps(data, default=str)}\n\n"

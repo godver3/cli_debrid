@@ -650,39 +650,66 @@ def check_trakt_early_releases():
     
     skipped_count = 0
     updated_count = 0
-    
+    no_early_release_skipped = 0 # Counter for skipped items due to the flag
+
     for item in items_to_check:
+        # Skip episodes immediately
         if item['type'] == 'episode':
             skipped_count += 1
             continue
-        
+
+        # Check if early release is explicitly disabled for this item
+        if item.get('no_early_release', False): # Check the flag before doing API calls
+            no_early_release_skipped += 1
+            continue
+
         imdb_id = item['imdb_id']
-        trakt_id = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
-        
-        if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
-            # Check if 'movie' key exists in the first item
-            if 'movie' in trakt_id[0]:
-                trakt_id = str(trakt_id[0]['movie']['ids']['trakt'])
-            elif 'show' in trakt_id[0]:
-                trakt_id = str(trakt_id[0]['show']['ids']['trakt'])
+        # Perform Trakt lookups only if no_early_release is False
+        trakt_id_search = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+
+        if trakt_id_search and isinstance(trakt_id_search, list) and len(trakt_id_search) > 0:
+            # Determine the correct trakt_id
+            trakt_id = None
+            if 'movie' in trakt_id_search[0] and 'ids' in trakt_id_search[0]['movie'] and 'trakt' in trakt_id_search[0]['movie']['ids']:
+                trakt_id = str(trakt_id_search[0]['movie']['ids']['trakt'])
+            elif 'show' in trakt_id_search[0] and 'ids' in trakt_id_search[0]['show'] and 'trakt' in trakt_id_search[0]['show']['ids']:
+                 trakt_id = str(trakt_id_search[0]['show']['ids']['trakt'])
             else:
-                logging.warning(f"Unexpected Trakt API response structure for IMDB ID: {imdb_id}")
-                continue
+                logging.warning(f"Unexpected Trakt API response structure or missing Trakt ID for IMDB ID: {imdb_id}. Response: {trakt_id_search[0]}")
+                continue # Skip if we can't get a valid trakt ID
+
+            # If we couldn't extract a valid trakt_id, skip
+            if not trakt_id:
+                 logging.warning(f"Could not extract Trakt ID for IMDB ID: {imdb_id}")
+                 continue
 
             endpoint = f"/movies/{trakt_id}/lists/personal/popular" if item['type'] == 'movie' else f"/shows/{trakt_id}/lists/personal/popular"
-            trakt_lists = fetch_items_from_trakt(endpoint)
-            
-            for trakt_list in trakt_lists:
-                if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
-                    update_media_item(item['id'], early_release=True)
-                    updated_count += 1
-                    break
-    
+            try:
+                trakt_lists = fetch_items_from_trakt(endpoint)
+            except Exception as e:
+                 logging.error(f"Error fetching Trakt lists for {item['type']} ID {trakt_id} (IMDB: {imdb_id}): {e}")
+                 continue # Skip item if list fetching fails
+
+            if trakt_lists: # Ensure trakt_lists is not None or empty
+                for trakt_list in trakt_lists:
+                    # Check if 'name' exists and is not None before applying regex
+                    list_name = trakt_list.get('name')
+                    if list_name and re.search(r'(latest|new).*?(releases)', list_name, re.IGNORECASE):
+                        logging.info(f"Found {item['title']} in early release list '{list_name}'. Setting early_release=True for item ID {item['id']}.")
+                        update_media_item(item['id'], early_release=True)
+                        updated_count += 1
+                        break # Found in a relevant list, no need to check other lists for this item
+            else:
+                 logging.debug(f"No popular personal lists found for Trakt ID {trakt_id} (IMDB: {imdb_id})")
+
+
     if updated_count > 0:
-        logging.info(f"Set early release flag for {updated_count} items")
+        logging.info(f"Set early release flag for {updated_count} items found in Trakt 'new release' lists.")
+    if no_early_release_skipped > 0:
+         logging.info(f"Skipped checking {no_early_release_skipped} items because their 'no_early_release' flag was set.")
     if skipped_count > 0:
-        logging.debug(f"Skipped {skipped_count} episodes")
-    
+        logging.debug(f"Skipped {skipped_count} episodes during Trakt early release check.")
+
 def fetch_liked_trakt_lists_details() -> List[Dict[str, str]]:
     """Fetches details (name, URL) of lists the authenticated user has liked."""
     logging.debug("Fetching details of Trakt liked lists")

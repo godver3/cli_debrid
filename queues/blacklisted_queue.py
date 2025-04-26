@@ -178,7 +178,7 @@ class BlacklistedQueue:
                      logging.warning(f"Configured fallback version '{fallback_version}' for version '{current_version}' does not exist. Proceeding with blacklisting {item_identifier}.")
                 pass
             else:
-                logging.warning(f"Item {item_identifier} does not have a version associated. Cannot perform fallback check. Proceeding with blacklisting.")
+                logging.debug(f"Item {item_identifier} does not have a fallback version associated. Blacklisting.")
         else:
             logging.warning(f"Item {item_identifier} does not have a version associated. Cannot perform fallback check. Proceeding with blacklisting.")
 

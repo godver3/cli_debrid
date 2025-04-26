@@ -129,6 +129,10 @@ class WantedQueue:
                  # SQLite treats NULL as smallest, so DESC puts them last
                 order_by_clauses.append("release_date DESC")
 
+            # Add sorting by show, season, and episode for deterministic episode processing order
+            order_by_clauses.append("imdb_id ASC") # Group by show
+            order_by_clauses.append("CASE WHEN type = 'episode' THEN season_number ELSE NULL END ASC") # Sort episodes by season (NULLS FIRST/LAST depends on DB)
+            order_by_clauses.append("CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC") # Then by episode
 
             # Content Source Priority (harder in pure SQL, apply *after* fetching batch)
             content_source_priority = get_setting("Queue", "content_source_priority", "")
@@ -166,9 +170,21 @@ class WantedQueue:
                 def get_source_priority(item):
                     source = item.get('content_source', '')
                     try:
-                        return source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
+                        # Maintain existing season/episode order for items with the same priority
+                        priority_index = source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
+                        return (
+                            priority_index,
+                            item.get('imdb_id', ''), # Keep show grouping stable
+                            item.get('season_number') if item['type'] == 'episode' else float('inf'), # Keep season order stable
+                            item.get('episode_number') if item['type'] == 'episode' else float('inf') # Keep episode order stable
+                        )
                     except ValueError:
-                        return len(source_priority_list)
+                        return (
+                            len(source_priority_list),
+                            item.get('imdb_id', ''),
+                            item.get('season_number') if item['type'] == 'episode' else float('inf'),
+                            item.get('episode_number') if item['type'] == 'episode' else float('inf')
+                         )
                 candidate_items.sort(key=get_source_priority)
 
             # 3. Process Candidate Items

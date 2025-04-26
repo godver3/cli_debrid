@@ -9,6 +9,7 @@ from utilities.post_processing import handle_state_change
 from typing import List
 import sqlite3
 
+@retry_on_db_lock()
 def bulk_delete_by_id(id_value, id_type):
     conn = get_db_connection()
     try:
@@ -23,6 +24,7 @@ def bulk_delete_by_id(id_value, id_type):
     finally:
         conn.close()
 
+@retry_on_db_lock()
 def update_year(item_id: int, year: int):
     conn = get_db_connection()
     try:
@@ -174,6 +176,7 @@ def update_media_item_state(item_id, state, **kwargs):
     finally:
         conn.close()
     
+@retry_on_db_lock()
 def remove_from_media_items(item_id):
     conn = get_db_connection()
     try:
@@ -208,6 +211,7 @@ def add_to_collected_notifications(media_item):
     except Exception as e:
         logging.error(f"Error adding notification for collected item (ID: {media_item['id']}): {str(e)}")
 
+@retry_on_db_lock()
 def update_media_item(item_id: int, **kwargs):
     conn = get_db_connection()
     try:
@@ -538,6 +542,7 @@ def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
     finally:
         conn.close()
 
+@retry_on_db_lock()
 def update_media_item_torrent_id(item_id: int, new_torrent_id: str):
     """Updates the 'filled_by_torrent_id' for a specific media item."""
     conn = get_db_connection()

@@ -17,6 +17,7 @@ from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from database.torrent_tracking import get_torrent_history
 from utilities.web_scraper import get_media_meta
 from queues.config_manager import get_content_source_display_names
+from database import update_media_item_state
 # import math # Removed unused import
 database_bp = Blueprint('database', __name__)
 
@@ -356,24 +357,28 @@ def bulk_queue_action():
     action = request.form.get('action')
     target_queue = request.form.get('target_queue')
     selected_items = request.form.getlist('selected_items')
-    blacklist = request.form.get('blacklist', 'false').lower() == 'true'
+    blacklist = request.form.get('blacklist', 'false').lower() == 'true' if action == 'delete' else False
+
+    logging.info(f"Bulk action route called. Action: '{action}', Items: {selected_items[:5]}...")
 
     if not action or not selected_items:
+        logging.warning("Bulk action returning error: Action or selected items missing.")
         return jsonify({'success': False, 'error': 'Action and selected items are required'})
 
-    # Process items in batches to avoid SQLite parameter limits
-    BATCH_SIZE = 450  # Stay well under SQLite's 999 parameter limit
+    BATCH_SIZE = 450
     total_processed = 0
     error_count = 0
     errors = []
-    
+
     from database import get_db_connection
 
     try:
         for i in range(0, len(selected_items), BATCH_SIZE):
             batch = selected_items[i:i + BATCH_SIZE]
-            
+            logging.info(f"Processing batch {i//BATCH_SIZE + 1}. Action: '{action}'")
+
             if action == 'delete':
+                logging.info("Entering 'delete' block.")
                 # Process each item in the batch through delete_item
                 for item_id in batch:
                     try:
@@ -406,6 +411,7 @@ def bulk_queue_action():
                         logging.error(f"Error processing item {item_id} in bulk delete: {str(e)}")
                         
             elif action == 'move' and target_queue:
+                logging.info("Entering 'move' block.")
                 # Keep existing move functionality
                 conn = get_db_connection()
                 try:
@@ -425,6 +431,7 @@ def bulk_queue_action():
                 finally:
                     conn.close()
             elif action == 'change_version' and target_queue:  # target_queue contains the version in this case
+                logging.info("Entering 'change_version' block.")
                 conn = get_db_connection()
                 try:
                     cursor = conn.cursor()
@@ -443,6 +450,7 @@ def bulk_queue_action():
                 finally:
                     conn.close()
             elif action == 'early_release':
+                logging.info("Entering 'early_release' block.")
                 # Handle early release action
                 conn = get_db_connection()
                 try:
@@ -461,7 +469,83 @@ def bulk_queue_action():
                     logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 finally:
                     conn.close()
+            elif action == 'rescrape':
+                logging.info(f"Entering 'rescrape' block for batch: {batch}")
+                # --- New Rescrape Logic ---
+                # Get file management settings once per batch
+                file_management = get_setting('File Management', 'file_collection_management', 'Plex')
+                mounted_location = get_setting('Plex', 'mounted_file_location', get_setting('File Management', 'original_files_path', ''))
+                original_files_path = get_setting('File Management', 'original_files_path', '')
+                symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
+                plex_url_for_symlink = get_setting('File Management', 'plex_url_for_symlink', '') # Get setting for symlinked Plex
+
+                for item_id in batch:
+                    item = None # Reset item for each iteration
+                    try:
+                        logging.info(f"Rescrape: Processing item_id: {item_id}")
+                        item = get_media_item_by_id(item_id)
+                        if not item:
+                            errors.append(f"Item {item_id} not found.")
+                            error_count += 1
+                            logging.warning(f"Rescrape: Item {item_id} not found, skipping.")
+                            continue
+
+                        # 1. Handle File Deletion
+                        if item['state'] in ['Collected', 'Upgrading']: # Only delete if currently collected/upgrading
+                             if file_management == 'Plex':
+                                 if mounted_location and item.get('location_on_disk'):
+                                     if os.path.exists(item['location_on_disk']):
+                                         os.remove(item['location_on_disk'])
+                                         logging.info(f"Rescrape: Deleted Plex file: {item['location_on_disk']}")
+
+                             elif file_management == 'Symlinked/Local':
+                                 # Handle symlink removal
+                                 if item.get('location_on_disk'):
+                                     if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
+                                         os.unlink(item['location_on_disk'])
+                                         logging.info(f"Rescrape: Removed symlink: {item['location_on_disk']}")
+                                 # Handle original file removal
+                                 if item.get('original_path_for_symlink'):
+                                     if os.path.exists(item['original_path_for_symlink']):
+                                         os.remove(item['original_path_for_symlink'])
+                                         logging.info(f"Rescrape: Deleted original file: {item['original_path_for_symlink']}")
+
+                        sleep(0.5) # Small delay before Plex removal
+
+                        # 2. Remove from Plex (if applicable)
+                        if item['state'] in ['Collected', 'Upgrading']:
+                             if file_management == 'Plex' and item.get('filled_by_file'):
+                                 if item['type'] == 'movie':
+                                     remove_file_from_plex(item['title'], item['filled_by_file'])
+                                 elif item['type'] == 'episode':
+                                     remove_file_from_plex(item['title'], item['filled_by_file'], item.get('episode_title')) # Use .get for safety
+                             elif file_management == 'Symlinked/Local' and plex_url_for_symlink and item.get('location_on_disk'):
+                                 if item['type'] == 'movie':
+                                     remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']))
+                                 elif item['type'] == 'episode':
+                                     remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']), item.get('episode_title'))
+
+                        # 3. Update Database State to 'Wanted' and clear file info
+                        logging.info(f"Rescrape: Attempting to update item {item_id} state to 'Wanted'. Current state: {item.get('state')}")
+                        update_media_item_state(
+                            item_id,
+                            'Wanted',
+                            location_on_disk=None,
+                            original_path_for_symlink=None,
+                            filled_by_file=None,
+                        )
+                        logging.info(f"Rescrape: Successfully called update_media_item_state for item {item_id}.")
+                        total_processed += 1
+
+                    except Exception as e:
+                        error_count += 1
+                        error_msg = f"Error processing item {item_id} for rescrape: {str(e)}"
+                        errors.append(error_msg)
+                        logging.error(f"Rescrape: {error_msg}", exc_info=True)
+                # --- End New Rescrape Logic ---
+
             else:
+                logging.warning(f"Bulk action returning error: Invalid action '{action}'")
                 return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
 
         if error_count > 0:
@@ -470,13 +554,20 @@ def bulk_queue_action():
                 message += f" First few errors: {'; '.join(errors[:3])}"
             return jsonify({'success': True, 'message': message, 'warning': True})
         else:
-            action_text = "deleted" if action == "delete" else "moved to {target_queue} queue" if action == "move" else "marked as early release and moved to Wanted queue" if action == "early_release" else f"changed to version {target_queue}"
+            action_map = {
+                "delete": "deleted",
+                "move": f"moved to {target_queue} queue",
+                "change_version": f"changed to version {target_queue}",
+                "early_release": "marked as early release and moved to Wanted queue",
+                "rescrape": "deleted files/Plex entries for and moved to Wanted queue" # Added rescrape message
+            }
+            action_text = action_map.get(action, f"processed ({action})")
             message = f"Successfully {action_text} {total_processed} items"
             return jsonify({'success': True, 'message': message})
 
     except Exception as e:
-        logging.error(f"Error performing bulk action: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)})
+        logging.error(f"Outer exception in bulk action '{action}': {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f"An unexpected error occurred during bulk {action}: {str(e)}"})
 
 @database_bp.route('/delete_item', methods=['POST'])
 def delete_item():

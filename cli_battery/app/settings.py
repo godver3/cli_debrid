@@ -73,18 +73,18 @@ class Settings:
             with tempfile.NamedTemporaryFile('w', dir=config_dir, delete=False) as temp_f:
                 json.dump(config, temp_f, indent=4)
                 temp_path = temp_f.name # Store the temporary file path
-            # Atomically rename the temporary file to the final config file path
-            os.rename(temp_path, self.config_file)
+            # Atomically replace the final config file path (overwrites if exists)
+            os.replace(temp_path, self.config_file)
             logger.debug(f"Settings saved successfully to {self.config_file}")
 
         except IOError as e:
             logger.error(f"IOError saving settings to {self.config_file}: {e}")
-            # Clean up the temporary file if rename failed
+            # Clean up the temporary file if replace failed
             if 'temp_path' in locals() and os.path.exists(temp_path):
                 os.remove(temp_path)
         except Exception as e:
             logger.error(f"Unexpected error saving settings: {e}")
-            # Clean up the temporary file if rename failed
+            # Clean up the temporary file if replace failed
             if 'temp_path' in locals() and os.path.exists(temp_path):
                 os.remove(temp_path)
 
@@ -141,18 +141,18 @@ class Settings:
             with tempfile.NamedTemporaryFile('w', dir=config_dir, delete=False) as temp_f:
                 json.dump(settings, temp_f, indent=4)
                 temp_path = temp_f.name # Store the temporary file path
-            # Atomically rename the temporary file to the final config file path
-            os.rename(temp_path, self.config_file)
+            # Atomically replace the final config file path (overwrites if exists)
+            os.replace(temp_path, self.config_file)
             logger.debug(f"Settings saved successfully via save_settings to {self.config_file}")
 
         except IOError as e:
             logger.error(f"Error saving settings to file via save_settings: {str(e)}")
-            # Clean up the temporary file if rename failed
+            # Clean up the temporary file if replace failed
             if 'temp_path' in locals() and os.path.exists(temp_path):
                 os.remove(temp_path)
         except Exception as e:
             logger.error(f"Unexpected error while saving settings via save_settings: {str(e)}")
-            # Clean up the temporary file if rename failed
+            # Clean up the temporary file if replace failed
             if 'temp_path' in locals() and os.path.exists(temp_path):
                 os.remove(temp_path)
 

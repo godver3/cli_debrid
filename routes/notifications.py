@@ -16,6 +16,7 @@ from database.core import (
     mark_db_notification_read,
     mark_all_db_notifications_read
 )
+import math # Add math import for ceiling division
 
 # Global notification buffer
 notification_buffer = []
@@ -145,9 +146,10 @@ def format_notification_content(notifications, notification_type, notification_c
     unique_notifications = []
     seen_keys = set()
     if isinstance(notifications, list): # Ensure it's a list before iterating
+        logging.debug(f"Notifications: Starting deduplication for batch of {len(notifications)} items.") # Add log
         for item in notifications:
             if not isinstance(item, dict): # Skip non-dict items
-                logging.warning(f"Skipping non-dictionary item during notification deduplication: {item}")
+                logging.warning(f"Notifications: Skipping non-dictionary item during deduplication: {item}")
                 continue
             # Create a unique key based on essential identifying information and the target state
             media_type = item.get('type', 'movie')
@@ -161,22 +163,28 @@ def format_notification_content(notifications, notification_type, notification_c
             ]
             if media_type == 'episode':
                 key_parts.extend([item.get('season_number'), item.get('episode_number')])
-            
+
             key = tuple(key_parts)
 
             if key not in seen_keys:
                 seen_keys.add(key)
                 unique_notifications.append(item)
+                logging.debug(f"Notifications: Keeping unique item with dedupe key: {key}") # Add log
             else:
-                 logging.debug(f"Skipping duplicate notification item: {key}")
+                 logging.debug(f"Notifications: Skipping duplicate item with dedupe key: {key}") # Modify log
     else:
         # If notifications is not a list (e.g., single system message), keep it as is
         unique_notifications = notifications
+        if not isinstance(notifications, list): # Add log for non-list case
+             logging.debug(f"Notifications: Input was not a list, skipping deduplication. Item: {notifications}")
+
 
     # --- END: Deduplicate notifications ---
+    logging.debug(f"Notifications: Finished deduplication. {len(unique_notifications)} unique items remain.") # Add log
 
     # --- START EDIT: Use the deduplicated list from now on ---
     if not unique_notifications:
+         logging.debug("Notifications: No unique notifications left after deduplication.") # Add log
          return "" # Return empty string if no unique notifications left
     # --- END EDIT ---
 
@@ -257,23 +265,53 @@ def format_notification_content(notifications, notification_type, notification_c
 
     # Group items by show/movie
     grouped_items = {}
+    logging.debug("Notifications: Starting grouping of unique items...") # Add log
     for item in unique_notifications:
-        # Group by title, type, year, and state for better batching
-        key = (item.get('title'), item.get('type'), item.get('year'), item.get('new_state'), item.get('is_upgrade', False))
+        # --- START EDIT: Check for Checking state during an upgrade ---
+        # If the state is 'Checking' but 'upgrading_from' is present, treat it as 'Upgrading' for formatting.
+        original_state = item.get('new_state', '') # Keep original state for logging
+        effective_state = original_state
+        if effective_state == 'Checking' and item.get('upgrading_from'):
+            effective_state = 'Upgrading'
+            # Optionally, ensure is_upgrade is also True if not already set, though it should be
+            # item['is_upgrade'] = True
+        # --- END EDIT ---
+
+        # Group by title, type, year, and the *effective* state for better batching
+        # --- EDIT: Add version to the grouping key ---
+        version_key_part = item.get('version', '').strip('*') # Get version for key explicitly
+        key = (item.get('title'), item.get('type'), item.get('year'), effective_state, item.get('is_upgrade', False), version_key_part)
+        # --- END EDIT ---
         if key not in grouped_items:
             grouped_items[key] = []
+        # Store the original item, but we'll use the effective_state when formatting
         grouped_items[key].append(item)
+        # More detailed log for adding item to group
+        logging.debug(f"Notifications: Adding item (Title: {item.get('title')}, Version: {version_key_part}, OrigState: {original_state}, EffState: {effective_state}) to group with key: {key}")
 
     content = []
-    
+    logging.debug(f"Notifications: Finished grouping. {len(grouped_items)} groups formed.") # Add log
+
     # Process each group
-    for (title, type_, year, state, is_upgrade), items in sorted(grouped_items.items()):
+    # --- EDIT: Update the key unpacking to include version ---
+    for (title, type_, year, state, is_upgrade, version), items in sorted(grouped_items.items()):
+    # --- END EDIT ---
+        # Log details about the group being processed
+        group_key_for_log = (title, type_, year, state, is_upgrade, version)
+        logging.debug(f"Notifications: Processing group with key: {group_key_for_log}. Contains {len(items)} item(s). First item details: {items[0]}")
         # Create a representative item for the group
         group_item = items[0].copy()
-        
-        # Add the title line only once per group
-        content.append(format_title(group_item))
-        
+
+        # --- EDIT: Use the effective state for formatting ---
+        # Ensure the representative item uses the effective state determined during grouping
+        group_item['new_state'] = state # 'state' here comes from the group key (effective_state)
+        # --- END EDIT ---
+
+        # Add the title line only once per group using the (potentially modified) group_item
+        formatted_title_line = format_title(group_item) # Get the formatted title
+        content.append(formatted_title_line) # Add it
+        logging.debug(f"Notifications: Added title line for group {group_key_for_log}: '{formatted_title_line}'") # Log title line addition
+
         # Sort episodes by season and episode number
         if type_ == 'episode':
             # Convert season and episode numbers to integers for sorting, with fallback handling
@@ -288,15 +326,27 @@ def format_notification_content(notifications, notification_type, notification_c
                 safe_convert_to_int(x.get('episode_number', 0))
             ))
             for item in sorted_items:
+                # --- EDIT: Use the effective state for episode suffix ---
+                effective_episode_state = item.get('new_state', '')
+                if effective_episode_state == 'Checking' and item.get('upgrading_from'):
+                    effective_episode_state = 'Upgrading'
+                
                 episode_line = format_episode(item)
                 if episode_line:
-                    content.append(f"{episode_line} {format_state_suffix(state, is_upgrade)}")
+                    # Pass the effective state to format_state_suffix
+                    content.append(f"{episode_line} {format_state_suffix(effective_episode_state, item.get('is_upgrade', False))}")
+                # --- END EDIT ---
+                logging.debug(f"Notifications: Added episode line for group {group_key_for_log}: '{content[-1]}'") # Log episode line addition
         else:
-            # For movies, just add the state suffix to the title line
-            content[-1] = f"{content[-1]} {format_state_suffix(state, is_upgrade)}"
+            # For movies, just add the state suffix (using the effective state) to the title line
+            state_suffix = format_state_suffix(state, is_upgrade) # Get suffix
+            content[-1] = f"{content[-1]} {state_suffix}" # Append suffix
+            logging.debug(f"Notifications: Appended movie state suffix for group {group_key_for_log}. Full line: '{content[-1]}'") # Log movie line update
 
     # Join with single newlines between items
-    return "\n".join(content)
+    final_content = "\n".join(content)
+    logging.debug(f"Notifications: Final formatted content generated:\n---\n{final_content}\n---") # Log final content
+    return final_content
 
 def start_safety_valve_timer(enabled_notifications, notification_category):
     global safety_valve_timer
@@ -592,6 +642,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
     logging.debug(f"Attempting to send external notifications for category: {notification_category}")
     send_successful = True
     processed_discord = False # Flag to check if we even attempted Discord
+    processed_email = False # Flag to check if we even attempted Email
 
     for notification_id, notification_config in enabled_notifications.items():
         logging.debug(f"Processing notification target ID: {notification_id}")
@@ -636,6 +687,29 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 else:
                      logging.warning(f"<-- Discord notification for {notification_id} FAILED after retries.")
 
+            elif notification_type == 'Email':
+                processed_email = True # Mark that we tried Email
+                smtp_config = {
+                    'from_address': notification_config.get('from_address'),
+                    'to_address': notification_config.get('to_address'),
+                    'smtp_server': notification_config.get('smtp_server'),
+                    'smtp_port': notification_config.get('smtp_port'),
+                    'smtp_username': notification_config.get('smtp_username'),
+                    'smtp_password': notification_config.get('smtp_password')
+                }
+                # Basic validation
+                if not all(smtp_config.values()):
+                     logging.warning(f"Skipping Email notification ({notification_id}): Missing required SMTP configuration fields.")
+                     continue
+
+                logging.info(f"--> Attempting to send Email notification for {notification_id}...")
+                # Pass notification_category here
+                send_result = send_email_notification(smtp_config, content, notification_category)
+                if send_result:
+                    logging.info(f"<-- Email notification for {notification_id} SUCCEEDED.")
+                else:
+                    logging.warning(f"<-- Email notification for {notification_id} FAILED.")
+
             # ... other types ...
 
             # If a sender function returned False, update overall status
@@ -649,6 +723,8 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
 
     if not processed_discord:
          logging.debug("No Discord notification target was processed (check enabled status, category filter, and type).")
+    if not processed_email:
+         logging.debug("No Email notification target was processed (check enabled status, category filter, and type).")
 
     logging.debug(f"Finished sending external notifications for category '{notification_category}'. Overall success: {send_successful}")
     return send_successful
@@ -659,7 +735,8 @@ def send_notifications(notifications, enabled_notifications, notification_catego
 
 def send_discord_notification(webhook_url, content):
     MAX_RETRIES = 3
-    RETRY_DELAY = 1
+    RETRY_DELAY = 1 # seconds between retries for the *original* message
+    CHUNK_SEND_DELAY = 0.5 # seconds between sending *chunks* if splitting occurs
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -667,44 +744,219 @@ def send_discord_notification(webhook_url, content):
             response = requests.post(webhook_url, json={'content': content}, timeout=15)
             logging.debug(f"Discord POST attempt {attempt + 1} status: {response.status_code}, Response: {response.text[:200]}")
 
-            response.raise_for_status()
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
             # If successful:
             logging.info(f"Discord POST attempt {attempt + 1} successful.")
-            return True
+            return True # Successfully sent the original message
 
         except requests.exceptions.Timeout:
              logging.warning(f"Discord POST attempt {attempt + 1} timed out.")
              if attempt < MAX_RETRIES - 1:
-                 time.sleep(RETRY_DELAY * (attempt + 1))
+                 time.sleep(RETRY_DELAY * (attempt + 1)) # Exponential backoff
              else:
                  logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts due to timeout.")
-        except requests.exceptions.RequestException as e:
-            # Includes HTTP errors from raise_for_status
-            logging.warning(f"Discord POST attempt {attempt + 1} failed: {str(e)}")
-            if attempt < MAX_RETRIES - 1:
-                time.sleep(RETRY_DELAY * (attempt + 1))
-            else:
-                logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts: {str(e)}")
+                 # No splitting on timeout, just fail
 
-    # If loop finishes without returning True
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Discord POST attempt {attempt + 1} failed: {str(e)}")
+
+            # Check if we have a response and status code to analyze
+            if e.response is not None:
+                status_code = e.response.status_code
+                logging.warning(f"Discord POST attempt {attempt + 1} received status code: {status_code}")
+
+                # --- START: Splitting Logic ---
+                # Check for Bad Request (400) which often indicates payload issues (size, formatting)
+                # Discord API might use 400 for various issues, but size is a common one for large posts.
+                if status_code == 400 and attempt == 0: # Only try splitting on the first attempt failure with 400
+                    logging.warning(f"Discord POST failed with 400, potentially due to payload size. Attempting to split content.")
+                    try:
+                        # Call the helper function to send in chunks
+                        split_success = _send_discord_chunks(webhook_url, content, CHUNK_SEND_DELAY)
+                        if split_success:
+                            logging.info("Successfully sent Discord notification content in smaller chunks.")
+                            return True # Return True as the content was eventually sent
+                        else:
+                            logging.error("Failed to send Discord notification content even after splitting into chunks.")
+                            return False # Return False as splitting also failed
+                    except Exception as split_err:
+                        logging.error(f"An error occurred during the splitting/chunk sending process: {split_err}")
+                        return False # Return False due to error during splitting attempt
+                # --- END: Splitting Logic ---
+
+                # Handle Rate Limiting (429)
+                elif status_code == 429:
+                    logging.warning(f"Discord rate limit hit (429). Retrying after delay...")
+                    # Respect Retry-After header if present
+                    retry_after = e.response.headers.get('Retry-After')
+                    delay = RETRY_DELAY * (attempt + 1) # Default backoff
+                    if retry_after:
+                        try:
+                            # Discord returns Retry-After in seconds (float or int)
+                            delay = max(float(retry_after), delay) # Use longer delay if Retry-After is bigger
+                            logging.info(f"Respecting Discord Retry-After header: waiting {delay:.2f} seconds.")
+                        except ValueError:
+                            logging.warning(f"Could not parse Retry-After header value: {retry_after}. Using default backoff.")
+                    else:
+                         logging.info(f"No Retry-After header found. Using default backoff: {delay} seconds.")
+
+                    if attempt < MAX_RETRIES - 1:
+                         time.sleep(delay)
+                         continue # Continue to the next retry attempt
+                    else:
+                         logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts due to rate limiting.")
+                         # Stop retrying after max attempts for rate limit
+
+                # Handle other HTTP errors (continue retry loop for potentially transient server issues)
+                else:
+                    logging.warning(f"Received unexpected status code {status_code}. Retrying...")
+                    if attempt < MAX_RETRIES - 1:
+                        time.sleep(RETRY_DELAY * (attempt + 1))
+                        continue # Continue to the next retry attempt
+                    else:
+                        logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts with final status code {status_code}.")
+
+            # Handle non-HTTP errors (e.g., network connection issues)
+            else:
+                logging.warning("Discord POST failed without a response object (e.g., network error). Retrying...")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(RETRY_DELAY * (attempt + 1))
+                    continue # Continue to the next retry attempt
+                else:
+                    logging.error(f"Discord notification FAILED after {MAX_RETRIES} attempts due to network/connection errors.")
+
+    # If loop finishes without returning True (or calling splitting logic which returns)
+    logging.error(f"Discord notification ultimately FAILED after all retries/attempts for the original message.")
     return False
 
-def send_email_notification(smtp_config, content):
+def _send_discord_chunks(webhook_url, original_content, delay_between_chunks, max_lines_per_chunk=15):
+    """Splits content by lines and sends it in smaller chunks."""
+    lines = original_content.strip().split('\n')
+    total_lines = len(lines)
+    num_chunks = math.ceil(total_lines / max_lines_per_chunk)
+    
+    logging.info(f"Splitting content into {num_chunks} chunks (max {max_lines_per_chunk} lines each).")
+    
+    all_chunks_sent = True
+    for i in range(num_chunks):
+        start_index = i * max_lines_per_chunk
+        end_index = start_index + max_lines_per_chunk
+        chunk_lines = lines[start_index:end_index]
+        chunk_content = "\n".join(chunk_lines)
+        
+        if not chunk_content:
+            logging.debug(f"Skipping empty chunk {i+1}/{num_chunks}")
+            continue
+            
+        logging.debug(f"Sending chunk {i+1}/{num_chunks} ({len(chunk_lines)} lines) to {webhook_url}")
+        
+        try:
+            # Use a simple, single attempt for each chunk for now. Could add retries here too if needed.
+            response = requests.post(webhook_url, json={'content': chunk_content}, timeout=10)
+            response.raise_for_status() # Check for errors on chunk send
+            logging.info(f"Successfully sent chunk {i+1}/{num_chunks}.")
+            
+            # Add delay before sending the next chunk (if not the last one)
+            if i < num_chunks - 1:
+                logging.debug(f"Waiting {delay_between_chunks}s before next chunk...")
+                time.sleep(delay_between_chunks)
+                
+        except requests.exceptions.RequestException as chunk_e:
+            logging.error(f"Failed to send chunk {i+1}/{num_chunks}: {str(chunk_e)}")
+            # Check for response in chunk error
+            if chunk_e.response is not None:
+                logging.error(f"Chunk send failed with status: {chunk_e.response.status_code}, response: {chunk_e.response.text[:200]}")
+            all_chunks_sent = False
+            break # Stop sending remaining chunks if one fails
+        except Exception as general_e:
+             logging.error(f"An unexpected error occurred sending chunk {i+1}/{num_chunks}: {str(general_e)}")
+             all_chunks_sent = False
+             break # Stop on unexpected error
+             
+    return all_chunks_sent
+
+def send_email_notification(smtp_config, content, notification_category):
+    # Determine subject based on category
+    # --- START: Subject Map Consolidation ---
+    # Use descriptive titles from the _send_notifications function where appropriate
+    # and add specific ones for system events.
+    subject_map = {
+        'program_crash': "Program Crashed",
+        'program_stop': "Program Stopped",
+        'program_start': "Program Started",
+        'queue_pause': "Queue Paused",
+        'queue_resume': "Queue Resumed", # Corrected: was "Queue Resumed"
+        'queue_start': "Queue Started",
+        'queue_stop': "Queue Stopped",
+        'upgrade_failed': "Upgrade Failed",
+        'collected': "Media Notification", # Generic for various content states
+        'downloading': "Downloading Content", # Using title from storage logic
+        'checking': "Checking Content",     # Using title from storage logic
+        'upgrading': "Upgrading Content",   # Using title from storage logic
+        'upgraded': "Content Upgraded",      # Using title from storage logic
+        'scraping_error': "Scraping Error",
+        'content_error': "Content Error",
+        'database_error': "Database Error"
+        # Add other categories as needed
+    }
+    # Default subject if category not in map or None
+    subject = subject_map.get(notification_category, "Media Notification") # Keep default
+    # --- END: Subject Map Consolidation ---
+
     try:
         msg = MIMEMultipart()
         msg['From'] = smtp_config['from_address']
         msg['To'] = smtp_config['to_address']
-        msg['Subject'] = "New Media Collected"
-        msg.attach(MIMEText(content, 'html'))  # Change 'plain' to 'html'
+        msg['Subject'] = subject # Use the dynamic subject
+        msg.attach(MIMEText(content, 'html'))
 
-        with smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port']) as server:
-            server.starttls()
-            server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
+        # Use context manager for SMTP connection
+        with smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port'], timeout=15) as server: # Added timeout
+            # Check if encryption is needed (common practice)
+            # This assumes STARTTLS; adjust if SSL/TLS is needed directly
+            server.ehlo() # Identify ourselves to the server
+            if server.has_extn('starttls'):
+                logging.debug("Starting TLS for email connection.")
+                server.starttls()
+                server.ehlo() # Re-identify after starting TLS
+            else:
+                 logging.debug("SMTP server does not support STARTTLS.")
+
+            # Login only if username/password are provided
+            if smtp_config.get('smtp_username') and smtp_config.get('smtp_password'):
+                logging.debug("Logging into SMTP server.")
+                try:
+                    server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
+                except smtplib.SMTPAuthenticationError as auth_err:
+                    logging.error(f"SMTP Authentication failed: {auth_err}")
+                    return False # Authentication failure
+                except smtplib.SMTPException as smtp_err:
+                    logging.error(f"SMTP login error: {smtp_err}")
+                    return False # Other login error
+            else:
+                logging.debug("Proceeding with anonymous SMTP connection (no username/password provided).")
+
+            logging.debug(f"Sending email to {smtp_config['to_address']} with subject '{subject}'")
             server.send_message(msg)
-        logging.info(f"Email notification sent successfully")
+        logging.info(f"Email notification sent successfully to {smtp_config['to_address']}")
+        return True # Indicate success
+    except smtplib.SMTPConnectError as e:
+        logging.error(f"Failed to connect to SMTP server {smtp_config['smtp_server']}:{smtp_config['smtp_port']}. Error: {e}")
+        return False
+    except smtplib.SMTPServerDisconnected as e:
+        logging.error(f"SMTP server disconnected unexpectedly. Error: {e}")
+        return False
+    except smtplib.SMTPResponseException as e:
+        logging.error(f"SMTP server responded with an error: {e.smtp_code} - {e.smtp_error}")
+        return False
+    except TimeoutError: # Catch potential timeout during connection or sending
+        logging.error(f"Timeout occurred while sending email notification to {smtp_config['to_address']}.")
+        return False
     except Exception as e:
-        logging.error(f"Failed to send email notification: {str(e)}")
+        # Catch any other unexpected exceptions during email sending
+        logging.error(f"Failed to send email notification: {str(e)}", exc_info=True) # Add exc_info for detailed traceback
+        return False # Indicate failure
 
 def send_ntfy_notification(host, api_key, priority, topic, content):
     if not priority:

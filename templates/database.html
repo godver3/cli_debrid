@@ -1672,7 +1672,7 @@ document.addEventListener('DOMContentLoaded', function() {
             onConfirm: async () => {
                 Loading.show();
                 try {
-                    const result = await processBatchedItems(selectedItems, 'delete');
+                    const result = await processBatchedItems(selectedItems, 'rescrape');
                     showPopup({
                         type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
                         message: result.message,

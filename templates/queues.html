@@ -3,6 +3,8 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/queues.css') }}">
+<!-- Add Font Awesome if not already included in base.html -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 {% endblock %}
 
 {% block content %}
@@ -275,6 +277,23 @@
         border-radius: 4px;
         overflow-x: auto;
     }
+
+    .processing-indicator {
+        margin-left: 10px;
+        color: #007bff; /* Or any color you prefer */
+        display: inline-block; /* Keep it inline */
+    }
+
+    .processing-indicator .fa-spin {
+        animation-duration: 1.5s; /* Adjust spin speed if needed */
+    }
+
+    /* Style for item currently being processed */
+    .item.is-processing {
+        /* Optional: Add a subtle background or border */
+         background-color: rgba(0, 123, 255, 0.1); /* Light blue background */
+         /* border-left: 3px solid #007bff; */
+    }
 </style>
 
 <script>
@@ -470,8 +489,14 @@
                 releaseInfo = ` - Release Date: ${releaseDate}`;
             }
 
+            // --- START EDIT: Check for processing flag ---
+            const isProcessing = item.is_processing || false;
+            const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
+            const processingClass = isProcessing ? 'is-processing' : '';
+            // --- END EDIT ---
+
             let itemContent = `
-                <div class="item" onclick="copyItemToClipboard(this, event)">
+                <div class="item ${processingClass}" onclick="copyItemToClipboard(this, event)">
                     ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}${releaseInfo}
             `;
 
@@ -521,12 +546,22 @@
             }
             // --- END EDIT ---
 
+            // --- START EDIT: Add indicator ---
+            itemContent += processingIndicator;
+            // --- END EDIT ---
+
             itemContent += `</div>`;
             return itemContent;
         }).join('');
     }
 
     function generateCheckingItem(item, showProgress = true) {
+        // --- START EDIT: Declare variables at the top ---
+        const isProcessing = item.is_processing || false; // Should always be false for Checking queue, but check anyway
+        const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
+        const processingClass = isProcessing ? 'is-processing' : '';
+        // --- END EDIT ---
+
         let seasonEpisode = '';
         if (item.type === 'episode' && item.season_number && item.episode_number) {
             let season = item.season_number.toString().padStart(2, '0');
@@ -535,7 +570,7 @@
         }
 
         let itemContent = `
-            <div class="item" onclick="copyItemToClipboard(this, event)">
+            <div class="item ${processingClass}" onclick="copyItemToClipboard(this, event)">
                 ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}
         `;
 
@@ -562,6 +597,14 @@
             `;
         }
 
+        // --- START EDIT: Check for processing flag (unlikely needed here, but for consistency) ---
+        // Moved declaration to the top
+        // const isProcessing = item.is_processing || false; // Should always be false for Checking queue
+        // const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
+        // const processingClass = isProcessing ? 'is-processing' : '';
+        // --- END EDIT ---
+
+        itemContent += processingIndicator;
         itemContent += `</div>`;
         return itemContent;
     }
@@ -668,7 +711,7 @@
                                 
                                 queueDiv.innerHTML = `
                                     <div class="queue-title" onclick="toggleQueue(this)">
-                                        <span>${queueName}</span>
+                                        <span>${queueName.replace(/_/g, ' ')}</span>
                                         ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
                                         <span class="queue-count">${totalItems} items</span>
                                     </div>
