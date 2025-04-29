@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request, Response
 from .models import user_required, onboarding_required
-from datetime import datetime
+from datetime import datetime, timedelta
 from queues.queue_manager import QueueManager
 import logging
 from .program_operation_routes import program_is_running, program_is_initializing
@@ -234,14 +234,14 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
         # Add scraping version settings to each item
         scraping_versions = get_setting('Scraping', 'versions', {})
         # Handle Infinity values in scraping_versions
-        for version in scraping_versions.values():
-            if isinstance(version, dict):
-                for key, value in version.items():
+        for version_key, version_data in scraping_versions.items():
+            if isinstance(version_data, dict):
+                for key, value in version_data.items():
                     if value == float('inf'):
-                        version[key] = "Infinity"
+                        version_data[key] = "Infinity"
                     elif value == float('-inf'):
-                        version[key] = "-Infinity"
-        
+                        version_data[key] = "-Infinity"
+
         item['scraping_versions'] = scraping_versions
         
         # --- START EDIT: Add processing flag ---
@@ -262,15 +262,64 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
                 item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_data.get(item['id'], {}).get('count', 0)
         elif queue_name == 'Wanted':
-            if 'scrape_time' in item:
-                if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
-                    try:
-                        scrape_time = datetime.strptime(item['scrape_time'], '%Y-%m-%d %H:%M:%S')
-                        item['formatted_scrape_time'] = scrape_time.strftime('%Y-%m-%d %I:%M %p')
-                    except ValueError:
-                        item['formatted_scrape_time'] = item['scrape_time']
-                else:
-                    item['formatted_scrape_time'] = item['scrape_time']
+            # --- START EDIT: Calculate and format scrape time ---
+            item['formatted_scrape_time'] = "Unknown" # Default value
+            try:
+                release_date_str = item.get('release_date')
+                airtime_str = item.get('airtime')
+                version = item.get('version')
+                item_type = item.get('type')
+
+                # Determine if physical release is required
+                version_settings = scraping_versions.get(version, {})
+                require_physical = version_settings.get('require_physical_release', False)
+                physical_release_date_str = item.get('physical_release_date')
+
+                # Determine the effective release date string
+                effective_release_date_str = None
+                if require_physical and physical_release_date_str:
+                    effective_release_date_str = physical_release_date_str
+                elif not require_physical and release_date_str and str(release_date_str).lower() not in ['unknown', 'none', 'null', '']:
+                    effective_release_date_str = str(release_date_str)
+                # If physical is required but missing, or normal release is missing/invalid, we can't calculate
+
+                if effective_release_date_str:
+                    # Parse effective date
+                    release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
+
+                    # Parse airtime (with defaults)
+                    airtime = None
+                    if airtime_str:
+                        try: airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                        except ValueError:
+                            try: airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                            except ValueError: airtime = datetime.strptime("00:00", '%H:%M').time()
+                    else: airtime = datetime.strptime("00:00", '%H:%M').time()
+
+                    # Combine date and time
+                    release_datetime = datetime.combine(release_date, airtime)
+
+                    # Get offset from settings
+                    offset_hours = 0.0
+                    if item_type == 'movie':
+                        movie_offset_setting = get_setting("Queue", "movie_airtime_offset", "0")
+                        try: offset_hours = float(movie_offset_setting)
+                        except (ValueError, TypeError): pass # Keep 0.0 on error
+                    elif item_type == 'episode':
+                        episode_offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
+                        try: offset_hours = float(episode_offset_setting)
+                        except (ValueError, TypeError): pass # Keep 0.0 on error
+
+                    # Calculate effective scrape time
+                    effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
+
+                    # Format for display
+                    item['formatted_scrape_time'] = effective_scrape_time.strftime('%Y-%m-%d %I:%M %p')
+
+            except Exception as e:
+                 logging.warning(f"Could not calculate scrape time for Wanted item {item.get('id')}: {e}")
+                 item['formatted_scrape_time'] = "Error Calculating" # Or keep "Unknown"
+            # --- END EDIT ---
         elif queue_name == 'Checking':
             # Convert datetime to string for time_added
             time_added = item.get('time_added', datetime.now())

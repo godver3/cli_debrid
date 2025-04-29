@@ -359,9 +359,10 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
 async def get_collected_from_plex(request='all', progress_callback=None, bypass=False,
                                 page_size: int = OPTIMAL_PAGE_SIZE,
                                 max_concurrent_requests: int = MAX_CONCURRENT_REQUESTS,
-                                specific_library_keys: List[str] = None):
+                                specific_library_keys: List[str] = None,
+                                scan_all_libraries: bool = False):
     start_time_total = time.perf_counter()
-    logger.info(f"Starting Plex content collection. Request: {request}, PageSize: {page_size}, Concurrency: {max_concurrent_requests}, Libs: {specific_library_keys}")
+    logger.info(f"Starting Plex content collection. Request: {request}, PageSize: {page_size}, Concurrency: {max_concurrent_requests}, Libs: {specific_library_keys or ('All' if scan_all_libraries else 'From Settings')}")
 
     stats = {
         "libraries_to_process": 0,
@@ -423,11 +424,57 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
         t_libs_end = time.perf_counter()
         stats["time_connect_libs"] = t_libs_end - t_libs_start
 
-        movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
-        show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
+        movie_libraries = []
+        show_libraries = []
 
-        logger.info(f"TV Show libraries to process: {show_libraries}")
-        logger.info(f"Movie libraries to process: {movie_libraries}")
+        if scan_all_libraries:
+             logger.info("Scan All Libraries requested. Identifying all Movie and Show libraries.")
+             for library in libraries_data['MediaContainer']['Directory']:
+                 lib_key = str(library.get('key'))
+                 lib_type = library.get('type')
+                 lib_title = library.get('title', 'Unknown')
+                 if lib_type == 'movie':
+                     movie_libraries.append(lib_key)
+                     logger.debug(f"Including all-scan movie library: {lib_title} (Key: {lib_key})")
+                 elif lib_type == 'show':
+                     show_libraries.append(lib_key)
+                     logger.debug(f"Including all-scan show library: {lib_title} (Key: {lib_key})")
+        elif specific_library_keys:
+             logger.info(f"Specific library keys provided: {specific_library_keys}. Overriding settings.")
+             # Assume specific_library_keys contains only valid keys for movie/show libs for now
+             # Or add logic here to check their type if needed
+             # This part needs refinement based on how specific_library_keys is intended to be used with types
+             # For now, assign all to both and let the content fetch handle it.
+             # A better approach would be to fetch section details for each key.
+             logger.warning("Specific library keys provided, assuming they are movie/show types. Type filtering during fetch will apply.")
+             # Fetch section details to determine type
+             all_sections_details = libraries_data['MediaContainer']['Directory']
+             for key in specific_library_keys:
+                 found = False
+                 for section_detail in all_sections_details:
+                     if str(section_detail.get('key')) == key:
+                         if section_detail.get('type') == 'movie':
+                             movie_libraries.append(key)
+                             found = True
+                             break
+                         elif section_detail.get('type') == 'show':
+                             show_libraries.append(key)
+                             found = True
+                             break
+                 if not found:
+                     logger.warning(f"Specific library key {key} not found or is not a movie/show library.")
+
+        else:
+             logger.info("Using libraries specified in settings.")
+             movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
+             show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
+
+        stats["movie_libs"] = len(movie_libraries)
+        stats["show_libs"] = len(show_libraries)
+        stats["libraries_to_process"] = stats["movie_libs"] + stats["show_libs"]
+
+        logger.info(f"Identified {stats['movie_libs']} movie libraries to process: {movie_libraries}")
+        logger.info(f"Identified {stats['show_libs']} show libraries to process: {show_libraries}")
 
         if progress_callback: progress_callback('scanning', 'Retrieving show library contents...')
 
@@ -456,10 +503,6 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                 'movies_processed': len(all_movies)
             })
 
-
- 
-    # --- 3. Process Movie Libraries ---
-    # (Keep existing movie fetching/processing logic here)
         if movie_libraries:
             if progress_callback: progress_callback('scanning', f'Retrieving content from {len(movie_libraries)} movie libraries...')
             logger.info(f"Starting movie fetch from {len(movie_libraries)} libraries...")
@@ -497,9 +540,7 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             else:
                  logger.info("No movies found in specified libraries to process.")
 
-    # --- 4. Process Show Libraries (Optimized) ---
         if show_libraries:
-            # 4a. Fetch all raw episodes directly
             if progress_callback: progress_callback('scanning', f'Retrieving episodes from {len(show_libraries)} show libraries...')
             logger.info(f"Starting episode fetch from {len(show_libraries)} libraries...")
             t_fetch_ep_start = time.perf_counter()
@@ -516,7 +557,6 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             if not all_raw_episodes:
                 logger.warning("No episodes found in the specified show libraries.")
             else:
-                # 4b. Identify unique shows and fetch details
                 logger.info("Identifying unique shows from episodes...")
                 t_fetch_show_start = time.perf_counter()
                 unique_show_keys_to_fetch = set()
@@ -567,7 +607,6 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                 stats["time_fetch_show_details"] = t_fetch_show_end - t_fetch_show_start
                 logger.info(f"Show detail fetching phase took {stats['time_fetch_show_details']:.2f}s.")
 
-                # 4c. Process episodes using the populated cache
                 if progress_callback:
                     progress_callback('scanning', f'Processing {len(all_raw_episodes)} episodes...', {
                         'shows_processed': shows_processed_count,
@@ -611,7 +650,6 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                 stats["time_process_episodes"] = t_process_ep_end - t_process_ep_start
                 logger.info(f"Episode processing phase took {stats['time_process_episodes']:.2f}s.")
 
-    # --- 5. Finalization ---
         end_time_total = time.perf_counter()
         stats["time_total"] = end_time_total - start_time_total
 
@@ -658,7 +696,7 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
 
 async def run_get_collected_from_plex(request='all', progress_callback=None, bypass=False, **kwargs):
     logger.info(f"Starting run_get_collected_from_plex with kwargs: {kwargs}")
-    allowed_kwargs = {'page_size', 'max_concurrent_requests', 'specific_library_keys'}
+    allowed_kwargs = {'page_size', 'max_concurrent_requests', 'specific_library_keys', 'scan_all_libraries'}
     filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_kwargs}
     result = await get_collected_from_plex(request, progress_callback, bypass, **filtered_kwargs)
     logger.info("Completed run_get_collected_from_plex")
@@ -666,7 +704,7 @@ async def run_get_collected_from_plex(request='all', progress_callback=None, byp
 
 def sync_run_get_collected_from_plex(request='all', progress_callback=None, bypass=False, **kwargs):
     logger.info(f"Starting sync_run_get_collected_from_plex with kwargs: {kwargs}")
-    allowed_kwargs = {'page_size', 'max_concurrent_requests', 'specific_library_keys'}
+    allowed_kwargs = {'page_size', 'max_concurrent_requests', 'specific_library_keys', 'scan_all_libraries'}
     filtered_kwargs = {k: v for k, v in kwargs.items() if k in allowed_kwargs}
     try:
         loop = asyncio.get_running_loop()
@@ -677,10 +715,10 @@ def sync_run_get_collected_from_plex(request='all', progress_callback=None, bypa
     else:
         return loop.run_until_complete(run_get_collected_from_plex(request, progress_callback, bypass, **filtered_kwargs))
 
-async def get_recent_from_plex():
+async def get_recent_from_plex(scan_all_libraries: bool = False):
     try:
         start_time = time.time()
-        logger.info("Starting Plex recent content collection")
+        logger.info(f"Starting Plex recent content collection ({'All Libraries' if scan_all_libraries else 'Libraries from Settings'})")
 
         plex_url = get_setting('Plex', 'url').rstrip('/')
         plex_token = get_setting('Plex', 'token')
@@ -695,68 +733,108 @@ async def get_recent_from_plex():
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
             
-            all_libraries = {library['title']: library['key'] for library in libraries_data['MediaContainer']['Directory']}
-            
-            movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']})
-            show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']})
-            
-            logger.info(f"TV Show libraries to process: {show_libraries}")
-            logger.info(f"Movie libraries to process: {movie_libraries}")
+            libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
+            all_libraries = {library['title']: str(library['key']) for library in libraries_data['MediaContainer']['Directory']}
+
+            movie_libraries = []
+            show_libraries = []
+
+            if scan_all_libraries:
+                 logger.info("Scan All Libraries requested for recent scan. Identifying all Movie and Show libraries.")
+                 for library in libraries_data['MediaContainer']['Directory']:
+                     lib_key = str(library.get('key'))
+                     lib_type = library.get('type')
+                     lib_title = library.get('title', 'Unknown')
+                     if lib_type == 'movie':
+                         movie_libraries.append(lib_key)
+                         logger.debug(f"Including all-scan movie library: {lib_title} (Key: {lib_key})")
+                     elif lib_type == 'show':
+                         show_libraries.append(lib_key)
+                         logger.debug(f"Including all-scan show library: {lib_title} (Key: {lib_key})")
+            else:
+                 logger.info("Using libraries specified in settings for recent scan.")
+                 movie_libraries = process_library_names(get_setting('Plex', 'movie_libraries', ''), all_libraries, libraries_by_key)
+                 show_libraries = process_library_names(get_setting('Plex', 'shows_libraries', ''), all_libraries, libraries_by_key)
+
+            logger.info(f"Identified {len(movie_libraries)} movie libraries for recent scan: {movie_libraries}")
+            logger.info(f"Identified {len(show_libraries)} show libraries for recent scan: {show_libraries}")
 
             processed_movies = []
             processed_episodes = []
-            
-            for library_key in movie_libraries + show_libraries:
+
+            libraries_to_scan = movie_libraries + show_libraries
+            if not libraries_to_scan:
+                 logger.warning("No libraries identified to scan for recent items.")
+                 return {'movies': [], 'episodes': []}
+
+            for library_key in libraries_to_scan:
+                library_title = libraries_by_key.get(library_key, f"Unknown Library (Key: {library_key})")
+                logger.debug(f"Fetching recent items from library: {library_title} ({library_key})")
                 recent_url = f"{plex_url}/library/sections/{library_key}/recentlyAdded"
                 recent_data = await fetch_data(session, recent_url, headers, semaphore)
-                
+
                 if 'MediaContainer' in recent_data and 'Metadata' in recent_data['MediaContainer']:
                     recent_items = recent_data['MediaContainer']['Metadata']
-                    logger.info(f"Retrieved {len(recent_items)} recent items from library {library_key}")
-                    
+                    logger.info(f"Retrieved {len(recent_items)} recent items from library {library_title}")
+
                     for item in recent_items:
-                        if item['type'] == 'movie':
-                            metadata_url = f"{plex_url}{item['key']}?includeGuids=1"
-                            metadata = await fetch_data(session, metadata_url, headers, semaphore)
-                            
-                            if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
-                                full_metadata = metadata['MediaContainer']['Metadata'][0]
-                                processed_items = await process_recent_movie(full_metadata)
-                                processed_movies.extend(processed_items)
-                        elif item['type'] == 'season':
-                            show_metadata_url = f"{plex_url}/library/metadata/{item['parentRatingKey']}?includeGuids=1"
-                            show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
-                            
-                            if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                                show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                                season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
-                                processed_episodes.extend([episode for sublist in season_episodes for episode in sublist])
-                        elif item['type'] == 'episode':
-                            show_metadata_url = f"{plex_url}/library/metadata/{item['grandparentRatingKey']}?includeGuids=1"
-                            show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
-                            
-                            if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                                show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                                show_imdb_id, show_tmdb_id = extract_show_ids(show_full_metadata)
-                                episode_data = await process_recent_episode(item, show_full_metadata['title'], item['parentIndex'], show_imdb_id, show_tmdb_id, show_full_metadata)
-                                processed_episodes.extend(episode_data)
+                        item_type = item.get('type')
+                        item_title_log = item.get('title', 'Unknown Item')
+                        try:
+                            if item_type == 'movie':
+                                metadata_url = f"{plex_url}{item.get('key')}?includeGuids=1"
+                                metadata = await fetch_data(session, metadata_url, headers, semaphore)
+                                if 'MediaContainer' in metadata and 'Metadata' in metadata['MediaContainer']:
+                                    full_metadata = metadata['MediaContainer']['Metadata'][0]
+                                    processed_items = await process_recent_movie(full_metadata)
+                                    processed_movies.extend(processed_items)
+                                else:
+                                    logger.warning(f"Could not fetch full metadata for recent movie: {item_title_log}")
+                            elif item_type == 'season':
+                                show_key = item.get('parentRatingKey')
+                                if not show_key:
+                                     logger.warning(f"Skipping recent season '{item_title_log}' due to missing parentRatingKey.")
+                                     continue
+                                show_metadata_url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
+                                show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
+                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
+                                    show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
+                                    season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
+                                    for episode_list in season_episodes:
+                                        processed_episodes.extend(episode_list)
+                                else:
+                                    logger.warning(f"Could not fetch show metadata for recent season: {item_title_log}")
+                            elif item_type == 'episode':
+                                show_key = item.get('grandparentRatingKey')
+                                if not show_key:
+                                     logger.warning(f"Skipping recent episode '{item_title_log}' due to missing grandparentRatingKey.")
+                                     continue
+                                show_metadata_url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
+                                show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
+                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
+                                    show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
+                                    show_imdb_id, show_tmdb_id = extract_show_ids(show_full_metadata)
+                                    episode_data = await process_recent_episode(item, show_full_metadata['title'], item.get('parentIndex'), show_imdb_id, show_tmdb_id, show_full_metadata)
+                                    processed_episodes.extend(episode_data)
+                                else:
+                                    logger.warning(f"Could not fetch show metadata for recent episode: {item_title_log}")
                             else:
-                                logger.error(f"Failed to fetch show metadata for episode: {item.get('title', 'Unknown')}")
-                        else:
-                            logger.warning(f"Skipping item: {item.get('title', 'Unknown')} (Type: {item.get('type', 'Unknown')})")
+                                logger.debug(f"Skipping non-movie/season/episode recent item: {item_title_log} (Type: {item_type})")
+                        except Exception as process_err:
+                             logger.error(f"Error processing recent item '{item_title_log}' (Type: {item_type}): {process_err}", exc_info=True)
 
         end_time = time.time()
         total_time = end_time - start_time
 
-        logger.info(f"Collection complete. Total time: {total_time:.2f} seconds")
+        logger.info(f"Recent content collection complete. Total time: {total_time:.2f} seconds")
         logger.info(f"Collected: {len(processed_episodes)} episodes and {len(processed_movies)} movies")
-        
+
         logger.debug(f"Final episodes list length: {len(processed_episodes)}")
         logger.debug(f"Final movies list length: {len(processed_movies)}")
 
         if not processed_movies and not processed_episodes:
-            logger.error("No content retrieved from Plex recent scan")
-            return None
+            logger.warning("No content retrieved from Plex recent scan")
+            return {'movies': [], 'episodes': []}
 
         return {
             'movies': processed_movies,
@@ -911,22 +989,22 @@ def extract_show_ids(show_metadata):
                 show_tmdb_id = guid['id'].split('://')[1]
     return show_imdb_id, show_tmdb_id
 
-async def run_get_recent_from_plex():
-    logger.info("Starting run_get_recent_from_plex")
-    result = await get_recent_from_plex()
+async def run_get_recent_from_plex(scan_all_libraries: bool = False):
+    logger.info(f"Starting run_get_recent_from_plex (scan_all_libraries={scan_all_libraries})")
+    result = await get_recent_from_plex(scan_all_libraries=scan_all_libraries)
     logger.info("Completed run_get_recent_from_plex")
     return result
 
-def sync_run_get_recent_from_plex():
-    logger.info(f"Starting sync_run_get_recent_from_plex")
+def sync_run_get_recent_from_plex(scan_all_libraries: bool = False):
+    logger.info(f"Starting sync_run_get_recent_from_plex (scan_all_libraries={scan_all_libraries})")
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        return loop.run_until_complete(run_get_recent_from_plex())
+        return loop.run_until_complete(run_get_recent_from_plex(scan_all_libraries=scan_all_libraries))
     else:
-        return loop.run_until_complete(run_get_recent_from_plex())
+        return loop.run_until_complete(run_get_recent_from_plex(scan_all_libraries=scan_all_libraries))
 
 def remove_file_from_plex(item_title, item_path, episode_title=None):
     try:

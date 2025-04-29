@@ -439,30 +439,27 @@ def check_service_connectivity():
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
     global program_runner
+    # Check service connectivity *before* attempting to create/start the runner
+    check_result, failed_services = check_service_connectivity()
+    if not check_result:
+        # Construct a more informative error message
+        error_message = "Cannot start program: Failed to connect to required services. Failed: " + ", ".join(failed_services) + ". Check logs for details."
+        logging.error(error_message) # Log the error as well
+        return jsonify({"status": "error", "message": error_message, "failed_services": failed_services})
+
     if program_runner is not None:
-        # Always clean up existing instance
+        # Always clean up existing instance if stop/start is called
+        logging.warning("Existing program runner found during start request. Stopping it first.")
         program_runner.stop()
         program_runner.invalidate_content_sources_cache()
         program_runner = None
+        time.sleep(1) # Add a small delay to ensure resources are released
 
-    # Add delay if auto-start is enabled
+    # Add delay if auto-start is enabled (Keep this behavior if desired)
     if get_setting('Debug', 'auto_run_program', default=False):
         time.sleep(1)  # 1 second delay for auto-start
 
-    # Check service connectivity before starting the program
-    check_result, failed_services = check_service_connectivity()
-    if not check_result:
-        # Get the last error message from the logs
-        error_message = "Failed to connect to required services. Check the logs for details."
-        for handler in logging.getLogger().handlers:
-            if isinstance(handler, logging.StreamHandler):
-                try:
-                    # Get the last error message if available
-                    error_message = handler.stream.getvalue().strip().split('\n')[-1]
-                except:
-                    pass
-        return jsonify({"status": "error", "message": error_message, "failed_services": failed_services})
-
+    logging.info("Creating and starting new ProgramRunner instance...") # Added log
     program_runner = ProgramRunner()
     try:
         _setup_scheduler_listeners(program_runner)
@@ -473,28 +470,39 @@ def start_program():
     # Start the program runner in a separate thread to avoid blocking the Flask server
     threading.Thread(target=program_runner.start).start()
     current_app.config['PROGRAM_RUNNING'] = True
-    
+
     # Send program start notification
     send_queue_start_notification("Queue processing started via web interface")
-    
-    return jsonify({"status": "success", "message": "Program started"})
+
+    return jsonify({"status": "success", "message": "Program started successfully"}) # Updated success message
 
 def stop_program():
     global program_runner, server_thread
+    # --- START EDIT: Log whether runner exists before stopping ---
+    if program_runner:
+        logging.info("Stop requested. ProgramRunner instance exists.")
+    else:
+        logging.info("Stop requested. No active ProgramRunner instance found.")
+    # --- END EDIT ---
     try:
         if program_runner is not None and program_runner.is_running():
+            logging.info("Program is running, proceeding with stop...") # Added log
             # Send stop notification before stopping
             send_queue_stop_notification("Queue processing stopped via web interface")
-            
+
             program_runner.stop()
             # Invalidate content sources cache before nulling the instance
             program_runner.invalidate_content_sources_cache()
             program_runner = None
-            
+            logging.info("ProgramRunner stopped and instance cleared.") # Added log
+
         current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "success", "message": "Program stopped"}
     except Exception as e:
-        logging.error(f"Error stopping program: {str(e)}")
+        logging.error(f"Error stopping program: {str(e)}", exc_info=True) # Added exc_info
+        # Ensure runner is cleared even on error during stop
+        program_runner = None
+        current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "error", "message": f"Error stopping program: {str(e)}"}
 
 @program_operation_bp.route('/api/stop_program', methods=['POST'])

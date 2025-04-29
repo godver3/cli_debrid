@@ -229,8 +229,8 @@ def setup_performance_logging(log_dir):
     performance_formatter = logging.Formatter('%(message)s')
     performance_handler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, 'performance.log'), 
-        maxBytes=50*1024*1024, 
-        backupCount=0, 
+        maxBytes=10*1024*1024, # Limit to 10MB
+        backupCount=1,         # Keep one backup file
         encoding='utf-8', 
         errors='replace'
     )

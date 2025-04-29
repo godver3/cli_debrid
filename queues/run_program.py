@@ -22,7 +22,9 @@ except ImportError:
 # *** START EDIT ***
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-import threading # For scheduler lock AND concurrent queue processing
+# --- START EDIT: Add threading.Lock ---
+import threading # For scheduler lock, concurrent queue processing, AND heavy task lock
+# --- END EDIT ---
 import functools # Added for partial
 import apscheduler.events # Added for listener events
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED
@@ -120,6 +122,7 @@ class ProgramRunner:
             self.scheduler = BackgroundScheduler() # Fallback to default
 
         self.scheduler_lock = threading.Lock() # Lock for modifying scheduler jobs
+        self.heavy_task_lock = threading.Lock() # Lock to serialize heavy DB tasks
         self.paused_jobs_by_queue = set() # Keep track of jobs paused by pause_queue
         
         from queues.queue_manager import QueueManager
@@ -156,6 +159,26 @@ class ProgramRunner:
             'Upgrading': 'process_upgrading',
             'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
         }
+        # --- END EDIT ---
+
+        # --- START EDIT: Define BASE set of heavy DB tasks ---
+        # Add tasks that are always considered heavy, except content sources
+        # Content source tasks ('task_..._wanted') will NOT use this lock.
+        self.HEAVY_DB_TASKS = {
+            'task_reconcile_queues',
+            'task_check_database_health',
+            'task_run_library_maintenance',
+            'task_update_show_ids',
+            'task_update_show_titles',
+            'task_update_movie_ids',
+            'task_update_movie_titles',
+            'task_update_tv_show_status',
+            'task_plex_full_scan',
+            'task_get_plex_watch_history',
+            'task_refresh_release_dates',
+        }
+        # --- Updated log message ---
+        logging.info(f"Defined {len(self.HEAVY_DB_TASKS)} base tasks requiring exclusive execution lock. Content source tasks will run concurrently.")
         # --- END EDIT ---
 
         # Base Task Intervals
@@ -601,7 +624,9 @@ class ProgramRunner:
             if target_func:
                 try:
                     # Wrap the target function
-                    wrapped_func = functools.partial(self._run_and_measure_task, target_func, args, kwargs)
+                    # --- START EDIT: Pass task_name to the wrapper ---
+                    wrapped_func = functools.partial(self._run_and_measure_task, task_name, target_func, args, kwargs)
+                    # --- END EDIT ---
 
                     trigger = IntervalTrigger(seconds=interval_seconds)
                     self.scheduler.add_job(
@@ -611,12 +636,12 @@ class ProgramRunner:
                         name=job_id,
                         replace_existing=True,
                         misfire_grace_time=max(60, interval_seconds // 4),
-                        # *** START EDIT: Allow 2 concurrent instances ***
+                        # *** START EDIT: Allow 1 concurrent instance ***
                         max_instances=1
                         # *** END EDIT ***
                     )
                     # *** START EDIT: Updated log message ***
-                    logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=2, wrapped for duration measurement).")
+                    logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=1, wrapped for duration measurement).") # Reverted max_instances to 1
                     # *** END EDIT ***
                     return True
                 except Exception as e:
@@ -2385,27 +2410,44 @@ class ProgramRunner:
             logging.info(f"Executing task '{job_id}' manually...")
             # --- START: Manual Running Task State Handling ---
             previous_running_task = None # Store previous state if any
+            lock_acquired = False # Track if heavy lock is acquired
+            is_heavy_task = job_id in self.HEAVY_DB_TASKS
+            # --- START EDIT: Initialize start_time before try block ---
+            start_time = time.time() # Initialize start time here
+            # --- END EDIT ---
             try:
-                # Set current running task before execution
+                # Acquire heavy task lock if needed
+                if is_heavy_task:
+                    logging.debug(f"Manual trigger for heavy task '{job_id}': Attempting lock acquisition...")
+                    lock_acquired = self.heavy_task_lock.acquire(blocking=False)
+                    if not lock_acquired:
+                        logging.warning(f"Cannot manually trigger heavy task '{job_id}': Another heavy task is running.")
+                        raise RuntimeError(f"Cannot manually trigger task '{job_id}': Another heavy task is running.")
+                    else:
+                        logging.info(f"Manual trigger for heavy task '{job_id}': Lock acquired.")
+
+                # Set current running task before execution (existing lock)
                 with self._running_task_lock:
                     previous_running_task = self.current_running_task # Remember what was running before
                     self.current_running_task = job_id
                     logging.info(f"[TaskMonitor Trigger] Set current running task to: {job_id}")
 
                 # Execute directly in the current thread
-                start_time = time.time()
+                # start_time = time.time() # Removed assignment from here
                 target_func(*args, **kwargs)
-                duration = time.time() - start_time
+                duration = time.time() - start_time # Duration calculated on success
                 logging.info(f"Manual trigger for task '{job_id}' completed in {duration:.2f}s.")
                 return True # Indicate success
 
             except Exception as e:
-                 duration = time.time() - start_time # Calculate duration even on error
-                 logging.error(f"Error during manual execution of task '{job_id}' after {duration:.2f}s: {e}", exc_info=True)
-                 # Re-raise a more specific error or wrap the original
-                 raise RuntimeError(f"Error executing task {job_id} manually: {e}") from e
+                 duration = time.time() - start_time # Calculate duration even on error (start_time now exists)
+                 # Don't log error twice if it's the lock acquisition error
+                 if not isinstance(e, RuntimeError) or "Another heavy task is running" not in str(e):
+                     logging.error(f"Error during manual execution of task '{job_id}' after {duration:.2f}s: {e}", exc_info=True)
+                 # Re-raise the original exception after logging
+                 raise e
             finally:
-                # Clear current running task *only if* it's still the one we set
+                 # Clear current running task *only if* it's still the one we set (existing lock)
                 with self._running_task_lock:
                     if self.current_running_task == job_id:
                         self.current_running_task = previous_running_task # Restore previous state or None
@@ -2416,6 +2458,14 @@ class ProgramRunner:
                     else:
                         # Log if something else took over the running task state concurrently
                         logging.warning(f"[TaskMonitor Trigger] Did not clear running task state for '{job_id}' because current running task is now '{self.current_running_task}'.")
+
+                # Release heavy task lock if acquired
+                if lock_acquired:
+                    try:
+                        self.heavy_task_lock.release()
+                        logging.info(f"Manual trigger for heavy task '{job_id}': Lock released.")
+                    except Exception as e_release:
+                        logging.error(f"Error releasing heavy task lock for '{job_id}' during manual trigger cleanup: {e_release}")
             # --- END: Manual Running Task State Handling ---
 
         else:
@@ -3322,15 +3372,30 @@ class ProgramRunner:
         # ... (rest of interval adjustment logic remains the same) ...
     # *** END EDIT ***
 
-    # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling ***
-    def _run_and_measure_task(self, func, args, kwargs):
-        """Wraps a task function to measure execution duration and track memory usage with tracemalloc if enabled and sampling condition met."""
+    # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling AND heavy task locking ***
+    def _run_and_measure_task(self, task_name_for_log, func, args, kwargs): # Added task_name_for_log
+        """Wraps a task function to measure execution duration, track memory usage with tracemalloc, and handle locking for heavy DB tasks."""
         start_time = time.time()
-        task_name_for_log = getattr(func, '__name__', 'unknown_function')
+        # Use the passed task_name_for_log instead of func.__name__ for consistency
+        # task_name_for_log = getattr(func, '__name__', 'unknown_function') # Removed
 
         mem_before = 0
         mem_after = 0
         run_tracemalloc_sample = False # Flag to indicate if we run tracemalloc this time
+        lock_acquired = False # Flag to track if heavy task lock was acquired
+
+        # --- Heavy Task Lock Handling ---
+        is_heavy_task = task_name_for_log in self.HEAVY_DB_TASKS
+        if is_heavy_task:
+            logging.debug(f"Task '{task_name_for_log}' requires heavy task lock. Attempting acquisition...")
+            lock_acquired = self.heavy_task_lock.acquire(blocking=False)
+            if not lock_acquired:
+                 logging.info(f"Skipping heavy task '{task_name_for_log}' execution: Another heavy task is currently running.")
+                 return # Skip execution if lock not acquired
+            else:
+                 logging.info(f"Heavy task lock acquired for '{task_name_for_log}'. Proceeding with execution.")
+        # --- End Heavy Task Lock Handling ---
+
 
         # Determine if we should sample this execution
         # Check if enabled AND available AND actually tracing
@@ -3422,6 +3487,16 @@ class ProgramRunner:
                  logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available at point of error memory check.")
 
             raise # Re-raise the exception
+        finally:
+            # --- Release heavy task lock if acquired ---
+            if lock_acquired:
+                try:
+                    self.heavy_task_lock.release()
+                    logging.info(f"Heavy task lock released for '{task_name_for_log}'.")
+                except Exception as e_release:
+                    # Should not happen if lock_acquired is True, but log defensively
+                    logging.error(f"Error releasing heavy task lock for '{task_name_for_log}': {e_release}")
+            # --- End Release heavy task lock ---
     # *** END EDIT ***
 
 def process_overseerr_webhook(data):

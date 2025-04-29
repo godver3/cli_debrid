@@ -305,8 +305,14 @@
         const queueItems = element.nextElementSibling;
         const isExpanded = queueItems.style.display !== 'none';
         queueItems.style.display = isExpanded ? 'none' : 'block';
-        const queueName = element.querySelector('span').textContent;
-        localStorage.setItem('queue_' + queueName, isExpanded ? 'collapsed' : 'expanded');
+        // Get the queue name from the data attribute of the parent .queue element
+        const queueDiv = element.closest('.queue');
+        const queueName = queueDiv ? queueDiv.getAttribute('data-queue-name') : null;
+        if (queueName) {
+            localStorage.setItem('queue_' + queueName, isExpanded ? 'collapsed' : 'expanded');
+        } else {
+            console.error("Could not find queue name for element:", element);
+        }
     }
 
     function toggleFilenames(event) {

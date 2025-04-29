@@ -678,6 +678,8 @@ class ScrapingQueue:
             logging.warning(f"Handling failed upgrade for {item_identifier}: No suitable scrape results found.")
             try:
                 from queues.upgrading_queue import UpgradingQueue
+                # Import datetime if not already imported at the top
+                from datetime import datetime # Added import
                 upgrading_queue = UpgradingQueue()
 
                 # Send notification
@@ -695,9 +697,9 @@ class ScrapingQueue:
                     'Scraping Queue Failure: No suitable results found'
                 )
 
-                # Restore previous state
+                # Attempt to restore previous state
                 if upgrading_queue.restore_item_state(item):
-                    # Add the failed attempt to tracking - less specific info here
+                    # Add the failed attempt to tracking
                     upgrading_queue.add_failed_upgrade(
                         item['id'],
                         {
@@ -707,20 +709,57 @@ class ScrapingQueue:
                         }
                     )
                     logging.info(f"Successfully reverted failed upgrade for {item_identifier} due to no scrape results.")
-                else:
-                    logging.error(f"Failed to restore previous state for {item_identifier} after scraping failure.")
-                    # Fallback? Keep in Scraping? Error state?
-                    # For now, remove from queue to avoid loops.
+                    # State is reverted in DB. Proceed to reset flags and remove from queue memory below.
+                else: # Restore failed
+                    # This is where the log "Failed to restore previous state..." comes from
+                    logging.error(f"Failed to restore previous state for {item_identifier} after scraping failure. Attempting manual state reset.")
+                    # --- NEW FALLBACK LOGIC ---
+                    try:
+                        from database import update_media_item # Use direct DB update function
 
+                        original_file = item.get('upgrading_from')
+                        new_state = 'Collected' if original_file else 'Wanted'
+                        log_message_state = 'Collected' if original_file else 'Wanted (original file unknown)'
+
+                        update_data = {
+                            'state': new_state,
+                            'upgrading': False,
+                            'upgrading_from': None,
+                            'upgrading_from_torrent_id': None,
+                            'last_updated': datetime.now()
+                        }
+                        update_media_item(item['id'], **update_data)
+                        logging.info(f"Manually reset state to '{log_message_state}' and cleared upgrade flags for {item_identifier}.")
+
+                        # Still record the failed attempt even though restore failed
+                        upgrading_queue.add_failed_upgrade(
+                            item['id'],
+                            {
+                                'title': 'N/A - No scrape result',
+                                'magnet': 'N/A',
+                                'reason': 'scraping_queue_no_results_restore_failed'
+                            }
+                        )
+
+                    except Exception as reset_err:
+                         logging.error(f"CRITICAL: Failed to manually reset state for {item_identifier} after restore failure: {reset_err}")
+                         # Item might be truly stuck now. Requires manual intervention.
+
+                    # --- END NEW FALLBACK LOGIC ---
+
+                # Always reset the not wanted check flag after handling an upgrade failure in scraping
                 self.reset_not_wanted_check(item['id'])
-                self.remove_item(item) # Remove from Scraping queue after handling
-            except Exception as e:
-                logging.error(f"Error handling failed upgrade in scraping queue for {item_identifier}: {e}", exc_info=True)
-                # Fallback: Remove from queue if error during handling
-                # Check if item exists before removing, might have been removed by restore_item_state or other logic
+                # Always remove from ScrapingQueue memory after handling (whether restore worked or failed)
+                # Ensure item exists before removing
                 if self.contains_item_id(item.get('id')):
                     self.remove_item(item)
-            return # Stop processing for this failed upgrade
+
+            except Exception as e:
+                logging.error(f"Error handling failed upgrade in scraping queue for {item_identifier}: {e}", exc_info=True)
+                # Fallback: Ensure removal from memory if an error occurs during handling
+                if self.contains_item_id(item.get('id')):
+                    self.remove_item(item)
+            return # Stop processing for this item (it's either handled or logged as critically failed)
 
         # --- Original Logic for Non-Upgrade Items ---
         if self.is_item_old(item):

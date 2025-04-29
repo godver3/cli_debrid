@@ -800,7 +800,8 @@
                     pageViews
                 });
 
-                if (hasPhalanxAccepted && !hasSeenSupport && pageViews >= 100) {
+                // Temporarily disable the support modal by adding '&& false'
+                if (hasPhalanxAccepted && !hasSeenSupport && pageViews >= 100 && false) {
                     console.log('Showing support modal in 2 seconds...');
                     setTimeout(() => {
                         console.log('Attempting to show support modal now');
