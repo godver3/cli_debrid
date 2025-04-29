@@ -184,9 +184,9 @@ class ProgramRunner:
         # Base Task Intervals
         self.task_intervals = {
             # Queue Processing Tasks (intervals for individual queues are less critical now)
-            'Wanted': 5,
-            'Scraping': 5,
-            'Adding': 5,
+            'Wanted': 10,             # Increased from 5
+            'Scraping': 10,           # Increased from 5
+            'Adding': 10,             # Increased from 5
             'Checking': 180,
             'Sleeping': 300,
             'Unreleased': 300,
@@ -629,6 +629,13 @@ class ProgramRunner:
                     # --- END EDIT ---
 
                     trigger = IntervalTrigger(seconds=interval_seconds)
+
+                    # *** START EDIT: Explicitly pass scheduler's timezone to add_job ***
+                    # This should prevent the IntervalTrigger from calling tzlocal.get_localzone()
+                    resolved_timezone = self.scheduler.timezone
+                    logging.debug(f"Passing timezone '{resolved_timezone}' explicitly to add_job for task '{job_id}'")
+                    # *** END EDIT ***
+
                     self.scheduler.add_job(
                         func=wrapped_func,
                         trigger=trigger,
@@ -637,7 +644,10 @@ class ProgramRunner:
                         replace_existing=True,
                         misfire_grace_time=max(60, interval_seconds // 4),
                         # *** START EDIT: Allow 1 concurrent instance ***
-                        max_instances=1
+                        max_instances=1,
+                        # *** END EDIT ***
+                        # *** START EDIT: Add timezone argument ***
+                        timezone=resolved_timezone
                         # *** END EDIT ***
                     )
                     # *** START EDIT: Updated log message ***

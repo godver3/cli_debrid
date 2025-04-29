@@ -1510,7 +1510,7 @@ def test_notification():
                     'to_address': notification_config['to_address']
                 }
                 
-                send_email_notification(smtp_config, content)
+                send_email_notification(smtp_config, content, 'test')
                 success = True
             
             else:

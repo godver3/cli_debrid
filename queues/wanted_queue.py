@@ -360,7 +360,6 @@ class WantedQueue:
 
             blacklisted_count = 0
             if not wanted_items:
-                logging.debug("No items currently in Wanted state to check against manual blacklist.")
                 return 0
 
             #logging.debug(f"Checking {len(wanted_items)} Wanted items against manual blacklist...")
