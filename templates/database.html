@@ -812,7 +812,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Update columns functionality
         updateColumnsBtn.addEventListener('click', function() {
             const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
-            
+
             if (selectedColumnValues.length === 0) {
                 showPopup({
                     type: POPUP_TYPES.ERROR,
@@ -824,12 +824,37 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Save selected columns to localStorage
             localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(selectedColumnValues));
-            saveSettings();
-            
+            saveSettings(); // Saves other relevant settings like filters, sort, content type, logic
+
             // Hide the column selector
             columnSelector.classList.add('hidden');
             toggleColumnSelectorBtn.classList.remove('active');
             toggleColumnSelectorBtn.textContent = 'Select Columns to Display';
+
+            // --- START CHANGE ---
+            // Gather all current settings to refresh the view correctly
+            const currentFilters = JSON.parse(localStorage.getItem(STORAGE_KEYS.FILTERS) || '[]');
+            const currentSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN) || '';
+            const currentSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER) || 'asc';
+            const currentFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND';
+            // Ensure currentContentType is up-to-date from localStorage
+            const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE) || 'movie';
+            // Use the globally tracked currentContentType, validated against saved value
+            currentContentType = (savedContentType === 'movie' || savedContentType === 'episode') ? savedContentType : 'movie';
+
+            const params = {
+                selected_columns: JSON.stringify(selectedColumnValues), // Use the newly selected columns
+                filters: JSON.stringify(currentFilters),              // Include current filters
+                sort_column: currentSortColumn,                       // Include current sort column
+                sort_order: currentSortOrder,                         // Include current sort order
+                filter_logic: currentFilterLogic,                     // Include current filter logic
+                content_type: currentContentType,                     // Include current content type
+                letter: currentLetter || '',                          // Include current letter pagination state
+            };
+
+            // Call updateContent to refresh the table view with new columns and existing settings
+            updateContent('{{ url_for('database.index') }}', params);
+            // --- END CHANGE ---
         });
 
         // Initialize column selection

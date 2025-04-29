@@ -116,13 +116,24 @@ class UnreleasedQueue:
 
                     target_datetime = datetime.combine(base_date, airtime)
 
-                    if item['type'] == 'movie':
-                        movie_airtime_offset = get_setting("Queue", "movie_airtime_offset", 19)
-                        offset = float(movie_airtime_offset) if movie_airtime_offset else 19.0
-                    else:  # episode
-                        episode_airtime_offset = get_setting("Queue", "episode_airtime_offset", 0)
-                        offset = float(episode_airtime_offset) if episode_airtime_offset else 0.0
-                    
+                    # Apply the appropriate offset based on type
+                    offset = 0.0
+                    item_type = item['type']
+                    if item_type == 'movie':
+                        movie_offset_setting = get_setting("Queue", "movie_airtime_offset", "19")
+                        try:
+                            offset = float(movie_offset_setting)
+                        except (ValueError, TypeError):
+                            logging.warning(f"Invalid movie_airtime_offset setting ('{movie_offset_setting}') in UnreleasedQueue. Using default 19.")
+                            offset = 19.0
+                    elif item_type == 'episode':
+                        episode_offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
+                        try:
+                            offset = float(episode_offset_setting)
+                        except (ValueError, TypeError):
+                            logging.warning(f"Invalid episode_airtime_offset setting ('{episode_offset_setting}') in UnreleasedQueue. Using default 0.")
+                            offset = 0.0
+
                     target_scrape_time = target_datetime + timedelta(hours=offset)
                     
                     time_until_target = target_scrape_time - current_datetime

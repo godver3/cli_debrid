@@ -29,10 +29,10 @@ class UpgradingQueue:
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         self.upgrades_file = Path(db_content_dir) / "upgrades.pkl"
         self.failed_upgrades_file = Path(db_content_dir) / "failed_upgrades.pkl"
-        self.upgrade_states_file = Path(db_content_dir) / "upgrade_states.pkl"  # New file for complete states
+        self.upgrade_states_file = Path(db_content_dir) / "upgrade_states.pkl"
         self.upgrades_data = self.load_upgrades_data()
         self.failed_upgrades = self.load_failed_upgrades()
-        self.upgrade_states = self.load_upgrade_states()  # Load saved states
+        self.upgrade_states = self.load_upgrade_states()
         self.currently_processing_item_id: Optional[str] = None
 
     def load_upgrades_data(self):
@@ -122,22 +122,33 @@ class UpgradingQueue:
             return {}
 
     def save_upgrade_states(self):
-        with open(self.upgrade_states_file, 'wb') as f:
-            pickle.dump(self.upgrade_states, f)
+        try:
+            with open(self.upgrade_states_file, 'wb') as f:
+                pickle.dump(self.upgrade_states, f)
+            # Optional: Add a debug log here if needed, but maybe too verbose
+            # logging.debug(f"Successfully saved upgrade states to {self.upgrade_states_file}")
+        except (IOError, pickle.PicklingError, EOFError) as e:
+            logging.error(f"Failed to save upgrade states to {self.upgrade_states_file}: {str(e)}", exc_info=True)
+            # Depending on severity, you might want to raise the exception
+            # or implement a more robust backup/retry mechanism here.
 
     def save_item_state(self, item: Dict[str, Any]):
         """Save complete item state before attempting an upgrade"""
         item_id = item['id']
         if item_id not in self.upgrade_states:
             self.upgrade_states[item_id] = []
-        
+
         # Save complete item state with timestamp
+        current_state_copy = item.copy() # Ensure we are saving a distinct copy
         self.upgrade_states[item_id].append({
             'timestamp': datetime.now(),
-            'state': item.copy()  # Save complete copy of item
+            'state': current_state_copy
         })
+
+        # --- Call the save function ---
         self.save_upgrade_states()
-        logging.info(f"Saved complete state for item {item_id} before upgrade attempt")
+        # --- Log SUCCESS *after* saving ---
+        logging.info(f"Saved state snapshot for item {item_id} (Total states stored for item: {len(self.upgrade_states[item_id])})")
 
     def get_last_stable_state(self, item_id: str) -> Optional[Dict[str, Any]]:
         """Get the most recent stable state for an item"""
@@ -149,10 +160,23 @@ class UpgradingQueue:
     def restore_item_state(self, item: Dict[str, Any]) -> bool:
         """Restore item to its last stable state"""
         item_id = item['id']
-        last_state = self.get_last_stable_state(item_id)
-        
+        last_state_entry = None # Initialize
+
+        # --- Enhanced Check ---
+        if item_id not in self.upgrade_states or not self.upgrade_states[item_id]:
+            logging.warning(f"No previous state found for item {item_id} in upgrade_states dictionary.")
+            return False
+        # --- End Enhanced Check ---
+
+        # Get the state entry (dictionary containing timestamp and state)
+        last_state_entry = self.upgrade_states[item_id][-1]
+        last_state = last_state_entry.get('state') # Extract the actual state dictionary
+
         if not last_state:
-            logging.warning(f"No previous state found for item {item_id}")
+            logging.error(f"Found state entry for item {item_id}, but the 'state' key is missing or empty. Cannot restore.")
+            # Optional: Maybe remove the corrupted entry?
+            # self.upgrade_states[item_id].pop()
+            # self.save_upgrade_states()
             return False
 
         try:
@@ -173,20 +197,25 @@ class UpgradingQueue:
             conn.execute(query, values)
             conn.commit()
             
-            # Remove the used state from history
-            if self.upgrade_states[item_id]:
-                self.upgrade_states[item_id].pop()
-                self.save_upgrade_states()
-            
-            logging.info(f"Successfully restored previous state for item {item_id}")
+            # Remove the used state from history *after* successful DB commit
+            if self.upgrade_states.get(item_id): # Check if key still exists
+                try:
+                    self.upgrade_states[item_id].pop()
+                    logging.info(f"Popped used state for item {item_id}. Remaining states: {len(self.upgrade_states[item_id])}")
+                    self.save_upgrade_states() # Save after popping
+                except IndexError:
+                     logging.warning(f"Attempted to pop state for item {item_id}, but the list was already empty (concurrent modification?).")
+
+            logging.info(f"Successfully restored previous state for item {item_id} from snapshot taken at {last_state_entry.get('timestamp')}")
             return True
             
         except Exception as e:
             conn.rollback()
-            logging.error(f"Failed to restore previous state for item {item_id}: {str(e)}")
+            logging.error(f"Failed to restore previous state for item {item_id} using snapshot from {last_state_entry.get('timestamp') if last_state_entry else 'N/A'}: {str(e)}")
             return False
         finally:
-            conn.close()
+            if conn: # Ensure conn exists before closing
+                conn.close()
 
     def add_failed_upgrade(self, item_id: str, result_info: Dict[str, Any]):
         if item_id not in self.failed_upgrades:

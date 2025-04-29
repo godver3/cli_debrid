@@ -279,9 +279,19 @@ class WantedQueue:
                         # Apply offset
                         offset_hours = 0.0
                         if item['type'] == 'movie':
-                            offset_hours = float(get_setting("Queue", "movie_airtime_offset", 19))
+                            movie_offset_setting = get_setting("Queue", "movie_airtime_offset", "19") # Get as string initially
+                            try:
+                                offset_hours = float(movie_offset_setting)
+                            except (ValueError, TypeError):
+                                logging.warning(f"Invalid movie_airtime_offset setting ('{movie_offset_setting}'). Using default 19.")
+                                offset_hours = 19.0 # Default float value
                         elif item['type'] == 'episode':
-                             offset_hours = float(get_setting("Queue", "episode_airtime_offset", 0))
+                            episode_offset_setting = get_setting("Queue", "episode_airtime_offset", "0") # Get as string initially
+                            try:
+                                 offset_hours = float(episode_offset_setting)
+                            except (ValueError, TypeError):
+                                 logging.warning(f"Invalid episode_airtime_offset setting ('{episode_offset_setting}'). Using default 0.")
+                                 offset_hours = 0.0 # Default float value
 
                         effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
 
