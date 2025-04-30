@@ -222,6 +222,7 @@
                 <p>This function will convert an existing Plex library to use symlinks. This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.</p>
                 <button type="submit">Convert to Symlinks</button>
             </form>
+            <div id="convert-to-symlinks-progress" class="progress-area" style="margin-top: 15px;"></div>
         </div>
         <div class="debug_item">
             <h3>Plex Token Status</h3>
@@ -1141,10 +1142,13 @@
 
         // Add event listener for convert to symlinks form
         const convertToSymlinksForm = document.getElementById('convert-to-symlinks-form');
-        if (convertToSymlinksForm) {
+        const convertProgressDiv = document.getElementById('convert-to-symlinks-progress');
+
+        if (convertToSymlinksForm && convertProgressDiv) {
             convertToSymlinksForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                
+                convertProgressDiv.innerHTML = ''; // Clear previous progress
+
                 showPopup({
                     type: POPUP_TYPES.CONFIRM,
                     message: 'Are you sure you want to convert library items to use symlinks? This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.',
@@ -1155,39 +1159,101 @@
                             method: 'POST',
                         })
                         .then(response => {
-                            const contentType = response.headers.get('content-type');
                             if (!response.ok) {
+                                // Try to get error text, then throw
                                 return response.text().then(text => {
-                                    throw new Error(text || 'An error occurred');
+                                     throw new Error(text || `Server responded with status ${response.status}`);
                                 });
                             }
-                            if (contentType && contentType.includes('application/json')) {
+                            // Check content type BEFORE parsing
+                            const contentType = response.headers.get('content-type');
+                             if (contentType && contentType.includes('application/json')) {
                                 return response.json();
                             }
-                            return response.text();
+                             throw new Error('Server response was not JSON'); // Or handle non-JSON if expected
                         })
                         .then(data => {
                             Loading.hide();
-                            const message = typeof data === 'object' ? data.message : data;
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                message: message,
-                                title: 'Success'
-                            });
+                            // --- Start Task Monitoring ---
+                            if (data.success && data.task_id) {
+                                convertProgressDiv.innerHTML = `<p>Conversion task started (ID: ${data.task_id}). Monitoring progress...</p>`;
+                                monitorConversionProgress(data.task_id, convertProgressDiv); // Call the monitoring function
+                            } else {
+                                throw new Error(data.error || 'Failed to start conversion task.');
+                            }
+                            // --- End Task Monitoring ---
                         })
                         .catch(error => {
                             Loading.hide();
-                            console.error('Error:', error);
+                            console.error('Error starting conversion:', error);
                             showPopup({
                                 type: POPUP_TYPES.ERROR,
-                                message: error.message || 'An error occurred',
+                                message: error.message || 'An error occurred while starting the conversion.',
                                 title: 'Error'
                             });
+                             convertProgressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
                         });
                     }
                 });
             });
         }
+
+        // --- Add New Monitoring Function ---
+        function monitorConversionProgress(taskId, targetDiv) {
+            targetDiv.innerHTML = `<p>Connecting to progress stream for task ${taskId}...</p>`;
+            const eventSource = new EventSource(`/debug/api/conversion_progress/${taskId}`); // Use the correct endpoint
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
+
+                    // Display specific counts if available
+                    if (data.total_items !== undefined) {
+                        progressHtml += `<p>Progress: ${data.processed_items || 0} / ${data.total_items}</p>`;
+                        progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                        progressHtml += `<p>Moved to Wanted: ${data.items_to_wanted || 0}</p>`;
+                        progressHtml += `<p>Deleted (Duplicates): ${data.items_deleted || 0}</p>`;
+                        progressHtml += `<p>Skipped (Already Symlinks): ${data.items_skipped || 0}</p>`;
+                    }
+
+                    if (data.errors && data.errors.length > 0) { // Check if backend sends errors array
+                        progressHtml += '<p class="error">Errors encountered:</p><ul>';
+                        data.errors.forEach(err => { progressHtml += `<li>${err}</li>`; });
+                        progressHtml += '</ul>';
+                    }
+
+                    targetDiv.innerHTML = progressHtml;
+
+                    if (data.complete) {
+                        eventSource.close();
+                        console.log(`Progress stream closed for conversion task ${taskId}`);
+                        // Show final popup based on backend success status
+                        showPopup({
+                             type: data.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
+                             message: data.message || (data.success ? 'Conversion complete.' : 'Conversion failed or finished with errors.'),
+                             title: data.success ? 'Conversion Complete' : 'Conversion Finished' // Use "Finished" if success is false
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error parsing progress update:", e, "Raw data:", event.data);
+                    targetDiv.innerHTML = `<p class="error">Error receiving progress update.</p>`;
+                    eventSource.close(); // Close on parsing error
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error("EventSource failed:", error);
+                targetDiv.innerHTML = `<p class="error">Connection to progress stream lost.</p>`;
+                eventSource.close();
+                 showPopup({ // Add popup on connection error too
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Lost connection to the progress stream. Please check server logs.',
+                    title: 'Connection Error'
+                });
+            };
+        }
+        // --- End New Monitoring Function ---
 
         function updatePlexTokenStatus(data) {
             const container = document.querySelector('.token-status-container');

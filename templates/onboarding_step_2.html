@@ -694,13 +694,16 @@ document.addEventListener('DOMContentLoaded', function() {
             resetModal();
         }
     }
-
+    
+    /*
+    // Commenting out the window.onclick listener to prevent closing the modal by clicking the backdrop
     window.onclick = function(event) {
         if (event.target == modal) {
             modal.style.display = 'none';
             resetModal();
         }
     }
+    */
 
     if (nextBtn) {
         nextBtn.onclick = function() {

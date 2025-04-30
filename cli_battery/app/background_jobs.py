@@ -3,7 +3,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime, timezone, timedelta
 from app.logger_config import logger
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy import func
+from sqlalchemy import func, select
 from flask import current_app
 import time
 import requests
@@ -17,16 +17,13 @@ class BackgroundJobManager:
     def __init__(self):
         self.scheduler = BackgroundScheduler(timezone=_get_local_timezone())
         self.settings = Settings()
-        self.metadata_manager = MetadataManager()
         self.app = None
         self.engine = None
 
     def init_app(self, app):
         """Initialize with Flask app context"""
         self.app = app
-        # Initialize database engine
         self.engine = init_db()
-        # Configure the global session
         DbSession.configure(bind=self.engine)
 
     def start(self):
@@ -75,83 +72,110 @@ class BackgroundJobManager:
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""
         try:
-            with DbSession() as session:
-                # Disable autoflush to prevent premature flushes during iteration
-                session.autoflush = False
-                
-                # Get all items in batches to reduce memory usage and lock time
+            # Use a session ONLY for querying item IDs and timestamps
+            with DbSession() as query_session:
+                query_session.autoflush = False # Still useful for query-only session
+
                 batch_size = 50
-                total_items = session.query(func.count(Item.id)).scalar()
+                # --- Select only specific columns ---
+                total_items_stmt = select(func.count(Item.id))
+                total_items = query_session.execute(total_items_stmt).scalar_one()
+                # --- End Selection ---
+
                 refreshed_count = 0
                 stale_count = 0
-                
+
                 logger.info(f"Checking {total_items} items for stale metadata...")
-                
+
                 try:
                     # Process items in batches
                     for offset in range(0, total_items, batch_size):
-                        items_batch = session.query(Item).limit(batch_size).offset(offset).all()
-                        
-                        for item in items_batch:
+                        # --- Select only specific columns ---
+                        stmt = select(Item.id, Item.imdb_id, Item.updated_at).\
+                               order_by(Item.id).\
+                               limit(batch_size).\
+                               offset(offset)
+                        items_batch = query_session.execute(stmt).all() # Returns Row objects
+                        # --- End Selection ---
+
+                        batch_imdb_ids = [item.imdb_id for item in items_batch]
+                        logger.debug(f"Processing batch offset {offset}, imdb_ids: {batch_imdb_ids}")
+
+                        # --- Iterate through Row objects ---
+                        for item_row in items_batch:
+                            item_id = item_row.id # Access via attribute or index
+                            item_imdb_id = item_row.imdb_id
+                            item_updated_at = item_row.updated_at
+                            # Use imdb_id for logging instead of title
+                            log_identifier = item_imdb_id or f"DB_ID_{item_id}"
+                            # --- End Iteration Setup ---
+
                             try:
-                                # Ensure item.updated_at has timezone info
-                                if item.updated_at and item.updated_at.tzinfo is None:
-                                    item.updated_at = item.updated_at.replace(tzinfo=_get_local_timezone())
-                                
-                                if MetadataManager.is_metadata_stale(item.updated_at):
+                                # Check staleness using the fetched timestamp
+                                if item_updated_at and item_updated_at.tzinfo is None:
+                                    item_updated_at = item_updated_at.replace(tzinfo=_get_local_timezone())
+
+                                if MetadataManager.is_metadata_stale(item_updated_at):
                                     stale_count += 1
+                                    logger.info(f"Item {log_identifier} is stale. Attempting refresh.")
                                     retry_count = 0
                                     max_retries = 3
+                                    success = False
                                     while retry_count < max_retries:
                                         try:
-                                            # Pass the current session to refresh_metadata
-                                            MetadataManager.refresh_metadata(item.imdb_id, existing_session=session)
-                                            refreshed_count += 1
-                                            # Re-query the item to ensure it's still bound to the session
-                                            item = session.query(Item).get(item.id)
-                                            break  # Success, exit retry loop
+                                            # Call refresh_metadata using only the IMDb ID
+                                            result = MetadataManager.refresh_metadata(item_imdb_id)
+
+                                            if result is not None:
+                                                success = True
+                                                refreshed_count += 1
+                                                logger.info(f"Successfully refreshed and saved metadata for {log_identifier}")
+                                                break
+                                            else:
+                                                logger.warning(f"Refresh attempt {retry_count + 1} failed for {log_identifier}. Save might have failed.")
+
                                         except requests.exceptions.HTTPError as e:
                                             if e.response is not None and e.response.status_code == 429:
-                                                retry_count += 1
-                                                logger.warning(f"Rate limit hit (429) while processing {item.title} ({item.imdb_id}). Attempt {retry_count}/{max_retries}")
-                                                if retry_count < max_retries:
-                                                    logger.info("Pausing for 30 seconds before retry...")
-                                                    time.sleep(30)  # 30 second pause on rate limit
-                                                else:
-                                                    logger.error(f"Max retries reached for {item.title} ({item.imdb_id})")
-                                                    break
+                                                 logger.warning(f"Rate limit hit (429) while refreshing {log_identifier}. Attempt {retry_count + 1}/{max_retries}")
                                             else:
-                                                logger.error(f"HTTP error refreshing metadata for {item.title} ({item.imdb_id}): {e}")
-                                                break
+                                                 logger.error(f"HTTP error refreshing metadata for {log_identifier}: {e}")
+                                                 break
                                         except Exception as e:
-                                            logger.error(f"Failed to refresh metadata for {item.title} ({item.imdb_id}): {e}")
-                                            break
+                                            logger.error(f"Unexpected error during refresh attempt for {log_identifier}: {e}")
+                                            # break # Consider breaking on unexpected errors
+
+                                        retry_count += 1
+                                        if not success and retry_count < max_retries:
+                                            logger.info(f"Pausing for 30 seconds before retry attempt {retry_count + 1} for {log_identifier}...")
+                                            time.sleep(30)
+
+                                    if not success:
+                                        logger.error(f"Max retries reached or non-retriable error occurred for {log_identifier}")
+
                             except Exception as e:
-                                logger.error(f"Error processing item {item.imdb_id}: {e}")
-                                continue
-                        
-                        # Commit after each batch to prevent long transactions
-                        session.commit()
-                        
-                        # Log progress every few batches
+                                # Log error using the fetched imdb_id
+                                logger.error(f"Error processing item {log_identifier} in batch: {e}", exc_info=True)
+                                continue # Move to the next item in the batch
+
+                        # No commit/rollback needed for the query_session
+
+                        # Log progress
                         if (offset + batch_size) % (batch_size * 5) == 0:
-                            logger.info(f"Progress: {min(offset + batch_size, total_items)}/{total_items} items checked")
-                        
-                        # Increase delay between batches to reduce API pressure
-                        time.sleep(3)  # 3 second delay between batches
-                    
+                             logger.info(f"Progress: {min(offset + batch_size, total_items)}/{total_items} items checked ({refreshed_count}/{stale_count} stale refreshed so far)")
+
+                        # Delay between batches
+                        logger.debug(f"Sleeping for 3 seconds after processing batch offset {offset}")
+                        time.sleep(3)
+
                     logger.info(
                         f"Metadata refresh complete: {refreshed_count}/{stale_count} stale items refreshed "
                         f"({total_items} total items checked)"
                     )
                 except Exception as e:
-                    logger.error(f"Error processing items batch: {e}")
-                    session.rollback()
+                    logger.error(f"Error processing item batches: {e}", exc_info=True)
+
         except Exception as e:
-            logger.error(f"Error in refresh_stale_metadata job: {e}")
-        finally:
-            # Ensure the session is closed
-            DbSession.remove()
+            logger.error(f"Error in refresh_stale_metadata job setup: {e}", exc_info=True)
 
 # Global instance
 background_jobs = BackgroundJobManager()

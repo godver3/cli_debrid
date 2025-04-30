@@ -909,7 +909,9 @@ def send_email_notification(smtp_config, content, notification_category):
         msg['From'] = smtp_config['from_address']
         msg['To'] = smtp_config['to_address']
         msg['Subject'] = subject # Use the dynamic subject
-        msg.attach(MIMEText(content, 'html'))
+        # Replace newlines with HTML line breaks for email formatting
+        html_content = content.replace('\n', '<br>\n')
+        msg.attach(MIMEText(html_content, 'html'))
 
         # Use context manager for SMTP connection
         with smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port'], timeout=15) as server: # Added timeout

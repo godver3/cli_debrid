@@ -456,17 +456,38 @@ def add_torrent_to_debrid():
                         season_data = metadata['seasons'].get(str(season_number), {})
                         episodes = season_data.get('episodes', {})
                         
-                        # Create a MediaMatcher instance to find matching files
+                        # Create a MediaMatcher instance
                         media_matcher = MediaMatcher()
                         
+                        # --- START EDIT: Pre-parse files ---
+                        # Pre-parse all files from the torrent info once
+                        parsed_files = []
+                        torrent_files = torrent_info.get('files', [])
+                        for file_dict in torrent_files:
+                            parsed_info = media_matcher._parse_file_info(file_dict)
+                            if parsed_info:
+                                parsed_files.append(parsed_info)
+                        
+                        if not parsed_files:
+                            logging.warning(f"No valid video files found in torrent for season pack processing.")
+                            # Decide if we should return an error or just continue
+                            # For now, let's return success as the torrent was added, but log the issue.
+                            return jsonify({
+                                'success': True,
+                                'message': 'Successfully added torrent, but no valid video files found for season pack processing.',
+                                'cache_status': cache_status
+                            })
+                        # --- END EDIT ---
+
                         # For each episode in the season
-                        for episode_num, episode_data in episodes.items():
+                        for episode_num_str, episode_data in episodes.items(): # Renamed episode_num to avoid clash
                             try:
-                                episode_num = int(episode_num)
+                                episode_num = int(episode_num_str) # Use a different variable name here
                                 # Create episode-specific item
                                 episode_item = item.copy()
                                 episode_item['episode_number'] = episode_num
                                 episode_item['current_score'] = current_score # Use the score passed for the pack
+                                episode_item['type'] = 'episode' # Ensure type is set for matching
                                 
                                 # Get episode-specific release date and title
                                 first_aired = episode_data.get('first_aired')
@@ -484,10 +505,13 @@ def add_torrent_to_debrid():
                                     except ValueError:
                                         episode_item['release_date'] = 'Unknown'
                                 
-                                # Find matching file for this episode
-                                matches = media_matcher.match_content(files, episode_item)
-                                if matches:
-                                    episode_item['filled_by_file'] = matches[0][0]  # Use first match's path
+                                # --- START EDIT: Find matching file using find_best_match_from_parsed ---
+                                # Find matching file for this episode from the pre-parsed list
+                                match_result = media_matcher.find_best_match_from_parsed(parsed_files, episode_item)
+                                
+                                if match_result:
+                                    matching_filepath_basename, _ = match_result # Unpack the tuple
+                                    episode_item['filled_by_file'] = matching_filepath_basename # Use the basename
                                     
                                     # Add episode to database
                                     from database import add_media_item
@@ -498,12 +522,18 @@ def add_torrent_to_debrid():
                                         from queues.checking_queue import CheckingQueue
                                         checking_queue = CheckingQueue()
                                         checking_queue.add_item(episode_item)
-                                        logging.info(f"Added episode {episode_num} to checking queue")
+                                        logging.info(f"Added episode {episode_num} to checking queue (matched file: {matching_filepath_basename})")
+                                    else:
+                                         logging.error(f"Failed to add episode {episode_num} to database.")
                                 else:
-                                    logging.warning(f"No matching file found for episode {episode_num}")
+                                    logging.warning(f"No matching file found for episode {episode_num} (S{season_number}E{episode_num}) in parsed files.")
+                                # --- END EDIT ---
                             except Exception as e:
                                 logging.error(f"Error processing episode {episode_num}: {str(e)}")
                                 continue
+                    else:
+                         logging.warning(f"No metadata or seasons found for TMDB ID {tmdb_id} during season pack processing.")
+
                     return jsonify({
                         'success': True,
                         'message': 'Successfully processed season pack',

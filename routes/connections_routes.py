@@ -122,6 +122,8 @@ def check_plex_connection():
         try:
             libraries = library_response.json()
             available_libraries = {lib['title']: lib['key'] for lib in libraries['MediaContainer']['Directory']}
+            # Create a lowercase version of available library titles for case-insensitive check
+            available_libraries_lower = {title.lower(): key for title, key in available_libraries.items()}
         except (ValueError, KeyError) as e:
             # If JSON parsing fails or expected structure isn't found
             return {
@@ -135,26 +137,37 @@ def check_plex_connection():
                 }
             }
             
-        # Check each configured library
+        # Check each configured library case-insensitively
         missing_libraries = []
-        for lib in libraries_to_check:
-            lib = lib.strip()
-            if lib not in available_libraries:
-                missing_libraries.append(lib)
-                
+        found_keys = set() # Track keys found to ensure config points to valid libraries
+
+        for lib_name_or_id in libraries_to_check: # Renamed variable for clarity
+            lib_name_or_id = lib_name_or_id.strip()
+            lib_lower = lib_name_or_id.lower()
+
+            # Check if lowercase name exists or if it's a valid key
+            if lib_lower in available_libraries_lower:
+                 found_keys.add(available_libraries_lower[lib_lower])
+            elif lib_name_or_id in available_libraries.values(): # Check if it's a key
+                 found_keys.add(lib_name_or_id)
+            else:
+                missing_libraries.append(lib_name_or_id)
+
+        # Report missing libraries based on original input names/IDs
         if missing_libraries:
             return {
                 'name': 'Plex',
-                'connected': False,
-                'error': f'Missing libraries: {", ".join(missing_libraries)}',
+                'connected': False, # Connection is fine, but config is wrong
+                'error': f'Configured libraries not found: {", ".join(missing_libraries)}',
                 'details': {
                     'url': plex_url,
-                    'available_libraries': list(available_libraries.keys()),
-                    'configured_libraries': libraries_to_check,
+                    'available_libraries': list(available_libraries.keys()), # Show actual names
+                    'configured_libraries': libraries_to_check, # Show what user configured
                     'missing_libraries': missing_libraries
                 }
             }
             
+        # If no libraries were missing, the connection and configuration are valid
         return {
             'name': 'Plex',
             'connected': True,
@@ -162,7 +175,8 @@ def check_plex_connection():
             'details': {
                 'url': plex_url,
                 'available_libraries': list(available_libraries.keys()),
-                'configured_libraries': libraries_to_check
+                'configured_libraries': libraries_to_check,
+                 # Optionally add 'found_library_keys': list(found_keys) for debugging
             }
         }
         

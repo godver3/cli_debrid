@@ -31,6 +31,7 @@
     function initializeContentSourcesFunctionality() {
         initializeAddSourceButton();
         initializeSourceButtons();
+        initializeAssignUserButtons();
 
         const settingsContainer = document.querySelector('.settings-container');
         if (settingsContainer) {
@@ -410,6 +411,121 @@
                  button.textContent = 'Import Liked Lists to this Source';
             });
     }
+
+    function initializeAssignUserButtons() {
+        const assignButtons = document.querySelectorAll('.get-user-watchlist-btn');
+        assignButtons.forEach(button => {
+            button.removeEventListener('click', handleAssignUserClick);
+            button.addEventListener('click', handleAssignUserClick);
+        });
+    }
+
+    function handleAssignUserClick(event) {
+        const sourceId = event.target.getAttribute('data-source-id');
+        showUserSelectionPopup(sourceId);
+    }
+
+    function showUserSelectionPopup(sourceId) {
+        fetch('/user_token/collect_tokens/get_usernames')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.usernames && data.usernames.length > 0) {
+                    const dropdownOptions = data.usernames.map(username => ({
+                        value: username,
+                        text: username
+                    }));
+
+                    window.showPopup({
+                        type: POPUP_TYPES.PROMPT,
+                        title: 'Select Plex User to Assign',
+                        message: 'Choose the user whose credentials should be used for this source:',
+                        dropdownOptions: dropdownOptions,
+                        confirmText: 'Assign User',
+                        cancelText: 'Cancel',
+                        onConfirm: (selectedUsername) => {
+                            if (selectedUsername) {
+                                assignUserToSource(sourceId, selectedUsername);
+                            }
+                        }
+                    });
+                } else if (data.success && data.usernames.length === 0) {
+                     window.showPopup({
+                         type: POPUP_TYPES.INFO,
+                         title: 'No Users Found',
+                         message: 'No Plex user tokens have been collected yet. Please use the "Collect User Plex Tokens" page first.'
+                     });
+                } else {
+                    throw new Error(data.error || 'Failed to fetch usernames.');
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching stored usernames:', error);
+                window.showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Error fetching user list: ' + error.message
+                });
+            });
+    }
+
+    function assignUserToSource(sourceId, username) {
+        console.log(`Assigning user ${username} to source ${sourceId}`);
+         const assignButton = document.querySelector(`.get-user-watchlist-btn[data-source-id="${sourceId}"]`);
+         if (assignButton) {
+             assignButton.textContent = 'Assigning...';
+             assignButton.disabled = true;
+         }
+
+        fetch('/user_token/collect_tokens/assign_to_source', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ source_id: sourceId, username: username })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'User Assigned',
+                    message: `Successfully assigned ${data.username} and their token to this source. Save settings to persist.`
+                });
+
+                const usernameInput = document.getElementById(`content-sources-${sourceId}-username`);
+                const tokenInput = document.getElementById(`content-sources-${sourceId}-token`);
+
+                if (usernameInput) {
+                    usernameInput.value = data.username;
+                    usernameInput.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    console.warn(`Could not find username input for source ${sourceId}`);
+                }
+                if (tokenInput) {
+                    tokenInput.value = data.token;
+                    tokenInput.dispatchEvent(new Event('change', { bubbles: true }));
+                } else {
+                    console.warn(`Could not find token input for source ${sourceId}`);
+                }
+
+            } else {
+                throw new Error(data.error || 'Unknown error during assignment.');
+            }
+        })
+        .catch(error => {
+            console.error('Error assigning user to source:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Assignment Failed',
+                message: 'Error assigning user: ' + error.message
+            });
+        })
+        .finally(() => {
+             if (assignButton) {
+                 assignButton.textContent = 'Assign User/Token to Source';
+                 assignButton.disabled = false;
+             }
+        });
+    }
 </script>
 
 <style>
@@ -459,38 +575,125 @@
                     </div>
                 </div>
                 <div class="settings-section-content" style="display: none;">
-                    {% for key, value in config.items() %}
-                    {% if key != 'type' and key != 'allow_specials' %}
-                    <div class="settings-form-group">
-                        {% if key == 'versions' %}
-                            <label class="settings-title">Versions:</label>
-                            <div class="version-checkboxes">
-                                {% set scraping_versions = settings.get('Scraping', {}).get('versions', {}) %}
-                                {% set source_versions = value %}
-                                {% for version_name in scraping_versions.keys() %}
-                                <label>
-                                    <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version_name }}"
-                                        data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version_name }}"
-                                        {% if source_versions is mapping and version_name in source_versions and source_versions[version_name] %}
-                                            checked
-                                        {% elif source_versions is iterable and not source_versions is string and not source_versions is mapping and version_name in source_versions %}
-                                            checked
-                                        {% endif %}
-                                        >
-                                    {{ version_name }}
-                                </label>
-                                {% endfor %}
-                            </div>
-                        {% elif key == 'enabled' %}
-                            <label class="settings-title">
-                                <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
-                                       name="Content Sources.{{ source_id }}.{{ key }}"
-                                       data-section="Content Sources"
-                                       data-key="{{ source_id }}.{{ key }}"
-                                       {% if value %}checked{% endif %}>
-                                {{ key|replace('_', ' ')|title }}
-                            </label>
-                        {% elif key == 'media_type' %}
+
+                    {# --- START: Conditional Rendering based on Type --- #}
+                    {% if config.type == 'Other Plex Watchlist' %}
+                        {# --- Render fields in SPECIFIC order for Other Plex Watchlist --- #}
+
+                        {# 1. Enabled #}
+                        {% set key = 'enabled' %}
+                        {% set value = config.get(key, False) %}
+                        <div class="settings-form-group">
+                             <label class="settings-title">
+                                 <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                        name="Content Sources.{{ source_id }}.{{ key }}"
+                                        data-section="Content Sources"
+                                        data-key="{{ source_id }}.{{ key }}"
+                                        {% if value %}checked{% endif %}>
+                                 {{ key|replace('_', ' ')|title }}
+                             </label>
+                             {# Add description if available in schema #}
+                             {% if settings_schema['Content Sources'].schema is defined and
+                                   config.type in settings_schema['Content Sources'].schema and
+                                   key in settings_schema['Content Sources'].schema[config.type] and
+                                   settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                             {% endif %}
+                         </div>
+
+                        {# 2. Versions #}
+                        {% set key = 'versions' %}
+                        {% set value = config.get(key, {}) %} {# Default to empty dict/list as appropriate #}
+                         <div class="settings-form-group">
+                             <label class="settings-title">Versions:</label>
+                             <div class="version-checkboxes">
+                                 {% set scraping_versions = settings.get('Scraping', {}).get('versions', {}) %}
+                                 {% set source_versions = value %}
+                                 {% for version_name in scraping_versions.keys() %}
+                                 <label>
+                                     <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version_name }}"
+                                         data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version_name }}"
+                                         {% if source_versions is mapping and version_name in source_versions and source_versions[version_name] %}
+                                             checked
+                                         {% elif source_versions is iterable and not source_versions is string and not source_versions is mapping and version_name in source_versions %}
+                                             checked
+                                         {% endif %}
+                                         >
+                                     {{ version_name }}
+                                 </label>
+                                 {% endfor %}
+                             </div>
+                             {# Add description if available in schema #}
+                             {% if settings_schema['Content Sources'].schema is defined and
+                                   config.type in settings_schema['Content Sources'].schema and
+                                   key in settings_schema['Content Sources'].schema[config.type] and
+                                   settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                             {% endif %}
+                         </div>
+
+                        {# 3. Username #}
+                        {% set key = 'username' %}
+                        {% set value = config.get(key, '') %}
+                        <div class="settings-form-group">
+                           <label for="content-sources-{{ source_id }}-username" class="settings-title">Username:</label>
+                           <input type="text" id="content-sources-{{ source_id }}-username"
+                                  name="Content Sources.{{ source_id }}.username"
+                                  value="{{ value }}"
+                                  class="settings-input"
+                                  data-section="Content Sources"
+                                  data-key="{{ source_id }}.username"
+                                  placeholder="Assign user via button ->"
+                                  readonly>
+                            {# Add description if available in schema #}
+                            {% if settings_schema['Content Sources'].schema is defined and
+                                  config.type in settings_schema['Content Sources'].schema and
+                                  key in settings_schema['Content Sources'].schema[config.type] and
+                                  settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                            {% else %}
+                                 <p class="settings-description">The Plex username whose token will be used.</p>
+                             {% endif %}
+                        </div>
+
+                        {# 5. Token #}
+                        {% set key = 'token' %}
+                        {% set value = config.get(key, '') %}
+                        <div class="settings-form-group">
+                           <label for="content-sources-{{ source_id }}-token" class="settings-title">Token:</label>
+                           <input type="text" id="content-sources-{{ source_id }}-token"
+                                  name="Content Sources.{{ source_id }}.token"
+                                  value="{{ value }}"
+                                  class="settings-input"
+                                  data-section="Content Sources"
+                                  data-key="{{ source_id }}.token"
+                                  placeholder="Assign user via button ->"
+                                  readonly>
+                            {# Add description if available in schema #}
+                           {% if settings_schema['Content Sources'].schema is defined and
+                                 config.type in settings_schema['Content Sources'].schema and
+                                 key in settings_schema['Content Sources'].schema[config.type] and
+                                 settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                           {% else %}
+                                <p class="settings-description">The Plex token associated with the user. (Stored securely on backend)</p>
+                           {% endif %}
+                        </div>
+
+                        {# 4. Assign User/Token Button #}
+                        <div class="settings-form-group" style="margin-top: 10px;">
+                            <button type="button"
+                                    class="import-liked-to-source-btn popup-button get-user-watchlist-btn"
+                                    data-source-id="{{ source_id }}">
+                                Assign User/Token to Source
+                            </button>
+                            <p class="settings-description">Select a user (from collected tokens) to populate their username and token for this source.</p>
+                        </div>
+
+                        {# 6. Media Type #}
+                        {% set key = 'media_type' %}
+                        {% set value = config.get(key, 'All') %} {# Default to 'All' if not set #}
+                        <div class="settings-form-group">
                             <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Media Type:</label>
                             <select id="content-sources-{{ source_id }}-{{ key }}"
                                     name="Content Sources.{{ source_id }}.{{ key }}"
@@ -501,79 +704,180 @@
                                     <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
                                 {% endfor %}
                             </select>
-                        {% elif key == 'trakt_lists' and config.type == 'Trakt Lists' %}
-                            <label for="content-sources-{{ source_id }}-trakt_lists" class="settings-title">Trakt List URL(s):</label>
-                            <textarea id="content-sources-{{ source_id }}-trakt_lists"
-                                      name="Content Sources.{{ source_id }}.trakt_lists"
-                                      class="settings-input"
-                                      data-section="Content Sources"
-                                      data-key="{{ source_id }}.trakt_lists"
-                                      rows="3"
-                                      placeholder="Enter comma-separated Trakt List URLs">{{ value }}</textarea>
-                            <button type="button"
-                                    class="import-liked-to-source-btn popup-button"
-                                    data-source-id="{{ source_id }}"
-                                    style="margin-top: 5px;">
-                                Import Liked Lists to this Source
-                            </button>
-                            {% if settings_schema['Content Sources'].schema is defined and
-                                  config.type in settings_schema['Content Sources'].schema and
-                                  key in settings_schema['Content Sources'].schema[config.type] and
-                                  settings_schema['Content Sources'].schema[config.type][key].description is defined %}
-                                <p class="settings-description" style="margin-top: 8px;">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
-                            {% endif %}
-                        {% else %}
-                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                            {% if value is iterable and (value is not string) %}
-                                <select id="content-sources-{{ source_id }}-{{ key }}"
-                                        name="Content Sources.{{ source_id }}.{{ key }}"
-                                        multiple class="settings-input"
-                                        data-section="Content Sources"
-                                        data-key="{{ source_id }}.{{ key }}">
-                                    {% for option in value %}
-                                    <option value="{{ option }}" selected>{{ option }}</option>
-                                    {% endfor %}
-                                </select>
-                            {% else %}
-                                <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
-                                       name="Content Sources.{{ source_id }}.{{ key }}"
-                                       value="{{ value }}"
-                                       class="settings-input"
-                                       data-section="Content Sources"
-                                       data-key="{{ source_id }}.{{ key }}">
-                            {% endif %}
+                             {# Add description if available in schema #}
                             {% if settings_schema['Content Sources'].schema is defined and
                                   config.type in settings_schema['Content Sources'].schema and
                                   key in settings_schema['Content Sources'].schema[config.type] and
                                   settings_schema['Content Sources'].schema[config.type][key].description is defined %}
                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                             {% endif %}
-                        {% endif %}
-                    </div>
-                    {% endif %}
-                    {% endfor %}
+                        </div>
 
-                    {% set source_type = config.type %}
-                    {% if settings_schema['Content Sources'].schema is defined and
-                          source_type in settings_schema['Content Sources'].schema and
-                          'allow_specials' in settings_schema['Content Sources'].schema[source_type] %}
-                    <div class="settings-form-group">
-                        <label class="settings-title">
-                            <input type="checkbox" id="content-sources-{{ source_id }}-allow_specials"
-                                   name="Content Sources.{{ source_id }}.allow_specials"
+                        {# 7. Display Name #}
+                        {% set key = 'display_name' %}
+                        {% set value = config.get(key, '') %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                            <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
+                                   name="Content Sources.{{ source_id }}.{{ key }}"
+                                   value="{{ value }}"
+                                   class="settings-input"
                                    data-section="Content Sources"
-                                   data-key="{{ source_id }}.allow_specials"
-                                   {% if config.allow_specials %}checked{% endif %}>
-                            Allow Specials
-                        </label>
-                        {% if settings_schema['Content Sources'].schema[source_type]['allow_specials'].description is defined %}
-                            <p class="settings-description">{{ settings_schema['Content Sources'].schema[source_type]['allow_specials'].description }}</p>
-                        {% endif %}
-                    </div>
-                    {% endif %}
+                                   data-key="{{ source_id }}.{{ key }}">
+                             {# Add description if available in schema #}
+                             {% if settings_schema['Content Sources'].schema is defined and
+                                   config.type in settings_schema['Content Sources'].schema and
+                                   key in settings_schema['Content Sources'].schema[config.type] and
+                                   settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                             {% endif %}
+                        </div>
 
-                </div>
-            </div>
+                        {# 8. Allow Specials (Conditional) #}
+                        {% set key = 'allow_specials' %}
+                        {% if settings_schema['Content Sources'].schema is defined and
+                              config.type in settings_schema['Content Sources'].schema and
+                              key in settings_schema['Content Sources'].schema[config.type] %}
+                           {% set value = config.get(key, False) %}
+                           <div class="settings-form-group">
+                               <label class="settings-title">
+                                   <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                          name="Content Sources.{{ source_id }}.{{ key }}"
+                                          data-section="Content Sources"
+                                          data-key="{{ source_id }}.{{ key }}"
+                                          {% if value %}checked{% endif %}>
+                                   {{ key|replace('_', ' ')|title }}
+                               </label>
+                               {% if settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                   <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                               {% endif %}
+                           </div>
+                        {% endif %}
+
+                    {% else %}
+                        {# --- Render fields using the GENERAL loop for other types --- #}
+                        {% for key, value in config.items() %}
+                            {# Skip standard 'type' field #}
+                            {% if key != 'type' %}
+                                <div class="settings-form-group"> {# Ensure each standard field is wrapped #}
+                                    {% if key == 'versions' %}
+                                         {# ... versions rendering ... #}
+                                         <label class="settings-title">Versions:</label>
+                                         <div class="version-checkboxes">
+                                             {% set scraping_versions = settings.get('Scraping', {}).get('versions', {}) %}
+                                             {% set source_versions = value %}
+                                             {% for version_name in scraping_versions.keys() %}
+                                             <label>
+                                                 <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version_name }}"
+                                                     data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version_name }}"
+                                                     {% if source_versions is mapping and version_name in source_versions and source_versions[version_name] %}
+                                                         checked
+                                                     {% elif source_versions is iterable and not source_versions is string and not source_versions is mapping and version_name in source_versions %}
+                                                         checked
+                                                     {% endif %}
+                                                     >
+                                                 {{ version_name }}
+                                             </label>
+                                             {% endfor %}
+                                         </div>
+                                    {% elif key == 'enabled' %}
+                                         {# ... enabled rendering ... #}
+                                         <label class="settings-title">
+                                             <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                                    name="Content Sources.{{ source_id }}.{{ key }}"
+                                                    data-section="Content Sources"
+                                                    data-key="{{ source_id }}.{{ key }}"
+                                                    {% if value %}checked{% endif %}>
+                                             {{ key|replace('_', ' ')|title }}
+                                         </label>
+                                    {% elif key == 'media_type' %}
+                                         {# ... media_type rendering ... #}
+                                         <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Media Type:</label>
+                                         <select id="content-sources-{{ source_id }}-{{ key }}"
+                                                 name="Content Sources.{{ source_id }}.{{ key }}"
+                                                 class="settings-input"
+                                                 data-section="Content Sources"
+                                                 data-key="{{ source_id }}.{{ key }}">
+                                             {% for option in ['All', 'Movies', 'Shows'] %}
+                                                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                                             {% endfor %}
+                                         </select>
+                                    {% elif key == 'trakt_lists' and config.type == 'Trakt Lists' %}
+                                         {# ... trakt_lists rendering ... #}
+                                         <label for="content-sources-{{ source_id }}-trakt_lists" class="settings-title">Trakt List URL(s):</label>
+                                         <textarea id="content-sources-{{ source_id }}-trakt_lists"
+                                                   name="Content Sources.{{ source_id }}.trakt_lists"
+                                                   class="settings-input"
+                                                   data-section="Content Sources"
+                                                   data-key="{{ source_id }}.trakt_lists"
+                                                   rows="3"
+                                                   placeholder="Enter comma-separated Trakt List URLs">{{ value }}</textarea>
+                                         <button type="button"
+                                                 class="import-liked-to-source-btn popup-button"
+                                                 data-source-id="{{ source_id }}"
+                                                 style="margin-top: 5px;">
+                                             Import Liked Lists to this Source
+                                         </button>
+                                    {% else %}
+                                         {# ... default text/select rendering ... #}
+                                         <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                                         {% if value is iterable and (value is not string) %}
+                                             <select id="content-sources-{{ source_id }}-{{ key }}"
+                                                     name="Content Sources.{{ source_id }}.{{ key }}"
+                                                     multiple class="settings-input"
+                                                     data-section="Content Sources"
+                                                     data-key="{{ source_id }}.{{ key }}">
+                                                 {% for option in value %}
+                                                 <option value="{{ option }}" selected>{{ option }}</option>
+                                                 {% endfor %}
+                                             </select>
+                                         {% else %}
+                                             <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
+                                                    name="Content Sources.{{ source_id }}.{{ key }}"
+                                                    value="{{ value }}"
+                                                    class="settings-input"
+                                                    data-section="Content Sources"
+                                                    data-key="{{ source_id }}.{{ key }}">
+                                         {% endif %}
+                                    {% endif %}
+                                    {# Render description for general fields if available #}
+                                     {% if settings_schema['Content Sources'].schema is defined and
+                                           config.type in settings_schema['Content Sources'].schema and
+                                           key in settings_schema['Content Sources'].schema[config.type] and
+                                           settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                         <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                                     {% endif %}
+                                </div> {# End .settings-form-group for general fields #}
+                            {% endif %} {# End if key != 'type' #}
+                        {% endfor %} {# End general loop for other types #}
+
+                        {# Render 'allow_specials' generally if applicable (might be redundant if handled above, but safe) #}
+                         {% set source_type = config.type %}
+                         {% if settings_schema['Content Sources'].schema is defined and
+                               source_type in settings_schema['Content Sources'].schema and
+                               'allow_specials' in settings_schema['Content Sources'].schema[source_type] %}
+                             {% set key = 'allow_specials' %}
+                             {% set value = config.get(key, False) %}
+                             <div class="settings-form-group">
+                                 <label class="settings-title">
+                                     <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                            name="Content Sources.{{ source_id }}.{{ key }}"
+                                            data-section="Content Sources"
+                                            data-key="{{ source_id }}.{{ key }}"
+                                            {% if value %}checked{% endif %}>
+                                     {{ key|replace('_', ' ')|title }}
+                                 </label>
+                                 {% if settings_schema['Content Sources'].schema[source_type][key].description is defined %}
+                                     <p class="settings-description">{{ settings_schema['Content Sources'].schema[source_type][key].description }}</p>
+                                 {% endif %}
+                             </div>
+                         {% endif %}
+
+                    {% endif %}
+                    {# --- END: Conditional Rendering based on Type --- #}
+
+                </div> {# End of settings-section-content #}
+            </div> {# End of settings-section #}
         {% else %}
             <div class="settings-section settings-section-invalid" data-source-id="{{ source_id }}">
                 <div class="settings-section-header">

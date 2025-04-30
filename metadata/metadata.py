@@ -1001,46 +1001,60 @@ def refresh_release_dates():
 
     for index, item in enumerate(items_to_refresh, 1):
         try:
-            # Convert sqlite3.Row to dict
             item_dict = dict(item)
-            
             title = item_dict.get('title', 'Unknown Title')
             media_type = item_dict.get('type', 'Unknown Type').lower()
             imdb_id = item_dict.get('imdb_id')
             season_number = item_dict.get('season_number')
             episode_number = item_dict.get('episode_number')
+            db_item_id = item_dict.get('id')
 
-            logging.info(f"Processing item {index}/{len(items_to_refresh)}: {title} ({media_type}) - IMDb ID: {imdb_id}")
-            
+            existing_release_date = item_dict.get('release_date')
+            def is_valid_date_str(date_str):
+                if not date_str or str(date_str).lower() in ['unknown', 'none']: return False
+                try: datetime.strptime(str(date_str), '%Y-%m-%d'); return True
+                except (ValueError, TypeError): return False
+
+            logging.info(f"Processing item {index}/{len(items_to_refresh)}: {title} ({media_type}) - IMDb ID: {imdb_id}, DB ID: {db_item_id}")
+
             if not imdb_id:
-                logging.warning(f"Skipping item {index} due to missing imdb_id")
+                logging.warning(f"Skipping item {index} (DB ID: {db_item_id}) due to missing imdb_id")
                 continue
 
+            new_release_date = None
+            new_physical_release_date = None
+            new_airtime = None
+
             if media_type == 'movie':
-                metadata, _ = DirectAPI.get_movie_metadata(imdb_id)
+                metadata, source = DirectAPI.get_movie_metadata(imdb_id)
                 if not metadata:
                     logging.warning(f"No metadata found for movie {title} ({imdb_id})")
-                    new_release_date = 'Unknown'
+                    if is_valid_date_str(existing_release_date):
+                        new_release_date = existing_release_date
+                        logging.warning(f"Metadata fetch failed for {title} ({imdb_id}), but preserving existing valid release date: {new_release_date}")
+                    else:
+                        new_release_date = 'Unknown'
                     new_physical_release_date = None
                 else:
                     logging.info("Getting release date and physical release date")
-                    new_release_date = get_release_date(metadata, imdb_id)
+                    fetched_release_date = get_release_date(metadata, imdb_id)
                     new_physical_release_date = get_physical_release_date(imdb_id)
                     logging.info(f"Physical release date: {new_physical_release_date}")
 
-                # Store original values for comparison
+                    if fetched_release_date == 'Unknown' and is_valid_date_str(existing_release_date):
+                        new_release_date = existing_release_date
+                        logging.warning(f"Fetched release date was 'Unknown' for {title} ({imdb_id}), but preserving existing valid release date: {new_release_date}")
+                    else:
+                        new_release_date = fetched_release_date
+
                 item_dict['early_release_original'] = item_dict.get('early_release', False)
                 item_dict['physical_release_date_original'] = item_dict.get('physical_release_date')
-
-                # Check Trakt for early releases if setting is enabled AND the item is not flagged to skip this check
                 trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
                 skip_early_release_check = item_dict.get('no_early_release', False)
-                
                 if trakt_early_releases and not skip_early_release_check:
                     logging.info(f"Checking Trakt for early releases for {title} ({imdb_id})")
                     trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
                     if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
-                        # Ensure we are checking the correct media type from Trakt search results
                         found_movie = False
                         for result in trakt_id:
                             if result.get('type') == 'movie':
@@ -1049,15 +1063,15 @@ def refresh_release_dates():
                                     trakt_id_num = str(trakt_movie_data['ids']['trakt'])
                                     logging.debug(f"Found Trakt movie ID {trakt_id_num} for {imdb_id}")
                                     trakt_lists = trakt.fetch_items_from_trakt(f"/movies/{trakt_id_num}/lists/personal/popular")
-                                    if trakt_lists: # Ensure trakt_lists is not None
+                                    if trakt_lists:
                                         for trakt_list in trakt_lists:
                                             if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
                                                 logging.info(f"Movie {title} ({imdb_id}) found in early release list: {trakt_list['name']}")
                                                 item_dict['early_release'] = True
                                                 found_movie = True
-                                                break # Exit inner loop (lists)
+                                                break
                                     if found_movie:
-                                        break # Exit outer loop (search results)
+                                        break
                                 else:
                                      logging.warning(f"Trakt search result for {imdb_id} did not contain expected movie ID structure: {result}")
                         if not found_movie:
@@ -1067,10 +1081,8 @@ def refresh_release_dates():
                 elif skip_early_release_check:
                     logging.info(f"Skipping Trakt early release check for {title} ({imdb_id}) due to no_early_release flag.")
                 
-                # Calculate new state for movies
-                new_state = item_dict['state'] # Default to current state
+                new_state = item_dict['state']
                 today = datetime.now().date()
-
                 if item_dict.get('early_release', False):
                     new_state = "Wanted"
                     logging.info(f"Movie is an early release, setting state to Wanted")
@@ -1085,7 +1097,7 @@ def refresh_release_dates():
                              logging.info(f"Physical release date {physical_release_dt} is in the future, setting state to Unreleased")
                     except ValueError:
                          logging.warning(f"Invalid physical release date format: {new_physical_release_date}. Keeping state as {new_state}")
-                         new_state = "Wanted" # Or handle as appropriate
+                         new_state = "Wanted"
                 elif new_release_date and new_release_date != 'Unknown':
                     try:
                         release_dt = datetime.strptime(new_release_date, "%Y-%m-%d").date()
@@ -1097,26 +1109,26 @@ def refresh_release_dates():
                             logging.info(f"Release date {release_dt} is in the future, setting state to Unreleased")
                     except ValueError:
                         logging.warning(f"Invalid release date format: {new_release_date}. Keeping state as {new_state}")
-                        new_state = "Wanted" # Or handle as appropriate
+                        new_state = "Wanted"
                 else:
-                    # If no valid dates and not early release, likely keep existing or set to Wanted
-                    new_state = "Wanted" 
+                    new_state = "Wanted"
                     logging.info(f"No valid release dates found, setting state to Wanted")
                 
-                # For movies, airtime is not relevant
                 new_airtime = None
 
             elif media_type == 'episode':
-                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+                metadata, source = DirectAPI.get_show_metadata(imdb_id)
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
-                
-                # Fetch the latest airtime for the show
+
                 new_airtime = get_episode_airtime(imdb_id)
                 logging.info(f"New airtime from metadata: {new_airtime}")
-                
+
                 if not metadata or not isinstance(metadata, dict):
                     logging.warning(f"Invalid or missing metadata for show {imdb_id}")
-                    new_release_date = 'Unknown'
+                    if is_valid_date_str(existing_release_date):
+                        new_release_date = existing_release_date
+                        logging.warning(f"Metadata fetch failed for show {imdb_id}, preserving existing valid date: {new_release_date}")
+                    else: new_release_date = 'Unknown'
                 else:
                     seasons = metadata.get('seasons', {})
                     if not isinstance(seasons, dict):
@@ -1133,38 +1145,55 @@ def refresh_release_dates():
                                 logging.warning(f"Invalid episodes data for show {imdb_id} season {season_number}")
                                 new_release_date = 'Unknown'
                             else:
-                                episode_data = episodes.get(str(episode_number))
+                                season_key_lookup = str(season_number)
+                                episode_key_lookup = str(episode_number)
+                                episode_data = episodes.get(episode_key_lookup)
+
                                 if not episode_data or not isinstance(episode_data, dict):
-                                    logging.warning(f"No valid data found for S{season_number}E{episode_number}")
-                                    new_release_date = 'Unknown'
+                                    logging.debug(f"Lookup Failure Details for DB ID: {db_item_id}")
+                                    logging.debug(f"  IMDb ID: {imdb_id}")
+                                    logging.debug(f"  DB Season Number: {season_number!r} (Type: {type(season_number).__name__})")
+                                    logging.debug(f"  DB Episode Number: {episode_number!r} (Type: {type(episode_number).__name__})")
+                                    logging.debug(f"  Season Key Used: '{season_key_lookup}'")
+                                    logging.debug(f"  Episode Key Used: '{episode_key_lookup}'")
+                                    logging.debug(f"  Metadata Source: {source}")
+                                    logging.debug(f"  Available Season Keys in Battery: {list(seasons.keys())}")
+                                    logging.debug(f"  Available Episode Keys for Season '{season_key_lookup}': {list(episodes.keys())}")
+                                    logging.debug(f"  Result of episodes.get('{episode_key_lookup}'): {episode_data!r}")
+
+                                    logging.warning(f"No valid data found for S{season_number}E{episode_number} in fetched metadata.")
+                                    if is_valid_date_str(existing_release_date):
+                                        new_release_date = existing_release_date
+                                        logging.warning(f"Episode data lookup failed, preserving existing valid release date: {new_release_date}")
+                                    else:
+                                        new_release_date = 'Unknown'
+                                        logging.warning("Episode data lookup failed and no valid existing date found. Setting to Unknown.")
                                 else:
                                     first_aired_str = episode_data.get('first_aired')
                                     logging.info(f"First aired date from metadata: {first_aired_str}")
-                                    
                                     if first_aired_str:
                                         try:
-                                            # Parse the UTC datetime string
-                                            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-
-                                            # Convert UTC to local timezone
+                                            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
                                             local_tz = _get_local_timezone()
                                             local_dt = first_aired_utc.astimezone(local_tz)
-
-                                            # Format the local date
                                             new_release_date = local_dt.strftime("%Y-%m-%d")
                                             logging.info(f"Calculated local release date {new_release_date} from UTC {first_aired_str}")
                                         except ValueError as e:
                                             logging.error(f"Invalid datetime format or conversion error: {first_aired_str} - Error: {e}")
-                                            new_release_date = 'Unknown'
+                                            if is_valid_date_str(existing_release_date):
+                                                new_release_date = existing_release_date
+                                                logging.warning(f"Date parsing failed for S{season_number}E{episode_number}, preserving existing valid release date: {new_release_date}")
+                                            else: new_release_date = 'Unknown'
                                     else:
                                         logging.warning("No first_aired date found in episode data")
-                                        new_release_date = 'Unknown'
-                
+                                        if is_valid_date_str(existing_release_date):
+                                            new_release_date = existing_release_date
+                                            logging.warning(f"No first_aired found for S{season_number}E{episode_number}, preserving existing valid release date: {new_release_date}")
+                                        else: new_release_date = 'Unknown'
+
                 logging.info(f"New release date: {new_release_date}")
 
-                # Calculate new state for episodes (moved calculation here for clarity)
-                new_state = item_dict['state'] # Default to current state
+                new_state = item_dict['state']
                 if new_release_date == "Unknown" or new_release_date is None:
                     new_state = "Wanted"
                     logging.info("Release date is Unknown, setting state to Wanted")
@@ -1172,55 +1201,34 @@ def refresh_release_dates():
                     try:
                         release_date_dt = datetime.strptime(new_release_date, "%Y-%m-%d").date()
                         today = datetime.now().date()
+                        if item_dict.get('early_release', False): new_state = "Wanted"; logging.info(f"Episode marked as early release, setting state to Wanted")
+                        else: new_state = "Wanted" if release_date_dt <= today else "Unreleased"; logging.info(f"Episode release date is {release_date_dt}, today is {today}, setting state to {new_state}")
+                    except ValueError: new_state = "Wanted"; logging.warning(f"Invalid release date format: {new_release_date}. Setting state to Wanted.")
 
-                        # If it's an early release, set to Wanted regardless of release date
-                        # Note: early_release flag is typically for movies, but check just in case
-                        if item_dict.get('early_release', False):
-                            new_state = "Wanted"
-                            logging.info(f"Episode marked as early release, setting state to Wanted")
-                        # Otherwise, set to Wanted only if it's past the release date
-                        else:
-                            new_state = "Wanted" if release_date_dt <= today else "Unreleased"
-                            logging.info(f"Episode release date is {release_date_dt}, today is {today}, setting state to {new_state}")
-                    except ValueError:
-                        logging.warning(f"Invalid release date format: {new_release_date}. Setting state to Wanted.")
-                        new_state = "Wanted"
-
-            # Check if any relevant field has changed before updating DB
-            # Ensure all variables used here are defined for both movie and episode branches
-            # Need to add check for no_early_release flag if it changes
             if (new_state != item_dict['state'] or
-                new_release_date != item_dict.get('release_date') or # Use .get for safety
-                (media_type == 'episode' and new_airtime != item_dict.get('airtime')) or # Only check airtime for episodes
+                new_release_date != item_dict.get('release_date') or
+                (media_type == 'episode' and new_airtime != item_dict.get('airtime')) or
                 item_dict.get('early_release', False) != item_dict.get('early_release_original', False) or
-                # Compare the current no_early_release state with its original state (if it existed)
-                item_dict.get('no_early_release', False) != item_dict.get('no_early_release_original', False) or 
+                item_dict.get('no_early_release', False) != item_dict.get('no_early_release_original', False) or
                 (media_type == 'movie' and new_physical_release_date != item_dict.get('physical_release_date_original'))):
 
-                logging.info(f"Changes detected for {title}. Current state: {item_dict['state']}, New state: {new_state}. Updating database.")
-                # Store the original no_early_release value before potential update
+                logging.info(f"Changes detected for {title} (DB ID: {db_item_id}). Current state: {item_dict['state']}, New state: {new_state}. Updating database.")
                 item_dict['no_early_release_original'] = item_dict.get('no_early_release', False)
                 update_release_date_and_state(
-                    item_dict['id'],
-                    new_release_date,
-                    new_state,
-                    airtime=new_airtime,
+                    db_item_id, new_release_date, new_state, airtime=new_airtime,
                     early_release=item_dict.get('early_release', False),
                     physical_release_date=new_physical_release_date if media_type == 'movie' else None,
-                    # Pass the current no_early_release value (which might be False if not set)
-                    no_early_release=item_dict.get('no_early_release', False) 
+                    no_early_release=item_dict.get('no_early_release', False)
                 )
-                log_msg = f"Updated: {title} has a release date of: {new_release_date}"
-                if media_type == 'movie':
-                     log_msg += f" and physical release date of: {new_physical_release_date}"
-                if media_type == 'episode':
-                     log_msg += f" and airtime of: {new_airtime}"
+                log_msg = f"Updated DB for ID {db_item_id}: State={new_state}, ReleaseDate={new_release_date}"
+                if media_type == 'movie': log_msg += f" and physical release date of: {new_physical_release_date}"
+                if media_type == 'episode': log_msg += f" and airtime of: {new_airtime}"
                 logging.info(log_msg)
             else:
-                logging.info("No changes needed for this item")
+                logging.info(f"No changes needed for {title} (DB ID: {db_item_id})")
 
         except Exception as e:
-            logging.error(f"Error processing item {index}: {str(e)}", exc_info=True)
+            logging.error(f"Error processing item {index} (DB ID: {item_dict.get('id', 'N/A')}): {str(e)}", exc_info=True)
             continue
 
     logging.info("Finished refresh_release_dates function")

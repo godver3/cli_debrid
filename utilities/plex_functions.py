@@ -29,26 +29,37 @@ RETRY_DELAY = 1
 def process_library_names(library_names: str, all_libraries: dict, libraries_by_key: dict) -> list:
     """
     Process a comma-separated string of library names/ids and return their corresponding library keys.
-    Handles both library names and numeric IDs.
+    Handles both library names and numeric IDs, performing case-insensitive matching for names.
     
     Args:
         library_names: Comma-separated string of library names or IDs
-        all_libraries: Dictionary mapping library names to keys
+        all_libraries: Dictionary mapping library names (case-sensitive) to keys
         libraries_by_key: Dictionary mapping library keys to names
         
     Returns:
         List of library keys
     """
-    libraries = []
-    for name in library_names.split(','):
-        name = name.strip()
-        if not name:
-            continue
-        if name in all_libraries:  # If it's a library name
-            libraries.append(all_libraries[name])
-        elif name in libraries_by_key:  # If it's a library key/ID
-            libraries.append(name)
-    return libraries
+    processed_keys = set() # Use a set to avoid duplicate keys if names overlap case-insensitively
+    
+    # Create a lower-case mapping for efficient case-insensitive lookup
+    all_libraries_lower = {name.lower(): key for name, key in all_libraries.items()}
+    
+    settings_names = [name.strip() for name in library_names.split(',') if name.strip()]
+
+    for name_or_id in settings_names:
+        name_lower = name_or_id.lower()
+        
+        # Check case-insensitively against Plex library names
+        if name_lower in all_libraries_lower:
+            processed_keys.add(all_libraries_lower[name_lower])
+        # Check if it's a direct library key/ID match
+        elif name_or_id in libraries_by_key:
+            processed_keys.add(name_or_id)
+        else:
+             # Optionally log a warning for names/IDs that don't match anything
+             logger.warning(f"Library name or ID '{name_or_id}' from settings not found in Plex libraries.")
+
+    return list(processed_keys)
 
 async def fetch_data(session: aiohttp.ClientSession, url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
     """Fetch data from Plex with retry logic."""
@@ -351,7 +362,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                         movie_entries.append(movie_entry)
     
     if not movie_entries:
-        logger.error(f"No file path found for movie: {movie['title']}")
+        logger.error(f"No filename found for movie: {movie['title']}")
     
     logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
     return movie_entries

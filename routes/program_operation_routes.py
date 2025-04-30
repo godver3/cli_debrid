@@ -342,41 +342,41 @@ def check_service_connectivity():
             
             try:
                 # Get actual library names from Plex (XML format)
-                available_libraries = []
+                available_library_titles = []
                 library_id_to_title = {}  # Map to store ID -> Title mapping
                 root = ET.fromstring(libraries_response.text)
                 for directory in root.findall('.//Directory'):
                     library_title = directory.get('title')
                     library_key = directory.get('key')
                     if library_title and library_key:
-                        available_libraries.append(library_title)
+                        available_library_titles.append(library_title)
                         library_id_to_title[library_key] = library_title
                         logging.info(f"Found Plex library: ID={library_key}, Title='{library_title}', Type={directory.get('type')}")
                 
-                if not available_libraries:
+                # Create a set of lowercase titles for efficient case-insensitive check
+                available_library_titles_lower = {title.lower() for title in available_library_titles}
+
+                if not available_library_titles:
                     logging.error("No libraries found in Plex response")
                     services_reachable = False
                     failed_services.append("Plex (no libraries found)")
                     return services_reachable, failed_services
 
-                # Verify all configured libraries exist (check both IDs and names)
+                # Verify all configured libraries exist (check IDs case-sensitively, names case-insensitively)
                 missing_libraries = []
-                for lib in movie_libraries + show_libraries:
-                    # Check if the library exists either as a title or an ID
-                    if lib not in available_libraries and lib not in library_id_to_title:
-                        # If it's a number, try to show the expected title
-                        if lib.isdigit() and lib in library_id_to_title:
-                            logging.info(f"Library ID {lib} refers to library '{library_id_to_title[lib]}'")
-                        else:
-                            missing_libraries.append(lib)
-                            logging.warning(f"Library '{lib}' not found in available libraries")
+                for lib_name_or_id in movie_libraries + show_libraries:
+                    # Check if it exists as an ID (case-sensitive) or as a name (case-insensitive)
+                    if lib_name_or_id not in library_id_to_title and lib_name_or_id.lower() not in available_library_titles_lower:
+                         missing_libraries.append(lib_name_or_id)
+                         logging.warning(f"Configured library '{lib_name_or_id}' not found in available libraries (IDs: {list(library_id_to_title.keys())}, Names: {available_library_titles})")
+
 
                 if missing_libraries:
                     error_msg = "Cannot start program: The following Plex libraries were not found:<ul>"
                     for lib in missing_libraries:
                         error_msg += f"<li>{lib}</li>"
                     error_msg += "</ul>Available libraries are:<ul>"
-                    for title in available_libraries:
+                    for title in available_library_titles:
                         error_msg += f"<li>{title}</li>"
                     error_msg += "</ul>Please verify your Plex library names in settings."
                     logging.error(error_msg)
