@@ -57,6 +57,7 @@ from flask import Response, stream_with_context
 # Import Plex debug functions
 # Import sqlite3 for error handling and add_media_item
 import sqlite3
+from utilities.local_library_scan import convert_item_to_symlink
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -1618,7 +1619,6 @@ def convert_to_symlinks():
                 })
 
                 # Convert items to symlinks
-                from utilities.local_library_scan import convert_item_to_symlink
                 processed = 0
                 wanted_count = 0
                 deleted_count = 0
@@ -1661,7 +1661,7 @@ def convert_to_symlinks():
                             logging.info("No symlinks found in first 100 items, disabling symlink check")
                             check_for_symlinks = False
 
-                    result = convert_item_to_symlink(item_dict)
+                    result = convert_item_to_symlink(item_dict, skip_verification=True) # Pass skip_verification=True here
 
                     if result['success']:
                         symlinks_created += 1

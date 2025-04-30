@@ -109,7 +109,7 @@ class ScrapingQueue:
         self.items.sort(key=lambda item: (
             # Preserve primary sort orders (source priority, type, release date implicitly handled by sorting earlier)
             # Then sort episodes explicitly by show/season/episode
-            item.get('imdb_id', ''), # Group by show
+            item.get('imdb_id') or '', # Group by show, ensuring None becomes ''
             item.get('season_number') if item.get('type') == 'episode' and item.get('season_number') is not None else float('inf'), # Sort episodes by season (handle None)
             item.get('episode_number') if item.get('type') == 'episode' and item.get('episode_number') is not None else float('inf') # Then by episode number (handle None)
         ))

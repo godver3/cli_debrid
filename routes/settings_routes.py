@@ -24,6 +24,566 @@ import sys
 
 settings_bp = Blueprint('settings', __name__)
 
+# --- BEGIN Hardcoded Default Versions ---
+HARDCODED_DEFAULT_VERSIONS = {
+  "versions": {
+    "2160p REMUX": {
+      "bitrate_weight": "3",
+      "enable_hdr": True,
+      "filter_in": [
+        "REMUX|Remux"
+      ],
+      "filter_out": [
+        "\\b(Fre|Ger|Ita|Spa|Cze|Hun|Pol|Rus|Ukr|MULTI)\\b",
+        "\\b(SDR)\\b",
+        "\\b(BEN.THE.MEN)\\b",
+        "\\b(ESP|Esp|LATINO)\\b",
+        "\\b(RGzsRutracker)\\b",
+        "\\b(3D)\\b",
+        "www"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "2160p",
+      "max_size_gb": None,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1500
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN|NTb)\\b",
+          1000
+        ],
+        [
+          "\\b(DV)\\b",
+          1000
+        ],
+        [
+          "\\b(FGT|NOGRP)\\b",
+          500
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ]
+      ],
+      "require_physical_release": True,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p REMUX": {
+      "bitrate_weight": "3",
+      "enable_hdr": False,
+      "filter_in": [
+        "REMUX|Remux"
+      ],
+      "filter_out": [
+        "\\b(HONE|MP4|SDR|Rus|Russian|BenTheMen|Ben.The.Men)\\b",
+        "\\b(x265|HEVC|h265)\\b",
+        "RGzsRutracker",
+        "www"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "1080p",
+      "max_size_gb": None,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1500
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN|NTb)\\b",
+          1000
+        ],
+        [
+          "\\b(FGT|NOGRP)\\b",
+          500
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ]
+      ],
+      "require_physical_release": True,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p WEB": {
+      "bitrate_weight": "3",
+      "enable_hdr": False,
+      "filter_in": [
+        "WEB|Web"
+      ],
+      "filter_out": [
+        "\\b(x265|HEVC|MP4|mp4|HDR|H265|h256|3D|10bit)\\b",
+        "RGzsRutracker",
+        "www.Torrenting.com"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "1080p",
+      "max_size_gb": None,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          480
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "\\b(MULTI)\\b",
+          200
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "www",
+          1000
+        ]
+      ],
+      "require_physical_release": False,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "2160p WEB": {
+      "bitrate_weight": "3",
+      "enable_hdr": True,
+      "filter_in": [
+        "WEB|Web"
+      ],
+      "filter_out": [
+        "\\b(MP4|mp4|3D|SDR)\\b",
+        "www",
+        "RGzsRutracker",
+        "www.Torrenting.com"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "2160p",
+      "max_size_gb": None,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(AMZN)\\b",
+          5
+        ],
+        [
+          "DV",
+          50
+        ],
+        [
+          "DV.HDR.2160p.WEB.H265",
+          25
+        ],
+        [
+          "DV.2160p.WEB.H265",
+          50
+        ],
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          495
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "\\b(MULTI)\\b",
+          200
+        ]
+      ],
+      "require_physical_release": False,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p ENCODE": {
+      "enable_hdr": False,
+      "max_resolution": "1080p",
+      "resolution_wanted": "==",
+      "resolution_weight": 3,
+      "hdr_weight": 3,
+      "similarity_weight": 3,
+      "size_weight": 3,
+      "bitrate_weight": 3,
+      "preferred_filter_in": [],
+      "preferred_filter_out": [],
+      "filter_in": [
+        "1080p.BluRay|1080p.bluray"
+      ],
+      "filter_out": [
+        "x265",
+        "h265",
+        "hevc",
+        "HEVC"
+      ],
+      "min_size_gb": 0,
+      "max_size_gb": None,
+      "similarity_threshold_anime": 0.35,
+      "similarity_threshold": 0.8,
+      "wake_count": 0,
+      "require_physical_release": True
+    },
+    "2160p BEST": {
+      "bitrate_weight": "3",
+      "enable_hdr": True,
+      "filter_in": [],
+      "filter_out": [
+        "\\b(MP4|mp4|3D|SDR)\\b",
+        "www",
+        "RGzsRutracker",
+        "www.Torrenting.com"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "2160p",
+      "max_size_gb": None,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "DV",
+          50
+        ],
+        [
+          "REPACK",
+          50
+        ],
+        [
+          "DV.HDR.2160p.WEB.H265",
+          25
+        ],
+        [
+          "HYBRID",
+          25
+        ],
+        [
+          "DV.2160p.WEB.H265",
+          50
+        ],
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1800
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN)\\b",
+          1600
+        ],
+        [
+          "REMUX|Remux",
+          1500
+        ],
+        [
+          "\\b(BBQ|BMF|c0kE|Chotab|CRiSC|CtrlHD|D-Z0N3|Dariush|decibeL|DON|EbP|EDPH|Geek|LolHD|NCmt|PTer|TayTO|TDD|TnP|VietHD|ZQ)\\b",
+          1000
+        ],
+        [
+          "\\b(EA|HiDt|HiSD|iFT|QOQ|SA89|sbR)\\b",
+          900
+        ],
+        [
+          "\\b(BHDStudio|hallowed|HONE|LoRD|playHD|SPHD|W4NK3R)\\b",
+          800
+        ],
+        [
+          "\\b(Bluray|BLURAY)\\b",
+          500
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          495
+        ],
+        [
+          "SCENE",
+          1
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "\\b(HDR10Plus)\\b",
+          25
+        ],
+        [
+          "\\b(DVP7|P7|P7)\\b",
+          100
+        ],
+        [
+          "\\b(DVP8|P8|P8)\\b",
+          100
+        ],
+        [
+          "\\b(HDR10+)\\b",
+          100
+        ],
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "\\b(MULTI)\\b",
+          200
+        ]
+      ],
+      "require_physical_release": False,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    },
+    "1080p BEST": {
+      "bitrate_weight": "3",
+      "enable_hdr": False,
+      "filter_in": [],
+      "filter_out": [
+        "\\b(x265|HEVC|MP4|mp4|HDR|H265|h256|3D|10bit)\\b",
+        "RGzsRutracker"
+      ],
+      "hdr_weight": "3",
+      "max_resolution": "1080p",
+      "max_size_gb": None,
+      "min_size_gb": 0,
+      "preferred_filter_in": [
+        [
+          "\\b(WEBRip)\\b",
+          100
+        ],
+        [
+          "REMUX|Remux",
+          100
+        ],
+        [
+          "NORDIC",
+          25
+        ],
+        [
+          "REPACK",
+          50
+        ],
+        [
+          "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
+          2000
+        ],
+        [
+          "\\b(Flights|NCmt|playBD|SiCFoI|SURFINBIRD|TEPES)\\b",
+          1800
+        ],
+        [
+          "\\b(decibeL|EPSiLON|HiFi|iFT|KRaLiMaRKo|PTP|SumVision|TOA|TRiToN)\\b",
+          1600
+        ],
+        [
+          "REMUX|Remux",
+          1500
+        ],
+        [
+          "\\b(BBQ|BMF|c0kE|Chotab|CRiSC|CtrlHD|D-Z0N3|Dariush|decibeL|DON|EbP|EDPH|Geek|LolHD|NCmt|PTer|TayTO|TDD|TnP|VietHD|ZQ)\\b",
+          1000
+        ],
+        [
+          "\\b(EA|HiDt|HiSD|iFT|QOQ|SA89|sbR)\\b",
+          900
+        ],
+        [
+          "\\b(BHDStudio|hallowed|HONE|LoRD|playHD|SPHD|W4NK3R)\\b",
+          800
+        ],
+        [
+          "\\b(Bluray|BLURAY)\\b",
+          500
+        ],
+        [
+          "\\b(ABBIE|AJP69|APEX|PAXA|PEXA|XEPA|BLUTONiUM|CMRG|CRFW|CRUD|FLUX|GNOME|HONE|KiNGS|Kitsune|NOSiViD|NTb|NTG|SiC|TEPES)\\b",
+          500
+        ],
+        [
+          "\\b(dB|Flights|MiU|monkee|MZABI|PHOENiX|playWEB|SbR|SMURF|TOMMY|XEBEC|4KBEC|CEBEX)\\b",
+          400
+        ],
+        [
+          "\\b(BYNDR|GNOMiSSiON|NINJACENTRAL|ROCCaT|SiGMA|SLiGNOME|SwAgLaNdEr)\\b",
+          300
+        ],
+        [
+          "\\b(WEB|WEB-DL|Web-DL)\\b",
+          250
+        ],
+        [
+          "\\b(CAKES|GGEZ|GGWP|GLHF|GOSSIP|NAISU|KOGI|PECULATE|SLOT|EDITH|ETHEL|ELEANOR|B2B|SPAMnEGGS|FTP|DiRT|SYNCOPY|BAE|SuccessfulCrab|NHTFS|SURCODE|B0MBARDIERS|DEFLATE|INFLATE)\\b",
+          480
+        ],
+        [
+          "SCENE",
+          1
+        ],
+        [
+          "\\b(Arg0|BTW|CasStudio|CiT|Coo7|DEEP|DRACULA|END|ETHiCS|FC|FGT|HDT|iJP|iKA|iT00NZ|JETIX|KHN|KiMCHI|LAZY|Legion|legi0n|LYS1TH3A|NPMS|NYH|OZR|orbitron|PSiG|RTFM|RTN|SCY|SDCC|SPiRiT|T4H|T6D|TVSmash|Vanilla|ViSiON|ViSUM|Vodes|WELP|ZeroBuild|NOGRP|BTN)\\b",
+          100
+        ]
+      ],
+      "preferred_filter_out": [
+        [
+          "\\b(MULTI)\\b",
+          200
+        ],
+        [
+          "\\b(RUS|RUSSIAN|Russian|Rus|PLSUB|Ger|Esp|Fre|Latino|LATINO|SPANISH|HINDI|KAZAKH|ITA|POR|Cze|Hun|Pol|Ukr)\\b",
+          1000
+        ],
+        [
+          "BDRip",
+          1000
+        ],
+        [
+          "EN-TR",
+          1000
+        ],
+        [
+          "www",
+          1000
+        ],
+        [
+          "[^\\x00-\\x7F\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6]",
+          10000
+        ]
+      ],
+      "require_physical_release": False,
+      "resolution_wanted": "==",
+      "resolution_weight": "3",
+      "similarity_threshold": "0.8",
+      "similarity_threshold_anime": "0.35",
+      "similarity_weight": "3",
+      "size_weight": "3",
+      "wake_count": 0
+    }
+  }
+}
+# --- END Hardcoded Default Versions ---
+
 @settings_bp.route('/content-sources/content')
 def content_sources_content():
     config = load_config()
@@ -825,6 +1385,7 @@ def delete_version():
 
 @settings_bp.route('/versions/import_defaults', methods=['POST'])
 def import_default_versions():
+    default_versions = None
     try:
         # Determine the base path depending on whether the app is frozen
         if getattr(sys, 'frozen', False):
@@ -832,16 +1393,29 @@ def import_default_versions():
             base_path = os.path.dirname(sys.executable)
         else:
             # If running as a normal script
-            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # Assumes settings_routes.py is one level down from the project root
+            # Use __file__ to get the directory of the current script (settings_routes.py)
+            # Then go up one level to get the project root
+            base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
 
         default_versions_path = os.path.join(base_path, 'optional_default_versions.json')
         
-        # Read the default versions from the JSON file using the absolute path
-        with open(default_versions_path, 'r') as f:
-            default_versions = json.load(f)
+        try:
+            # Read the default versions from the JSON file using the absolute path
+            with open(default_versions_path, 'r') as f:
+                default_versions = json.load(f)
+            logging.info(f"Successfully loaded default versions from: {default_versions_path}")
+
+        except FileNotFoundError:
+            logging.warning(f"Default versions file not found at path: {default_versions_path}. Using hardcoded fallback.")
+            default_versions = HARDCODED_DEFAULT_VERSIONS
+        except json.JSONDecodeError:
+            logging.error(f"Invalid JSON in default versions file at path: {default_versions_path}. Using hardcoded fallback.")
+            default_versions = HARDCODED_DEFAULT_VERSIONS
         
-        if not isinstance(default_versions, dict) or 'versions' not in default_versions:
-            return jsonify({'success': False, 'error': 'Invalid default versions format'}), 400
+        if not default_versions or not isinstance(default_versions, dict) or 'versions' not in default_versions:
+             # This case handles if the hardcoded version is somehow invalid or the file loaded empty/wrong format
+             logging.error("Invalid default versions data (either from file or hardcoded). Cannot import.")
+             return jsonify({'success': False, 'error': 'Invalid default versions data format'}), 400
             
         # Load current config
         config = load_config()
@@ -851,6 +1425,7 @@ def import_default_versions():
             config['Scraping']['versions'] = {}
             
         # Add each default version with a unique name
+        imported_count = 0
         for version_name, version_config in default_versions['versions'].items():
             base_name = version_name
             counter = 1
@@ -862,20 +1437,21 @@ def import_default_versions():
                 counter += 1
                 
             config['Scraping']['versions'][new_name] = version_config
+            imported_count += 1
+            logging.info(f"Imported default version '{version_name}' as '{new_name}'.")
         
         # Save the updated config
-        save_config(config)
+        if imported_count > 0:
+            save_config(config)
+            message = f"Successfully imported {imported_count} default version(s)."
+        else:
+            message = "No new default versions to import."
+
+        return jsonify({'success': True, 'message': message})
         
-        return jsonify({'success': True, 'message': 'Default versions imported successfully'})
-    except FileNotFoundError:
-        logging.error(f"Default versions file not found at path: {default_versions_path}")
-        return jsonify({'success': False, 'error': f'Default versions file not found'}), 404
-    except json.JSONDecodeError:
-        logging.error(f"Invalid JSON in default versions file at path: {default_versions_path}")
-        return jsonify({'success': False, 'error': 'Invalid JSON in default versions file'}), 400
     except Exception as e:
-        logging.error(f"Error importing default versions: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logging.error(f"Unexpected error importing default versions: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'Unexpected error: {str(e)}'}), 500
 
 @settings_bp.route('/versions/rename', methods=['POST'])
 def rename_version():

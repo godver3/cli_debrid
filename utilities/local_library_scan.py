@@ -23,7 +23,7 @@ def sanitize_filename(filename: str) -> str:
     filename = re.sub(r'[<>|?*:"\'\&/\\]', '_', filename)  # Added slashes and backslashes
     return filename.strip()  # Just trim whitespace, don't mess with dots
 
-def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
+def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     try:
         # --- BEGIN Enhanced Logging ---
@@ -173,8 +173,8 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
             
             # --- BEGIN Logging for AniDB Call --- 
             anidb_metadata_used = False
-            if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime:
-                logging.info(f"[SymlinkPath] Anime detected and Jikan renaming enabled. Attempting to get Jikan metadata for '{item.get('title')}' S{episode_vars.get('season_number')}E{episode_vars.get('episode_number')}")
+            if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime and not skip_jikan_lookup:
+                logging.info(f"[SymlinkPath] Anime detected and Jikan renaming enabled. Attempting to get Jikan metadata for '{item.get('title')} S{episode_vars.get('season_number')}E{episode_vars.get('episode_number')}")
                 from utilities.anidb_functions import get_anidb_metadata_for_item
                 anime_metadata = get_anidb_metadata_for_item(item)
                 if anime_metadata:
@@ -264,45 +264,71 @@ def get_symlink_path(item: Dict[str, Any], original_file: str) -> str:
         logging.error(f"[SymlinkPath] Error generating symlink path for item {item.get('id', '')}: {str(e)}", exc_info=True)
         return None
 
-def create_symlink(source_path: str, dest_path: str, media_item_id: int = None) -> bool:
-    """Create a symlink from source to destination path."""
-    try:
-        dest_dir = os.path.dirname(dest_path)
+def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, skip_verification: bool = False) -> bool:
+    """Creates a symlink from source_path to dest_path."""
+    
+    # Normalize paths for better compatibility
+    source_path = os.path.abspath(source_path)
+    dest_path = os.path.abspath(dest_path)
+    
+    # Basic checks
+    if not source_path or not dest_path:
+        logging.error("Source or destination path is empty.")
+        return False
+    
+    if not os.path.exists(source_path):
+        logging.error(f"Source path does not exist: {source_path}")
+        return False
         
-        # Check if a folder with same name but different case exists and use it
-        if os.path.exists(os.path.dirname(dest_dir)):
-            existing_items = os.listdir(os.path.dirname(dest_dir))
-            folder_name = os.path.basename(dest_dir)
-            for item in existing_items:
-                if item.lower() == folder_name.lower() and item != folder_name:
-                    logging.info(f"Using existing folder with different case: {item} instead of {folder_name}")
-                    # Reconstruct the destination path using the existing folder name
-                    dest_dir = os.path.join(os.path.dirname(dest_dir), item)
-                    dest_path = os.path.join(dest_dir, os.path.basename(dest_path))
-                    break
-        
-        # Ensure the destination directory exists
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        
-        # Remove existing symlink if it exists
-        if os.path.lexists(dest_path):
-            os.unlink(dest_path)
-            
-        # Create the symlink
-        os.symlink(source_path, dest_path)
-        logging.info(f"Created symlink: {source_path} -> {dest_path}")
-
-        # Add to verification queue if media_item_id is provided and library type is Symlinked/Local
-        if media_item_id and get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+    # If destination exists and is a symlink, check if it points to the correct source
+    if os.path.islink(dest_path):
+        try:
+            current_target = os.path.realpath(dest_path)
+            if current_target == source_path:
+                logging.info(f"Symlink already exists and points to the correct target: {dest_path}")
+                return True # Already correctly linked
+            else:
+                logging.warning(f"Symlink exists but points to wrong target ({current_target}). Removing and recreating.")
+                os.unlink(dest_path)
+        except Exception as e:
+            logging.error(f"Error checking existing symlink {dest_path}: {e}. Removing and recreating.")
             try:
-                add_symlinked_file_for_verification(media_item_id, dest_path)
-                logging.info(f"Added file to verification queue: {dest_path}")
-            except Exception as e:
-                logging.error(f"Failed to add file to verification queue: {str(e)}")
+                os.unlink(dest_path)
+            except Exception as unlink_err:
+                logging.error(f"Failed to remove existing incorrect symlink {dest_path}: {unlink_err}")
+                return False # Cannot proceed if we can't remove the wrong link
+
+    elif os.path.exists(dest_path):
+        # If destination exists but is not a symlink (e.g., a regular file), log an error or handle as needed.
+        # For now, let's log an error and return False to avoid overwriting.
+        logging.error(f"Destination path exists but is not a symlink: {dest_path}. Cannot create symlink.")
+        return False
+        
+    # Ensure the directory for the destination path exists
+    dest_dir = os.path.dirname(dest_path)
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+    except Exception as e:
+        logging.error(f"Failed to create directory for symlink {dest_path}: {e}")
+        return False
+
+    # Create the symlink
+    try:
+        os.symlink(source_path, dest_path)
+        logging.info(f"Created symlink: {dest_path} -> {source_path}")
+        
+        # Add the file to the verification queue if needed and media_item_id is provided
+        if media_item_id is not None and not skip_verification: # Add condition here
+             try:
+                 add_symlinked_file_for_verification(media_item_id, dest_path)
+                 logging.info(f"Added file to verification queue: {dest_path}")
+             except Exception as e:
+                 logging.error(f"Failed to add file to verification queue {dest_path}: {e}", exc_info=True)
+                 # Continue even if adding to verification fails for now
 
         return True
     except Exception as e:
-        logging.error(f"Failed to create symlink {source_path} -> {dest_path}: {str(e)}")
+        logging.error(f"Failed to create symlink from {source_path} to {dest_path}: {e}")
         return False
 
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None) -> bool:
@@ -384,7 +410,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 return False
             
             # Get destination path based on settings
-            dest_file = get_symlink_path(item, source_file)
+            dest_file = get_symlink_path(item, source_file, skip_jikan_lookup=False)
             if not dest_file:
                 return False
             
@@ -503,7 +529,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             logging.warning("[UPGRADE] 'upgrading_from_version' not found in item dict. Old symlink path might be incorrect if version changed.")
                             # Keep the current version as a fallback if the old one isn't stored
 
-                        old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path)
+                        old_dest = get_symlink_path(item_for_old_path, old_source_for_symlink_path, skip_jikan_lookup=False)
 
                         if old_dest and os.path.lexists(old_dest):
                             try:
@@ -564,7 +590,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             # --- Unconditionally attempt to create/replace the symlink --- 
             # This runs for both upgrades (after cleanup) and non-upgrades
             logging.info(f"Attempting to create/replace symlink: {source_file} -> {dest_file}")
-            success = create_symlink(source_file, dest_file, item.get('id'))
+            success = create_symlink(source_file, dest_file, item.get('id'), skip_verification=False)
             if not success:
                  logging.error(f"Failed to create/replace symlink at {dest_file}. Aborting process for this item.")
                  return False # Abort if symlink creation fails for any reason
@@ -683,81 +709,54 @@ def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500)
     # Disabled for now
     return {}
 
-def convert_item_to_symlink(item: Dict[str, Any]) -> Dict[str, Any]:
+def convert_item_to_symlink(item: Dict[str, Any], skip_verification: bool = False) -> Dict[str, Any]:
     """
-    Convert an existing library item to use symlinks.
-    Returns a dict with success status and details about the conversion.
+    Converts a given library item to use a symlink based on configured templates.
+    Returns a dictionary with success status, paths, and potential error message.
     """
-    try:
-        logging.debug(f"convert_item_to_symlink received item with filename_real_path: {item.get('filename_real_path')}")
-        
-        if not item.get('location_on_disk'):
-            return {
-                'success': False,
-                'error': 'No location_on_disk found',
-                'item_id': item.get('id')
-            }
+    item_id = item.get('id')
+    original_location = item.get('location_on_disk')
 
-        # Get the original file path
-        source_file = item['location_on_disk']
-        if not os.path.exists(source_file):
-            return {
-                'success': False,
-                'error': f'Source file not found: {source_file}',
-                'item_id': item.get('id')
-            }
+    logging.debug(f"convert_item_to_symlink received item with filename_real_path: {item.get('filename_real_path')}")
 
-        # Get destination path based on settings
-        logging.debug(f"Calling get_symlink_path with filename_real_path: {item.get('filename_real_path')}")
-        dest_file = get_symlink_path(item, source_file)
-        if not dest_file:
-            return {
-                'success': False,
-                'error': 'Failed to generate symlink path',
-                'item_id': item.get('id')
-            }
+    if not item_id or not original_location:
+        return {'success': False, 'error': 'Missing item ID or original location', 'item_id': item_id}
 
-        # Create symlink if it doesn't exist
-        success = False
-        if not os.path.exists(dest_file):
-            success = create_symlink(source_file, dest_file, item.get('id'))
-        else:
-            # Verify existing symlink points to correct source
-            if os.path.islink(dest_file):
-                real_source = os.path.realpath(dest_file)
-                if real_source == source_file:
-                    success = True
-                else:
-                    # Recreate symlink if pointing to wrong source
-                    os.unlink(dest_file)
-                    success = create_symlink(source_file, dest_file, item.get('id'))
-            else:
-                return {
-                    'success': False,
-                    'error': f'Destination exists but is not a symlink: {dest_file}',
-                    'item_id': item.get('id')
-                }
+    # Check if original_location exists
+    if not os.path.exists(original_location):
+        logging.warning(f"Original file not found for item {item_id}: {original_location}")
+        # Let the calling function decide how to handle (e.g., move to Wanted)
+        return {'success': False, 'error': 'Source file not found', 'item_id': item_id, 'old_location': original_location}
 
-        if success:
-            return {
-                'success': True,
-                'old_location': source_file,
-                'new_location': dest_file,
-                'item_id': item.get('id')
-            }
-        else:
-            return {
-                'success': False,
-                'error': 'Failed to create symlink',
-                'item_id': item.get('id')
-            }
+    # Determine the filename to use for path generation
+    # Prefer filename_real_path if it exists (set during initial scan if symlink was found)
+    filename_for_path = item.get('filename_real_path') or os.path.basename(original_location)
+    logging.debug(f"Calling get_symlink_path with filename_real_path: {item.get('filename_real_path')}")
 
-    except Exception as e:
-        logging.error(f"Error converting item to symlink: {str(e)}")
+    # Generate the new symlink path using the original filename's base name
+    new_symlink_path = get_symlink_path(item, filename_for_path, skip_jikan_lookup=skip_verification)
+
+    if not new_symlink_path:
+        return {'success': False, 'error': 'Failed to generate new symlink path', 'item_id': item_id}
+
+    # Create the symlink
+    # Pass media_item_id for verification queue
+    success = create_symlink(original_location, new_symlink_path, media_item_id=item_id, skip_verification=skip_verification)
+
+    if success:
+        return {
+            'success': True,
+            'item_id': item_id,
+            'old_location': original_location,
+            'new_location': new_symlink_path
+        }
+    else:
         return {
             'success': False,
-            'error': str(e),
-            'item_id': item.get('id')
+            'error': 'Failed to create symlink',
+            'item_id': item_id,
+            'old_location': original_location,
+            'new_location': new_symlink_path # Return path even on failure for logging
         }
 
 def scan_for_broken_symlinks(library_path: str = None) -> Dict[str, Any]:
