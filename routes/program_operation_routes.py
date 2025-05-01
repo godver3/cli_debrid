@@ -26,7 +26,7 @@ from routes.notifications import (
 from apscheduler.triggers.interval import IntervalTrigger
 from datetime import timezone
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 
 program_operation_bp = Blueprint('program_operation', __name__)
@@ -569,150 +569,134 @@ def check_program_conditions():
 @program_operation_bp.route('/api/task_timings', methods=['GET'])
 @user_required
 def get_task_timings():
-    global program_runner
-
-    # If program runner isn't initialized, return empty immediately
-    if not program_runner or not hasattr(program_runner, 'task_intervals'):
-        logging.debug("Program runner not fully initialized, returning empty task timings.")
-        return jsonify({
-            "success": True,
-            "tasks": {"queues": {}, "content_sources": {}, "system_tasks": {}}
+    runner = get_program_runner()
+    if not runner or not runner.is_running():
+        # If not running, return empty or maybe load saved toggles/intervals?
+        # Let's return empty for now, UI can handle loading saved states.
+        return jsonify(success=False, error="Program is not running", tasks={
+            'queues': {}, 'content_sources': {}, 'system_tasks': {}
         })
 
-    # Load saved toggle states to determine the intended state if a task isn't scheduled
-    saved_states = {}
+    # Load custom intervals (now expects seconds)
+    saved_intervals_seconds = {}
+    intervals_file_path = _get_task_intervals_file_path()
+    if os.path.exists(intervals_file_path):
+        try:
+            with open(intervals_file_path, 'r') as f:
+                saved_intervals_seconds = json.load(f) # Load the saved seconds
+        except Exception as e:
+            logging.error(f"Error loading saved task intervals (seconds) from {intervals_file_path}: {e}")
+
+    tasks_data = {
+        'queues': {},
+        'content_sources': {},
+        'system_tasks': {}
+    }
+    job_infos = {}
+
     try:
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-        if os.path.exists(toggles_file_path):
-            with open(toggles_file_path, 'r') as f:
-                saved_states = json.load(f)
+        with runner.scheduler_lock:
+            if not runner.scheduler or not runner.scheduler.running:
+                # Added check inside lock as well
+                return jsonify(success=False, error="Scheduler is not running", tasks=tasks_data)
+
+            jobs = runner.scheduler.get_jobs()
+            for job in jobs:
+                job_infos[job.id] = job
+
     except Exception as e:
-        logging.error(f"Error loading task_toggles.json: {e}")
+        logging.error(f"Error accessing scheduler jobs: {e}", exc_info=True)
+        return jsonify(success=False, error="Failed to access scheduler jobs", tasks=tasks_data)
 
-    # Get all defined tasks and their default intervals
-    defined_tasks_with_intervals = program_runner.task_intervals or {}
+    now_local = datetime.now(runner.scheduler.timezone) # Use scheduler's timezone
 
-    # Get currently scheduled jobs if scheduler is running
-    scheduled_jobs_dict = {}
-    tz = pytz.utc # Default timezone
-    current_time_dt = datetime.now(tz)
-    scheduler_running = False
-    if hasattr(program_runner, 'scheduler') and program_runner.scheduler.running:
-        scheduler_running = True
-        # Use scheduler's timezone if available
-        tz = program_runner.scheduler.timezone if hasattr(program_runner.scheduler, 'timezone') else pytz.utc
-        current_time_dt = datetime.now(tz)
-        with program_runner.scheduler_lock: # Use lock for safety
-            jobs = program_runner.scheduler.get_jobs()
-            scheduled_jobs_dict = {job.id: job for job in jobs}
-            logging.debug(f"Found {len(scheduled_jobs_dict)} scheduled jobs.")
-    else:
-        logging.debug("Scheduler not running or not found.")
+    # Ensure these attributes exist before accessing them
+    original_intervals = getattr(runner, 'original_task_intervals', {})
+    queue_map = getattr(runner, 'queue_processing_map', {})
+    content_sources_map = getattr(runner, 'content_sources', {}) # Use content_sources dict
 
-
-    # Ensure content sources are loaded (for display names)
-    # Use force_refresh=False to avoid redundant work if already loaded
-    content_sources = program_runner.get_content_sources(force_refresh=False) or {}
-
-    all_tasks_data = {}
-
-    # Iterate through all DEFINED tasks
-    for task_name, defined_interval in defined_tasks_with_intervals.items():
-        job = scheduled_jobs_dict.get(task_name)
-        is_scheduled = job is not None
-        live_enabled = is_scheduled and job.next_run_time is not None
-
-        interval = defined_interval # Use the defined interval as default
-        next_run_timestamp = None
-        time_until_next_run = 0
-
-        if is_scheduled:
-            # Use interval from the job trigger if available and it's an IntervalTrigger
-            if isinstance(job.trigger, IntervalTrigger):
-                 interval = job.trigger.interval.total_seconds()
-
-            if job.next_run_time:
-                # Ensure next_run_time is timezone-aware using scheduler's timezone
-                next_run_aware = job.next_run_time.astimezone(tz)
-                next_run_timestamp = next_run_aware.timestamp()
-                # Calculate time until next run in seconds only if live_enabled
-                if live_enabled:
-                     time_until_next_run = max(0, next_run_timestamp - current_time_dt.timestamp())
-
-        # Convert to hours, minutes, seconds
-        hours, remainder = divmod(int(time_until_next_run), 3600)
-        minutes, seconds = divmod(remainder, 60)
-
-        # Create a human-readable display name
-        display_name = task_name # Default
-        normalized_task_name_for_display = program_runner._normalize_task_name(task_name) # Normalize for consistent lookup
-
-        if normalized_task_name_for_display in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
-                       'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']:
-            display_name = normalized_task_name_for_display
-        elif normalized_task_name_for_display == 'final_check_queue': # Specific check for final_check_queue
-            display_name = "Final Check"
-        elif normalized_task_name_for_display.endswith('_wanted'):
-            source_name = normalized_task_name_for_display.replace('task_', '').replace('_wanted', '')
-            source_config = content_sources.get(source_name) # Use normalized name lookup
-            if isinstance(source_config, dict) and source_config.get('display_name'):
-                display_name = source_config['display_name']
-            else:
-                # Fallback formatting using the derived source_name
-                display_name = ' '.join(word.capitalize() for word in source_name.split('_'))
-        elif normalized_task_name_for_display.startswith('task_'):
-             display_name = ' '.join(word.capitalize() for word in normalized_task_name_for_display.replace('task_', '').split('_'))
-        # Keep original task_name as fallback if no rule matched
-        # (The else block is implicitly handled by the default display_name = task_name assignment)
-
-
-        all_tasks_data[task_name] = {
-            "display_name": display_name, # This will now be "Final Check" for the relevant task
-            "next_run_in": {
-                "hours": hours,
-                "minutes": minutes,
-                "seconds": seconds,
-                "total_seconds": time_until_next_run
-            },
-            "interval": interval, # Use interval from job or defined default
-            "last_run": None, # Last run time is not easily available
-             # 'enabled' reflects LIVE status if scheduled, FALSE otherwise.
-             # This matches frontend expectation for styling/labels.
-            "enabled": live_enabled
+    all_defined_tasks = set(original_intervals.keys())
+    for task_name in all_defined_tasks:
+        normalized_name = runner._normalize_task_name(task_name) # Use runner's normalization
+        job = job_infos.get(normalized_name)
+        
+        task_info = {
+            'enabled': job is not None and job.next_run_time is not None,
+            'interval': 0, # Current interval from job or default
+            'next_run_in': {'hours': 0, 'minutes': 0, 'seconds': 0, 'total_seconds': 0},
+            'display_name': _format_task_display_name(normalized_name, queue_map, content_sources_map),
+            'current_interval_seconds': 0,
+            'default_interval_seconds': original_intervals.get(normalized_name, 0),
+            'custom_interval_seconds': saved_intervals_seconds.get(normalized_name) # Load saved value in seconds
         }
 
-    # Group tasks by type (using the combined data)
-    grouped_timings = {
-        "queues": {},
-        "content_sources": {},
-        "system_tasks": {}
-    }
+        if job:
+            # Get current interval from the job's trigger
+            current_interval_seconds = 0
+            if hasattr(job.trigger, 'interval') and isinstance(job.trigger.interval, timedelta):
+                 current_interval_seconds = job.trigger.interval.total_seconds()
+            # --- START EDIT: Update interval fields for running job ---
+            task_info['interval'] = current_interval_seconds # Legacy field for compatibility? Keep it as current.
+            task_info['current_interval_seconds'] = current_interval_seconds
+             # --- END EDIT ---
 
-    # Use the same grouping logic as before, applying it to all_tasks_data
-    for task, timing in all_tasks_data.items():
-        normalized_task_name = program_runner._normalize_task_name(task) # Normalize for consistent checks
-        if normalized_task_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping',
-                   'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'final_check_queue']:
-            # Use the original task name (which might be non-normalized if that's the key)
-            # Or better, use the normalized name as the key for consistency
-            grouped_timings["queues"][normalized_task_name] = timing
-        elif normalized_task_name.endswith('_wanted'):
-             # Use normalized name as key
-            grouped_timings["content_sources"][normalized_task_name] = timing
+            if job.next_run_time:
+                 # Ensure next_run_time is timezone-aware using scheduler's timezone
+                next_run_local = job.next_run_time.astimezone(runner.scheduler.timezone) if job.next_run_time.tzinfo else runner.scheduler.timezone.localize(job.next_run_time)
+
+                time_diff = next_run_local - now_local
+                total_seconds = max(0, time_diff.total_seconds())
+
+                task_info['next_run_in'] = {
+                    'hours': int(total_seconds // 3600),
+                    'minutes': int((total_seconds % 3600) // 60),
+                    'seconds': int(total_seconds % 60),
+                    'total_seconds': total_seconds
+                }
+            else:
+                 # Job exists but is paused (next_run_time is None)
+                 task_info['enabled'] = False # Explicitly set enabled to false if paused
+
         else:
-            # Only include tasks that start with 'task_' in system tasks (using normalized name)
-            if normalized_task_name.startswith('task_'):
-                 # Use normalized name as key
-                 grouped_timings["system_tasks"][normalized_task_name] = timing
-            # else: # Log tasks that didn't fit into any category?
-            #    logging.debug(f"Task '{task}' (normalized: '{normalized_task_name}') did not fit into known categories.")
+            # Task is defined but not scheduled (disabled)
+            task_info['enabled'] = False
+            # --- START EDIT: Set intervals for non-running job ---
+            default_interval = original_intervals.get(normalized_name, 0)
+            # If a custom interval is saved, assume that *would* be the current one if enabled
+            current_interval_if_enabled = (saved_intervals_seconds.get(normalized_name) * 60) if saved_intervals_seconds.get(normalized_name) is not None else default_interval
 
-    return jsonify({
-        "success": True,
-        "tasks": grouped_timings,
-        "current_time": current_time_dt.timestamp() # Send current timestamp for reference
-    })
+            task_info['interval'] = current_interval_if_enabled # Legacy field
+            task_info['current_interval_seconds'] = current_interval_if_enabled # What it would be if running
+            # default_interval_seconds is already set from original_intervals
+            # custom_interval_seconds is already set from saved_intervals_seconds
+             # --- END EDIT ---
+
+
+        # Categorize task
+        if normalized_name in queue_map:
+            tasks_data['queues'][normalized_name] = task_info
+        elif normalized_name.startswith('task_') and normalized_name.endswith('_wanted'):
+             # Use the display name logic to check if it was a derived content source
+             source_key = normalized_name[5:-7] # Extract potential source key
+             is_content_source = False
+             if content_sources_map:
+                 # Check against actual content source keys
+                 # Need to handle potential spaces vs underscores if display name was complex
+                 simple_key_match = source_key in content_sources_map
+                 # More robust check might involve comparing display names if simple key fails
+                 if simple_key_match:
+                      is_content_source = True
+
+             if is_content_source:
+                 tasks_data['content_sources'][normalized_name] = task_info
+             else:
+                  # If it looks like a source but isn't in the map, treat as system? Or log warning?
+                 logging.warning(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
+                 tasks_data['system_tasks'][normalized_name] = task_info
+        else:
+            tasks_data['system_tasks'][normalized_name] = task_info
+
+    return jsonify(success=True, tasks=tasks_data)
 
 @program_operation_bp.route('/task_timings')
 @user_required
@@ -846,3 +830,153 @@ def load_task_toggles():
     except Exception as e:
         logging.error(f"Error loading task toggles: {str(e)}")
         return jsonify({'success': False, 'error': str(e)})
+
+# --- START EDIT: Helper function for interval file path ---
+def _get_task_intervals_file_path():
+    """Gets the absolute path for the task_intervals.json file."""
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    return os.path.join(db_content_dir, 'task_intervals.json')
+# --- END EDIT ---
+
+# --- START EDIT: Add routes for saving/loading custom intervals ---
+@program_operation_bp.route('/save_task_intervals', methods=['POST'])
+@admin_required
+def save_task_intervals():
+    """Saves custom task intervals (in seconds) provided by the user."""
+    data = request.get_json()
+    if not data or 'task_intervals' not in data:
+        return jsonify(success=False, error='Missing task_intervals data'), 400
+
+    custom_intervals_seconds_input = data['task_intervals']
+    valid_intervals_seconds = {}
+    errors = []
+    # --- START EDIT: Define minimum interval in seconds ---
+    MIN_INTERVAL_SECONDS = 10 # Example: Minimum 10 seconds
+    # --- END EDIT ---
+
+    for task_name, interval_seconds_str in custom_intervals_seconds_input.items():
+        if interval_seconds_str is None or interval_seconds_str == '':
+             valid_intervals_seconds[task_name] = None # Reset to default
+             continue
+
+        try:
+            interval_sec = int(interval_seconds_str)
+            # --- START EDIT: Validate against minimum seconds ---
+            if interval_sec >= MIN_INTERVAL_SECONDS:
+                 valid_intervals_seconds[task_name] = interval_sec
+            else:
+                 errors.append(f"Invalid interval for {task_name}: must be {MIN_INTERVAL_SECONDS} seconds or greater.")
+            # --- END EDIT ---
+        except (ValueError, TypeError):
+            errors.append(f"Invalid interval format for {task_name}: '{interval_seconds_str}' is not a whole number.")
+
+    if errors:
+        return jsonify(success=False, error="Validation errors: " + "; ".join(errors)), 400
+
+    intervals_file_path = _get_task_intervals_file_path()
+    try:
+        # ... (ensure directory exists) ...
+        os.makedirs(os.path.dirname(intervals_file_path), exist_ok=True)
+
+        existing_intervals = {}
+        if os.path.exists(intervals_file_path):
+             try:
+                  with open(intervals_file_path, 'r') as f:
+                       existing_intervals = json.load(f)
+             except json.JSONDecodeError:
+                  logging.warning(f"Could not decode existing intervals file {intervals_file_path}. Overwriting.")
+                  existing_intervals = {}
+
+        final_intervals_to_save = existing_intervals.copy()
+        for task_name, interval_sec in valid_intervals_seconds.items():
+             if interval_sec is None:
+                  if task_name in final_intervals_to_save:
+                       del final_intervals_to_save[task_name]
+             else:
+                  final_intervals_to_save[task_name] = interval_sec # Save seconds
+
+        with open(intervals_file_path, 'w') as f:
+            json.dump(final_intervals_to_save, f, indent=4)
+
+        # Trigger live updates if runner is active
+        runner = get_program_runner()
+        updated_live = 0
+        update_errors = []
+        if runner and runner.is_running():
+            logging.info("Program running, attempting to apply interval changes (seconds) live...")
+            for task_name, interval_sec in valid_intervals_seconds.items(): # Iterate validated seconds
+                 if hasattr(runner, 'update_task_interval'):
+                     try:
+                         # --- START EDIT: Pass seconds to update_task_interval ---
+                         if runner.update_task_interval(task_name, interval_sec): # Pass seconds (or None)
+                         # --- END EDIT ---
+                              updated_live += 1
+                     except Exception as live_e:
+                         update_errors.append(f"Error applying live update for {task_name}: {live_e}")
+                 else:
+                      update_errors.append("ProgramRunner does not support live interval updates.")
+                      break
+            if update_errors:
+                 logging.warning("Some live interval updates failed: " + "; ".join(update_errors))
+
+        return jsonify(success=True, message="Task intervals saved (seconds). Changes will apply on next program start." + (f" Attempted to apply {updated_live} changes live." if updated_live > 0 else ""))
+
+    except Exception as e:
+        logging.error(f"Error saving task intervals (seconds) to {intervals_file_path}: {str(e)}", exc_info=True)
+        return jsonify(success=False, error=f"Failed to save task intervals file: {str(e)}"), 500
+
+
+@program_operation_bp.route('/load_task_intervals', methods=['GET'])
+@admin_required
+def load_task_intervals():
+    """Loads saved custom task intervals (in seconds)."""
+    intervals_file_path = _get_task_intervals_file_path()
+    saved_intervals_seconds = {}
+    if os.path.exists(intervals_file_path):
+        try:
+            with open(intervals_file_path, 'r') as f:
+                saved_intervals_seconds = json.load(f) # Load seconds
+        except Exception as e:
+            logging.error(f"Error loading saved task intervals (seconds) from {intervals_file_path}: {e}")
+            return jsonify(success=True, task_intervals={})
+
+    return jsonify(success=True, task_intervals=saved_intervals_seconds) # Return seconds
+
+# --- START EDIT: Define the missing helper function ---
+def _format_task_display_name(task_name, queue_map, content_sources_map):
+    """Formats the internal task name into a user-friendly display name."""
+    
+    # Check if it's a known queue task (using the map keys)
+    if task_name in queue_map:
+        # For queues, the key itself is usually descriptive enough
+        # Maybe capitalize? e.g., "Wanted", "Scraping"
+        return task_name.capitalize()
+
+    # Check if it's a content source task
+    if task_name.startswith('task_') and task_name.endswith('_wanted'):
+        source_key = task_name[5:-7] # Extract potential key 'My_Overseerr' etc.
+        
+        # Try to find a matching entry in the content_sources_map
+        # Content source keys *might* have underscores, but display should be nicer
+        if content_sources_map and source_key in content_sources_map:
+             # Use the key but replace underscores with spaces and capitalize
+            display_name = source_key.replace('_', ' ').strip()
+             # Basic capitalization (capitalize first letter of each word)
+            return ' '.join(word.capitalize() for word in display_name.split())
+        else:
+            # Fallback if key not found in map (shouldn't happen often if maps are synced)
+             logging.warning(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
+             # Fallback to generic formatting
+             display_name = source_key.replace('_', ' ').strip()
+             return ' '.join(word.capitalize() for word in display_name.split()) + " (Source)"
+
+
+    # Handle other system tasks (usually start with 'task_')
+    if task_name.startswith('task_'):
+        display_name = task_name[5:].replace('_', ' ').strip() # Remove prefix, replace underscores
+         # Capitalize first letter of each word
+        return ' '.join(word.capitalize() for word in display_name.split())
+
+    # Default fallback if no rule matches (should be rare)
+    return task_name.replace('_', ' ').capitalize()
+# --- END EDIT ---

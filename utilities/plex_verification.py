@@ -251,49 +251,18 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
 
         # --- Max attempts check ---
         if file_data.get('verification_attempts', 0) >= max_attempts:
-            # ... (logic for handling max attempts remains the same) ...
-            logger.error(f"File {file_data['full_path']} (Media ID: {media_item_id}, Verification ID: {verification_id}) exceeded maximum verification attempts ({max_attempts})")
-            failure_reason_prefix = f"Exceeded {max_attempts} verification attempts."
-
-            # Now check file/symlink status to provide a better reason
-            if not os.path.exists(file_data['full_path']):
-                 logger.error(f"File does not exist on disk and has exceeded max attempts: {file_data['full_path']}")
-                 mark_file_as_permanently_failed(verification_id, f"{failure_reason_prefix} File does not exist on disk.")
-            elif os.path.islink(file_data['full_path']):
-                 target_path = os.path.realpath(file_data['full_path'])
-                 if not os.path.exists(target_path):
-                     logger.error(f"Symlink target does not exist and has exceeded max attempts. Target: {target_path}, Symlink: {file_data['full_path']}")
-                     mark_file_as_permanently_failed(verification_id, f"{failure_reason_prefix} Symlink target does not exist. Target: {target_path}")
-                 else:
-                     # Symlink target exists, but verification failed max times
-                     try:
-                         stat_info = os.stat(file_data['full_path']) # Stat the symlink itself
-                         failure_reason = (f"{failure_reason_prefix} Symlink target exists but verification failed. "
-                                           f"Symlink Permissions: {oct(stat_info.st_mode)}, Owner: {stat_info.st_uid}, Group: {stat_info.st_gid}")
-                         logger.error(failure_reason)
-                         mark_file_as_permanently_failed(verification_id, failure_reason)
-                     except Exception as e_stat:
-                         failure_reason = f"{failure_reason_prefix} Symlink target exists but error getting symlink stats: {str(e_stat)}"
-                         logger.error(failure_reason)
-                         mark_file_as_permanently_failed(verification_id, failure_reason)
-            else: # Regular file exists, but verification failed max times
-                 try:
-                     stat_info = os.stat(file_data['full_path'])
-                     failure_reason = (f"{failure_reason_prefix} File exists but verification failed. "
-                                       f"Permissions: {oct(stat_info.st_mode)}, Owner: {stat_info.st_uid}, Group: {stat_info.st_gid}")
-                     logger.error(failure_reason)
-                     mark_file_as_permanently_failed(verification_id, failure_reason)
-                 except Exception as e_stat:
-                     failure_reason = f"{failure_reason_prefix} File exists but error getting file stats: {str(e_stat)}"
-                     logger.error(failure_reason)
-                     mark_file_as_permanently_failed(verification_id, failure_reason)
-            continue # Skip further processing for this file
-
+            # Changed from error to warning and removed the permanent failure logic
+            logger.warning(f"File {file_data['full_path']} (Media ID: {media_item_id}, Verification ID: {verification_id}) has failed verification {file_data.get('verification_attempts', 0)} times (max_attempts={max_attempts}), but will continue retrying.")
+            # Skip further processing for this file IN THIS RUN, attempt count will be updated if verification fails below
+            # The original logic to mark permanently failed has been removed.
+            continue # Skip verification check below for this run
 
         # Check if the file exists before calling verify_plex_file
         if not os.path.exists(file_data['full_path']):
             logger.warning(f"File does not exist: {file_data['full_path']} (Attempt {file_data.get('verification_attempts', 0) + 1}). Incrementing attempt count.")
             # Increment attempt count even if file doesn't exist
+            # We still increment here so non-existent files don't retry forever without limit *if* max_attempts was ever re-enabled
+            # Although, since we removed the check above, this update is less critical but harmless.
             update_verification_attempt(verification_id)
             continue # Skip verification if file isn't there
 

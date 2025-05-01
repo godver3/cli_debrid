@@ -81,6 +81,7 @@ from database.database_reading import get_media_item_by_id
 from utilities.local_library_scan import check_local_file_for_item # Add local scan import
 from utilities.rclone_processing import handle_rclone_file # Add this import
 from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
+import json # Added for loading intervals
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -229,7 +230,53 @@ class ProgramRunner:
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
-        
+        logging.info(f"Base default task intervals defined: {len(self.original_task_intervals)}")
+
+        # --- START EDIT: Load custom intervals ---
+        custom_intervals_applied = 0
+        intervals_file_path = None # Define outside try
+        try:
+            from routes.program_operation_routes import _get_task_intervals_file_path # Import helper
+            intervals_file_path = _get_task_intervals_file_path()
+            if os.path.exists(intervals_file_path):
+                logging.info(f"Loading custom task intervals from {intervals_file_path}")
+                with open(intervals_file_path, 'r') as f:
+                    saved_intervals = json.load(f)
+
+                for task_name, interval_minutes in saved_intervals.items():
+                    normalized_name = self._normalize_task_name(task_name) # Normalize saved task name
+
+                    # Check if this task exists in our defaults
+                    if normalized_name in self.task_intervals:
+                        if interval_minutes is not None: # Ignore None values (means reset)
+                            try:
+                                interval_min_int = int(interval_minutes)
+                                if interval_min_int >= 1:
+                                    interval_seconds = interval_min_int * 60
+                                    if self.task_intervals[normalized_name] != interval_seconds:
+                                        logging.info(f"Applying custom interval for '{normalized_name}': {interval_min_int} minutes ({interval_seconds}s)")
+                                        self.task_intervals[normalized_name] = interval_seconds
+                                        custom_intervals_applied += 1
+                                    else:
+                                        logging.debug(f"Custom interval for '{normalized_name}' matches default or was already set. Skipping.")
+                                else:
+                                    logging.warning(f"Skipping invalid custom interval for '{normalized_name}': {interval_minutes} (must be >= 1 minute).")
+                            except (ValueError, TypeError):
+                                logging.warning(f"Skipping invalid custom interval format for '{normalized_name}': {interval_minutes}.")
+                        # else: interval_minutes is None, meaning use default - no action needed here.
+                    # else:
+                    #     logging.warning(f"Custom interval found for task '{normalized_name}' but task is not defined in default intervals. Ignoring.")
+
+            else:
+                logging.info("No custom task_intervals.json found, using default intervals.")
+        except Exception as e:
+            log_path_str = f" at {intervals_file_path}" if intervals_file_path else ""
+            logging.error(f"Error loading custom task intervals{log_path_str}: {e}", exc_info=True)
+
+        if custom_intervals_applied > 0:
+             logging.info(f"Applied {custom_intervals_applied} custom task intervals.")
+        # --- END EDIT ---
+
         # --- START EDIT: Define constants for dynamic interval adjustment ---
         # Based on slowdown_candidates logic from task_adjust_intervals_for_load
         self.DYNAMIC_INTERVAL_TASKS = {
@@ -1491,6 +1538,74 @@ class ProgramRunner:
 
         self._was_idle_last_check = system_is_idle
          # --- END REFACTOR ---
+
+
+        # --- Determine idle state based on Scraping/Adding queues ---
+        # ... (existing idle check logic) ...
+
+        with self.scheduler_lock:
+            # Get the *currently configured* intervals (could be default or custom)
+            # These are stored in self.task_intervals after __init__ applies customs.
+            # We no longer need self.original_task_intervals for this task's logic.
+
+            if system_is_idle:
+                # ... (existing logging for idle state) ...
+                idle_increase_seconds = 300 # Make this configurable later?
+
+                for task_id in self.DYNAMIC_INTERVAL_TASKS: # Use the dynamic task set
+                    job = self.scheduler.get_job(task_id)
+                    # Get the base interval for this task (could be default or custom)
+                    # self.task_intervals holds the *intended* base interval after init.
+                    base_interval = self.task_intervals.get(task_id)
+
+                    if job and base_interval:
+                        current_job_interval = job.trigger.interval.total_seconds()
+                        # Increase interval relative to the *configured* base interval
+                        # Apply max limits
+                        new_interval = min(
+                             base_interval + idle_increase_seconds,
+                             base_interval * self.MAX_INTERVAL_MULTIPLIER,
+                             self.ABSOLUTE_MAX_INTERVAL
+                        )
+                        new_interval = max(new_interval, base_interval) # Ensure it doesn't go below base
+
+                        if new_interval > current_job_interval: # Only modify if increasing
+                            try:
+                                self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=new_interval))
+                                logging.debug(f"Adjusted interval for idle '{task_id}' to {new_interval}s (Base: {base_interval}s)")
+                            except Exception as e:
+                                logging.error(f"Error modifying job '{task_id}' interval to {new_interval}s: {e}")
+
+            else: # System is active
+                # ... (existing logging for active state) ...
+
+                needs_reset = False
+                tasks_to_reset = []
+                for task_id in self.DYNAMIC_INTERVAL_TASKS: # Use the dynamic task set
+                    job = self.scheduler.get_job(task_id)
+                    # Get the configured base interval (default or custom)
+                    base_interval = self.task_intervals.get(task_id)
+
+                    if job and base_interval:
+                        current_job_interval = job.trigger.interval.total_seconds()
+                        # Reset if current interval doesn't match the configured base
+                        if current_job_interval != base_interval:
+                            needs_reset = True
+                            tasks_to_reset.append(task_id)
+
+                if needs_reset:
+                    logging.info(f"System active: Resetting intervals for {len(tasks_to_reset)} dynamically adjusted tasks to their configured base values.")
+                    for task_id in tasks_to_reset:
+                        base_interval = self.task_intervals.get(task_id) # Get configured base again
+                        if base_interval:
+                            try:
+                                self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=base_interval))
+                                logging.debug(f"Reset interval for '{task_id}' to configured base {base_interval}s")
+                            except Exception as e:
+                                logging.error(f"Error resetting job '{task_id}' interval to {base_interval}s: {e}")
+
+        self._was_idle_last_check = system_is_idle
+        # --- END EDIT ---
 
 
     def check_task_health(self):
@@ -3508,6 +3623,67 @@ class ProgramRunner:
                     logging.error(f"Error releasing heavy task lock for '{task_name_for_log}': {e_release}")
             # --- End Release heavy task lock ---
     # *** END EDIT ***
+
+    # --- START EDIT: Add method for live interval updates ---
+    def update_task_interval(self, task_name: str, interval_seconds: int | None):
+        """
+        Updates the interval (in seconds) for a specific task live.
+        If interval_seconds is None, resets to the default interval.
+        """
+        normalized_name = self._normalize_task_name(task_name)
+
+        if normalized_name not in self.original_task_intervals:
+            logging.error(f"Cannot update interval for '{normalized_name}': Task not defined.")
+            return False
+
+        # --- START EDIT: Define minimum seconds ---
+        MIN_INTERVAL_SECONDS = 10 # Must match validation
+        # --- END EDIT ---
+
+        target_interval_seconds = 0
+        is_resetting = interval_seconds is None
+
+        if is_resetting:
+            target_interval_seconds = self.original_task_intervals.get(normalized_name)
+            logging.info(f"Resetting task '{normalized_name}' interval to default: {target_interval_seconds}s")
+            if normalized_name in self.task_intervals:
+                 self.task_intervals[normalized_name] = target_interval_seconds
+        else:
+            # Validate the provided seconds
+            try:
+                interval_sec_int = int(interval_seconds)
+                 # --- START EDIT: Validate seconds ---
+                if interval_sec_int >= MIN_INTERVAL_SECONDS:
+                    target_interval_seconds = interval_sec_int
+                else:
+                    logging.error(f"Invalid interval for '{normalized_name}': {interval_seconds} (must be >= {MIN_INTERVAL_SECONDS} seconds). Cannot apply live update.")
+                    return False
+                 # --- END EDIT ---
+            except (ValueError, TypeError):
+                logging.error(f"Invalid interval format for '{normalized_name}': {interval_seconds}. Cannot apply live update.")
+                return False
+
+            logging.info(f"Updating task '{normalized_name}' interval live to: {target_interval_seconds}s")
+            self.task_intervals[normalized_name] = target_interval_seconds # Update internal map
+
+        # Apply the change to the scheduler
+        with self.scheduler_lock:
+            job = self.scheduler.get_job(normalized_name)
+            if not job:
+                logging.info(f"Task '{normalized_name}' is not currently scheduled. Interval preference updated internally.")
+                return True
+
+            try:
+                self.scheduler.reschedule_job(
+                    normalized_name,
+                    trigger=IntervalTrigger(seconds=target_interval_seconds) # Use target seconds
+                )
+                logging.info(f"Successfully rescheduled task '{normalized_name}' with new interval {target_interval_seconds}s.")
+                return True
+            except Exception as e:
+                logging.error(f"Error rescheduling job '{normalized_name}' with new interval: {e}", exc_info=True)
+                return False
+    # --- END EDIT ---
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
