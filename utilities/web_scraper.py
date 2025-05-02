@@ -33,146 +33,55 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
         'trakt-api-key': trakt_client_id
     }
 
-    # Build search URL with optional year parameter
-    search_url = f"https://api.trakt.tv/search/movie,show?query={api.utils.quote(search_term)}&extended=full"
+    # Build search URL for page 1 with a limit of 20
+    limit_per_page = 20
+    search_url = f"https://api.trakt.tv/search/movie,show?query={api.utils.quote(search_term)}&extended=full&page=1&limit={limit_per_page}"
     if year:
         search_url += f"&years={year}"
+
+    logging.info(f"Querying Trakt API (limit {limit_per_page}): {search_url}")
 
     # Initialize retry parameters
     max_retries = 3
     retry_delay = 1  # Initial delay in seconds
     attempt = 0
+    fetched_data = []
 
     while attempt < max_retries:
         try:
-            response = api.get(search_url, headers=headers, timeout=30)  # Add timeout
+            response = api.get(search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             # Check for rate limit headers
             if 'X-RateLimit-Remaining' in response.headers:
                 remaining = int(response.headers['X-RateLimit-Remaining'])
-                if remaining < 5:  # Warning threshold
+                if remaining < 5:
                     logging.warning(f"Trakt API rate limit running low. {remaining} requests remaining.")
                     if remaining == 0:
                         reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
                         logging.error(f"Trakt API rate limit exceeded. Reset at timestamp: {reset_time}")
-                        break
+                        # Return empty if rate limited on the first try
+                        return [] 
 
-            data = response.json()
+            # Log pagination info from headers (even though we only fetch one page)
+            page_count = response.headers.get('X-Pagination-Page-Count', 'N/A')
+            item_count = response.headers.get('X-Pagination-Item-Count', 'N/A')
+            logging.info(f"Trakt Headers: Page Count={page_count}, Item Count={item_count}")
+
+            fetched_data = response.json()
             
-            if data:
-                # Sort results based on multiple criteria
-                sorted_results = sorted(
-                    data,
-                    key=lambda x: (
-                        # Exact title match gets highest priority
-                        x['movie' if x['type'] == 'movie' else 'show']['title'].lower() == search_term.lower(),
-                        # Year match gets second priority
-                        (str(x['movie' if x['type'] == 'movie' else 'show']['year']) == str(year) if year else False),
-                        # Title similarity gets third priority
-                        fuzz.ratio(search_term.lower(), x['movie' if x['type'] == 'movie' else 'show']['title'].lower()),
-                        # Number of votes (popularity) gets fourth priority
-                        x['movie' if x['type'] == 'movie' else 'show'].get('votes', 0)
-                    ),
-                    reverse=True
-                )
-                
-                for result in sorted_results:
-                    if result['type'] == 'movie':
-                        logging.debug(f"Result title: {result['movie']['title']}")
-                    else:
-                        logging.debug(f"Result title: {result['show']['title']}")
-
-                # Convert Trakt results and include poster paths
-                converted_results = []
-                filter_stats = {
-                    'total': len(sorted_results),
-                    'no_tmdb': 0,
-                    'no_poster': 0,
-                    'no_year': 0
-                }
-                
-                for result in sorted_results:
-                    media_type = result['type']
-                    item = result['movie' if media_type == 'movie' else 'show']
-                    
-                    # Skip items with no TMDB ID
-                    if not item['ids'].get('tmdb'):
-                        filter_stats['no_tmdb'] += 1
-                        logging.debug(f"No TMDB ID found for {item['title']}")
-                        continue
-
-                    tmdb_id = item['ids']['tmdb']
-                    cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
-                    cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
-
-                    if cached_poster_url and cached_media_meta:
-                        poster_path = cached_poster_url
-                        media_meta = cached_media_meta
-                    else:
-                        logging.info(f"Fetching data for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
-                        media_meta = get_media_meta(tmdb_id, media_type)
-                        if media_meta and media_meta[0]:  # Only proceed if we have a poster
-                            poster_path = media_meta[0]
-                            cache_poster_url(tmdb_id, media_type, poster_path)
-                            cache_media_meta(tmdb_id, media_type, media_meta)
-                            logging.info(f"Cached poster and metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
-                        else:
-                            if has_tmdb:
-                                filter_stats['no_poster'] += 1
-                                logging.debug(f"No poster found for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
-                                continue  # Skip items without posters only if we have TMDB API key
-                            else:
-                                # Use placeholder if no TMDB API key
-                                poster_path = "static/images/placeholder.png"
-                                media_meta = (poster_path, "No overview available", [], 0.0, "")
-
-                    if not item.get('year'):
-                        filter_stats['no_year'] += 1
-                        logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to no year")
-                        continue
-
-                    if has_tmdb and not item.get('posterPath') and not poster_path:
-                        filter_stats['no_poster'] += 1
-                        logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to no poster")
-                        continue
-
-                    converted_results.append({
-                        'mediaType': media_type,
-                        'id': tmdb_id,
-                        'title': item['title'],
-                        'year': item['year'],
-                        'posterPath': poster_path,
-                        'show_overview' if media_type == 'show' else 'overview': media_meta[1],
-                        'genres': media_meta[2],
-                        'voteAverage': media_meta[3],
-                        'backdropPath': media_meta[4],
-                        'votes': item.get('votes', 0)
-                    })
-
-                # Limit to top 100 results
-                if len(converted_results) > 100:
-                    logging.info(f"Limiting results from {len(converted_results)} to 100")
-                    converted_results = converted_results[:100]
-                
-                # Log filtering report
-                logging.info("=== Search Results Filtering Report ===")
-                logging.info(f"Total results from Trakt: {filter_stats['total']}")
-                logging.info(f"Filtered out due to:")
-                logging.info(f"  - No TMDB ID: {filter_stats['no_tmdb']}")
-                logging.info(f"  - No poster: {filter_stats['no_poster']}")
-                logging.info(f"  - No year: {filter_stats['no_year']}")
-                logging.info(f"Final results after filtering: {len(converted_results)}")
-                logging.info("=================================")
-                
-                return converted_results
+            if fetched_data:
+                logging.info(f"Successfully received {len(fetched_data)} result(s) from Trakt.")
+                break # Exit retry loop on success
             else:
-                logging.warning(f"No results found for search term: {search_term}")
-                return []
+                # No data found on the first page
+                logging.info(f"No results found for the query.")
+                return [] # Return empty list immediately
+
         except api.exceptions.RequestException as e:
             attempt += 1
             if attempt < max_retries:
-                wait_time = retry_delay * (2 ** (attempt - 1))  # Exponential backoff
+                wait_time = retry_delay * (2 ** (attempt - 1)) # Exponential backoff
                 logging.warning(f"Attempt {attempt} failed. Retrying in {wait_time} seconds. Error: {str(e)}")
                 time.sleep(wait_time)
                 continue
@@ -181,14 +90,136 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 if isinstance(e, api.exceptions.HTTPError):
                     logging.error(f"HTTP Status Code: {e.response.status_code}")
                     logging.error(f"Response Headers: {e.response.headers}")
-                return []
+                return [] # Return empty on repeated failure
         except Exception as e:
             logging.error(f"Unexpected error searching Trakt: {str(e)}", exc_info=True)
-            return []
+            return [] # Return empty on unexpected error
 
-        break  # If we get here, the request was successful
+    # If loop finished without break (e.g., error), fetched_data might be empty
+    if not fetched_data:
+        logging.warning(f"No results obtained for search term: {search_term}")
+        return []
+    
+    # --- Process fetched results ---
+    # Sort results using the original multi-criteria logic
+    logging.info(f"Sorting {len(fetched_data)} fetched results...")
+    sorted_results = sorted(
+        fetched_data,
+        key=lambda x: (
+            x['movie' if x['type'] == 'movie' else 'show']['title'].lower() == search_term.lower(),
+            (str(x['movie' if x['type'] == 'movie' else 'show']['year']) == str(year) if year else False),
+            fuzz.ratio(search_term.lower(), x['movie' if x['type'] == 'movie' else 'show']['title'].lower()),
+            x['movie' if x['type'] == 'movie' else 'show'].get('votes', 0)
+        ),
+        reverse=True
+    )
+    
+    logging.info("Top results after sorting:")
+    for result in sorted_results[:20]: # Log top 20 titles after sorting
+        if result['type'] == 'movie':
+            logging.debug(f"  Sorted Result: {result['movie']['title']} (Votes: {result['movie'].get('votes', 0)})")
+        else:
+            logging.debug(f"  Sorted Result: {result['show']['title']} (Votes: {result['show'].get('votes', 0)})")
 
-    return []  # Return empty list if all retries failed
+    # Convert Trakt results and include poster paths
+    converted_results = []
+    filter_stats = {
+        'total': len(sorted_results), # Use length of sorted results
+        'no_tmdb': 0,
+        'no_poster': 0,
+        'no_year': 0
+    }
+    
+    processed_count = 0
+    # We fetched max 20, so processing limit isn't strictly needed, but keep it high just in case
+    results_to_process_limit = 100 
+
+    for result in sorted_results:
+        if processed_count >= results_to_process_limit:
+            logging.info(f"Reached processing limit of {results_to_process_limit}. Skipping remaining {len(sorted_results) - processed_count} raw results.")
+            break
+            
+        media_type = result['type']
+        item = result['movie' if media_type == 'movie' else 'show']
+        
+        if not item['ids'].get('tmdb'):
+            filter_stats['no_tmdb'] += 1
+            logging.debug(f"No TMDB ID found for {item['title']}")
+            continue
+
+        tmdb_id = item['ids']['tmdb']
+        cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
+        cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
+
+        poster_path = None
+        media_meta = None
+
+        if cached_poster_url and cached_media_meta:
+            poster_path = cached_poster_url
+            media_meta = cached_media_meta
+        else:
+            logging.info(f"Fetching data for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
+            media_meta = get_media_meta(tmdb_id, media_type)
+            if media_meta and media_meta[0]:
+                poster_path = media_meta[0]
+                cache_poster_url(tmdb_id, media_type, poster_path)
+                cache_media_meta(tmdb_id, media_type, media_meta)
+                logging.info(f"Cached poster and metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
+            else:
+                if has_tmdb:
+                    filter_stats['no_poster'] += 1
+                    logging.debug(f"No poster found for {media_type} {item['title']} (TMDB ID: {tmdb_id}) after fetch attempt")
+                    continue
+                else:
+                    poster_path = "static/images/placeholder.png"
+                    media_meta = (poster_path, "No overview available", [], 0.0, "")
+        
+        if not media_meta or len(media_meta) < 5:
+            logging.warning(f"Incomplete media_meta for {item['title']} ({tmdb_id}). Skipping.")
+            filter_stats['no_poster'] += 1 
+            continue
+
+        if not item.get('year'):
+            filter_stats['no_year'] += 1
+            logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to no year")
+            continue
+        
+        if has_tmdb and (not poster_path or 'placeholder' in poster_path):
+             filter_stats['no_poster'] += 1
+             logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to invalid poster path after processing: {poster_path}")
+             continue
+
+        converted_results.append({
+            'mediaType': media_type,
+            'id': tmdb_id,
+            'title': item['title'],
+            'year': item['year'],
+            'posterPath': poster_path,
+            'show_overview' if media_type == 'show' else 'overview': media_meta[1],
+            'genres': media_meta[2],
+            'voteAverage': media_meta[3],
+            'backdropPath': media_meta[4],
+            'votes': item.get('votes', 0)
+        })
+        processed_count += 1
+
+    # Limit to top 100 final results (though unlikely needed with limit=20)
+    if len(converted_results) > 100:
+        logging.info(f"Limiting final results from {len(converted_results)} to 100")
+        converted_results = converted_results[:100]
+    
+    # Log filtering report
+    logging.info("=== Search Results Filtering Report ===")
+    logging.info(f"Total raw results fetched from Trakt (limit {limit_per_page}): {filter_stats['total']}")
+    logging.info(f"Items processed for metadata/filtering: {processed_count}")
+    logging.info(f"Filtered out during processing due to:")
+    logging.info(f"  - No TMDB ID: {filter_stats['no_tmdb']}")
+    logging.info(f"  - No poster/metadata: {filter_stats['no_poster']}")
+    logging.info(f"  - No year: {filter_stats['no_year']}")
+    logging.info(f"Final results returned after filtering & limit: {len(converted_results)}")
+    logging.info("=================================")
+    
+    return converted_results
 
 def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, list, float, str]]:
     tmdb_api_key = get_setting('TMDB', 'api_key')
@@ -336,14 +367,14 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
         if result['mediaType'] != 'person':
             tmdb_id = result['id']
             media_type = result['mediaType']
-            logging.info(f"Processing media tmdb_id: {tmdb_id}")
-            logging.info(f"Processing media type: {media_type}")
+            title_for_logging = result['title']
+            logging.info(f"Processing media tmdb_id: {tmdb_id}, type: {media_type}, title: {title_for_logging}")
 
             # Skip poster validation when we have no TMDB API key
             if has_tmdb:
                 # Skip if no poster path or if it's a placeholder when we have TMDB
                 if not result.get('posterPath') or 'placeholder' in result.get('posterPath', '').lower():
-                    logging.info(f"Skipping {result['title']} - no poster path or placeholder image")
+                    logging.info(f"web_scrape: Skipping {title_for_logging} ({tmdb_id}) - no initial poster path or placeholder in search_trakt result.")
                     continue
 
             cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
@@ -352,7 +383,7 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
             if cached_poster_url and cached_media_meta:
                 # Only validate cached poster URL if we have TMDB API key
                 if has_tmdb and ('placeholder' in cached_poster_url.lower() or not cached_poster_url.startswith('https://image.tmdb.org/')):
-                    logging.info(f"Skipping {result['title']} - invalid cached poster URL")
+                    logging.info(f"web_scrape: Skipping {title_for_logging} ({tmdb_id}) - invalid cached poster URL: {cached_poster_url}")
                     continue
                 logging.info(f"Using cached data for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 poster_path = cached_poster_url
@@ -363,14 +394,14 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 if media_meta and media_meta[0]:  # Check if media_meta exists and has a valid poster URL
                     poster_path = asyncio.run(fetch_poster_url(tmdb_id, media_type))
                     if has_tmdb and (not poster_path or 'placeholder' in poster_path.lower() or not poster_path.startswith('https://image.tmdb.org/')):
-                        logging.info(f"Skipping {result['title']} - invalid or missing poster URL")
+                        logging.info(f"web_scrape: Skipping {title_for_logging} ({tmdb_id}) - invalid or missing fetched poster URL: {poster_path}")
                         continue
                     cache_poster_url(tmdb_id, media_type, poster_path)
                     cache_media_meta(tmdb_id, media_type, media_meta)
                     logging.info(f"Cached poster and metadata for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 else:
                     if has_tmdb:
-                        logging.info(f"Skipping {result['title']} - no valid metadata or poster")
+                        logging.info(f"web_scrape: Skipping {title_for_logging} ({tmdb_id}) - no valid metadata or poster returned from get_media_meta.")
                         continue
                     else:
                         # Use placeholder if no TMDB API key
@@ -378,8 +409,9 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                         media_meta = (poster_path, "No overview available", [], 0.0, "")
 
             # Skip if overview is empty (likely incomplete metadata) - only if we have TMDB API
-            if has_tmdb and not media_meta[1].strip():
-                logging.info(f"Skipping {result['title']} - empty overview")
+            if has_tmdb and (not media_meta or not media_meta[1] or not media_meta[1].strip()):
+                overview_content = media_meta[1] if media_meta and len(media_meta) > 1 else "N/A"
+                logging.info(f"web_scrape: Skipping {title_for_logging} ({tmdb_id}) - empty or missing overview. Overview: '{overview_content}'")
                 continue
 
             detailed_result = {

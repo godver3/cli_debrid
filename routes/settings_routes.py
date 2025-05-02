@@ -1867,6 +1867,7 @@ def add_separate_versions():
         version_1080p.update({
             'enable_hdr': False,
             'max_resolution': '1080p',
+            'resolution_wanted': '<=', # Explicitly set to <= for 1080p
             'preferred_filter_in': [
                 [
                     'REMUX',
@@ -1913,7 +1914,7 @@ def add_separate_versions():
         version_4k.update({
             'enable_hdr': True,
             'max_resolution': '2160p',
-            'resolution_wanted': '==',
+            'resolution_wanted': '==', # Keep 4K as ==
             'wake_count': 6,
             'preferred_filter_in': [
                 [

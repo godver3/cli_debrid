@@ -169,20 +169,18 @@ class Season(Base):
 
 class Episode(Base):
     __tablename__ = 'episodes'
+    __table_args__ = (UniqueConstraint('season_id', 'episode_number', name='uix_season_episode'),)
 
     id = Column(Integer, primary_key=True)
     season_id = Column(Integer, ForeignKey('seasons.id'), nullable=False)
     episode_number = Column(Integer, nullable=False)
-    episode_imdb_id = Column(String, unique=True, index=True)
+    episode_imdb_id = Column(String, unique=True, index=True, nullable=True)
     title = Column(String)
     overview = Column(Text)
     runtime = Column(Integer)
     first_aired = Column(DateTime)
+    imdb_id = Column(String)
     season = relationship("Season", back_populates="episodes")
-    imdb_id = Column(String)  # Add this line to include the imdb_id column
-
-    # Relationships
-    season = relationship('Season', back_populates='episodes')
 
 class Poster(Base):
     __tablename__ = 'posters'
@@ -274,9 +272,16 @@ class DatabaseManager:
     @staticmethod
     def get_all_items():
         with Session() as session:
-            items = session.query(Item).options(joinedload(Item.item_metadata)).all()
+            # Use selectinload for better performance with relationships
+            items = session.query(Item).options(
+                selectinload(Item.item_metadata),
+                selectinload(Item.seasons).selectinload(Season.episodes) # Load seasons and episodes
+            ).all()
+            # Assign display_year for potential use, though it's handled again in the route
             for item in items:
                 year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
+                # You might not need this if display_year is consistently set in the route
+                # item.display_year = year_metadata or item.year
             return items
 
     @staticmethod

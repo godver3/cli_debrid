@@ -39,21 +39,6 @@ def get_movie_release_dates(imdb_id):
         logger.error(f"Error fetching movie release dates: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@api_bp.route('/api/episode/metadata/<imdb_id>', methods=['GET'])
-def get_episode_metadata(imdb_id):
-    try:
-        print(f"Fetching episode metadata for IMDB ID: {imdb_id}")
-        metadata, source = MetadataManager.get_metadata_by_episode_imdb(imdb_id)
-        if metadata:
-            print(f"Successfully retrieved episode metadata for IMDB ID: {imdb_id} from {source}")
-            return jsonify({"data": metadata, "source": source})
-        else:
-            logger.warning(f"Episode metadata not found for IMDB ID: {imdb_id}")
-            return jsonify({"error": "Episode metadata not found"}), 404
-    except Exception as e:
-        logger.error(f"Error fetching episode metadata: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
 @api_bp.route('/api/show/metadata/<imdb_id>', methods=['GET'])
 def get_show_metadata(imdb_id):
     try:

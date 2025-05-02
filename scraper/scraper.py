@@ -130,7 +130,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             episode_formats = convert_anime_episode_format(season, episode, total_episodes)
             logging.info(f"Generated episode formats for anime: {episode_formats}")
 
-        # --- XEM Mapping Lookup --- 
+        # --- XEM Mapping Lookup ---
         target_air_date = None # Initialize target air date
         if content_type.lower() == 'episode' and season is not None and original_episode is not None:
             try:
@@ -140,55 +140,114 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     xem_mapping_list = show_metadata.get('xem_mapping')
                     trakt_seasons_data = show_metadata.get('seasons') # Get Trakt season structure
 
+                    # --- START ADDED LOGGING ---
+                    logging.info(f"Inspecting Trakt seasons data type: {type(trakt_seasons_data)}")
+                    if isinstance(trakt_seasons_data, dict):
+                        logging.info(f"Trakt seasons data keys: {list(trakt_seasons_data.keys())}")
+                        # Optionally log the specific season data if needed, but be mindful of log size
+                        # if str(season) in trakt_seasons_data:
+                        #     logging.info(f"Data for season {season}: {json.dumps(trakt_seasons_data[str(season)], indent=2)}")
+                        # else:
+                        #     logging.info(f"Season key '{str(season)}' not found in trakt_seasons_data keys.")
+                    # --- END ADDED LOGGING ---
+
                     # --- Extract Target Air Date ---
                     try:
-                        if isinstance(trakt_seasons_data, dict) and str(season) in trakt_seasons_data:
-                            season_data = trakt_seasons_data[str(season)]
-                            if isinstance(season_data, dict) and 'episodes' in season_data and str(original_episode) in season_data['episodes']:
-                                episode_data = season_data['episodes'][str(original_episode)]
-                                if isinstance(episode_data, dict) and 'first_aired' in episode_data:
-                                    air_date_full = episode_data['first_aired']
-                                    if isinstance(air_date_full, str) and air_date_full:
-                                        try:
-                                            # Parse the ISO 8601 timestamp
-                                            # Replace 'Z' with '+00:00' for Python compatibility if necessary
-                                            if air_date_full.endswith('Z'):
-                                                air_date_full = air_date_full[:-1] + '+00:00'
-                                            
-                                            utc_dt = datetime.fromisoformat(air_date_full)
-                                            
-                                            # Ensure it's timezone-aware (should be from isoformat with offset)
-                                            if utc_dt.tzinfo is None:
-                                                 utc_dt = utc_dt.replace(tzinfo=timezone.utc) # Add UTC timezone if missing
-                                            else:
-                                                 utc_dt = utc_dt.astimezone(timezone.utc) # Convert to UTC if it had a different offset
-
-                                            # Heuristic: If UTC time is before noon, assume local air date was the previous day
-                                            # This is common for shows airing in the evening in the Americas.
-                                            adjusted_dt = utc_dt
-                                            if utc_dt.hour < 12:
-                                                adjusted_dt = utc_dt - timedelta(days=1)
-                                                logging.debug(f"Adjusted UTC date {utc_dt.date()} to {adjusted_dt.date()} based on early UTC hour ({utc_dt.hour})")
-                                            
-                                            target_air_date = adjusted_dt.strftime('%Y-%m-%d')
-                                            logging.info(f"Found target air date for S{season}E{original_episode}: {target_air_date} (adjusted from UTC {utc_dt.date()} if necessary)")
-                                            
-                                        except ValueError as format_err:
-                                            logging.error(f"Could not parse air date string '{air_date_full}': {format_err}")
-                                            # Fallback: Try splitting just in case it's only YYYY-MM-DD
-                                            target_air_date = air_date_full.split('T')[0]
-                                            logging.warning(f"Using fallback date extraction: {target_air_date}")
-                                            
-                                    elif air_date_full is None:
-                                         logging.warning(f"Target episode S{season}E{original_episode} has a null 'first_aired' date.")
-                                    else:
-                                         logging.warning(f"'first_aired' for S{season}E{original_episode} is not a string or is empty: {air_date_full}")
+                        # Use integer key 'season' for lookup, not str(season)
+                        if isinstance(trakt_seasons_data, dict) and season in trakt_seasons_data:
+                            # Access using the integer key 'season'
+                            season_data = trakt_seasons_data[season]
+                            # --- START ADDED LOGGING ---
+                            logging.info(f"Inspecting season {season} data type: {type(season_data)}")
+                            if isinstance(season_data, dict):
+                                logging.info(f"Keys in season {season} data: {list(season_data.keys())}")
+                                if 'episodes' in season_data:
+                                    episodes_data = season_data['episodes']
+                                    logging.info(f"Type of episodes data for season {season}: {type(episodes_data)}")
+                                    if isinstance(episodes_data, dict):
+                                         logging.info(f"Keys in episodes data for season {season}: {list(episodes_data.keys())}")
+                                         # Log the specific episode data if the key exists
+                                         # if str(original_episode) in episodes_data:
+                                         #     logging.info(f"Data for episode '{str(original_episode)}' in season {season}: {json.dumps(episodes_data[str(original_episode)], indent=2)}")
+                                         # else:
+                                         #     logging.info(f"Episode key '{str(original_episode)}' not found in episode keys.")
+                                    elif isinstance(episodes_data, list):
+                                         logging.info(f"First few items in episodes list for season {season} (if any): {episodes_data[:5]}")
                                 else:
-                                    logging.warning(f"Could not find 'first_aired' key or value in episode data for S{season}E{original_episode}.")
+                                    logging.info(f"'episodes' key not found in season {season} data.")
+                            # --- END ADDED LOGGING ---
+
+                            # Check if episode keys are integers (based on log observation)
+                            # Ensure episodes_data is checked before indexing
+                            if isinstance(season_data, dict) and 'episodes' in season_data:
+                                episodes_data = season_data['episodes'] # Assign for clarity
+                                # Check for integer key original_episode
+                                if isinstance(episodes_data, dict) and original_episode in episodes_data:
+                                    # Access using integer key original_episode
+                                    episode_data = episodes_data[original_episode]
+                                    if isinstance(episode_data, dict) and 'first_aired' in episode_data:
+                                        air_date_full = episode_data['first_aired']
+                                        if isinstance(air_date_full, str) and air_date_full:
+                                            # --- START UTC to Local Conversion ---
+                                            try:
+                                                # Handle 'Z' for UTC explicitly
+                                                if air_date_full.endswith('Z'):
+                                                    air_date_full = air_date_full[:-1] + '+00:00'
+
+                                                # Parse the ISO 8601 timestamp into an aware UTC datetime
+                                                utc_dt = datetime.fromisoformat(air_date_full)
+
+                                                # Ensure it's timezone-aware (should be fromisoformat, but double-check)
+                                                if utc_dt.tzinfo is None:
+                                                     utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+                                                elif utc_dt.tzinfo.utcoffset(utc_dt) != timedelta(0):
+                                                     utc_dt = utc_dt.astimezone(timezone.utc) # Convert to UTC if not already
+
+                                                # Get local timezone
+                                                from metadata.metadata import _get_local_timezone
+                                                local_tz = _get_local_timezone()
+
+                                                # Convert UTC datetime to local datetime
+                                                local_dt = utc_dt.astimezone(local_tz)
+
+                                                # Extract the date part in YYYY-MM-DD format
+                                                target_air_date = local_dt.strftime('%Y-%m-%d')
+                                                logging.info(f"Found target air date for S{season}E{original_episode}: {target_air_date} (local) from UTC {utc_dt.isoformat()}")
+
+                                            except ValueError as format_err:
+                                                logging.error(f"Could not parse air date string '{air_date_full}' during UTC->local conversion: {format_err}")
+                                                # Fallback: Try splitting just in case it's only YYYY-MM-DD (less ideal)
+                                                try:
+                                                     target_air_date = air_date_full.split('T')[0]
+                                                     datetime.strptime(target_air_date, '%Y-%m-%d') # Validate format
+                                                     logging.warning(f"Using fallback date extraction (UTC date part): {target_air_date}")
+                                                except (ValueError, IndexError):
+                                                     target_air_date = None # Set to None if fallback also fails
+                                                     logging.error("Fallback date extraction also failed.")
+                                            except Exception as conv_err:
+                                                logging.error(f"Error converting UTC air date to local for S{season}E{original_episode}: {conv_err}", exc_info=True)
+                                                target_air_date = None # Set to None on conversion error
+                                            # --- END UTC to Local Conversion ---
+
+                                        elif air_date_full is None:
+                                             logging.warning(f"Target episode S{season}E{original_episode} has a null 'first_aired' date.")
+                                             target_air_date = None # Ensure it's None
+                                        else:
+                                             logging.warning(f"'first_aired' for S{season}E{original_episode} is not a string or is empty: {air_date_full}")
+                                             target_air_date = None # Ensure it's None
+                                    else:
+                                        logging.warning(f"Could not find 'first_aired' key or value in episode data for S{season}E{original_episode}.")
+                                        target_air_date = None # Ensure it's None
+                                else:
+                                    # Updated warning to reflect integer key check
+                                    logging.warning(f"Could not find episode key {original_episode} (integer) in season {season} episodes dictionary, or episodes data is not a dict. Type: {type(episodes_data)}")
                             else:
-                                logging.warning(f"Could not find episode {original_episode} in season {season} episode data.")
+                                # Updated warning
+                                logging.warning(f"Could not find 'episodes' key in season {season} data, or season data is not a dict.")
+
                         else:
-                             logging.warning(f"Could not find season {season} data in Trakt metadata or it's not a dictionary.")
+                             # Updated warning to reflect integer key check
+                             logging.warning(f"Could not find season {season} (integer key) data in Trakt metadata or it's not a dictionary.")
                     except Exception as date_err:
                          logging.error(f"Error extracting target air date for S{season}E{original_episode}: {date_err}", exc_info=True)
                     # --- End Extract Target Air Date ---
@@ -233,14 +292,17 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                             calculated_trakt_abs = False
                             try:
                                 # Iterate through Trakt seasons in order (ensure keys are integers for sorting)
-                                sorted_trakt_seasons = sorted([int(k) for k in trakt_seasons_data.keys() if k.isdigit()])
+                                # Keys are already integers, directly sort them
+                                sorted_trakt_seasons = sorted(k for k in trakt_seasons_data.keys() if isinstance(k, int))
                                 for s_num in sorted_trakt_seasons:
-                                    s_num_str = str(s_num) # Use string key for lookup
+                                    # Access using integer key s_num
                                     if s_num < season:
                                         # Use 'episode_count' if available, else count episodes
-                                        count = trakt_seasons_data[s_num_str].get('episode_count')
+                                        # Access season data using integer key s_num
+                                        count = trakt_seasons_data[s_num].get('episode_count')
                                         if count is None:
-                                             count = len(trakt_seasons_data[s_num_str].get('episodes', {}))
+                                             # Access episodes using integer key s_num
+                                             count = len(trakt_seasons_data[s_num].get('episodes', {}))
                                         trakt_absolute_ep += count
                                     elif s_num == season:
                                         trakt_absolute_ep += original_episode
@@ -296,18 +358,30 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                              logging.info(f"No specific XEM mapping entry found for Trakt S{season}E{original_episode} via standard or absolute lookup.")
                     else:
                         logging.info(f"No XEM mapping list found in metadata for {imdb_id}.")
+
+                    # --- START ADDED LOGGING ---
+                    logging.info(f"Pre-Scrape Check: Using target_air_date='{target_air_date}' for comparison after calculation/heuristic.")
+                    # --- END ADDED LOGGING ---
+
                 else:
-                    logging.warning(f"Could not retrieve show metadata for {imdb_id} to check XEM mapping.")
+                    logging.warning(f"Could not retrieve show metadata for {imdb_id} to check XEM mapping or air date.")
             except Exception as e:
-                logging.error(f"Error during XEM mapping lookup for {imdb_id} S{season}E{original_episode}: {e}", exc_info=True)
+                logging.error(f"Error during XEM mapping or air date lookup for {imdb_id} S{season}E{original_episode}: {e}", exc_info=True)
         
         # Store the final season/episode used after potential XEM mapping
-        # Use the xem_applied flag to decide if we should store these
         if xem_applied:
             scene_season = season
             scene_episode = episode
-        # else: scene_season and scene_episode remain None
-        # --- End XEM Mapping Lookup ---
+            # --- START ADDED LOGGING ---
+            logging.info(f"Pre-Scrape Check: Using XEM-mapped season={scene_season}, episode={scene_episode} for scraping.")
+            # --- END ADDED LOGGING ---
+        else:
+            # --- START ADDED LOGGING ---
+            logging.info(f"Pre-Scrape Check: No XEM mapping applied. Using original season={original_season}, episode={original_episode} for scraping.")
+            # --- END ADDED LOGGING ---
+            # Ensure season/episode passed to _do_scrape are the originals if no XEM
+            season = original_season
+            episode = original_episode
 
         # Initialize results lists
         all_filtered_results = []
@@ -536,10 +610,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Execute scraping based on the determined titles
         for source, search_title in titles_to_try:
             logging.info(f"Scraping with {source}: {search_title}")
-            # If scraping with original title or preferred alias, pass translated title for ranking/filtering
-            # If scraping with translated title, it's already the search_title, so pass None here.
-            # NO! Always pass the actual translated title to _do_scrape if it exists.
-            # current_translated_title_for_scrape = translated_title if source != 'translated_title' else None
+
+            # --- START ADDED LOGGING ---
+            logging.info(f"Calling _do_scrape with: search_title='{search_title}', original_media_title='{title}', season={season}, episode={episode}, target_air_date='{target_air_date}'")
+            # --- END ADDED LOGGING ---
 
             filtered_results, filtered_out_results, task_timings = _do_scrape(
                 search_title=search_title,
@@ -547,8 +621,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 content_type=content_type,
                 version=version,
                 version_settings=version_settings,
-                season=scene_season if xem_applied else original_season, # Pass final season used for scraping
-                episode=scene_episode if xem_applied else original_episode, # Pass final episode used for scraping
+                season=season, # Use potentially XEM-modified season
+                episode=episode, # Use potentially XEM-modified episode
                 multi=multi,
                 genres=genres,
                 episode_formats=episode_formats,
@@ -559,8 +633,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 translated_title=translated_title, # Always pass the actual translation
                 target_air_date=target_air_date, # Pass target_air_date here
                 # Pass the determined scene mapping (or None) to _do_scrape
-                scene_season_map=scene_season, 
-                scene_episode_map=scene_episode
+                scene_season_map=scene_season, # This is the XEM-mapped season (or None)
+                scene_episode_map=scene_episode # This is the XEM-mapped episode (or None)
             )
             
             if filtered_results:
