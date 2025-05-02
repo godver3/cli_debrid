@@ -129,12 +129,16 @@ def request_content():
         # Process metadata
         processed_items = process_metadata([wanted_item])
         if not processed_items:
-            return jsonify({'error': 'Failed to process metadata'}), 400
+            # Handle cases where process_metadata returns None or an empty dict
+            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Content might already exist or is invalid.")
+            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
         # Combine movies and episodes from processed items
         all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
         if not all_items:
-            return jsonify({'error': 'No valid items after processing'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Content might already exist.")
+            # Return a more specific message indicating the item might already exist or was filtered
+            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
         # Add content source to all items
         for item in all_items:

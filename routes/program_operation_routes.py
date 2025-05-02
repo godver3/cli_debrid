@@ -957,12 +957,20 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
         source_key = task_name[5:-7] # Extract potential key 'My_Overseerr' etc.
         
         # Try to find a matching entry in the content_sources_map
-        # Content source keys *might* have underscores, but display should be nicer
+        # --- START EDIT: Prioritize configured display_name ---
         if content_sources_map and source_key in content_sources_map:
-             # Use the key but replace underscores with spaces and capitalize
-            display_name = source_key.replace('_', ' ').strip()
-             # Basic capitalization (capitalize first letter of each word)
-            return ' '.join(word.capitalize() for word in display_name.split())
+            source_config = content_sources_map[source_key]
+            # Check if the source config has a non-empty 'display_name' field
+            config_display_name = getattr(source_config, 'display_name', '') or source_config.get('display_name', '') if isinstance(source_config, dict) else ''
+
+            if config_display_name and config_display_name.strip():
+                return config_display_name.strip()
+            else:
+                # Fallback to formatting the key if display_name is missing/empty
+                display_name = source_key.replace('_', ' ').strip()
+                # Basic capitalization (capitalize first letter of each word)
+                return ' '.join(word.capitalize() for word in display_name.split())
+        # --- END EDIT ---
         else:
             # Fallback if key not found in map (shouldn't happen often if maps are synced)
              logging.warning(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")

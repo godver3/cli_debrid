@@ -114,7 +114,7 @@ def index():
         if not selected_columns:
             selected_columns = ['id']
 
-        # Get filter, sort, and logic parameters
+        # Get filter, sort, and logic parameters from request
         filters = []
         filter_data = request.args.get('filters', '')
         if filter_data:
@@ -125,9 +125,10 @@ def index():
 
         sort_column = request.args.get('sort_column', 'id')
         sort_order = request.args.get('sort_order', 'asc')
-        content_type = request.args.get('content_type', 'movie')
-        current_letter = request.args.get('letter', 'A')
-        filter_logic = request.args.get('filter_logic', 'AND').upper() # Get filter logic
+        # Get initial values from request, they might be defaulted later
+        content_type_req = request.args.get('content_type')
+        current_letter_req = request.args.get('letter')
+        filter_logic = request.args.get('filter_logic', 'AND').upper()
 
         # Validate filter_logic
         if filter_logic not in ['AND', 'OR']:
@@ -135,151 +136,202 @@ def index():
 
         # Validate sort_column
         if sort_column not in all_columns:
-            sort_column = 'id'  # Fallback to 'id' if invalid column is provided
+            sort_column = 'id'
 
         # Validate sort_order
         if sort_order.lower() not in ['asc', 'desc']:
-            sort_order = 'asc'  # Fallback to 'asc' if invalid order is provided
+            sort_order = 'asc'
 
-        # Define alphabet here
+        # Define alphabet
         alphabet = list(string.ascii_uppercase)
 
-        # Construct the SQL query
+        # Construct the SQL query columns
         query_columns = list(set(selected_columns + ['id']))
-        # Ensure 'content_source' is always fetched if it's selected or used for filtering/display
+        # Ensure 'content_source' is always fetched if it's selected or needed
         if 'content_source' in selected_columns or any(f.get('column') == 'content_source' for f in filters):
              if 'content_source' not in query_columns:
                  query_columns.append('content_source')
 
-        # Create the comma-separated list of quoted columns first
         columns_quoted_str = ', '.join([f'"{col}"' for col in query_columns])
-        # Now use this string in the main f-string
-        query = f"SELECT {columns_quoted_str} FROM media_items"
+        base_query = f"SELECT {columns_quoted_str} FROM media_items"
 
-        where_clauses = []
-        params = []
+        # --- Process Explicit Filters ---
+        filter_where_clauses = []
+        filter_params = []
 
-        # Apply filters if present
-        if filters:
+        if filters: # Only process if filters were provided in the request
             for filter_item in filters:
                 column = filter_item.get('column')
                 raw_value = filter_item.get('value')
                 operator = filter_item.get('operator', 'contains')
 
+                # --- Backend Validation: Ignore operators requiring value with empty string ---
+                if raw_value == '' and operator in ['contains', 'starts_with', 'ends_with', 'greater_than', 'less_than']:
+                    logging.warning(f"Ignoring filter condition: Column '{column}', Operator '{operator}' with empty value.")
+                    continue # Skip this filter item entirely
+                # --- END Backend Validation ---
+
+                # --- Start: Added validation block ---
+                if not column or column not in all_columns:
+                    logging.warning(f"Ignoring filter condition: Invalid column '{column}'.")
+                    continue # Skip invalid column
+
+                if not operator or operator not in [op['value'] for op in data['operators']]:
+                     logging.warning(f"Ignoring filter condition: Invalid operator '{operator}' for column '{column}'.")
+                     continue # Skip invalid operator
+                # --- End: Added validation block ---
+
+                clause_added_in_this_iteration = False # Track if a clause is added for THIS filter item
+
                 # Special handling for content_source filtering (filter by ID)
-                if column == 'content_source' and column in all_columns:
+                if column == 'content_source':
                     value = raw_value # The value from the filter dropdown IS the source_id
                     if operator == 'equals':
-                        where_clauses.append(f'"{column}" = ?')
-                        params.append(value)
+                        filter_where_clauses.append(f'"{column}" = ?')
+                        filter_params.append(value)
+                        clause_added_in_this_iteration = True
                     elif operator == 'not_equals':
-                        # Need to handle NULLs correctly if 'None' is a selectable option
-                        if value == "None":
-                            where_clauses.append(f'"{column}" IS NOT NULL')
+                        if value == "None": # Special handling if 'None' is a possible value ID
+                            filter_where_clauses.append(f'"{column}" IS NOT NULL')
+                            # No params needed
                         else:
-                            where_clauses.append(f'("{column}" IS NULL OR "{column}" != ?)')
-                            params.append(value)
+                            filter_where_clauses.append(f'("{column}" IS NULL OR "{column}" != ?)')
+                            filter_params.append(value)
+                        clause_added_in_this_iteration = True
                     # Add other operators for content_source if needed, filtering by ID
-                    continue # Skip default filter processing for content_source
+                    if clause_added_in_this_iteration:
+                         continue # Skip default filter processing if content_source was handled
 
-                # --- Keep existing filter logic for other columns ---
-                if column and column in all_columns:
-                    value = raw_value # Keep empty string as is
+                # Handle operators that don't need a value first
+                if operator == 'is_null':
+                    filter_where_clauses.append(f'"{column}" IS NULL')
+                    clause_added_in_this_iteration = True
+                    continue # Skip value processing for IS NULL
+                elif operator == 'is_not_null':
+                    filter_where_clauses.append(f'"{column}" IS NOT NULL')
+                    clause_added_in_this_iteration = True
+                    continue # Skip value processing for IS NOT NULL
 
-                    # Handle operators that don't need a value first
-                    if operator == 'is_null':
-                        where_clauses.append(f'"{column}" IS NULL')
-                        continue # Skip value processing for IS NULL
-                    elif operator == 'is_not_null':
-                        where_clauses.append(f'"{column}" IS NOT NULL')
-                        continue # Skip value processing for IS NOT NULL
+                # Proceed with operators requiring a value (or specific handling for "None")
+                value = raw_value # Keep original value
 
-                    # Proceed with operators requiring a value (or specific handling for "None")
-                    if value == "None" and operator == 'equals':
-                        where_clauses.append(f'("{column}" IS NULL OR "{column}" = ? OR "{column}" = ?)')
-                        params.extend(['', 'None'])
-                    elif value == "None" and operator == 'not_equals':
-                        where_clauses.append(f'("{column}" IS NOT NULL AND "{column}" != ? AND "{column}" != ?)')
-                        params.extend(['', 'None'])
-                    # Handle operators requiring a non-"None" value
-                    elif value != "None":
-                        if value == '' and operator == 'equals':
-                            where_clauses.append(f'"{column}" = ?')
-                            params.append('')
-                        elif value == '' and operator == 'not_equals':
-                             where_clauses.append(f'"{column}" != ?')
-                             params.append('')
-                        # Standard operators for non-empty, non-"None" values
-                        elif value != '':
-                            if operator == 'contains':
-                                where_clauses.append(f'"{column}" LIKE ?')
-                                params.append(f"%{value}%")
-                            elif operator == 'equals':
-                                where_clauses.append(f'"{column}" = ?')
-                                params.append(value)
-                            elif operator == 'not_equals':
-                                where_clauses.append(f'"{column}" IS NOT ?') # Use IS NOT for NULL-safe inequality
-                                params.append(value)
-                            elif operator == 'starts_with':
-                                where_clauses.append(f'"{column}" LIKE ?')
-                                params.append(f"{value}%")
-                            elif operator == 'ends_with':
-                                where_clauses.append(f'"{column}" LIKE ?')
-                                params.append(f"%{value}")
-                            elif operator == 'greater_than':
-                                try:
-                                    where_clauses.append(f'CAST("{column}" AS REAL) > ?')
-                                    params.append(float(value))
-                                except (ValueError, TypeError):
-                                    where_clauses.append(f'"{column}" > ?')
-                                    params.append(value)
-                            elif operator == 'less_than':
-                                try:
-                                    where_clauses.append(f'CAST("{column}" AS REAL) < ?')
-                                    params.append(float(value))
-                                except (ValueError, TypeError):
-                                    where_clauses.append(f'"{column}" < ?')
-                                    params.append(value)
-            # --- End existing filter logic ---
+                if value == "None":
+                    if operator == 'equals':
+                        filter_where_clauses.append(f'("{column}" IS NULL OR "{column}" = ? OR "{column}" = ?)')
+                        filter_params.extend(['', 'None'])
+                        clause_added_in_this_iteration = True
+                    elif operator == 'not_equals':
+                        filter_where_clauses.append(f'("{column}" IS NOT NULL AND "{column}" != ? AND "{column}" != ?)')
+                        filter_params.extend(['', 'None'])
+                        clause_added_in_this_iteration = True
+                    if clause_added_in_this_iteration:
+                         continue # Skip further processing if handled
 
-            # Combine filter clauses based on the selected logic
-            if where_clauses:
-                filter_combination_operator = f" {filter_logic} "
-                query += " WHERE (" + filter_combination_operator.join(where_clauses) + ")" # Group filters
-                # If filters are applied, don't reset content_type/letter if they were also specified
-                if 'content_type' not in request.args:
-                    content_type = 'all'
-                if 'letter' not in request.args:
-                    current_letter = ''
-        # Apply content type and letter filters only if no column filters were specified
-        else:
-            non_filter_clauses = []
-            if content_type != 'all':
-                non_filter_clauses.append("\"type\" = ?") # Quote column name
-                params.append(content_type)
+                # Handle empty string specifically (only for equals/not_equals now)
+                elif value == '':
+                    if operator == 'equals':
+                        filter_where_clauses.append(f'"{column}" = ?')
+                        filter_params.append('')
+                        clause_added_in_this_iteration = True
+                    elif operator == 'not_equals':
+                         filter_where_clauses.append(f'"{column}" IS NOT ?') # Use IS NOT for NULL safety
+                         filter_params.append('')
+                         clause_added_in_this_iteration = True
+                    if clause_added_in_this_iteration:
+                         continue
 
-            if current_letter:
-                if current_letter == '#':
+                # Standard operators for non-empty, non-"None" values
+                elif value != '':
+                    original_clause_count = len(filter_where_clauses)
+                    if operator == 'contains':
+                        filter_where_clauses.append(f'"{column}" LIKE ?')
+                        filter_params.append(f"%{value}%")
+                    elif operator == 'equals':
+                        filter_where_clauses.append(f'"{column}" = ?')
+                        filter_params.append(value)
+                    elif operator == 'not_equals':
+                        filter_where_clauses.append(f'"{column}" IS NOT ?') # Use IS NOT for NULL-safe inequality
+                        filter_params.append(value)
+                    elif operator == 'starts_with':
+                        filter_where_clauses.append(f'"{column}" LIKE ?')
+                        filter_params.append(f"{value}%")
+                    elif operator == 'ends_with':
+                        filter_where_clauses.append(f'"{column}" LIKE ?')
+                        filter_params.append(f"%{value}")
+                    elif operator == 'greater_than':
+                        try:
+                            filter_where_clauses.append(f'CAST("{column}" AS REAL) > ?')
+                            filter_params.append(float(value))
+                        except (ValueError, TypeError):
+                            filter_where_clauses.append(f'"{column}" > ?')
+                            filter_params.append(value)
+                    elif operator == 'less_than':
+                        try:
+                            filter_where_clauses.append(f'CAST("{column}" AS REAL) < ?')
+                            filter_params.append(float(value))
+                        except (ValueError, TypeError):
+                            filter_where_clauses.append(f'"{column}" < ?')
+                            filter_params.append(value)
+
+                    if len(filter_where_clauses) > original_clause_count:
+                        clause_added_in_this_iteration = True
+                        continue # Skip further processing if clause was added
+            # --- End Filter Processing Loop ---
+
+        # --- Determine final WHERE clause and parameters ---
+        final_where_clause = ""
+        final_params = []
+
+        # Determine the effective content type and letter for this request (used if no valid filters)
+        effective_content_type = content_type_req if content_type_req is not None else 'movie' # Default to movie
+        effective_current_letter = current_letter_req if current_letter_req is not None else 'A' # Default to A
+
+        if filter_where_clauses: # If any valid filters were processed from the 'filters' parameter
+            filter_combination_operator = f" {filter_logic} "
+            final_where_clause = "WHERE (" + filter_combination_operator.join(filter_where_clauses) + ")"
+            final_params = filter_params
+            # Filters take precedence, reset type/letter selectors for UI consistency
+            content_type_for_template = 'all'
+            current_letter_for_template = ''
+        else: # No valid explicit filters were applied, use type/letter (request values or defaults)
+            default_clauses = []
+            default_params = []
+
+            if effective_content_type != 'all':
+                default_clauses.append("\"type\" = ?") # Quote column name
+                default_params.append(effective_content_type)
+
+            if effective_current_letter: # Check if effective_current_letter has a value
+                if effective_current_letter == '#':
                     numeric_likes = " OR ".join([f"title LIKE '{i}%'" for i in range(10)])
                     symbol_likes = " OR ".join([f"title LIKE '{s}%'" for s in ['[', '(', '{']])
-                    non_filter_clauses.append(f"({numeric_likes} OR {symbol_likes})")
-                elif current_letter.isalpha():
-                    non_filter_clauses.append("title LIKE ?")
-                    params.append(f"{current_letter}%")
+                    default_clauses.append(f"({numeric_likes} OR {symbol_likes})")
+                    # No parameters needed for this specific clause structure
+                elif effective_current_letter.isalpha() and len(effective_current_letter) == 1:
+                    default_clauses.append("title LIKE ?")
+                    default_params.append(f"{effective_current_letter.upper()}%")
+                # else: Invalid letter/symbol provided, ignore it
 
-            if non_filter_clauses:
-                query += " WHERE " + " AND ".join(non_filter_clauses) # Always AND for type/letter
+            if default_clauses:
+                final_where_clause = "WHERE " + " AND ".join(default_clauses)
+                final_params = default_params
+
+            # Use the effective values for the template display when defaults are applied
+            content_type_for_template = effective_content_type
+            current_letter_for_template = effective_current_letter
 
         # Construct the ORDER BY clause safely
         order_clause = f"ORDER BY \"{sort_column}\" {sort_order}" # Quote column name
-        query += f" {order_clause}"
+
+        # Final Query Assembly
+        query = f"{base_query} {final_where_clause} {order_clause}"
 
         # Log the query and parameters for debugging
         logging.debug(f"Executing query: {query}")
-        logging.debug(f"Query parameters: {params}")
+        logging.debug(f"Query parameters: {final_params}")
 
         # Execute the query
-        cursor.execute(query, params)
+        cursor.execute(query, final_params) # Use final_params consistently
         items = cursor.fetchall()
 
         # Log the number of items fetched
@@ -321,11 +373,11 @@ def index():
         data.update({
             'items': items_dict_list, # Use the modified list
             'selected_columns': selected_columns,
-            'filters': filters,
+            'filters': filters, # Pass original filters back for display
             'sort_column': sort_column,
             'sort_order': sort_order,
-            'current_letter': current_letter,
-            'content_type': content_type,
+            'current_letter': current_letter_for_template, # Use determined value for template
+            'content_type': content_type_for_template,   # Use determined value for template
             'filter_logic': filter_logic,
             'column_values': column_values,
             # content_source_display_map is already in data
@@ -335,7 +387,7 @@ def index():
             return jsonify(data)
         else:
             return render_template('database.html', **data)
-        
+
     except sqlite3.Error as e:
         logging.error(f"SQLite error in database route: {str(e)}")
         error_message = f"Database error: {str(e)}"

@@ -223,19 +223,6 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         retrieved_show_metadata = None
 
         try:
-            if base_episode_data['episode_imdb_id']:
-                metadata_result = DirectAPI.get_episode_metadata(base_episode_data['episode_imdb_id'])
-                if metadata_result and isinstance(metadata_result, tuple):
-                    metadata = metadata_result[0]
-                    if metadata and isinstance(metadata, dict):
-                        episode_data = metadata.get('episode', {})
-                        if episode_data and isinstance(episode_data, dict):
-                            first_aired = episode_data.get('first_aired')
-                            if first_aired:
-                                base_episode_data['release_date'] = first_aired[:10]
-                                fallback_date_found = True 
-                                logger.info(f"Fallback successful using episode metadata: set release_date to {base_episode_data['release_date']}")
-            
             if not fallback_date_found and show_imdb_id:
                 if fallback_show_metadata_cache is not None and show_imdb_id in fallback_show_metadata_cache:
                     retrieved_show_metadata = fallback_show_metadata_cache[show_imdb_id]

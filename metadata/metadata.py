@@ -733,12 +733,29 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         representative_item = original_items_list[0]
         media_type = representative_item.get('media_type', '').lower()
         metadata = None
+        source = "bulk" # Track metadata source
 
         # Retrieve metadata (potentially fetched individually now)
         if media_type == 'movie' and imdb_id in bulk_movie_metadata:
             metadata = bulk_movie_metadata[imdb_id]
         elif media_type in ['tv', 'show', 'episode'] and imdb_id in bulk_show_metadata:
             metadata = bulk_show_metadata[imdb_id]
+            # Check if bulk metadata lacks the required seasons structure
+            if metadata and not isinstance(metadata.get('seasons'), dict):
+                logging.warning(f"Bulk metadata for show {imdb_id} lacks structured seasons. Fetching individually...")
+                try:
+                    # Fetch the full metadata individually, which includes formatted seasons
+                    individual_metadata, individual_source = DirectAPI.get_show_metadata(imdb_id)
+                    if individual_metadata:
+                        logging.info(f"Successfully fetched individual metadata for {imdb_id} including seasons.")
+                        metadata = individual_metadata # Replace bulk data with complete individual data
+                        source = individual_source
+                    else:
+                        logging.error(f"Individual metadata fetch failed for {imdb_id}. Cannot proceed with seasons.")
+                        # Keep original bulk metadata, the error will be logged later anyway
+                except Exception as e_ind:
+                    logging.error(f"Error during individual metadata fetch for {imdb_id}: {e_ind}", exc_info=True)
+                    # Keep original bulk metadata
 
         # This warning should be less frequent now due to individual fetch attempt
         if not metadata:
@@ -834,8 +851,11 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                          continue
 
                      seasons = item_metadata.get('seasons')
+                     # Log the data *after* potential individual fetch
+                     logging.debug(f"Inspecting seasons data for IMDb {imdb_id} before processing: Type={type(seasons)}, HasData={bool(seasons)}") # Modified Log Line
                      if seasons == 'None' or not isinstance(seasons, dict):
-                         logging.error(f"Invalid seasons data in final metadata for show {imdb_id}. Skipping.")
+                         # This error should now only trigger if the individual fetch *also* failed or returned bad data.
+                         logging.error(f"Invalid or missing seasons data in final metadata for show {imdb_id} after potential individual fetch. Skipping.")
                          continue
 
                      requested_seasons = item.get('requested_seasons', [])

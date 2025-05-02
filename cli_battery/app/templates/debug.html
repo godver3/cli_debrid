@@ -38,6 +38,29 @@
         </tr>
         <tr class="details" style="display: none;">
             <td colspan="4">
+                <h4>Seasons:</h4>
+                {% if item.seasons %}
+                    <ul style="padding-left: 20px; margin-top: 0.5rem;">
+                    {% for season in item.seasons | sort(attribute='season_number') %}
+                        <li>
+                            <strong>Season {{ season.season_number }}</strong>
+                            {% if season.episode_count is not none %} ({{ season.episode_count }} episodes declared) {% endif %}
+                            {% if season.episodes %}
+                                <ul style="padding-left: 20px; margin-top: 0.2rem;">
+                                {% for episode in season.episodes | sort(attribute='episode_number') %}
+                                    <li>E{{ episode.episode_number }}: {{ episode.title or 'No Title' }} (Aired: {{ episode.first_aired.strftime('%Y-%m-%d %H:%M:%S') if episode.first_aired else 'N/A' }})</li>
+                                {% endfor %}
+                                </ul>
+                            {% elif season.episode_count is not none and season.episode_count > 0 %}
+                                <p style="font-style: italic; color: #888; margin-left: 20px;">Episode details not loaded.</p>
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p style="color: #888;">No season data loaded or available for this item.</p>
+                {% endif %}
+
                 <h4>Metadata:</h4>
                 <div class="metadata-container">
                 {% for metadata in item.item_metadata %}
