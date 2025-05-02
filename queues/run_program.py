@@ -236,36 +236,75 @@ class ProgramRunner:
         custom_intervals_applied = 0
         intervals_file_path = None # Define outside try
         try:
+            # --- START EDIT: Add import os ---
+            import os
+            import json
+            # --- END EDIT ---
             from routes.program_operation_routes import _get_task_intervals_file_path # Import helper
             intervals_file_path = _get_task_intervals_file_path()
-            if os.path.exists(intervals_file_path):
+            if os.path.exists(intervals_file_path): # Error occurred here
+                # --- START EDIT: Added log ---
                 logging.info(f"Loading custom task intervals from {intervals_file_path}")
+                # --- END EDIT ---
                 with open(intervals_file_path, 'r') as f:
-                    saved_intervals = json.load(f)
+                    # --- START EDIT: Added try-except for JSON decode ---
+                    try:
+                        saved_intervals = json.load(f)
+                        logging.debug(f"Successfully loaded JSON data: {saved_intervals}") # Log loaded data
+                    except json.JSONDecodeError as json_e:
+                        logging.error(f"Failed to decode JSON from {intervals_file_path}: {json_e}")
+                        saved_intervals = {} # Use empty dict on decode error
+                    # --- END EDIT ---
 
-                for task_name, interval_minutes in saved_intervals.items():
+                # Process values as SECONDS
+                for task_name, interval_seconds_val in saved_intervals.items(): # Rename loop variable
+                    # --- START EDIT: Log raw values ---
+                    logging.debug(f"Processing raw custom interval: Task='{task_name}', Value='{interval_seconds_val}'")
+                    # --- END EDIT ---
                     normalized_name = self._normalize_task_name(task_name) # Normalize saved task name
+                    # --- START EDIT: Log normalized name ---
+                    logging.debug(f"Normalized task name: '{normalized_name}'")
+                    # --- END EDIT ---
 
                     # Check if this task exists in our defaults
                     if normalized_name in self.task_intervals:
-                        if interval_minutes is not None: # Ignore None values (means reset)
+                        # --- START EDIT: Log default interval ---
+                        default_interval = self.task_intervals[normalized_name]
+                        logging.debug(f"Task '{normalized_name}' exists. Default interval: {default_interval}s")
+                        # --- END EDIT ---
+
+                        if interval_seconds_val is not None: # Ignore None values (means reset)
                             try:
-                                interval_min_int = int(interval_minutes)
-                                if interval_min_int >= 1:
-                                    interval_seconds = interval_min_int * 60
-                                    if self.task_intervals[normalized_name] != interval_seconds:
-                                        logging.info(f"Applying custom interval for '{normalized_name}': {interval_min_int} minutes ({interval_seconds}s)")
-                                        self.task_intervals[normalized_name] = interval_seconds
+                                # Value is already in seconds
+                                interval_sec_int = int(interval_seconds_val)
+                                # --- START EDIT: Log parsed custom interval ---
+                                logging.debug(f"Parsed custom interval for '{normalized_name}' as {interval_sec_int} seconds.")
+                                # --- END EDIT ---
+
+                                # Use the minimum interval defined elsewhere (e.g., 10 seconds)
+                                MIN_INTERVAL_SECONDS = 10 # Define or import this constant
+                                if interval_sec_int >= MIN_INTERVAL_SECONDS:
+                                    # --- START EDIT: Log comparison ---
+                                    logging.debug(f"Comparing default ({default_interval}s) with custom ({interval_sec_int}s) for '{normalized_name}'")
+                                    # --- END EDIT ---
+                                    if default_interval != interval_sec_int:
+                                        # --- START EDIT: Log application ---
+                                        logging.info(f"Applying custom interval for '{normalized_name}': {interval_sec_int} seconds (Previous: {default_interval}s)")
+                                        # --- END EDIT ---
+                                        self.task_intervals[normalized_name] = interval_sec_int
                                         custom_intervals_applied += 1
                                     else:
-                                        logging.debug(f"Custom interval for '{normalized_name}' matches default or was already set. Skipping.")
+                                        # --- START EDIT: Log skipping ---
+                                        logging.debug(f"Custom interval ({interval_sec_int}s) for '{normalized_name}' matches default ({default_interval}s). Skipping update.")
+                                        # --- END EDIT ---
                                 else:
-                                    logging.warning(f"Skipping invalid custom interval for '{normalized_name}': {interval_minutes} (must be >= 1 minute).")
-                            except (ValueError, TypeError):
-                                logging.warning(f"Skipping invalid custom interval format for '{normalized_name}': {interval_minutes}.")
-                        # else: interval_minutes is None, meaning use default - no action needed here.
-                    # else:
-                    #     logging.warning(f"Custom interval found for task '{normalized_name}' but task is not defined in default intervals. Ignoring.")
+                                    logging.warning(f"Skipping invalid custom interval for '{normalized_name}': {interval_sec_int}s (must be >= {MIN_INTERVAL_SECONDS} seconds).")
+                            except (ValueError, TypeError) as parse_e:
+                                logging.warning(f"Skipping invalid custom interval format for '{normalized_name}': {interval_seconds_val}. Error: {parse_e}")
+                        else:
+                             logging.debug(f"Custom interval for '{normalized_name}' is None. Will use default.")
+                    else:
+                        logging.warning(f"Custom interval found for task '{normalized_name}' but task is not defined in default intervals. Ignoring.")
 
             else:
                 logging.info("No custom task_intervals.json found, using default intervals.")
