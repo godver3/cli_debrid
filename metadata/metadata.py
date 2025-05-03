@@ -11,6 +11,7 @@ import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 from collections import defaultdict
+import iso8601
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -262,9 +263,13 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 
     if first_aired_str:
         try:
-            # Parse the UTC datetime string
-            first_aired_utc = datetime.strptime(first_aired_str, "%Y-%m-%dT%H:%M:%S.%fZ")
-            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+            # Use iso8601 library for robust parsing
+            first_aired_utc = iso8601.parse_date(first_aired_str)
+            # iso8601.parse_date handles the 'Z' automatically, making it UTC
+
+            # Ensure it's timezone-aware (should be redundant, but safe)
+            if first_aired_utc.tzinfo is None:
+                 first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
 
             # Convert UTC to local timezone using cross-platform function
             local_tz = _get_local_timezone()
@@ -275,7 +280,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             airtime = premiere_dt_local_tz.strftime("%H:%M")
             logging.debug(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
 
-        except ValueError as e:
+        except (ValueError, iso8601.ParseError) as e: # Catch iso8601.ParseError too
             logging.warning(f"Invalid datetime format or timezone conversion error: {first_aired_str} - {e}")
             # Keep release_date as 'Unknown' and airtime as default '19:00'
     else:

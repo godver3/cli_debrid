@@ -22,6 +22,13 @@ from pathlib import Path
 from scraper.functions import *
 from cli_battery.app.direct_api import DirectAPI
 import json
+try:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+except ImportError:
+    # Fallback or raise error if zoneinfo is critical and not available
+    logging.warning("zoneinfo module not found. Timezone conversion for air dates might be limited.")
+    ZoneInfo = None # Define ZoneInfo as None to handle checks later
+    ZoneInfoNotFoundError = Exception # Use base Exception for catch block
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
@@ -136,7 +143,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             try:
                 logging.info(f"Checking for XEM mapping for {title} S{season}E{original_episode} (IMDb: {imdb_id})")
                 show_metadata, meta_source = direct_api.get_show_metadata(imdb_id)
+                airs_data = None # Initialize airs_data
                 if show_metadata:
+                    # Store airs data if available
+                    airs_data = show_metadata.get('airs')
                     xem_mapping_list = show_metadata.get('xem_mapping')
                     trakt_seasons_data = show_metadata.get('seasons') # Get Trakt season structure
 
@@ -186,54 +196,59 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                                     # Access using integer key original_episode
                                     episode_data = episodes_data[original_episode]
                                     if isinstance(episode_data, dict) and 'first_aired' in episode_data:
-                                        air_date_full = episode_data['first_aired']
-                                        if isinstance(air_date_full, str) and air_date_full:
-                                            # --- START UTC to Local Conversion ---
+                                        air_date_full_utc_str = episode_data['first_aired']
+                                        if isinstance(air_date_full_utc_str, str) and air_date_full_utc_str:
+                                            # --- START Timezone-Aware Air Date Calculation ---
+                                            target_air_date = None # Initialize
                                             try:
-                                                # Handle 'Z' for UTC explicitly
-                                                if air_date_full.endswith('Z'):
-                                                    air_date_full = air_date_full[:-1] + '+00:00'
+                                                # 1. Parse the UTC timestamp string
+                                                # Handle 'Z' for UTC explicitly if present
+                                                if air_date_full_utc_str.endswith('Z'):
+                                                     air_date_full_utc_str = air_date_full_utc_str[:-1] + '+00:00'
 
-                                                # Parse the ISO 8601 timestamp into an aware UTC datetime
-                                                utc_dt = datetime.fromisoformat(air_date_full)
-
-                                                # Ensure it's timezone-aware (should be fromisoformat, but double-check)
+                                                utc_dt = datetime.fromisoformat(air_date_full_utc_str)
+                                                # Ensure it's timezone-aware and set to UTC
                                                 if utc_dt.tzinfo is None:
-                                                     utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+                                                    utc_dt = utc_dt.replace(tzinfo=timezone.utc)
                                                 elif utc_dt.tzinfo.utcoffset(utc_dt) != timedelta(0):
-                                                     utc_dt = utc_dt.astimezone(timezone.utc) # Convert to UTC if not already
+                                                    utc_dt = utc_dt.astimezone(timezone.utc)
 
-                                                # Get local timezone
-                                                from metadata.metadata import _get_local_timezone
-                                                local_tz = _get_local_timezone()
+                                                # 2. Attempt conversion using show's timezone from airs_data
+                                                show_timezone_str = None
+                                                if ZoneInfo and isinstance(airs_data, dict) and isinstance(airs_data.get('timezone'), str):
+                                                    show_timezone_str = airs_data['timezone']
 
-                                                # Convert UTC datetime to local datetime
-                                                local_dt = utc_dt.astimezone(local_tz)
+                                                if show_timezone_str:
+                                                    try:
+                                                        target_tz = ZoneInfo(show_timezone_str)
+                                                        local_dt = utc_dt.astimezone(target_tz)
+                                                        target_air_date = local_dt.strftime('%Y-%m-%d')
+                                                        logging.info(f"Calculated target air date using show timezone '{show_timezone_str}': {target_air_date} for S{season}E{original_episode}")
+                                                    except ZoneInfoNotFoundError:
+                                                        logging.warning(f"Show timezone '{show_timezone_str}' not found. Falling back to UTC date.")
+                                                    except Exception as tz_conv_err:
+                                                        logging.error(f"Error converting UTC to show timezone '{show_timezone_str}': {tz_conv_err}. Falling back to UTC date.", exc_info=True)
+                                                else:
+                                                    logging.info(f"Show timezone info not available or invalid in airs_data: {airs_data}. Falling back to UTC date.")
 
-                                                # Extract the date part in YYYY-MM-DD format
-                                                target_air_date = local_dt.strftime('%Y-%m-%d')
-                                                logging.info(f"Found target air date for S{season}E{original_episode}: {target_air_date} (local) from UTC {utc_dt.isoformat()}")
+                                                # 3. Fallback: If conversion failed or wasn't possible, use the UTC date part
+                                                if target_air_date is None:
+                                                    target_air_date = utc_dt.strftime('%Y-%m-%d')
+                                                    logging.info(f"Using UTC date as target air date: {target_air_date} for S{season}E{original_episode}")
 
                                             except ValueError as format_err:
-                                                logging.error(f"Could not parse air date string '{air_date_full}' during UTC->local conversion: {format_err}")
-                                                # Fallback: Try splitting just in case it's only YYYY-MM-DD (less ideal)
-                                                try:
-                                                     target_air_date = air_date_full.split('T')[0]
-                                                     datetime.strptime(target_air_date, '%Y-%m-%d') # Validate format
-                                                     logging.warning(f"Using fallback date extraction (UTC date part): {target_air_date}")
-                                                except (ValueError, IndexError):
-                                                     target_air_date = None # Set to None if fallback also fails
-                                                     logging.error("Fallback date extraction also failed.")
+                                                logging.error(f"Could not parse 'first_aired' UTC string '{air_date_full_utc_str}': {format_err}")
+                                                target_air_date = None # Ensure it's None on parsing error
                                             except Exception as conv_err:
-                                                logging.error(f"Error converting UTC air date to local for S{season}E{original_episode}: {conv_err}", exc_info=True)
-                                                target_air_date = None # Set to None on conversion error
-                                            # --- END UTC to Local Conversion ---
+                                                logging.error(f"Unexpected error during air date calculation for S{season}E{original_episode}: {conv_err}", exc_info=True)
+                                                target_air_date = None # Ensure it's None on other errors
+                                            # --- END Timezone-Aware Air Date Calculation ---
 
-                                        elif air_date_full is None:
+                                        elif air_date_full_utc_str is None:
                                              logging.warning(f"Target episode S{season}E{original_episode} has a null 'first_aired' date.")
                                              target_air_date = None # Ensure it's None
                                         else:
-                                             logging.warning(f"'first_aired' for S{season}E{original_episode} is not a string or is empty: {air_date_full}")
+                                             logging.warning(f"'first_aired' for S{season}E{original_episode} is not a string or is empty: {air_date_full_utc_str}")
                                              target_air_date = None # Ensure it's None
                                     else:
                                         logging.warning(f"Could not find 'first_aired' key or value in episode data for S{season}E{original_episode}.")
@@ -408,7 +423,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             }
 
         # Fetch translated title based on language settings
-        language_setting = version_settings.get('language_code', '')
+        language_setting = version_settings.get('language_code') or '' # Ensure language_setting is a string
         languages_to_try = [lang.strip() for lang in language_setting.split(',') if lang.strip() and lang.strip().lower() != 'en']
         logging.info(f"Languages to attempt translation for (from version '{version}' settings): {languages_to_try}")
 

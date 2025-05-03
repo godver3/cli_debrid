@@ -188,19 +188,38 @@ class TorrentProcessor:
             with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
                 temp_file_path = tmp.name # Store path early for cleanup
                 try:
-                    response = requests.get(magnet_or_url, timeout=30)
+                    # Disable automatic redirects to handle magnet redirects manually
+                    response = requests.get(magnet_or_url, timeout=30, allow_redirects=False)
+
+                    # Check if server responded with a redirect
+                    if response.is_redirect or response.is_permanent_redirect:
+                        location = response.headers.get('Location')
+                        # Check if the redirect location is a magnet link
+                        if location and location.startswith('magnet:'):
+                            logging.info(f"URL {magnet_or_url} redirected to a magnet link.")
+                            # Clean up the temp file we created but won't use
+                            try:
+                                os.unlink(temp_file_path)
+                            except OSError as e:
+                                logging.warning(f"Could not delete temporary file {temp_file_path} after finding magnet redirect: {e}")
+                            return location.strip(), None # Return the extracted magnet link
+
+                    # If it wasn't a redirect to a magnet, raise errors for non-2xx status codes
+                    # This will catch issues like 404 Not Found, 500 Server Error, etc.
+                    # It will also catch redirects to non-magnet URLs if we don't handle them further,
+                    # though requests would normally follow those if allow_redirects was True.
                     response.raise_for_status()
 
                     # Check if the response body starts with 'magnet:'
                     # Decode safely, only need the first few bytes to check
                     content_start = response.content[:10].decode('utf-8', errors='ignore').strip()
                     if content_start.startswith('magnet:'):
-                        logging.info(f"URL {magnet_or_url} resolved to a magnet link.")
+                        logging.info(f"URL {magnet_or_url} resolved to a magnet link (content).")
                         # Clean up the temp file we created but won't use
                         try:
                             os.unlink(temp_file_path)
                         except OSError as e:
-                            logging.warning(f"Could not delete temporary file {temp_file_path} after finding magnet link: {e}")
+                            logging.warning(f"Could not delete temporary file {temp_file_path} after finding magnet link in content: {e}")
                         # Return the full response text as the magnet link
                         return response.text.strip(), None
                     

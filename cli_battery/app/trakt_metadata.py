@@ -123,43 +123,76 @@ class TraktMetadata:
     def _search_by_imdb(self, imdb_id: str):
         """Search for content by IMDB ID to get Trakt slug"""
         url = f"{self.base_url}/search/imdb/{imdb_id}?type=show,movie"
+        logger.debug(f"Trakt Search URL: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
             results = response.json()
+            logger.debug(f"Trakt Search Raw Results for {imdb_id}: {results}")
             if results:
+                logger.debug(f"Trakt Search: Taking first result for {imdb_id}: {results[0]}")
                 return results[0]  # Return first match
+        elif response:
+            logger.warning(f"Trakt Search for {imdb_id} failed with status {response.status_code}: {response.text}")
+        else:
+            logger.warning(f"Trakt Search for {imdb_id} received no response.")
         return None
 
     def _get_show_data(self, imdb_id):
-        # First search to get the show's Trakt slug
+        # First search to get the show's Trakt slug and ID
         search_result = self._search_by_imdb(imdb_id)
         if not search_result or search_result['type'] != 'show':
+            logger.debug(f"Trakt: Search for IMDB {imdb_id} did not return a show. Result: {search_result}")
             return None
             
         show = search_result['show']
-        slug = show['ids']['slug']
+        trakt_id = show['ids']['trakt']
+        if not trakt_id:
+            logger.error(f"Trakt: Missing trakt ID in search result for IMDb {imdb_id}. Result: {search_result}")
+            return None
         
-        # Now get the full show data using the slug
-        url = f"{self.base_url}/shows/{slug}?extended=full"
+        # Now get the full show data using the Trakt ID
+        url = f"{self.base_url}/shows/{trakt_id}?extended=full"
+        logger.debug(f"Trakt: Fetching full show data using Trakt ID '{trakt_id}' with URL: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
-            return response.json()
+            show_data_raw = response.json()
+            logger.debug(f"Trakt: Raw response from {url}: {show_data_raw}")
+            returned_imdb_id = show_data_raw.get('ids', {}).get('imdb')
+            if returned_imdb_id != imdb_id:
+                logger.error(f"Trakt API Mismatch! Requested IMDb {imdb_id} but /shows/{trakt_id} endpoint returned data for IMDb {returned_imdb_id}. Raw Data: {show_data_raw}")
+                return None
+            return show_data_raw
+        elif response:
+            logger.warning(f"Trakt: Fetching full show data from {url} (using Trakt ID {trakt_id}) failed with status {response.status_code}: {response.text}")
+        else:
+            logger.warning(f"Trakt: Fetching full show data from {url} (using Trakt ID {trakt_id}) received no response.")
         return None
 
     def _get_movie_data(self, imdb_id):
-        # First search to get the movie's Trakt slug
+        # First search to get the movie's Trakt slug and ID
         search_result = self._search_by_imdb(imdb_id)
         if not search_result or search_result['type'] != 'movie':
+            logger.debug(f"Trakt: Search for IMDB {imdb_id} did not return a movie. Result: {search_result}")
             return None
             
         movie = search_result['movie']
+        trakt_id = movie['ids']['trakt']
         slug = movie['ids']['slug']
+        if not trakt_id:
+            logger.error(f"Trakt: Missing trakt ID in search result for IMDb {imdb_id}. Result: {search_result}")
+            return None
         
-        # Now get the full movie data using the slug
-        url = f"{self.base_url}/movies/{slug}?extended=full"
+        # Now get the full movie data using the Trakt ID
+        url = f"{self.base_url}/movies/{trakt_id}?extended=full"
+        logger.debug(f"Trakt: Fetching full movie data using Trakt ID '{trakt_id}' with URL: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
             movie_data = response.json()
+            logger.debug(f"Trakt: Raw response from {url}: {movie_data}")
+            returned_imdb_id = movie_data.get('ids', {}).get('imdb')
+            if returned_imdb_id != imdb_id:
+                logger.error(f"Trakt API Mismatch! Requested IMDb {imdb_id} but /movies/{trakt_id} endpoint returned data for IMDb {returned_imdb_id}. Raw Data: {movie_data}")
+                return None
             
             # Get aliases and add them to the movie data
             aliases = self._get_movie_aliases(slug)
@@ -172,6 +205,10 @@ class TraktMetadata:
                 movie_data['release_dates'] = release_dates
                 
             return movie_data
+        elif response:
+            logger.warning(f"Trakt: Fetching full movie data from {url} (using Trakt ID {trakt_id}) failed with status {response.status_code}: {response.text}")
+        else:
+            logger.warning(f"Trakt: Fetching full movie data from {url} (using Trakt ID {trakt_id}) received no response.")
         return None
 
     def get_show_seasons_and_episodes(self, imdb_id, include_specials: bool = False):

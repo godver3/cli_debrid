@@ -18,7 +18,6 @@ from .settings import Settings
 from datetime import datetime, timezone
 import random
 from typing import Optional, Dict, Any, List, Tuple
-import logging
 from .xem_utils import fetch_xem_mapping
 from sqlalchemy.orm import Session as SqlAlchemySession # Use alias
 
@@ -498,11 +497,19 @@ class MetadataManager:
         logger.info(f"Refreshing metadata for {imdb_id}")
 
         summary_data_result = trakt.refresh_metadata(imdb_id)
+        # --- START DEBUG LOGGING ---
+        # Log the raw data received before any processing/saving occurs
+        logger.debug(f"Raw data received from trakt.refresh_metadata for {imdb_id}: {summary_data_result}")
+        # --- END DEBUG LOGGING ---
         if not summary_data_result:
              logger.warning(f"Could not fetch summary metadata from Trakt for {imdb_id}")
              return None
 
         data_to_save = summary_data_result.get('metadata', summary_data_result)
+        # --- START DEBUG LOGGING ---
+        # Log the extracted data_to_save as well
+        logger.debug(f"Extracted data_to_save for {imdb_id}: {data_to_save}")
+         # --- END DEBUG LOGGING ---
         if not isinstance(data_to_save, dict):
             logger.error(f"Invalid summary metadata format received from Trakt for {imdb_id}")
             return None
@@ -1300,7 +1307,7 @@ class MetadataManager:
 
     @staticmethod
     def get_show_metadata(imdb_id, session: Optional[SqlAlchemySession] = None):
-        logging.info(f"MetadataManager.get_show_metadata called for {imdb_id}. Session provided: {session is not None}")
+        logger.info(f"MetadataManager.get_show_metadata called for {imdb_id}. Session provided: {session is not None}")
         session_context = session if session else DbSession()
         try:
             metadata = None
@@ -1359,16 +1366,16 @@ class MetadataManager:
                      seasons_loaded = bool(item.seasons) # Check if the list is non-empty
 
                      needs_full_refresh = (not seasons_loaded or is_stale)
-                     if not seasons_loaded: logging.info(f"Metadata for {imdb_id} needs refresh: No seasons found relationally (provided session).")
-                     if is_stale: logging.info(f"Metadata for {imdb_id} needs refresh: Data is stale (updated_at: {item.updated_at}).")
+                     if not seasons_loaded: logger.info(f"Metadata for {imdb_id} needs refresh: No seasons found relationally (provided session).")
+                     if is_stale: logger.info(f"Metadata for {imdb_id} needs refresh: Data is stale (updated_at: {item.updated_at}).")
 
 
                      if needs_full_refresh:
-                         logging.info(f"Metadata for {imdb_id} requires refresh (Seasons Missing: {not seasons_loaded}, Stale: {is_stale}).")
+                         logger.info(f"Metadata for {imdb_id} requires refresh (Seasons Missing: {not seasons_loaded}, Stale: {is_stale}).")
                          # Pass session down
                          refreshed_data = MetadataManager.refresh_metadata(imdb_id, session=session_context)
                          if refreshed_data:
-                             logging.info(f"Successfully refreshed and saved metadata for {imdb_id} (within provided session).")
+                             logger.info(f"Successfully refreshed and saved metadata for {imdb_id} (within provided session).")
                              # refresh_metadata now returns the data dict, source implies trakt
                              return refreshed_data, "trakt (refreshed)"
                          else:
@@ -1377,13 +1384,13 @@ class MetadataManager:
                              return metadata, "battery (stale, refresh failed)"
                      else:
                          # Data is fresh, format from relational
-                         logging.info(f"Metadata for {imdb_id} is fresh, returning from battery (provided session).")
+                         logger.info(f"Metadata for {imdb_id} is fresh, returning from battery (provided session).")
                          metadata['seasons'] = MetadataManager.format_seasons_data(item.seasons)
                          # ... log counts ...
 
                          # Check/Fetch XEM (still might write if missing)
                          if not has_xem:
-                            logging.info(f"Existing metadata for {imdb_id} is missing XEM mapping. Attempting to fetch...")
+                            logger.info(f"Existing metadata for {imdb_id} is missing XEM mapping. Attempting to fetch...")
                             if tvdb_id:
                                 try:
                                     xem_mapping_data = fetch_xem_mapping(tvdb_id)
@@ -1409,11 +1416,11 @@ class MetadataManager:
                          return metadata, "battery"
 
                  # Item not found in provided session, fetch from Trakt
-                 logging.info(f"Item {imdb_id} not found in database, fetching from Trakt (passing session).")
+                 logger.info(f"Item {imdb_id} not found in database, fetching from Trakt (passing session).")
                  # Pass session down
                  initial_data = MetadataManager.refresh_metadata(imdb_id, session=session_context)
                  if initial_data:
-                      logging.info(f"Successfully fetched and saved initial metadata for {imdb_id} (within provided session).")
+                      logger.info(f"Successfully fetched and saved initial metadata for {imdb_id} (within provided session).")
                       return initial_data, "trakt (new)"
                  else:
                       logger.error(f"Failed to fetch or save initial metadata for {imdb_id} (within provided session).")
@@ -1466,15 +1473,15 @@ class MetadataManager:
                          seasons_loaded = bool(item.seasons) # Check if loaded
 
                          needs_full_refresh = (not seasons_loaded or is_stale)
-                         if not seasons_loaded: logging.info(f"Metadata for {imdb_id} needs refresh: No seasons found relationally (local session).")
-                         if is_stale: logging.info(f"Metadata for {imdb_id} needs refresh: Data is stale (updated_at: {item.updated_at}).")
+                         if not seasons_loaded: logger.info(f"Metadata for {imdb_id} needs refresh: No seasons found relationally (local session).")
+                         if is_stale: logger.info(f"Metadata for {imdb_id} needs refresh: Data is stale (updated_at: {item.updated_at}).")
 
                          if needs_full_refresh:
-                             logging.info(f"Metadata for {imdb_id} requires refresh (Seasons Missing: {not seasons_loaded}, Stale: {is_stale}).")
+                             logger.info(f"Metadata for {imdb_id} requires refresh (Seasons Missing: {not seasons_loaded}, Stale: {is_stale}).")
                              # Pass session down
                              refreshed_data = MetadataManager.refresh_metadata(imdb_id, session=local_session)
                              if refreshed_data:
-                                 logging.info(f"Successfully refreshed and saved metadata for {imdb_id} (within local session).")
+                                 logger.info(f"Successfully refreshed and saved metadata for {imdb_id} (within local session).")
                                  # refresh_metadata handles commit for local session case
                                  return refreshed_data, "trakt (refreshed)"
                              else:
@@ -1483,13 +1490,13 @@ class MetadataManager:
                                  return metadata, "battery (stale, refresh failed)"
                          else:
                              # Data is fresh, format from relational
-                             logging.info(f"Metadata for {imdb_id} is fresh, returning from battery (local session).")
+                             logger.info(f"Metadata for {imdb_id} is fresh, returning from battery (local session).")
                              metadata['seasons'] = MetadataManager.format_seasons_data(item.seasons)
                              # ... log counts ...
 
                              # Check/Fetch XEM (still might write if missing)
                              if not has_xem:
-                                logging.info(f"Existing metadata for {imdb_id} is missing XEM mapping. Attempting to fetch...")
+                                logger.info(f"Existing metadata for {imdb_id} is missing XEM mapping. Attempting to fetch...")
                                 if tvdb_id:
                                     try:
                                         xem_mapping_data = fetch_xem_mapping(tvdb_id)
@@ -1516,10 +1523,10 @@ class MetadataManager:
                              return metadata, "battery"
 
                     # Item not found, fetch from Trakt
-                    logging.info(f"Item {imdb_id} not found in database, fetching from Trakt (local session).")
+                    logger.info(f"Item {imdb_id} not found in database, fetching from Trakt (local session).")
                     initial_data = MetadataManager.refresh_metadata(imdb_id, session=local_session) # Pass session
                     if initial_data:
-                         logging.info(f"Successfully fetched and saved initial metadata for {imdb_id} (within local session).")
+                         logger.info(f"Successfully fetched and saved initial metadata for {imdb_id} (within local session).")
                          # refresh_metadata handles commit for local session case
                          return initial_data, "trakt (new)"
                     else:
