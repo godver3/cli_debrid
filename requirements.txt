@@ -30,6 +30,7 @@ supervisor==4.2.5
 ntplib==0.4.0
 parsett==1.6.13
 pytz==2024.1
+tzdata
 psutil==6.0.0
 urllib3==1.26.15
 idna==3.3
