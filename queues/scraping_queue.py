@@ -284,9 +284,9 @@ class ScrapingQueue:
 
 
                         if show_metadata and 'seasons' in show_metadata:
-                            season_str = str(item_to_process['season_number'])
-                            if season_str in show_metadata['seasons']:
-                                season_data = show_metadata['seasons'][season_str]
+                            season_num = item_to_process['season_number'] # Use integer directly
+                            if season_num in show_metadata['seasons']: # Check for integer key
+                                season_data = show_metadata['seasons'][season_num] # Access using integer key
                                 if 'episodes' in season_data:
                                     # Check if this is the season finale
                                     total_episodes = len(season_data['episodes'])
@@ -305,7 +305,7 @@ class ScrapingQueue:
                                     # Only check air dates if multi-pack is still a possibility
                                     if can_attempt_multi_pack:
                                         # First pass - log all episode dates
-                                        logging.info(f"Checking air dates for {total_episodes} episodes in season {season_str}:")
+                                        logging.info(f"Checking air dates for {total_episodes} episodes in season {season_num}:")
                                         sorted_episodes = sorted(season_data['episodes'].items(), key=lambda x: int(x[0]))
                                         for ep_num, ep_data in sorted_episodes:
                                             first_aired = ep_data.get('first_aired', 'unknown')
@@ -382,7 +382,7 @@ class ScrapingQueue:
                                     logging.info("No episodes data found in season metadata - skipping multi-pack check")
                                     # is_multi_pack remains False
                             else: # Season not found
-                                logging.info(f"Season {season_str} not found in show metadata - skipping multi-pack check")
+                                logging.info(f"Season {season_num} not found in show metadata - skipping multi-pack check") # Log integer season
                                 # is_multi_pack remains False
                         else: # No 'seasons' in show_metadata
                             logging.info("No seasons data found in show metadata - skipping multi-pack check")

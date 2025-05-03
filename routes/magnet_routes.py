@@ -49,7 +49,7 @@ def _fetch_trakt_season_data_directly(imdb_id: str) -> dict | None:
             if season_num is not None:
                 # Use episode_count if available, otherwise count episodes list
                 episode_count = season.get('episode_count', len(season.get('episodes', [])))
-                season_counts[str(season_num)] = episode_count
+                season_counts[season_num] = episode_count
             else:
                 logging.warning(f"Skipping season with null number for IMDb ID {imdb_id}")
 
@@ -278,7 +278,7 @@ def prepare_manual_assignment():
                     metadata['seasons'] = {}
                     # Convert integer keys from Trakt to string keys for internal use
                     for season_num, season_info in seasons_data.items():
-                        metadata['seasons'][str(season_num)] = {
+                        metadata['seasons'][season_num] = {
                             'episodes': season_info.get('episodes', {}),
                             'episode_count': len(season_info.get('episodes', {}))
                         }
@@ -672,7 +672,7 @@ def confirm_manual_assignment():
                                 metadata['seasons'] = {}
                                 # Convert integer keys from Trakt to string keys
                                 for sn, si in seasons_data.items():
-                                    metadata['seasons'][str(sn)] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
+                                    metadata['seasons'][sn] = {'episodes': si.get('episodes', {}), 'episode_count': len(si.get('episodes', {}))}
                             else:
                                 logging.warning(f"No season data fetched from Trakt for {metadata.get('imdb_id')} in confirmation step")
                         except Exception as e:
@@ -869,8 +869,8 @@ def create_episode_item(metadata, title, year, version, torrent_id, magnet_link,
     logging.debug(f"Creating item S{season_key}E{episode_key}")
 
     # Get season and episode data safely
-    season_data = metadata.get('seasons', {}).get(season_key, {})
-    logging.debug(f"  Season data retrieved for key '{season_key}': {{'keys': list(season_data.keys())}})") # Log only keys
+    season_data = metadata.get('seasons', {}).get(season_number, {})
+    logging.debug(f"  Season data retrieved for key '{season_number}': {{'keys': list(season_data.keys())}})") # Log only keys
 
     episodes_dict = season_data.get('episodes', {})
     logging.debug(f"  Episodes dict type: {type(episodes_dict)}, Keys type: {type(list(episodes_dict.keys())[0]) if episodes_dict else 'N/A'}, Example Key: {list(episodes_dict.keys())[0] if episodes_dict else 'N/A'}") # Log types
@@ -960,7 +960,7 @@ def create_season_items(metadata, title, year, version, torrent_id, magnet_link,
     for season in selected_seasons:
         try:
             season_number = int(season)
-            season_data = metadata.get('seasons', {}).get(str(season_number), {})
+            season_data = metadata.get('seasons', {}).get(season_number, {})
             episodes = season_data.get('episodes', {})
             
             for episode_number in episodes:
@@ -986,7 +986,7 @@ def create_full_series_items(metadata, title, year, version, torrent_id, magnet_
         try:
             season_num = int(season_number)
                 
-            season_data = seasons.get(str(season_num), {})  # Use string key to access season data
+            season_data = seasons.get(season_num, {})  # Use integer key to access season data
             episodes = season_data.get('episodes', {})
             
             # Convert episode dictionary keys to integers and sort them
