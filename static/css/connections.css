@@ -53,7 +53,10 @@
     font-weight: 500;
     font-size: 1.1rem;
     color: #f4f4f4;
-    max-width: 75%;
+    margin-right: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .connection-status {
@@ -258,4 +261,65 @@
     .failure-details {
         padding: 12px;
     }
+}
+
+/* Sample Data Styling */
+.toggle-sample {
+    cursor: pointer;
+    color: #4dabf7;
+    font-size: 0.8em;
+    margin-left: 10px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.toggle-sample:hover {
+    text-decoration: underline;
+    color: #74c0fc;
+}
+
+.sample-data-container {
+    display: none;
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #363636;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 0.9em;
+    color: #bbb;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.sample-data-container strong {
+    color: #888;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.sample-data-container ul {
+    list-style: disc;
+    margin-bottom: 0;
+    padding-left: 20px;
+    margin-left: 0;
+}
+
+.sample-data-container li {
+    margin-bottom: 4px;
+    color: #bbb;
+}
+
+.sample-error {
+    color: #f44336;
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+/* Ensure status and link stay together */
+.connection-header > .status-indicator {
+    margin-left: auto;
+}
+.connection-header > .toggle-sample {
+    margin-left: 10px;
+    flex-shrink: 0;
 } 

@@ -57,7 +57,9 @@ from flask import Response, stream_with_context
 # Import Plex debug functions
 # Import sqlite3 for error handling and add_media_item
 import sqlite3
-from utilities.local_library_scan import convert_item_to_symlink
+from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink
+from scraper.functions.ptt_parser import parse_with_ptt
+from database.database_writing import add_media_item
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -66,6 +68,9 @@ scan_progress = {}
 
 # Global dictionary to store analysis progress
 analysis_progress = {}
+
+# Global dictionary for Rclone to Symlink progress tracking
+rclone_scan_progress = {}
 
 # --- Helper function to get cache files ---
 def get_cache_files():
@@ -2872,3 +2877,423 @@ def delete_battery_db_files():
          return jsonify({'success': True, 'message': 'No battery DB files found to delete.'}), 200
     else:
         return jsonify({'success': True, 'message': f'Successfully deleted files: {", ".join(deleted_files)}'}), 200
+
+# --- Rclone Mount to Symlinks Logic ---
+
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id):
+    """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
+    global rclone_scan_progress
+
+    rclone_scan_progress[task_id] = {
+        'status': 'starting',
+        'message': 'Initializing Rclone scan...',
+        'total_files_scanned': 0,
+        'media_files_found': 0,
+        'items_processed': 0,
+        'items_added_to_db': 0,
+        'symlinks_created': 0,
+        'parser_errors': 0,
+        'metadata_errors': 0,
+        'db_errors': 0,
+        'symlink_errors': 0,
+        'skipped_duplicates': 0,
+        'preview': [], # For dry run
+        'errors': [], # General errors
+        'complete': False
+    }
+
+    def update_progress(**kwargs):
+        if task_id in rclone_scan_progress:
+            progress_data = rclone_scan_progress[task_id]
+            progress_data.update(kwargs)
+            # Limit preview size
+            if 'preview' in progress_data and len(progress_data['preview']) > 5:
+                 progress_data['preview'] = progress_data['preview'][:5]
+        else:
+            logging.warning(f"Rclone scan Task ID {task_id} not found in progress dict during update.")
+
+    try:
+        rclone_mount_path = Path(rclone_mount_path_str)
+        symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path') # Backup setting
+
+        if not rclone_mount_path.is_dir():
+            raise ValueError(f"Rclone Mount Path is not a valid directory: {rclone_mount_path_str}")
+        if not symlink_base_path_str:
+             raise ValueError("Symlink Base Path cannot be empty.")
+
+        # Temporarily override the setting for get_symlink_path
+        # NOTE: This is not thread-safe if multiple tasks modify settings concurrently.
+        # A better approach might involve passing the base path directly to get_symlink_path if possible,
+        # or creating a context manager for settings. For now, we proceed with caution.
+        logging.info(f"[RcloneScan {task_id}] Temporarily setting symlink path to: {symlink_base_path_str}")
+        # This function needs to exist and handle the setting change properly.
+        # Let's assume set_setting exists and works for this context.
+        try:
+             set_setting('File Management', 'symlinked_files_path', symlink_base_path_str)
+        except Exception as set_setting_err:
+             raise RuntimeError(f"Failed to temporarily set symlink base path: {set_setting_err}")
+
+
+        update_progress(status='scanning', message='Scanning Rclone mount path...')
+
+        # Supported video extensions
+        video_extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg'}
+        total_files_scanned = 0
+        media_files_found = 0
+        items_processed = 0
+        items_added_to_db = 0
+        symlinks_created = 0
+        parser_errors = 0
+        metadata_errors = 0
+        db_errors = 0
+        symlink_errors = 0
+        skipped_duplicates = 0
+        preview_list = []
+        error_list = []
+
+        direct_api = DirectAPI() # Initialize DirectAPI for metadata fetching
+
+        for item_path in rclone_mount_path.rglob('*'):
+            total_files_scanned += 1
+            if total_files_scanned % 100 == 0:
+                 update_progress(total_files_scanned=total_files_scanned, message=f'Scanned {total_files_scanned} files...')
+
+            if item_path.is_file() and item_path.suffix.lower() in video_extensions:
+                media_files_found += 1
+                original_file_path = str(item_path)
+                logging.debug(f"[RcloneScan {task_id}] Processing media file: {original_file_path}")
+                update_progress(media_files_found=media_files_found, message=f'Processing: {item_path.name}')
+
+                # 1. Parse filename/path using parse_with_ptt and reverse_parser
+                try:
+                    parsed_info = parse_with_ptt(item_path.name)
+                    if parsed_info.get('parsing_error'):
+                         raise ValueError("PTT parsing indicated an error")
+                    # Use reverse_parser for version
+                    parsed_version = parse_filename_for_version(item_path.name)
+                    items_processed += 1
+                except Exception as e:
+                    # ... (parser error handling) ...
+                    logging.warning(f"[RcloneScan {task_id}] PTT/Reverse parsing failed for {item_path.name}: {e}")
+                    parser_errors += 1
+                    update_progress(parser_errors=parser_errors)
+                    continue
+
+                # Extract essential info from parsed_info
+                parsed_title = parsed_info.get('title')
+                parsed_year = parsed_info.get('year')
+                parsed_season = parsed_info.get('season')
+                parsed_episode = parsed_info.get('episode')
+                if parsed_season or parsed_episode:
+                    parsed_type = 'episode'
+                else:
+                    parsed_type = 'movie'
+                # parsed_version is now assigned above using reverse_parser
+
+                if not parsed_title or not parsed_type:
+                    # ... (missing title/type handling) ...
+                    logging.warning(f"[RcloneScan {task_id}] Could not parse title or type for {item_path.name}")
+                    parser_errors += 1
+                    update_progress(parser_errors=parser_errors)
+                    continue
+
+                # 2. Fetch Metadata (Revised Logic v3 - Simpler Episode Handling)
+                metadata = None
+                show_metadata_full = None
+                final_imdb_id = None
+                final_tmdb_id = None
+                try:
+                    item_id_to_use = None
+                    # --- Search for the item first to get an ID ---
+                    if parsed_season or parsed_episode:
+                        search_parsed_type = 'show'
+                    else:
+                        search_parsed_type = parsed_type
+                    search_results, _ = direct_api.search_media(query=parsed_title, year=parsed_year, media_type=search_parsed_type)
+
+                    if search_results and isinstance(search_results, list) and len(search_results) > 0:
+                        first_match = search_results[0]
+                        item_id_to_use = first_match.get('imdb_id') or first_match.get('tmdb_id')
+                        logging.debug(f"[RcloneScan {task_id}] Found {parsed_type} match: {first_match.get('title')} ({first_match.get('year')}), ID: {item_id_to_use}")
+                    else:
+                         logging.warning(f"[RcloneScan {task_id}] {parsed_type.capitalize()} search returned no results for '{parsed_title}' ({parsed_year})")
+
+                    if item_id_to_use:
+                        is_imdb = str(item_id_to_use).startswith('tt')
+
+                        # --- Get definitive metadata using the found ID ---
+                        if parsed_type == 'movie':
+                            # --- MODIFICATION START ---
+                            imdb_id_for_fetch = None
+                            if is_imdb:
+                                imdb_id_for_fetch = item_id_to_use
+                            else:
+                                # It's a TMDB ID, try to convert
+                                logging.debug(f"[RcloneScan {task_id}] Movie search returned TMDB ID ({item_id_to_use}), attempting conversion to IMDb ID...")
+                                imdb_id_converted, conversion_source = direct_api.tmdb_to_imdb(tmdb_id=str(item_id_to_use), media_type='movie')
+                                if imdb_id_converted:
+                                    imdb_id_for_fetch = imdb_id_converted
+                                    logging.debug(f"[RcloneScan {task_id}] Successfully converted TMDB ID {item_id_to_use} to IMDb ID {imdb_id_for_fetch} via {conversion_source}.")
+                                else:
+                                    logging.warning(f"[RcloneScan {task_id}] Failed to convert TMDB ID {item_id_to_use} to IMDb ID. Skipping metadata fetch.")
+
+                            if imdb_id_for_fetch:
+                                metadata_result, _ = direct_api.get_movie_metadata(imdb_id=imdb_id_for_fetch)
+                                if metadata_result and isinstance(metadata_result, dict):
+                                    metadata = metadata_result
+                                    # Ensure both IDs are stored if available
+                                    final_imdb_id = metadata.get('imdb_id') # Should match imdb_id_for_fetch
+                                    final_tmdb_id = metadata.get('id') or (str(item_id_to_use) if not is_imdb else None) # Prioritize from metadata, fallback to original if it was TMDB
+                                else:
+                                     logging.warning(f"[RcloneScan {task_id}] get_movie_metadata failed for IMDb ID {imdb_id_for_fetch}.")
+                            # --- MODIFICATION END ---
+
+                        elif parsed_type == 'episode':
+                             if parsed_season is None or parsed_episode is None:
+                                 raise ValueError("Missing season/episode number from PTT parse for episode type")
+
+                             show_imdb_id = item_id_to_use if is_imdb else None
+                             if not show_imdb_id:
+                                 logging.warning(f"[RcloneScan {task_id}] Show search returned non-IMDb ID ({item_id_to_use}). Skipping.")
+
+                             if show_imdb_id:
+                                 # Get the full show metadata (which includes all episodes)
+                                 show_metadata_full, _ = direct_api.get_show_metadata(imdb_id=show_imdb_id)
+
+                                 if show_metadata_full and isinstance(show_metadata_full, dict):
+                                     # === FIX: Use the confirmed ID directly ===
+                                     final_imdb_id = show_imdb_id
+                                     # =========================================
+                                     final_tmdb_id = show_metadata_full.get('id') # Show's TMDB ID
+
+                                     # Now, extract the specific episode's data from the full show data
+                                     try:
+                                         # ... (episode extraction logic using final_imdb_id) ...
+                                         season_data = show_metadata_full.get('seasons', {}).get(str(parsed_season))
+                                         if season_data is None: season_data = show_metadata_full.get('seasons', {}).get(int(parsed_season))
+                                         episode_data = season_data.get('episodes', {}).get(str(parsed_episode)) if season_data else None
+                                         if episode_data is None and season_data: episode_data = season_data.get('episodes', {}).get(int(parsed_episode))
+
+                                         if episode_data and isinstance(episode_data, dict):
+                                             metadata = {
+                                                 'title': show_metadata_full.get('title'),
+                                                 'year': show_metadata_full.get('year'),
+                                                 'imdb_id': final_imdb_id, # Use the fixed final_imdb_id
+                                                 'tmdb_id': final_tmdb_id,
+                                                 'season_number': parsed_season,
+                                                 'episode_number': parsed_episode,
+                                                 'episode_title': episode_data.get('title'),
+                                                 'air_date': episode_data.get('first_aired'),
+                                                 'genres': show_metadata_full.get('genres', [])
+                                             }
+                                         else:
+                                             logging.warning(f"[RcloneScan {task_id}] Episode S{parsed_season}E{parsed_episode} not found within show metadata for {final_imdb_id}")
+                                     except Exception as ex:
+                                          logging.error(f"[RcloneScan {task_id}] Error extracting episode data from show metadata for S{parsed_season}E{parsed_episode} of {final_imdb_id}: {ex}")
+                                 else:
+                                      logging.warning(f"[RcloneScan {task_id}] Failed to get show metadata using ID: {show_imdb_id}")
+
+
+                    # Final check if metadata object was populated
+                    if not metadata: # Check the final metadata dict
+                         raise ValueError("Metadata fetch/extraction failed or missing necessary IDs")
+
+                    # Extract IDs from the correct location within the final metadata object
+                    ids_dict = metadata.get('ids', {}) # Get the 'ids' dict, default to empty if not found
+                    final_imdb_id = ids_dict.get('imdb')
+                    final_tmdb_id = ids_dict.get('tmdb')
+                    # Fallback for TMDB ID if it wasn't in the ids dict but the original search was TMDB
+                    if not final_imdb_id:
+                        final_imdb_id = item_id_to_use
+
+                    # Ensure we have at least one valid ID after extraction
+                    if not final_imdb_id and not final_tmdb_id:
+                        raise ValueError("Failed to extract either IMDb or TMDB ID from metadata['ids']")
+
+
+                except Exception as e:
+                    # ... (metadata error handling) ...
+                    logging.warning(f"[RcloneScan {task_id}] Metadata fetch/extraction failed for {item_path.name}: {e}")
+                    metadata_errors += 1
+                    update_progress(metadata_errors=metadata_errors)
+                    continue # Skip to the next file if metadata fails
+
+                # 3. Prepare DB Item (using parsed_version)
+                now_iso = datetime.now().isoformat()
+                item_for_db = {
+                    'imdb_id': final_imdb_id,
+                    'tmdb_id': final_tmdb_id,
+                    'title': metadata.get('title'),
+                    'year': metadata.get('year'),
+                    'release_date': metadata.get('release_date') if parsed_type == 'movie' else metadata.get('air_date'),
+                    'state': 'Collected',
+                    'type': parsed_type,
+                    'season_number': metadata.get('season_number'),
+                    'episode_number': metadata.get('episode_number'),
+                    'episode_title': metadata.get('episode_title'),
+                    'collected_at': now_iso,
+                    'original_collected_at': now_iso,
+                    'original_path_for_symlink': original_file_path,
+                    'version': parsed_version, # Use version from reverse_parser
+                    'filled_by_file': item_path.name,
+                    'metadata_updated': now_iso,
+                    'genres': json.dumps(metadata.get('genres', [])),
+                }
+                item_for_db_filtered = {k: v for k, v in item_for_db.items() if v is not None}
+
+                # 4. Generate Symlink Path
+                try:
+                    # Pass the filtered item dict which now contains the correct version
+                    symlink_dest_path = get_symlink_path(item_for_db_filtered, item_path.name, skip_jikan_lookup=True)
+                    if not symlink_dest_path:
+                        raise ValueError("get_symlink_path returned None")
+                    item_for_db_filtered['location_on_disk'] = symlink_dest_path
+                except Exception as e:
+                    # ... (symlink path error handling) ...
+                    logging.warning(f"[RcloneScan {task_id}] Failed to generate symlink path for {item_path.name}: {e}")
+                    symlink_errors += 1
+                    update_progress(symlink_errors=symlink_errors)
+                    continue
+
+                # 5. Dry Run or Execution
+                if dry_run:
+                    # ... (dry run preview logic) ...
+                    preview_data = {
+                        'original_file': original_file_path,
+                        'parsed_title': parsed_title,
+                        'parsed_type': parsed_type,
+                        'fetched_title': item_for_db_filtered.get('title'),
+                        'imdb_id': final_imdb_id,
+                        'tmdb_id': final_tmdb_id,
+                        'version': parsed_version, # Include version in preview
+                        'symlink_path': symlink_dest_path,
+                        'action': 'CREATE DB Entry & Symlink'
+                    }
+                    preview_list.append(preview_data)
+                    update_progress(preview=preview_list)
+                else:
+                    # ... (DB add and symlink creation logic) ...
+                    item_id = None
+                    try:
+                        item_id = add_media_item(item_for_db_filtered)
+                        if item_id:
+                             items_added_to_db += 1
+                             update_progress(items_added_to_db=items_added_to_db)
+                    except sqlite3.IntegrityError:
+                        # ... (duplicate handling) ...
+                        logging.warning(f"[RcloneScan {task_id}] Item already exists in DB (IntegrityError), skipping DB add for: {item_for_db_filtered.get('title')} V:{parsed_version}")
+                        skipped_duplicates += 1
+                        update_progress(skipped_duplicates=skipped_duplicates)
+                        continue
+                    except Exception as e:
+                        # ... (db error handling) ...
+                        logging.error(f"[RcloneScan {task_id}] Error adding item to DB for {item_path.name}: {e}", exc_info=True)
+                        db_errors += 1
+                        error_list.append(f"DB Add Error ({item_path.name}): {e}")
+                        update_progress(db_errors=db_errors, errors=error_list)
+                        continue
+
+                    if item_id:
+                        try:
+                            symlink_success = create_symlink(original_file_path, symlink_dest_path, media_item_id=item_id, skip_verification=True)
+                            if symlink_success:
+                                symlinks_created += 1
+                                update_progress(symlinks_created=symlinks_created)
+                            else:
+                                raise Exception("create_symlink returned False")
+                        except Exception as e:
+                             # ... (symlink creation error handling) ...
+                            logging.error(f"[RcloneScan {task_id}] Error creating symlink {symlink_dest_path}: {e}", exc_info=True)
+                            symlink_errors += 1
+                            error_list.append(f"Symlink Error ({item_path.name}): {e}")
+                            update_progress(symlink_errors=symlink_errors, errors=error_list)
+
+
+            update_progress(items_processed=items_processed) # Update items_processed count outside the if block
+
+        # ... (Scan complete logic - construct final_message) ...
+        final_message = f"Rclone scan finished. Scanned: {total_files_scanned}, Media Files: {media_files_found}, Processed: {items_processed}."
+        # ... (append stats to final_message) ...
+        if dry_run:
+            final_message += f" Dry Run Results: {len(preview_list)} items would be processed."
+        else:
+             final_message += f" DB Entries Added: {items_added_to_db}, Symlinks Created: {symlinks_created}."
+        if skipped_duplicates > 0: final_message += f" Skipped Duplicates: {skipped_duplicates}."
+        if parser_errors > 0: final_message += f" Parser Errors: {parser_errors}."
+        if metadata_errors > 0: final_message += f" Metadata Errors: {metadata_errors}."
+        if db_errors > 0: final_message += f" DB Errors: {db_errors}."
+        if symlink_errors > 0: final_message += f" Symlink Errors: {symlink_errors}."
+
+        update_progress(
+            status='complete',
+            message=final_message,
+            complete=True,
+            success=(db_errors == 0 and symlink_errors == 0 and parser_errors == 0 and metadata_errors == 0)
+        )
+
+    except Exception as e:
+        # ... (Error handling) ...
+        logging.error(f"[RcloneScan {task_id}] Error during Rclone scan task: {e}", exc_info=True)
+        update_progress(status='error', message=f'Task failed: {e}', complete=True, success=False)
+    finally:
+        # ... (Setting restore and cleanup) ...
+        try:
+             if symlink_base_path_setting_backup is not None:
+                 logging.info(f"[RcloneScan {task_id}] Restoring original symlink path setting.")
+                 set_setting('File Management', 'symlinked_files_path', symlink_base_path_setting_backup)
+        except Exception as restore_err:
+             logging.error(f"[RcloneScan {task_id}] Failed to restore original symlink path setting: {restore_err}")
+             if task_id in rclone_scan_progress:
+                 rclone_scan_progress[task_id].setdefault('errors', []).append(f"Failed to restore setting: {restore_err}")
+        threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()
+
+
+@debug_bp.route('/api/rclone_to_symlinks', methods=['POST'])
+@admin_required
+def rclone_to_symlinks_route():
+    """API endpoint to initiate the Rclone mount scan and symlink creation."""
+    rclone_mount_path = request.form.get('rclone_mount_path')
+    symlink_base_path = request.form.get('symlink_base_path')
+    dry_run = request.form.get('dry_run') == 'on' # Checkbox value is 'on' if checked
+
+    if not rclone_mount_path:
+        return jsonify({'success': False, 'error': 'Rclone Mount Path is required.'}), 400
+    if not symlink_base_path:
+         return jsonify({'success': False, 'error': 'Symlink Base Path is required.'}), 400
+
+    import uuid
+    task_id = str(uuid.uuid4())
+
+    # Start the background task
+    thread = threading.Thread(
+        target=_run_rclone_to_symlink_task,
+        args=(rclone_mount_path, symlink_base_path, dry_run, task_id)
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'task_id': task_id}), 202
+
+
+@debug_bp.route('/api/rclone_scan_progress/<task_id>')
+@admin_required # Add protection here as well
+def rclone_scan_progress_stream(task_id):
+    """SSE endpoint for tracking Rclone scan progress."""
+    def generate():
+        while True:
+            if task_id not in rclone_scan_progress:
+                progress = {'status': 'error', 'message': 'Task not found or expired', 'complete': True}
+                yield f"data: {json.dumps(progress)}\n\n"
+                break
+
+            progress = rclone_scan_progress[task_id]
+            yield f"data: {json.dumps(progress)}\n\n"
+
+            if progress.get('complete', False):
+                break
+
+            time.sleep(1) # Poll interval
+
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+# --- End Rclone Mount to Symlinks Logic ---

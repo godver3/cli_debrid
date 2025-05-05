@@ -9,6 +9,8 @@ import hashlib
 import bencodepy
 import inspect
 import asyncio
+import math
+import json
 
 from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError
 from ..common import (
@@ -20,10 +22,28 @@ from ..common import (
     is_unwanted_file
 )
 from ..status import TorrentStatus
-from .api import make_request
+from .api import make_request, get_all_torrents, get_all_downloads
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
+
+# Define the path for the size cache file
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+SIZE_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'library_size_cache.json')
+
+# Helper function to write the cache
+def _write_size_cache(size_str: str):
+    try:
+        data = {
+            'size_str': size_str,
+            'timestamp': datetime.utcnow().isoformat() # Store timestamp
+        }
+        os.makedirs(os.path.dirname(SIZE_CACHE_FILE), exist_ok=True) # Ensure dir exists
+        with open(SIZE_CACHE_FILE, 'w') as f:
+            json.dump(data, f, indent=2) # Use indent for readability
+        logging.debug(f"Successfully wrote library size '{size_str}' to cache file: {SIZE_CACHE_FILE}")
+    except Exception as e:
+        logging.error(f"Failed to write library size cache to {SIZE_CACHE_FILE}: {e}")
 
 class RealDebridProvider(DebridProvider):
     """Real-Debrid implementation of the DebridProvider interface"""
@@ -808,3 +828,85 @@ class RealDebridProvider(DebridProvider):
                 filename = torrent.get('filename', 'unknown')
         except Exception as e:
             logging.error(f"Error verifying removal state: {str(e)}")
+
+    # Keep cache decorator commented out as requested
+    # @timed_lru_cache(seconds=3600)
+    async def get_total_library_size(self) -> Optional[str]:
+        """
+        Calculates the total size of the user's library on Real-Debrid asynchronously
+        by fetching and summing all items in the /torrents list. Writes successful
+        result to a cache file.
+
+        Returns:
+            Optional[str]: Human-readable total size, or specific error strings.
+        """
+        total_size_bytes = 0
+        calculated_size_str = None # Variable to hold the successful result before returning
+        error_result = None # Variable to hold error string
+
+        try:
+            logging.info("Executing get_total_library_size (fetching /torrents - all)...")
+            torrents = await get_all_torrents(self.api_key)
+
+            if torrents is None:
+                logging.error("Failed to fetch torrents from Real-Debrid API for size calculation.")
+                error_result = "Error (API)"
+                # Don't return yet, let the finally block (outside try) handle logic
+
+            elif not torrents:
+                 logging.info("No torrents found in the account.")
+                 calculated_size_str = "0 B" # Successful calculation of 0
+
+            else:
+                # Calculation logic remains the same
+                processed_hashes = set()
+                item_count = 0
+                for item in torrents:
+                    item_hash = item.get('hash')
+                    if item_hash and item_hash in processed_hashes:
+                        continue
+
+                    item_size = item.get('bytes', 0)
+
+                    if isinstance(item_size, (int, float)) and item_size >= 0:
+                        total_size_bytes += item_size
+                        item_count += 1
+                        if item_hash:
+                            processed_hashes.add(item_hash)
+                    else:
+                         logging.warning(f"Invalid or missing 'bytes' field value '{item_size}' for torrent: {item.get('filename', item.get('id', 'N/A'))}")
+
+                logging.info(f"Processed {item_count} unique torrent items. Total calculated size: {total_size_bytes} bytes.")
+
+                # Convert bytes to human-readable format
+                if total_size_bytes == 0:
+                    calculated_size_str = "0 B"
+                else:
+                    size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+                    if total_size_bytes <= 0:
+                         calculated_size_str = "0 B"
+                    else:
+                        try:
+                            i = int(math.floor(math.log(total_size_bytes, 1024)))
+                            i = max(0, min(i, len(size_name) - 1))
+                            p = math.pow(1024, i)
+                            s = round(total_size_bytes / p, 2)
+                            calculated_size_str = f"{s} {size_name[i]}" # Store successful result
+                        except ValueError:
+                             logging.error(f"Math error converting bytes: {total_size_bytes}", exc_info=True)
+                             error_result = "Error (Math)"
+
+        except Exception as e:
+            logging.error(f"Error fetching/processing torrents for library size: {e}", exc_info=True)
+            error_result = "Error (Server)"
+            # Don't return yet
+
+        # --- Post-calculation Logic ---
+        if calculated_size_str is not None:
+             # Write successful result to cache
+             _write_size_cache(calculated_size_str)
+             return calculated_size_str # Return the fresh calculation
+        else:
+             # Return the specific error encountered
+             # The caller (API route) will handle reading from cache if needed
+             return error_result if error_result else "Error (Unknown)"

@@ -345,12 +345,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                                             if tvdb_abs != original_episode or scene_season != season:
                                                  logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}. Targeting TVDB ABS number {tvdb_abs}.")
                                                  season = scene_season # Still use scene season
-                                                 episode = tvdb_abs # Use TVDB ABSOLUTE as target episode
+                                                 episode = scene_ep # CORRECT: Use the scene episode number from the mapping
                                                  found_mapping = True
                                                  xem_applied = True # Mark XEM as applied
                                                  break 
                                             else:
                                                  logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}. Using TVDB ABS {tvdb_abs} (no change needed). ")
+                                                 # Ensure episode is set correctly even if no change needed in S/E for consistency
+                                                 season = scene_season
+                                                 episode = scene_ep
                                                  found_mapping = True
                                                  xem_applied = True # Mark XEM as confirmed
                                                  break

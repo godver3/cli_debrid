@@ -2,13 +2,14 @@
 
 import os
 import logging
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, List
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from ..base import ProviderUnavailableError, RateLimitError
 from .exceptions import RealDebridAPIError, RealDebridAuthError
 from utilities.settings import get_setting
 from routes.api_tracker import api
+import asyncio
 
 def get_api_key() -> str:
     """Get Real-Debrid API key from settings"""
@@ -108,3 +109,78 @@ def make_request(
         if should_retry_error(e):
             raise RealDebridAPIError(f"Temporary service error: {str(e)}")
         raise ProviderUnavailableError(f"Request failed: {str(e)}")
+
+async def get_all_items(endpoint: str, api_key: str, limit: int = 500, extra_params: Optional[Dict] = None) -> Optional[List[Dict]]:
+    """
+    Fetches all items from a paginated Real-Debrid endpoint asynchronously using page-based pagination.
+
+    Args:
+        endpoint: The API endpoint (e.g., '/torrents').
+        api_key: The Real-Debrid API key.
+        limit: The number of items to fetch per request (max 5000 according to docs, use a reasonable default).
+        extra_params: Optional dictionary of additional query parameters.
+
+    Returns:
+        A list of all items, or None if an error occurs.
+    """
+    all_items = []
+    current_page = 1 # Start with page 1
+    # RD docs say limit max 5000, but let's use 500 as a safer default per page
+    limit = min(limit, 500)
+
+    while True:
+        try:
+            # Use 'page' and 'limit' for pagination
+            params = {'limit': limit, 'page': current_page}
+            if extra_params:
+                params.update(extra_params)
+
+            logging.debug(f"Fetching items from {endpoint} with params: {params}")
+            page_items = await asyncio.to_thread(
+                make_request, 'GET', endpoint, api_key, params=params
+            )
+
+            # Check response: RD might return empty list on last page OR None on error/404
+            if page_items is None:
+                 # If make_request returns None (e.g. 404 on a page > 1), assume we're done
+                 logging.warning(f"Received None response for {endpoint} at page {current_page}. Assuming end of list.")
+                 break # Stop pagination
+
+            if not isinstance(page_items, list):
+                logging.error(f"Expected list response from {endpoint}, got {type(page_items)}. Stopping pagination.")
+                return all_items # Return what we have
+
+            if not page_items:
+                # Empty list means no more items on this or subsequent pages
+                logging.debug(f"Received empty list for {endpoint} at page {current_page}. End of list.")
+                break # Stop pagination
+
+            all_items.extend(page_items)
+            logging.debug(f"Fetched {len(page_items)} items from page {current_page}. Total items: {len(all_items)}")
+
+            # According to RD docs, X-Total-Count header *might* exist, but relying on empty list is safer
+            # Stop if the number fetched is less than the limit (usually indicates last page)
+            if len(page_items) < limit:
+                 logging.debug("Fetched less items than limit, assuming last page.")
+                 break
+
+            current_page += 1 # Go to the next page
+
+        except (RealDebridAPIError, ProviderUnavailableError, RateLimitError) as e:
+            logging.error(f"API error fetching items from {endpoint} at page {current_page}: {e}")
+            return None # Signal failure
+
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during pagination for {endpoint}: {e}", exc_info=True)
+            return None # Signal failure
+
+    logging.info(f"Successfully fetched {len(all_items)} items from {endpoint} using page pagination.")
+    return all_items
+
+async def get_all_torrents(api_key: str) -> Optional[List[Dict]]:
+    """Fetches all torrents from the user's Real-Debrid account asynchronously."""
+    return await get_all_items('/torrents', api_key, limit=500, extra_params=None) # Use page pagination default
+
+async def get_all_downloads(api_key: str) -> Optional[List[Dict]]:
+    """Fetches all downloads from the user's Real-Debrid account asynchronously."""
+    return await get_all_items('/downloads', api_key, limit=500, extra_params=None) # Use page pagination default

@@ -254,9 +254,9 @@ def format_notification_content(notifications, notification_type, notification_c
                     episode = int(episode)
                 except (ValueError, TypeError):
                     # If conversion fails, use string formatting instead
-                    return f"    S{season}E{episode}{' [' + item.get('version', '') + ']' if item.get('version') else ''}"
-                
-                version = item.get('version', '')
+                    return f"    S{season}E{episode}{' [' + item.get('version', '').strip('*') + ']' if item.get('version') else ''}"
+
+                version = item.get('version', '').strip('*')
                 version_str = f" [{version}]" if version else ""
                 return f"    S{season:02d}E{episode:02d}{version_str}"
         except (ValueError, TypeError) as e:

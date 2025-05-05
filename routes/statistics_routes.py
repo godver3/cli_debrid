@@ -15,6 +15,8 @@ from .program_operation_routes import program_is_running, program_is_initializin
 import json
 import math
 from functools import wraps
+from debrid.real_debrid.client import RealDebridProvider
+from typing import Optional, Dict
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
@@ -373,16 +375,6 @@ def root():
     # Force compact view on mobile devices
     if is_mobile:
         compact_view = True
-    else:
-        # Handle compact toggle only for desktop
-        toggle_compact = request.args.get('toggle_compact')
-        if toggle_compact is not None:
-            # Convert string value to boolean
-            new_compact_view = toggle_compact.lower() == 'true'
-            set_setting('UI Settings', 'compact_view', new_compact_view)
-            compact_view = new_compact_view
-            if request.headers.get('Accept') == 'application/json':
-                return jsonify({'success': True, 'compact_view': compact_view})
     
     # Get all statistics data
     stats = {}
@@ -425,6 +417,15 @@ def root():
         }
     logging.info(f"Download stats check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
     
+    # --- Read Cached Library Size for Initial Display ---
+    cached_size_data = _read_size_cache()
+    if cached_size_data:
+        stats['total_library_size'] = f"{cached_size_data['size_str']} (cached)"
+        logging.debug(f"Displaying cached library size on initial load: {stats['total_library_size']}")
+    else:
+        # Default if cache is missing, invalid, or expired
+        stats['total_library_size'] = "Click Refresh" # Changed default text
+
     # Get recently aired and upcoming shows
     shows_start = time.perf_counter()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
@@ -468,6 +469,7 @@ def root():
                     show['collected_at'], 
                     use_24hour_format
                 )
+                show['formatted_collected_at'] = show['formatted_date']
                 recently_added['shows'].append(show)
         
         # Get recently upgraded items
@@ -1108,3 +1110,107 @@ def move_to_wanted():
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         conn.close()
+
+# Define the path for the size cache file
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+SIZE_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'library_size_cache.json')
+CACHE_EXPIRY_HOURS = 72 # How long to consider the cached value valid (e.g., 3 days)
+
+# Helper function to read the cache
+def _read_size_cache() -> Optional[Dict]:
+    try:
+        if os.path.exists(SIZE_CACHE_FILE):
+            with open(SIZE_CACHE_FILE, 'r') as f:
+                data = json.load(f)
+                if isinstance(data, dict) and 'size_str' in data and 'timestamp' in data:
+                     try:
+                        cached_time = datetime.fromisoformat(data['timestamp'])
+                        if datetime.utcnow() - cached_time < timedelta(hours=CACHE_EXPIRY_HOURS):
+                            # logging.debug("Read valid library size cache for initial page load.")
+                            return data
+                        else:
+                            # logging.info("Cached library size expired for initial page load.")
+                            return None
+                     except ValueError:
+                         # logging.warning("Invalid timestamp format in cache file.")
+                         return None
+                else:
+                    # logging.warning("Invalid data format in cache file.")
+                    return None
+        else:
+            # logging.debug("Library size cache file not found for initial load.")
+            return None
+    except Exception as e:
+        logging.error(f"Failed to read library size cache for initial load: {e}")
+        return None
+
+@statistics_bp.route('/api/library_size', methods=['GET'])
+@user_required
+def get_library_size_api():
+    """API endpoint to calculate and return the total library size, using cache on failure."""
+    start_time = time.perf_counter()
+    size_str = "N/A" # Default/initial state
+    is_cached_value = False
+    calculation_error = None # Store the specific error if calculation fails
+
+    try:
+        provider = get_debrid_provider()
+        if isinstance(provider, RealDebridProvider):
+            logging.info("Fetching library size via API request...")
+            try:
+                # Run the async function which now writes cache on success
+                calculated_size = asyncio.run(provider.get_total_library_size())
+
+                # Check if the calculation resulted in an error state
+                if calculated_size is None or calculated_size.startswith("Error"):
+                     calculation_error = calculated_size if calculated_size else "Error (Unknown)"
+                     logging.warning(f"Library size calculation failed ({calculation_error}). Attempting to read from cache.")
+                     # Fall through to read cache below
+                else:
+                    # Calculation was successful
+                    size_str = calculated_size
+
+            except RuntimeError as e:
+                 logging.error(f"Asyncio runtime error calculating library size: {e}", exc_info=True)
+                 calculation_error = "Error (Async)"
+                 # Fall through to read cache below
+
+            # --- Attempt to read cache ONLY if calculation failed ---
+            if calculation_error:
+                cached_data = _read_size_cache()
+                if cached_data:
+                    size_str = f"{cached_data['size_str']} (cached)"
+                    is_cached_value = True
+                else:
+                    # If cache is unavailable/invalid/expired, return the original calculation error
+                    size_str = calculation_error
+
+            log_prefix = "(Cached) " if is_cached_value else ""
+            logging.info(f"{log_prefix}Library size retrieval took {(time.perf_counter() - start_time)*1000:.2f}ms. Result: {size_str}")
+
+        else:
+            size_str = "N/A (Not RD)"
+            logging.info("Library size requested, but provider is not RealDebrid.")
+
+    except ProviderUnavailableError:
+        logging.warning("Debrid provider unavailable when calculating library size.")
+        calculation_error = "Error (Provider)"
+        # Try reading cache
+        cached_data = _read_size_cache()
+        if cached_data:
+            size_str = f"{cached_data['size_str']} (cached)"
+            is_cached_value = True
+        else:
+            size_str = calculation_error # Return provider error if cache fails
+    except Exception as e:
+        logging.error(f"Error calculating library size via API: {e}", exc_info=True)
+        calculation_error = "Error (Server)"
+         # Try reading cache
+        cached_data = _read_size_cache()
+        if cached_data:
+            size_str = f"{cached_data['size_str']} (cached)"
+            is_cached_value = True
+        else:
+             size_str = calculation_error # Return server error if cache fails
+
+    return jsonify({'total_library_size': size_str})

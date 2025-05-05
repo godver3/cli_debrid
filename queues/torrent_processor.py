@@ -424,7 +424,7 @@ class TorrentProcessor:
         results: list[Dict],
         accept_uncached: bool = False,
         item: Optional[Dict] = None
-    ) -> Tuple[Optional[Dict], Optional[str]]:
+    ) -> Tuple[Optional[Dict], Optional[str], Optional[Dict]]:
         """
         Process a list of results to find the best match
         
@@ -434,12 +434,13 @@ class TorrentProcessor:
             item: Optional media item for tracking successful results
             
         Returns:
-            Tuple of (torrent_info, magnet_link) if successful, (None, None) otherwise
+            Tuple of (torrent_info, magnet_link, chosen_result) if successful, (None, None, None) otherwise
         """
         item_identifier = item.get('title', 'Unknown') if item else 'Unknown'
         logging.info(f"[{item_identifier}] Starting to process {len(results)} results (accept_uncached={accept_uncached})")
         
         for idx, result in enumerate(results, 1):
+            chosen_result_for_return = None # Initialize variable to hold the chosen result
             try:
                 original_link = result.get('magnet') or result.get('link')
                 if not original_link:
@@ -482,7 +483,8 @@ class TorrentProcessor:
                                     filled_by_title=result.get('title', ''))
                                 item['filled_by_magnet'] = original_link
                                 item['filled_by_title'] = result.get('title', '')
-                            return None, original_link
+                            # Return None, original_link, AND the result that triggered this
+                            return None, original_link, result
                     except TooManyDownloadsError:
                         logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Download limit reached. Moving to pending uncached queue.")
                         if item:
@@ -492,7 +494,8 @@ class TorrentProcessor:
                                 filled_by_title=result.get('title', ''))
                             item['filled_by_magnet'] = original_link
                             item['filled_by_title'] = result.get('title', '')
-                        return None, original_link
+                        # Return None, original_link, AND the result that triggered this
+                        return None, original_link, result
                     except Exception as e:
                         logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error checking download limits: {str(e)}")
                         continue
@@ -677,7 +680,8 @@ class TorrentProcessor:
                                 logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to process magnet for not wanted: {str(e)}")
 
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
-                            return info, original_link
+                            chosen_result_for_return = result # Store the successful result
+                            return info, original_link, chosen_result_for_return # Return all three
                     else:
                         try:
                             if info.get('id'):
@@ -696,4 +700,4 @@ class TorrentProcessor:
                 continue
                 
         logging.info(f"[{item_identifier}] No suitable results found after processing all options")
-        return None, None
+        return None, None, None # Return None for all three if no suitable result found

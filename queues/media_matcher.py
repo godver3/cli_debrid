@@ -54,7 +54,7 @@ class MediaMatcher:
             'parsed_info': parsed_info
         }
 
-    def _check_match(self, parsed_file_info: Dict[str, Any], item: Dict[str, Any], use_relaxed_matching: bool) -> bool:
+    def _check_match(self, parsed_file_info: Dict[str, Any], item: Dict[str, Any], use_relaxed_matching: bool, xem_mapping: Optional[Dict[str, int]] = None) -> bool:
         """
         Checks if a pre-parsed file info dictionary matches a media item (TV Episode logic).
 
@@ -62,38 +62,67 @@ class MediaMatcher:
             parsed_file_info: The dictionary returned by _parse_file_info.
             item: The media item (episode) to match against.
             use_relaxed_matching: Flag for relaxed matching rules.
+            xem_mapping: Optional dictionary with 'season' and 'episode' keys from XEM.
 
         Returns:
             True if the file matches the item, False otherwise.
         """
         ptt_result = parsed_file_info['parsed_info'] # Get the PTT result stored earlier
-        item_season = item.get('season') or item.get('season_number')
-        item_episode = item.get('episode') or item.get('episode_number')
 
-        # Check required item fields (already done in original caller, but good safeguard)
+        # Determine target season/episode: Use XEM if available, otherwise original item S/E
+        target_season = item.get('season') or item.get('season_number')
+        target_episode = item.get('episode') or item.get('episode_number')
+        using_xem = False
+        if xem_mapping and 'season' in xem_mapping and 'episode' in xem_mapping:
+             # Validate XEM values are integers
+             try:
+                 xem_season = int(xem_mapping['season'])
+                 xem_episode = int(xem_mapping['episode'])
+                 logging.debug(f"Using XEM mapping for match check: S{xem_season}E{xem_episode} (Original: S{target_season}E{target_episode})")
+                 target_season = xem_season
+                 target_episode = xem_episode
+                 using_xem = True
+             except (ValueError, TypeError):
+                  logging.warning(f"Invalid XEM mapping format encountered: {xem_mapping}. Falling back to original item S/E.")
+                  # Fallback to original item S/E below
+        # else: # No need for else, target_season/episode already hold original values
+        #      logging.debug(f"Using original item S/E for match check: S{target_season}E{target_episode}")
+
+
+        # Check required item fields (use target season/episode now)
         series_title = item.get('series_title', '') or item.get('title', '')
-        if not all([series_title, item_episode is not None]):
+        if not all([series_title, target_episode is not None]):
+            logging.debug(f"Match failed: Missing series title or target episode ({target_episode})")
             return False
-        if not use_relaxed_matching and item_season is None:
+        # Relaxed matching doesn't strictly require season, but strict does IF NOT using XEM
+        if not use_relaxed_matching and target_season is None and not using_xem:
+            logging.debug(f"Match failed: Strict matching requires season, but item season is None and not using XEM.")
             return False
 
         # --- Relaxed Matching Logic ---
         if use_relaxed_matching:
             episode_match = False
             # Check PTT episodes
-            if item_episode in ptt_result.get('episodes', []):
+            if ptt_result.get('episodes') and target_episode in ptt_result.get('episodes', []):
                 episode_match = True
+                logging.debug("Relaxed match: PTT episode matched target episode.")
             # Check fallback episode if PTT episodes are empty
-            elif not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == item_episode:
+            elif not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == target_episode:
                 episode_match = True
+                logging.debug("Relaxed match: Fallback episode matched target episode.")
 
-            # Season matching (allows missing season in filename or item)
-            season_match = (not ptt_result.get('seasons') or
-                          not item_season or
-                          item_season in ptt_result.get('seasons', []) or
-                          (use_relaxed_matching and 0 in ptt_result.get('seasons', []))) # Season 0 relaxed match
+            # Season matching (allows missing season in filename or item, or season 0)
+            season_match = (target_season is None or # If target season is None (only possible with XEM if mapping had None?)
+                          not ptt_result.get('seasons') or # Filename has no season
+                          target_season in ptt_result.get('seasons', []) or # Target season is in filename seasons
+                          (0 in ptt_result.get('seasons', []))) # Filename has season 0
 
-            return episode_match and season_match
+            if season_match and episode_match:
+                 logging.debug(f"Relaxed match successful: S:{season_match} E:{episode_match}")
+                 return True
+            else:
+                 logging.debug(f"Relaxed match failed: S:{season_match} E:{episode_match}")
+                 return False
 
         # --- Strict Matching Logic ---
         else:
@@ -104,54 +133,74 @@ class MediaMatcher:
             has_episodes = bool(ptt_result.get('episodes'))
 
             if has_date and not has_seasons and not has_episodes:
-                # Date matching logic (TMDB lookup) - requires item TMDB ID etc.
-                # This might be better placed outside the pure check, or require more info passed in.
-                # For now, keep the original logic flow structure. We assume TMDB lookup happens later if needed.
-                # Let's replicate the original check structure approximately.
                  try:
-                      if item.get('tmdb_id') and item.get('season_number') is not None and item.get('episode_number') is not None:
+                      # Use original item S/E for TMDB lookup as that identifies the actual episode
+                      original_item_season = item.get('season') or item.get('season_number')
+                      original_item_episode = item.get('episode') or item.get('episode_number')
+                      if item.get('tmdb_id') and original_item_season is not None and original_item_episode is not None:
                            from utilities.web_scraper import get_tmdb_data
-                           episode_data = get_tmdb_data(int(item['tmdb_id']), 'tv', item['season_number'], item['episode_number'])
+                           episode_data = get_tmdb_data(int(item['tmdb_id']), 'tv', original_item_season, original_item_episode)
                            if episode_data and episode_data.get('air_date') == ptt_result['date']:
+                                logging.debug("Strict match: Date matched via TMDB lookup.")
                                 date_match = True
+                           else:
+                                logging.debug(f"Strict match: Date mismatch (File: {ptt_result['date']}, TMDB: {episode_data.get('air_date') if episode_data else 'N/A'})")
+                      else:
+                           logging.debug("Strict match: Skipping date check (missing TMDB ID/S/E for lookup).")
                  except Exception as e:
                       logging.warning(f"Could not perform date check during match: {e}") # Warn instead of error
 
-            # Season/Episode matching
+            # Season/Episode matching (using target_season/target_episode)
             season_episode_match = False
             if not date_match: # Only check if date didn't match
-                season_match = item_season in ptt_result.get('seasons', [])
-                episode_match = item_episode in ptt_result.get('episodes', [])
+                # Ensure target_season is not None before checking containment, unless it's None because of XEM
+                season_match = (target_season is not None and target_season in ptt_result.get('seasons', [])) or \
+                               (using_xem and target_season is None and not ptt_result.get('seasons')) # Allow None season match if XEM provided None and file has no season
+                episode_match = target_episode in ptt_result.get('episodes', [])
                 # Also check fallback episode if PTT episodes are empty
-                if not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == item_episode:
+                if not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == target_episode:
                     episode_match = True
-                season_episode_match = season_match and episode_match
 
-                # Last resort: check file date against TMDB date for season/episode files
+                season_episode_match = season_match and episode_match
+                logging.debug(f"Strict match: S/E check -> S:{season_match} E:{episode_match} (Target S{target_season}E{target_episode})")
+
+
+                # Last resort: check file date against TMDB date for season/episode files if S/E match failed
                 if not season_episode_match and ptt_result.get('date'):
                     try:
-                         if item.get('tmdb_id') and item_season is not None and item_episode is not None:
+                         # Use original item S/E for TMDB lookup
+                         original_item_season = item.get('season') or item.get('season_number')
+                         original_item_episode = item.get('episode') or item.get('episode_number')
+                         if item.get('tmdb_id') and original_item_season is not None and original_item_episode is not None:
                              from utilities.web_scraper import get_tmdb_data
-                             episode_data = get_tmdb_data(int(item['tmdb_id']), 'tv', item_season, item_episode)
+                             episode_data = get_tmdb_data(int(item['tmdb_id']), 'tv', original_item_season, original_item_episode)
                              if episode_data and episode_data.get('air_date') == ptt_result['date']:
+                                 logging.debug("Strict match: Date matched via fallback TMDB lookup.")
                                  date_match = True # Consider it a date match if air dates align
+                             else:
+                                 logging.debug(f"Strict match: Fallback date mismatch (File: {ptt_result['date']}, TMDB: {episode_data.get('air_date') if episode_data else 'N/A'})")
+                         else:
+                              logging.debug("Strict match: Skipping fallback date check (missing TMDB ID/S/E).")
                     except Exception as e:
                          logging.warning(f"Could not perform fallback date check: {e}")
 
-            return season_episode_match or date_match
+            final_match = season_episode_match or date_match
+            logging.debug(f"Strict match final result: {final_match}")
+            return final_match
 
-    def find_best_match_from_parsed(self, parsed_files: List[Dict[str, Any]], item: Dict[str, Any]) -> Optional[Tuple[str, Dict[str, Any]]]:
+    def find_best_match_from_parsed(self, parsed_files: List[Dict[str, Any]], item: Dict[str, Any], xem_mapping: Optional[Dict[str, int]] = None) -> Optional[Tuple[str, Dict[str, Any]]]:
         """
         Finds the best matching file for a single item from a list of pre-parsed file info.
 
         Args:
             parsed_files: List of dictionaries returned by _parse_file_info.
             item: The media item to match.
+            xem_mapping: Optional dictionary with 'season' and 'episode' keys from XEM.
 
         Returns:
-            A tuple (matching_filepath, item) if a match is found, otherwise None.
-            For movies, returns the largest video file path.
-            For episodes, returns the first file that matches season/episode criteria.
+            A tuple (matching_filepath_basename, item) if a match is found, otherwise None.
+            For movies, returns the largest video file path basename.
+            For episodes, returns the first file that matches season/episode criteria (using XEM if provided).
         """
         item_type = item.get('type')
 
@@ -180,11 +229,16 @@ class MediaMatcher:
             file_collection_management = get_setting('File Management', 'file_collection_management')
             using_plex = file_collection_management == 'Plex'
             use_relaxed_matching = not using_plex and (is_anime or self.relaxed_matching)
+            logging.debug(f"Episode matching mode: {'Relaxed' if use_relaxed_matching else 'Strict'}")
 
             for parsed_file_info in parsed_files:
-                if self._check_match(parsed_file_info, item, use_relaxed_matching):
+                # Pass xem_mapping down to _check_match
+                if self._check_match(parsed_file_info, item, use_relaxed_matching, xem_mapping=xem_mapping):
                     # Return the first match found
+                    logging.info(f"Match found for item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} (using XEM: {xem_mapping is not None}) -> File: {parsed_file_info['path']}")
                     return (os.path.basename(parsed_file_info['path']), item) # Return basename path and item
+
+            logging.debug(f"No matching file found for item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} (using XEM: {xem_mapping is not None}) in parsed files.")
             return None # No match found
 
         # --- Unknown Type ---

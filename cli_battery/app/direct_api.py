@@ -5,6 +5,8 @@ from .database import init_db, Session as DbSession
 from contextlib import contextmanager
 import logging
 from sqlalchemy.orm import Session as SqlAlchemySession
+from .trakt_metadata import TraktMetadata
+from functools import lru_cache
 
 @contextmanager
 def managed_session():
@@ -213,4 +215,30 @@ class DirectAPI:
                 return refreshed_data, source
         except Exception as e:
             logging.error(f"Error during DirectAPI.force_refresh_metadata for {imdb_id}: {e}", exc_info=True)
+            return None, None
+
+    @staticmethod
+    @lru_cache()
+    def search_media(query: str, year: Optional[int] = None, media_type: Optional[str] = None) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+        """
+        Search for media using Trakt. Caches results in memory.
+        Args:
+            query: The search query (title).
+            year: Optional year to filter by.
+            media_type: Optional type ('movie' or 'show').
+        Returns:
+            A tuple containing:
+                - A list of search result dictionaries (or None on error).
+                - The source ('trakt' or None).
+        """
+        logger.info(f"DirectAPI.search_media called: query='{query}', year={year}, type={media_type}")
+        try:
+            # Instantiate TraktMetadata to use its search method
+            trakt_api = TraktMetadata()
+            results = trakt_api.search_media(query=query, year=year, media_type=media_type)
+            # Search always comes from Trakt if successful
+            source = 'trakt' if results is not None else None
+            return results, source
+        except Exception as e:
+            logger.error(f"Error during DirectAPI.search_media for query '{query}': {e}", exc_info=True)
             return None, None

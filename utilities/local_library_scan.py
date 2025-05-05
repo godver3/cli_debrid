@@ -356,60 +356,76 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 
             original_path = get_setting('File Management', 'original_files_path')
             
-            # First try the original path construction
-            source_file = os.path.join(original_path, item.get('filled_by_title', ''), item['filled_by_file'])
-            logging.debug(f"Trying original source file path: {source_file}")
+            # --- Get potential folder names ---
+            filled_by_title = item.get('filled_by_title', '')
+            original_torrent_title = item.get('original_scraped_torrent_title', '')
+            current_filename = item['filled_by_file'] # The actual file we are looking for
+
             found_file = False
+            source_file = None # Initialize source_file
 
-            # Always try both standard paths
-            if os.path.exists(source_file):
-                logging.debug(f"Found file at original path: {source_file}")
-                found_file = True
-            else:
-                logging.debug(f"File not found at original path: {source_file}")
-                # Try path with extension stripped from directory name
-                title_dir = os.path.dirname(source_file)
-                parent_dir = os.path.dirname(title_dir)
-                title_without_ext = os.path.splitext(os.path.basename(title_dir))[0]
-                source_file_no_ext = os.path.join(parent_dir, title_without_ext, os.path.basename(source_file))
-                
-                if os.path.exists(source_file_no_ext):
-                    source_file = source_file_no_ext
-                    logging.info(f"Found file at path with extension stripped: {source_file}")
+            # --- Check Order: Original Torrent Title -> Filled By Title ---
+
+            # 1. Check original_scraped_torrent_title (raw)
+            if original_torrent_title:
+                potential_path = os.path.join(original_path, original_torrent_title, current_filename)
+                logging.debug(f"Attempt 1: Checking path using original_scraped_torrent_title: {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
                     found_file = True
-                else:
-                    logging.debug(f"File not found at stripped extension path: {source_file_no_ext}")
+                    logging.info(f"Found file using original_scraped_torrent_title (raw): {source_file}")
 
-            # If file not found and extended search is enabled, try find command
-            if not found_file and extended_search:
-                # Only do extended search if item is not in a downloading state
-                torrent_id = item.get('filled_by_torrent_id')
-                is_downloading = False
-                
-                if torrent_id:
-                    try:
-                        from debrid import get_debrid_provider
-                        debrid_provider = get_debrid_provider()
-                        torrent_info = debrid_provider.get_torrent_info(torrent_id)
-                        if torrent_info:
-                            progress = torrent_info.get('progress', 0)
-                            is_downloading = progress > 0 and progress < 100
-                    except Exception as e:
-                        logging.debug(f"Failed to check torrent status: {str(e)}")
+            # 2. Check original_scraped_torrent_title (trimmed)
+            if not found_file and original_torrent_title:
+                original_torrent_title_trimmed = os.path.splitext(original_torrent_title)[0]
+                if original_torrent_title_trimmed != original_torrent_title: # Only check if trimming actually changed the name
+                    potential_path = os.path.join(original_path, original_torrent_title_trimmed, current_filename)
+                    logging.debug(f"Attempt 2: Checking path using trimmed original_scraped_torrent_title: {potential_path}")
+                    if os.path.exists(potential_path):
+                        source_file = potential_path
+                        found_file = True
+                        logging.info(f"Found file using original_scraped_torrent_title (trimmed): {source_file}")
 
-                # Only perform find command search if not downloading
-                if not is_downloading:
-                    logging.debug(f"Extended search enabled, but file not found in primary locations. Skipping broad search.")
+            # 3. Check filled_by_title (raw)
+            if not found_file and filled_by_title:
+                potential_path = os.path.join(original_path, filled_by_title, current_filename)
+                logging.debug(f"Attempt 3: Checking path using filled_by_title: {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
+                    found_file = True
+                    logging.info(f"Found file using filled_by_title (raw): {source_file}")
 
+            # 4. Check filled_by_title (trimmed)
+            if not found_file and filled_by_title:
+                filled_by_title_trimmed = os.path.splitext(filled_by_title)[0]
+                if filled_by_title_trimmed != filled_by_title: # Only check if trimming actually changed the name
+                    potential_path = os.path.join(original_path, filled_by_title_trimmed, current_filename)
+                    logging.debug(f"Attempt 4: Checking path using trimmed filled_by_title: {potential_path}")
+                    if os.path.exists(potential_path):
+                        source_file = potential_path
+                        found_file = True
+                        logging.info(f"Found file using filled_by_title (trimmed): {source_file}")
+
+            # 5. Check direct path (less common, added for completeness)
+            if not found_file:
+                 potential_path = os.path.join(original_path, current_filename)
+                 logging.debug(f"Attempt 5: Checking direct path under original_files_path: {potential_path}")
+                 if os.path.exists(potential_path):
+                     source_file = potential_path
+                     found_file = True
+                     logging.info(f"Found file directly under original_files_path: {source_file}")
+
+
+            # --- Handling not found after all checks ---
             if not found_file:
                 if is_webhook and attempt < max_retries - 1:
-                    logging.info(f"File not found, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
+                    logging.info(f"File '{current_filename}' not found using any title variation, attempt {attempt + 1}/{max_retries}. Retrying in {retry_delay} second...")
                     time.sleep(retry_delay)
                     continue
-                logging.warning(f"File not found in any checked location")
+                logging.warning(f"File '{current_filename}' not found in any checked location")
                 return False
             
-            # Get destination path based on settings
+            # Get destination path based on settings (using the found source_file)
             dest_file = get_symlink_path(item, source_file, skip_jikan_lookup=False)
             if not dest_file:
                 return False

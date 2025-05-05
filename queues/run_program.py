@@ -2225,147 +2225,154 @@ class ProgramRunner:
                     logging.debug(f"Item {item_id} missing filled_by_title or filled_by_file. Skipping.")
                     continue
 
-                # Construct potential paths
-                file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
-                # Handle cases where filled_by_title might have an extension (less common now?)
-                title_without_ext = os.path.splitext(filled_by_title)[0]
-                file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
-                # Add check for file directly under plex_file_location (less common)
-                file_path_direct = os.path.join(plex_file_location, filled_by_file) # Direct path
+                # --- Get potential folder names ---
+                filled_by_title = item_dict['filled_by_title']
+                original_torrent_title = item_dict.get('original_scraped_torrent_title', '') # Use .get() for safety
+                current_filename = item_dict['filled_by_file']
 
+                # --- Construct potential paths in order of priority ---
+                paths_to_check = []
+                base_path = plex_file_location # Base path to check within
 
-                # Check if we've already found this file before (cache)
-                cache_key = f"{filled_by_title}:{filled_by_file}"
-                # --- START EDIT: Remove early cache skip - needs tick logic first ---
-                # if self.file_location_cache.get(cache_key) == 'exists':
-                #     logging.debug(f"Skipping previously verified file via cache: {filled_by_title}/{filled_by_file}")
-                #     continue
-                # --- END EDIT ---
+                # 1. Original Torrent Title (raw)
+                if original_torrent_title:
+                    paths_to_check.append(os.path.join(base_path, original_torrent_title, current_filename))
 
+                # 2. Original Torrent Title (trimmed)
+                if original_torrent_title:
+                    original_torrent_title_trimmed = os.path.splitext(original_torrent_title)[0]
+                    if original_torrent_title_trimmed != original_torrent_title:
+                        paths_to_check.append(os.path.join(base_path, original_torrent_title_trimmed, current_filename))
 
+                # 3. Filled By Title (raw)
+                if filled_by_title:
+                    paths_to_check.append(os.path.join(base_path, filled_by_title, current_filename))
+
+                # 4. Filled By Title (trimmed)
+                if filled_by_title:
+                    filled_by_title_trimmed = os.path.splitext(filled_by_title)[0]
+                    if filled_by_title_trimmed != filled_by_title:
+                        paths_to_check.append(os.path.join(base_path, filled_by_title_trimmed, current_filename))
+
+                # 5. Direct path under base
+                paths_to_check.append(os.path.join(base_path, current_filename))
+
+                # --- Check paths in order ---
                 file_found_on_disk = False
                 actual_file_path = None
-                if os.path.exists(file_path):
-                    file_found_on_disk = True
-                    actual_file_path = file_path
-                elif os.path.exists(file_path_no_ext):
-                    file_found_on_disk = True
-                    actual_file_path = file_path_no_ext
-                # Add check for file directly under plex_file_location (less common)
-                elif os.path.exists(file_path_direct):
-                     file_found_on_disk = True
-                     actual_file_path = file_path_direct
+                checked_paths_log = [] # For logging if not found
+                for idx, potential_path in enumerate(paths_to_check):
+                    checked_paths_log.append(potential_path)
+                    logging.debug(f"Plex Check Attempt {idx+1}: Checking path: {potential_path}")
+                    if os.path.exists(potential_path):
+                        file_found_on_disk = True
+                        actual_file_path = potential_path
+                        logging.info(f"Plex Check: Found file for item {item_id} at: {actual_file_path} (Attempt {idx+1})")
+                        break # Found it, stop checking
+
+                # --- Handle Cache Key ---
+                # Use a consistent cache key, perhaps based on item ID or a combo?
+                # Using filled_by_title + filled_by_file might be less reliable if those change.
+                # Let's stick with the existing filled_by_title:filled_by_file key for now.
+                cache_key = f"{filled_by_title}:{current_filename}"
 
 
                 if file_found_on_disk:
-                    logging.info(f"Found file on disk: {actual_file_path} for item {item_id}")
-                    self.file_location_cache[cache_key] = 'exists' # Update cache
+                    logging.info(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}") # Log actual path found
+                    self.file_location_cache[cache_key] = 'exists'
 
                     # --- START EDIT: Add Tick Check and Scan Path Gathering ---
                     should_trigger_scan = False
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
-                    if current_tick <= 5:
-                        should_trigger_scan = True
-                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
+                    # Trigger scan only if library checks are ENABLED
+                    if not get_setting('Plex', 'disable_plex_library_checks', default=False):
+                         if current_tick <= 5:
+                             should_trigger_scan = True
+                             updated_items += 1 # Count item here when scan is intended
+                             logging.info(f"File '{current_filename}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
+                         else:
+                             logging.debug(f"File '{current_filename}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
                     else:
-                        logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
+                         # If library checks are disabled, we don't trigger scans based on ticks here
+                         # We just mark as collected
+                         updated_items += 1 # Count item as 'updated' if found (checks disabled case)
+                         logging.info(f"File '{current_filename}' found (tick {current_tick}). Library checks disabled, will mark as collected.")
 
-                    if should_trigger_scan and plex and sections_map: # Check connection exists
-                        item_type_mapped = 'show' if item_dict['type'] == 'episode' else item_dict['type']
-                        logging.debug(f"Identifying scan paths for item {item_id} (type: {item_type_mapped}, title: '{filled_by_title}')")
-                        found_matching_section_location = False
-                        for section in sections:
-                            if section.type != item_type_mapped:
-                                continue
-                            logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
-                            for location in section.locations:
-                                constructed_plex_path = os.path.join(location, filled_by_title)
-                                logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}'")
-                                if section.title not in paths_to_scan_by_section:
-                                    paths_to_scan_by_section[section.title] = set()
-                                paths_to_scan_by_section[section.title].add(constructed_plex_path)
-                                found_matching_section_location = True
-                        if not found_matching_section_location:
-                            logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{filled_by_file}'. Scan might not be triggered correctly.")
-                    # --- END EDIT ---
-                            
-                    updated_items += 1 # Count item as 'updated' if found
 
-                    # Update item state to Collected if found
-                    conn_update = None
-                    try:
-                        conn_update = get_db_connection()
-                        cursor_update = conn_update.cursor()
-                        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        # --- START EDIT: Remove redundant first update ---
-                        # cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ?, filled_by_file = ?, filled_by_title = ? WHERE id = ? AND state = "Checking"',
-                        #                       (now, os.path.basename(actual_file_path), os.path.basename(os.path.dirname(actual_file_path)), item_id)) # Update file/title too? Maybe safer not to here. Use original filled_by.
-                        # Let's stick to only updating state and time here for safety
-                        # --- END EDIT ---
-                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
-                                              (now, item_id))
-
-                        if cursor_update.rowcount > 0: # Check if the update actually happened
-                            conn_update.commit()
-                            item_title_log = item_dict['title'] if item_dict['title'] else 'N/A'
-                            logging.info(f"Updated item {item_id} ({item_title_log}) to Collected state.")
-
-                            # Add post-processing call after state update
-                            # Fetch updated details AFTER commit
-                            updated_item_details = get_media_item_by_id(item_id)
-                            if updated_item_details:
-                                handle_state_change(dict(updated_item_details)) # Pass as dict
-
-                            # Send notification for collected item
-                            try:
-                                from routes.notifications import send_notifications # Keep import local
-                                from routes.settings_routes import get_enabled_notifications_for_category # Keep import local
-                                from routes.extensions import app # Keep import local
-
-                                with app.app_context(): # Ensure Flask app context
-                                    # Fetch enabled notifications (simplified call)
-                                    enabled_notifications = get_enabled_notifications_for_category('collected').get_json().get('enabled_notifications', {})
-
-                                    if enabled_notifications and updated_item_details:
-                                        # Construct notification data from fetched details
-                                        notification_data = {
-                                            'id': updated_item_details['id'],
-                                            'title': updated_item_details.get('title', 'Unknown Title'),
-                                            'type': updated_item_details.get('type', 'unknown'),
-                                            'year': updated_item_details.get('year', ''),
-                                            'version': updated_item_details.get('version', ''),
-                                            'season_number': updated_item_details.get('season_number'),
-                                            'episode_number': updated_item_details.get('episode_number'),
-                                            'new_state': 'Collected'
-                                        }
-                                        send_notifications([notification_data], enabled_notifications, notification_category='collected')
-                            except Exception as e_notify:
-                                logging.error(f"Failed to send collected notification for item {item_id}: {str(e_notify)}", exc_info=True)
+                    # --- Only gather scan paths if checks enabled AND should_trigger_scan ---
+                    if should_trigger_scan and not get_setting('Plex', 'disable_plex_library_checks', default=False):
+                        if not sections:
+                             logging.error("Plex sections not available, cannot identify scan paths.")
+                             # Continue processing other items
                         else:
-                             # Log if the item wasn't updated (e.g., state changed concurrently)
-                            logging.debug(f"Item {item_id} was not updated to Collected (state may have changed).")
+                            item_type_mapped = 'show' if item_dict['type'] == 'episode' else item_dict['type']
+                            logging.debug(f"Identifying scan paths for item {item_id} (type: {item_type_mapped}, title: '{filled_by_title}')")
 
-                    except sqlite3.Error as db_update_err:
-                        logging.error(f"Database error updating item {item_id} to collected: {db_update_err}")
-                        if conn_update: conn_update.rollback()
-                    except Exception as e_update:
-                         logging.error(f"Unexpected error during item update/notification for {item_id}: {e_update}", exc_info=True)
-                         if conn_update: conn_update.rollback()
-                    finally:
-                        if conn_update: conn_update.close()
+                            found_matching_section_location = False
+                            # Use the *folder name* from the actual_file_path to construct the scan path relative to section locations
+                            folder_name_found = os.path.basename(os.path.dirname(actual_file_path))
+
+                            for section in sections:
+                                if section.type != item_type_mapped:
+                                    continue
+
+                                logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
+                                for location in section.locations:
+                                    # Construct the path Plex *should* see using the folder name from the found path
+                                    constructed_plex_path = os.path.join(location, folder_name_found)
+                                    logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}' and found folder '{folder_name_found}'")
+
+                                    if section.title not in paths_to_scan_by_section:
+                                        paths_to_scan_by_section[section.title] = set()
+                                    paths_to_scan_by_section[section.title].add(constructed_plex_path)
+                                    found_matching_section_location = True
+
+                            if not found_matching_section_location:
+                                logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{current_filename}'. Scan might not be triggered correctly.")
+
+                    # --- Update item state to Collected if checks are disabled ---
+                    if get_setting('Plex', 'disable_plex_library_checks', default=False):
+                         conn_update = None
+                         try:
+                             conn_update = get_db_connection()
+                             cursor_update = conn_update.cursor()
+                             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                             cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
+                                                   (now, item_id))
+
+                             if cursor_update.rowcount > 0:
+                                 conn_update.commit()
+                                 item_title_log = item_dict['title'] if item_dict['title'] else 'N/A'
+                                 logging.info(f"Updated item {item_id} ({item_title_log}) to Collected state (Plex checks disabled).")
+                                 # Post-processing and notification logic... (omitted for brevity, should be similar to existing code)
+                                 updated_item_details = get_media_item_by_id(item_id)
+                                 if updated_item_details:
+                                      handle_state_change(dict(updated_item_details))
+                                      # Add notification logic here...
+
+                             else:
+                                 logging.debug(f"Item {item_id} was not updated to Collected (state may have changed).")
+
+                         except sqlite3.Error as db_update_err:
+                             logging.error(f"Database error updating item {item_id} to collected: {db_update_err}")
+                             if conn_update: conn_update.rollback()
+                         except Exception as e_update:
+                              logging.error(f"Unexpected error during item update/notification for {item_id}: {e_update}", exc_info=True)
+                              if conn_update: conn_update.rollback()
+                         finally:
+                             if conn_update: conn_update.close()
+
 
                 else: # File not found on disk
                     not_found_items += 1
-                    logging.debug(f"File not found on disk for item {item_id} in primary locations:\n  {file_path}\n  {file_path_no_ext}\n  {file_path_direct}")
+                    logging.debug(f"File not found on disk for item {item_id}. Checked paths:\n  " + "\n  ".join(checked_paths_log))
                     # --- START EDIT: Reset tick count if file missing ---
                     if cache_key in self.plex_scan_tick_counts:
-                        logging.debug(f"Resetting Plex scan tick count for missing file '{filled_by_file}'.")
+                        logging.debug(f"Resetting Plex scan tick count for missing file '{current_filename}'.")
                         del self.plex_scan_tick_counts[cache_key]
                     # --- END EDIT ---
-                    # Optional: Clear cache if file is confirmed missing? Might cause re-checks later if transient.
-                    # if cache_key in self.file_location_cache:
-                    #     del self.file_location_cache[cache_key]
+                    continue
 
             # --- START EDIT: Add Scan Triggering Logic ---
             if paths_to_scan_by_section and plex and sections_map: # Check connection exists

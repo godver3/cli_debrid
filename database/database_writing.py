@@ -95,7 +95,7 @@ def update_release_date_and_state(
 
         if updated_item:
             item_dict = dict(updated_item)
-            handle_state_change(item_dict) # Handle notifications etc based on the new state
+            # handle_state_change(item_dict) # REMOVED: Handle notifications etc based on the new state - Let callers handle this based on context
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
         

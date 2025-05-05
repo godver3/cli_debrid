@@ -22,6 +22,39 @@
     .modal-content {
         background-color: #1e1e1e !important;
     }
+    .toggle-container .toggle-item .refresh-btn { /* Style for the specific size refresh */
+        background: none;
+        border: none;
+        color: #aaa; /* Match icon color */
+        cursor: pointer;
+        font-size: 1em; /* Match icon size */
+        padding: 0 3px;
+        margin-left: 3px;
+        vertical-align: middle;
+    }
+    .toggle-container .toggle-item .refresh-btn:hover {
+        color: #fff;
+    }
+    .toggle-container .toggle-item .refresh-btn i.fa-spin { /* Style for spinning icon */
+        /* Optional: add animation if not default */
+    }
+    #library-size-display {
+        margin-right: 2px; /* Add a little space before the button */
+    }
+    /* General page refresh button style (if keeping it) */
+     .page-refresh-btn {
+        background: none;
+        border: none;
+        color: #ccc;
+        cursor: pointer;
+        font-size: 1.1em;
+        padding: 0 5px;
+        margin-left: 5px;
+        vertical-align: middle;
+    }
+    .page-refresh-btn:hover {
+        color: #fff;
+    }
 </style>
 
 <!-- Add modal for external links -->
@@ -58,6 +91,13 @@
 
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
+        <div class="toggle-item">
+            <span class="toggle-label"><i class="fas fa-hdd"></i> Library:</span>
+            <span id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
+            <button id="refresh-library-size-btn" class="refresh-btn" title="Refresh Library Size">
+                 <i class="fas fa-sync-alt"></i>
+            </button>
+        </div>
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
         </div>
@@ -109,6 +149,40 @@
             } else if (typeof reattachExternalLinksListeners === 'function') {
                 reattachExternalLinksListeners();
             }
+
+            // --- Library Size Refresh Button ---
+            const refreshSizeButton = document.getElementById('refresh-library-size-btn');
+            const sizeDisplaySpan = document.getElementById('library-size-display');
+            if (refreshSizeButton && sizeDisplaySpan) {
+                refreshSizeButton.addEventListener('click', function() {
+                    const icon = refreshSizeButton.querySelector('i');
+                    // Indicate loading
+                    sizeDisplaySpan.textContent = 'Loading...';
+                    refreshSizeButton.disabled = true;
+                    if (icon) icon.classList.add('fa-spin');
+
+                    fetch('/statistics/api/library_size') // Ensure this path matches your blueprint prefix + route
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            sizeDisplaySpan.textContent = data.total_library_size || 'Error';
+                        })
+                        .catch(error => {
+                            console.error('Error fetching library size:', error);
+                            sizeDisplaySpan.textContent = 'Error';
+                        })
+                        .finally(() => {
+                            // Reset button
+                            refreshSizeButton.disabled = false;
+                            if (icon) icon.classList.remove('fa-spin');
+                        });
+                });
+            }
+
         });
 
         document.getElementById('time-format-toggle').addEventListener('change', function() {
@@ -716,7 +790,7 @@
                         <div class="poster-container">
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
-                                <span class="title">{{ show.title }}</span>
+                                <span class="title">${show.title}</span>
                                 <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>
