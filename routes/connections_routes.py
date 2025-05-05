@@ -2,11 +2,47 @@ from flask import Blueprint, render_template, flash, redirect, url_for
 import requests
 import os
 from datetime import datetime
-from utilities.settings import get_setting
+from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
-from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request
+from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request, parse_trakt_list_url
+from content_checkers.plex_watchlist import MyPlexAccount
+import logging
+import feedparser # Keep import for RSS
+# Attempt to import DirectAPI - adjust path if necessary based on your project structure
+try:
+    # Assuming cli_battery is a sibling directory or installed package
+    from cli_battery.app.direct_api import DirectAPI 
+except ImportError:
+    # Fallback if direct import doesn't work (e.g., running not from root)
+    import sys
+    # Add the parent directory to sys.path if cli_battery is adjacent
+    parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) 
+    if os.path.exists(os.path.join(parent_dir, 'cli_battery')):
+        sys.path.insert(0, parent_dir)
+        from cli_battery.app.direct_api import DirectAPI
+    else:
+        # If it still fails, create a dummy class to prevent crashes, but log error
+        logging.error("Could not import DirectAPI from cli_battery. Metadata fallback for Overseer samples will not work.")
+        class DirectAPI: # Dummy class
+            def tmdb_to_imdb(*args, **kwargs): return None, None
+            def get_movie_metadata(*args, **kwargs): return None, None
+            def get_show_metadata(*args, **kwargs): return None, None
+
+# --- Instantiate DirectAPI ---
+# It's generally better to instantiate once if the class handles sessions internally
+# Or instantiate within the function if session management requires it per-request
+try:
+    direct_api_instance = DirectAPI()
+    logging.info("DirectAPI instance created successfully for connections_routes.")
+except Exception as e:
+     logging.error(f"Failed to instantiate DirectAPI in connections_routes: {e}", exc_info=True)
+     direct_api_instance = None # Set to None if instantiation fails
 
 connections_bp = Blueprint('connections', __name__)
+
+# Add logging configuration if not already present
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 
 def check_cli_battery_connection():
     """Check connection to cli_battery service using environment variables."""
@@ -490,13 +526,12 @@ def check_scrapers_connections():
     return scraper_statuses
 
 def check_content_source_connection(source_id: str, source_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Check connection to a specific content source."""
-    source_type = source_id.split('_')[0]  # Get base type without number
+    """Check connection to a specific content source and fetch a sample."""
+    source_type = source_id.split('_')[0]
     
     if not source_config.get('enabled', False):
         return None
         
-    # Format name to include identifier in brackets if there's a display name
     display_name = source_config.get('display_name')
     name = f"{display_name} ({source_id})" if display_name else source_id
         
@@ -507,11 +542,14 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
         'details': {
             'type': source_type,
             'identifier': source_id,
-            'media_type': source_config.get('media_type', 'All')
+            'media_type': source_config.get('media_type', 'All'),
+            'sample_data': None,
+            'sample_error': None
         }
     }
     
     try:
+        # --- MDBList ---
         if source_type == 'MDBList':
             urls = source_config.get('urls', '').strip()
             if not urls:
@@ -569,9 +607,38 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 'versions': source_config.get('versions', {'Default': True})
             })
             
-        elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist']:
-            
-            # First ensure we have valid authentication
+            # --- Fetch Sample Data for MDBList (if connected) ---
+            if base_response['connected'] and successful_urls:
+                sample_items = []
+                try:
+                    sample_url = successful_urls[0]
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                    sample_response = requests.get(sample_url, headers=headers, timeout=5, allow_redirects=True)
+                    sample_response.raise_for_status()
+                    data = sample_response.json()
+                    
+                    if isinstance(data, list):
+                        for item in data[:3]: 
+                            title = item.get('title', 'Unknown Title')
+                            year = item.get('year')
+                            item_type = item.get('mediatype', 'unknown').lower()
+                            display_type = 'TV' if item_type in ['show', 'tv'] else item_type.capitalize()
+                            
+                            display_text = f"{title} ({year})" if year else title
+                            sample_items.append(f"[{display_type}] {display_text}")
+                    else:
+                         base_response['details']['sample_error'] = "Unexpected JSON format (not a list)"
+                    base_response['details']['sample_data'] = sample_items if sample_items else ["No items found or could not parse."]
+
+                except Exception as e:
+                    log.warning(f"Failed to fetch sample for MDBList {source_id}: {e}", exc_info=True)
+                    base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
+            # --- End MDBList Sample Fetch ---
+
+        # --- Trakt Sources (Watchlist, Lists, Friends, Collection) ---
+        elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist', 'Trakt Collection']:
             access_token = ensure_trakt_auth()
             if not access_token:
                 base_response['error'] = 'Failed to authenticate with Trakt'
@@ -597,6 +664,113 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 base_response['error'] = f'Trakt API error: {str(e)}'
                 base_response['connected'] = False
             
+            # --- Fetch Sample Data for Trakt (if connected) ---
+            if base_response['connected']:
+                sample_items = []
+                try:
+                    # --- Trakt Watchlist Sample ---
+                    if source_type == 'Trakt Watchlist':
+                        # Fetch both movies and shows for the sample, limit each
+                        endpoints = {'movies': '/sync/watchlist/movies?limit=2', 'shows': '/sync/watchlist/shows?limit=2'}
+                        for media_type, endpoint in endpoints.items():
+                            items_response = make_trakt_request('get', endpoint)
+                            if items_response and items_response.status_code == 200:
+                                data = items_response.json()
+                                for item in data:
+                                    # Extract nested object ('movie' or 'show')
+                                    item_data = item.get(media_type[:-1]) 
+                                    if item_data:
+                                        title = item_data.get('title', 'Unknown Title')
+                                        year = item_data.get('year')
+                                        display_type = "Movie" if media_type == 'movies' else "Show"
+                                        display_text = f"{title} ({year})" if year else title
+                                        sample_items.append(f"[{display_type}] {display_text}")
+                            else:
+                                log.warning(f"Failed to fetch {media_type} for Trakt Watchlist sample. Status: {items_response.status_code if items_response else 'N/A'}")
+                    
+                    # --- Trakt Lists Sample ---
+                    elif source_type == 'Trakt Lists':
+                        # Corrected: Use 'trakt_lists' key instead of 'urls'
+                        list_urls_str = source_config.get('trakt_lists', '').strip()
+                        if list_urls_str:
+                             # Use the first URL for the sample
+                            first_url = list_urls_str.split(',')[0].strip()
+                            list_info = parse_trakt_list_url(first_url)
+                            if list_info:
+                                username = list_info.get('username')
+                                list_id = list_info.get('list_id')
+                                if username and list_id:
+                                    endpoint = f"/users/{username}/lists/{list_id}/items?limit=3"
+                                    items_response = make_trakt_request('get', endpoint)
+                                    if items_response and items_response.status_code == 200:
+                                        data = items_response.json()
+                                        for item in data:
+                                            item_type_key = None
+                                            if 'movie' in item: item_type_key = 'movie'
+                                            elif 'show' in item: item_type_key = 'show'
+                                            elif 'episode' in item: item_type_key = 'episode' 
+
+                                            if item_type_key:
+                                                item_data = item.get(item_type_key)
+                                                if item_type_key == 'episode':
+                                                    item_data = item.get('show') 
+                                                    display_type = "Show" 
+                                                elif item_type_key == 'show':
+                                                    display_type = "Show"
+                                                else:
+                                                    display_type = "Movie"
+
+                                                if item_data:
+                                                    title = item_data.get('title', 'Unknown Title')
+                                                    year = item_data.get('year')
+                                                    display_text = f"{title} ({year})" if year else title
+                                                    sample_items.append(f"[{display_type}] {display_text}")
+                                    else:
+                                        log.warning(f"Failed to fetch items for Trakt List {list_id}. Status: {items_response.status_code if items_response else 'N/A'}")
+                                        # Add error to sample details if fetch failed
+                                        base_response['details']['sample_error'] = f"Failed to fetch sample from list (Status: {items_response.status_code if items_response else 'N/A'})"
+                                else:
+                                    base_response['details']['sample_error'] = "Could not parse username/list ID from URL."
+                            else:
+                                base_response['details']['sample_error'] = "Could not parse Trakt list URL."
+                        else:
+                             # This error message should now be correct if 'trakt_lists' is missing/empty
+                             base_response['details']['sample_error'] = "No URLs configured for Trakt List source."
+
+                    # --- Trakt Collection Sample (Existing - No change needed) ---
+                    elif source_type == 'Trakt Collection':
+                         movies_resp = make_trakt_request('get', '/sync/collection/movies?limit=2')
+                         shows_resp = make_trakt_request('get', '/sync/collection/shows?limit=1')
+                         if movies_resp and movies_resp.status_code == 200:
+                             for item in movies_resp.json():
+                                 movie = item.get('movie')
+                                 if movie:
+                                     title = movie.get('title', 'Unknown Title')
+                                     year = movie.get('year')
+                                     sample_items.append(f"[Movie] {title} ({year})" if year else f"[Movie] {title}")
+                         if shows_resp and shows_resp.status_code == 200:
+                              for item in shows_resp.json():
+                                  show = item.get('show')
+                                  if show:
+                                      title = show.get('title', 'Unknown Title')
+                                      year = show.get('year')
+                                      sample_items.append(f"[Show] {title} ({year})" if year else f"[Show] {title}")
+
+                    # Add Friends Trakt Watchlist sample fetch if needed later
+
+                    base_response['details']['sample_data'] = sample_items if sample_items else ["No items found in sample."]
+                    # Only overwrite sample_error if it wasn't already set by a specific list fetch failure
+                    if not base_response['details']['sample_error'] and not sample_items:
+                        base_response['details']['sample_data'] = ["No items found in sample."]
+
+                except Exception as e:
+                    log.warning(f"Failed to fetch sample for Trakt source {source_id}: {e}", exc_info=True) 
+                    # Avoid overwriting specific errors (like URL parsing) with the general exception message
+                    if not base_response['details']['sample_error']:
+                        base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
+            # --- End Trakt Sample Fetch ---
+
+        # --- Overseerr ---
         elif source_type == 'Overseerr':
             url = source_config.get('url', '').strip()
             api_key = source_config.get('api_key', '').strip()
@@ -620,10 +794,86 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 'api_status': response.status_code
             })
             
+            # --- Fetch Sample Data for Overseerr (if connected) ---
+            if base_response['connected']:
+                sample_items = []
+                try:
+                    sample_url = f"{url.rstrip('/')}/api/v1/request?take=3&skip=0&sort=added&filter=available"
+                    headers = {'X-Api-Key': api_key}
+                    sample_response = requests.get(sample_url, headers=headers, timeout=5)
+                    sample_response.raise_for_status()
+                    data = sample_response.json()
+                    results = data.get('results', [])
+                    
+                    for request in results:
+                         media_info = request.get('media', {})
+                         media_type = media_info.get('mediaType') # 'movie' or 'tv'
+                         
+                         title = None
+                         year = None
+                         display_type = 'Unknown'
+                         tmdb_id_for_log = media_info.get('tmdbId', 'N/A') 
+
+                         if media_type == 'movie':
+                             title = media_info.get('title') or media_info.get('originalTitle')
+                             year = media_info.get('releaseDate', '')[:4] if media_info.get('releaseDate') else ''
+                             display_type = "Movie"
+                         elif media_type == 'tv':
+                             title = media_info.get('name') or media_info.get('originalName')
+                             year = media_info.get('firstAirDate', '')[:4] if media_info.get('firstAirDate') else ''
+                             display_type = "TV"
+                         else:
+                             title = media_info.get('title') or media_info.get('name') or media_info.get('originalTitle') or media_info.get('originalName')
+                             year = (media_info.get('releaseDate') or media_info.get('firstAirDate') or '')[:4]
+
+                         # --- Fallback using DirectAPI if title is missing ---
+                         if (not title or title == "Unknown Title") and tmdb_id_for_log != 'N/A' and direct_api_instance:
+                             log.warning(f"Overseerr sample: Title missing for {media_type} TMDB ID {tmdb_id_for_log}. Attempting fallback lookup.")
+                             try:
+                                 # Convert TMDB to IMDb
+                                 conversion_media_type = 'show' if media_type == 'tv' else media_type
+                                 imdb_id, _ = direct_api_instance.tmdb_to_imdb(str(tmdb_id_for_log), media_type=conversion_media_type)
+                                 
+                                 if imdb_id:
+                                     # Fetch metadata using IMDb ID
+                                     metadata = None
+                                     if media_type == 'movie':
+                                         metadata, _ = direct_api_instance.get_movie_metadata(imdb_id)
+                                     elif media_type == 'tv':
+                                         metadata, _ = direct_api_instance.get_show_metadata(imdb_id)
+                                     
+                                     if metadata and isinstance(metadata, dict) and metadata.get('title'):
+                                         fetched_title = metadata.get('title')
+                                         log.info(f"Fallback successful: Found title '{fetched_title}' for TMDB ID {tmdb_id_for_log} (IMDb: {imdb_id})")
+                                         title = fetched_title # Update the title
+                                     else:
+                                         log.warning(f"Fallback failed: Could not fetch metadata or title for IMDb ID {imdb_id}")
+                                 else:
+                                     log.warning(f"Fallback failed: Could not convert TMDB ID {tmdb_id_for_log} to IMDb ID.")
+                             except Exception as fallback_e:
+                                 log.error(f"Error during Overseerr sample title fallback lookup: {fallback_e}", exc_info=True)
+                         # --- End Fallback ---
+
+                         # Ensure title is not None or empty before formatting
+                         title = title if title else "Unknown Title"
+
+                         display_text = f"{title} ({year})" if year else title
+                         sample_items.append(f"[{display_type}] {display_text}")
+
+                    base_response['details']['sample_data'] = sample_items if sample_items else ["No available requests found in sample."]
+
+                except Exception as e:
+                    log.warning(f"Failed to fetch sample for Overseerr {source_id}: {e}", exc_info=True) 
+                    base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
+            # --- End Overseerr Sample Fetch ---
+
+        # --- Plex Watchlist (My/Other) ---
         elif source_type in ['My Plex Watchlist', 'Other Plex Watchlist']:
-            from content_checkers.plex_watchlist import MyPlexAccount
-            
-            # Get the appropriate token based on source type
+            token = None # Initialize token
+            username = None # Initialize username for 'Other'
+            account = None # Initialize account object
+
+            # Get token and potentially username
             if source_type == 'Other Plex Watchlist':
                 token = source_config.get('token', '').strip()
                 username = source_config.get('username', '').strip()
@@ -631,36 +881,71 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                     base_response['error'] = 'Token or username not configured'
                     base_response['connected'] = False
                     return base_response
-            else:
-                from utilities.settings import get_setting
-                token = get_setting('Plex', 'token')
-                if not token:
-                    token = get_setting('File Management', 'plex_token_for_symlink')
+            else: # My Plex Watchlist
+                token = get_setting('Plex', 'token') or get_setting('File Management', 'plex_token_for_symlink')
                 if not token:
                     base_response['error'] = 'Plex token not configured'
                     base_response['connected'] = False
                     return base_response
             
+            # --- Connection Check ---
             try:
                 # Try to connect with the token
-                account = MyPlexAccount(token=token)
-                
+                account = MyPlexAccount(token=token) # Instantiate account
+
                 # For Other Plex Watchlist, verify username matches
                 if source_type == 'Other Plex Watchlist' and account.username != username:
                     base_response['error'] = f'Token does not match username. Expected: {username}, Got: {account.username}'
                     base_response['connected'] = False
-                    return base_response
-                
-                # If we get here, connection was successful
-                base_response['connected'] = True
-                base_response['details'].update({
-                    'username': account.username,
-                    'email': account.email
-                })
+                    # No need to return here, let it fall through to sample fetch attempt if desired,
+                    # but mark as disconnected
+                else:
+                    # If we get here, connection was successful
+                    base_response['connected'] = True
+                    base_response['details'].update({
+                        'username': account.username,
+                        'email': account.email
+                    })
+
             except Exception as e:
+                log.error(f"Failed to authenticate Plex Watchlist {source_id}: {e}", exc_info=True) # Log full traceback
                 base_response['error'] = f'Failed to authenticate: {str(e)}'
                 base_response['connected'] = False
-            
+                # Don't proceed to sample fetch if authentication failed
+                return base_response
+            # --- End Connection Check ---
+
+            # --- Fetch Sample Data for Plex Watchlist (if connection seems okay) ---
+            # We attempt sample fetch even if username mismatch occurred, but connection itself worked
+            if account: # Check if account object was created
+                sample_items = []
+                try:
+                    # Call watchlist() directly on the MyPlexAccount instance
+                    # Pass maxresults=3 to limit the sample size
+                    watchlist_items = account.watchlist(sort='addedAt:desc', maxresults=3) # Corrected call
+
+                    for item in watchlist_items:
+                         title = getattr(item, 'title', 'Unknown Title')
+                         year = getattr(item, 'year', None)
+                         item_type = getattr(item, 'type', 'unknown').capitalize()
+                         display_text = f"{title} ({year})" if year else title
+                         sample_items.append(f"[{item_type}] {display_text}")
+
+                    base_response['details']['sample_data'] = sample_items if sample_items else ["Watchlist is empty or could not fetch sample."]
+
+                except AttributeError as ae:
+                     # Handle case where MyPlexAccount doesn't have watchlist method
+                     log.error(f"MyPlexAccount object for {source_id} is missing the 'watchlist' method: {ae}", exc_info=True)
+                     base_response['details']['sample_error'] = "Internal Error: Watchlist method not found."
+                except Exception as e:
+                    # Catch specific plexapi exceptions if known, otherwise general Exception
+                    log.warning(f"Failed to fetch sample for Plex Watchlist {source_id}: {e}", exc_info=True) # Log traceback
+                    base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
+            elif not base_response['connected']:
+                 base_response['details']['sample_error'] = "Cannot fetch sample, connection failed."
+            # --- End Plex Watchlist Sample Fetch ---
+
+        # --- Plex RSS Watchlist ---
         elif source_type in ['My Plex RSS Watchlist', 'My Friends Plex RSS Watchlist']:
             url = source_config.get('url', '').strip()
             if not url:
@@ -677,34 +962,27 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 'rss_status': response.status_code
             })
             
-        elif source_type == 'Trakt Collection':
-            # Handle Trakt Collection
-            access_token = ensure_trakt_auth()
-            if not access_token:
-                base_response['error'] = 'Not authenticated'
-                base_response['connected'] = False
-                return base_response
+            # --- Fetch Sample Data for Plex RSS (if connected) ---
+            if base_response['connected']:
+                sample_items = []
+                try:
+                    import feedparser # Import here to avoid making it a hard dependency if RSS isn't used
+                    url = source_config.get('url', '').strip()
+                    feed = feedparser.parse(url)
 
-            # Try to get both movies and shows collection
-            movies_response = make_trakt_request('get', "/sync/collection/movies")
-            shows_response = make_trakt_request('get', "/sync/collection/shows")
-            
-            if not movies_response or not shows_response:
-                base_response['error'] = 'Failed to fetch collection data'
-                base_response['connected'] = False
-                base_response['details'].update({
-                    'movies_status': 'Failed' if not movies_response else 'Success',
-                    'shows_status': 'Failed' if not shows_response else 'Success'
-                })
-                return base_response
-            
-            # Both requests succeeded
-            base_response['connected'] = True
-            base_response['details'].update({
-                'movies_count': len(movies_response.json()),
-                'shows_count': len(shows_response.json())
-            })
-            
+                    for entry in feed.entries[:3]: # Get first 3 entries
+                        title = entry.get('title', 'Unknown Title')
+                        sample_items.append(title)
+
+                    base_response['details']['sample_data'] = sample_items if sample_items else ["RSS feed empty or could not parse."]
+
+                except ImportError:
+                     base_response['details']['sample_error'] = "feedparser library not installed."
+                except Exception as e:
+                    log.warning(f"Failed to fetch sample for Plex RSS {source_id}: {e}")
+                    base_response['details']['sample_error'] = f"Failed to fetch sample: {e}"
+            # --- End Plex RSS Sample Fetch ---
+
     except requests.Timeout:
         base_response['error'] = 'Connection timed out'
         base_response['connected'] = False
@@ -712,7 +990,8 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
         base_response['error'] = 'Connection refused'
         base_response['connected'] = False
     except Exception as e:
-        base_response['error'] = str(e)
+        log.exception(f"Unhandled error during connection check for {source_id}: {e}") # Log unexpected errors
+        base_response['error'] = f"Unexpected error: {str(e)}"
         base_response['connected'] = False
         
     return base_response
@@ -738,11 +1017,14 @@ def check_content_sources_connections():
     return source_statuses
 
 def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
-    content_sources = get_all_settings().get('Content Sources', {})
+    # Use get_all_settings instead of direct config loading if possible
+    # Assuming get_all_settings provides the full config dictionary
+    all_settings = get_all_settings()
+    content_sources = all_settings.get('Content Sources', {})
     watchlist_sources = [data for source, data in content_sources.items() if source.startswith('Trakt Watchlist')]
     list_sources = [data for source, data in content_sources.items() if source.startswith('Trakt Lists')]
     friend_watchlist_sources = [data for source, data in content_sources.items() if source.startswith('Friends Trakt Watchlist')]
-    
+
     return {
         'watchlist': watchlist_sources,
         'lists': list_sources,
@@ -752,7 +1034,7 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
 @connections_bp.route('/')
 def index():
     """Display the connections status page."""
-    # Get connection statuses
+    # Get connection statuses (these now include sample data in details)
     cli_battery_status = check_cli_battery_connection()
     plex_status = check_plex_connection()
     mounted_files_status = check_mounted_files_connection()

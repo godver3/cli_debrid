@@ -3,7 +3,7 @@
 {% block title %}Connections{% endblock %}
 
 {% block head %}
-<meta http-equiv="refresh" content="30">
+<meta http-equiv="refresh" content="300">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/connections.css') }}">
 {% endblock %}
 
@@ -69,7 +69,7 @@
     <h2 class="mt-4">Scraper Connections</h2>
     <div class="connections-container">
         {% for scraper in scraper_statuses %}
-        <div class="connection-card" data-service="scraper-{{ scraper.name|lower|replace(' ', '-') }}">
+        <div class="connection-card" data-service="scraper-{{ scraper.name|lower|replace(' ', '-')|replace('(', '')|replace(')', '') }}">
             <div class="connection-header">
                 {% if 'Jackett' in scraper.name %}
                 <i class="fas fa-search"></i>
@@ -97,7 +97,9 @@
     <h2 class="mt-4">Content Source Connections</h2>
     <div class="connections-container">
         {% for source in content_source_statuses %}
-        <div class="connection-card" data-service="source-{{ source.name|lower|replace(' ', '-') }}">
+        {# Generate a unique ID for the sample container - Added replace("'", "") #}
+        {% set sample_id = "sample-" ~ source.name|lower|replace(' ', '-')|replace('(', '')|replace(')', '')|replace("'", "") ~ loop.index %}
+        <div class="connection-card" data-service="source-{{ source.name|lower|replace(' ', '-')|replace('(', '')|replace(')', '')|replace("'", "") }}">
             <div class="connection-header">
                 {% if 'MDBList' in source.name %}
                 <i class="fas fa-list"></i>
@@ -114,7 +116,28 @@
                 {% endif %}
                 <span class="connection-title">{{ source.name }}</span>
                 <div class="status-indicator {{ 'connected' if source.connected else 'disconnected' }}"></div>
+                {% if source.connected and (source.details.sample_data or source.details.sample_error) %}
+                    <a href="#" class="toggle-sample" data-target="#{{ sample_id }}">Show Sample</a>
+                {% endif %}
             </div>
+            {# Conditionally render the sample data container #}
+            {% if source.connected and (source.details.sample_data or source.details.sample_error) %}
+            <div class="sample-data-container" id="{{ sample_id }}">
+                {% if source.details.sample_data %}
+                    <strong>Sample Items:</strong>
+                    <ul>
+                        {% for item in source.details.sample_data %}
+                            <li>{{ item }}</li>
+                        {% else %}
+                            <li>No sample items available.</li>
+                        {% endfor %}
+                    </ul>
+                {% endif %}
+                {% if source.details.sample_error %}
+                    <div class="sample-error">Error fetching sample: {{ source.details.sample_error }}</div>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
@@ -134,4 +157,23 @@
     </div>
     {% endif %}
 </div>
+
+<script>
+    // Add JavaScript to handle toggling the sample data display
+    document.addEventListener('DOMContentLoaded', function() {
+        const toggleLinks = document.querySelectorAll('.toggle-sample');
+        toggleLinks.forEach(link => {
+            link.addEventListener('click', function(event) {
+                event.preventDefault(); // Prevent default link behavior
+                const targetId = this.getAttribute('data-target');
+                const targetElement = document.querySelector(targetId);
+                if (targetElement) {
+                    const isVisible = targetElement.style.display === 'block';
+                    targetElement.style.display = isVisible ? 'none' : 'block';
+                    this.textContent = isVisible ? 'Show Sample' : 'Hide Sample';
+                }
+            });
+        });
+    });
+</script>
 {% endblock %}

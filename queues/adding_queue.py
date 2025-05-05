@@ -238,12 +238,18 @@ class AddingQueue:
                 else: # Hybrid mode is the default if not None or Full
                     accept_uncached = False # Start with cached only for hybrid
 
-                torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached, item=item)
+                # Now returns torrent_info, magnet, and chosen_result_info
+                torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
+                    results, item_identifier, accept_uncached, item=item
+                )
 
                 if not torrent_info and not magnet and get_setting('Scraping', 'hybrid_mode', True): # Check hybrid setting explicitly
                     logging.info(f"No cached results found, trying uncached results (Hybrid Mode)")
                     accept_uncached = True # Now accept uncached
-                    torrent_info, magnet = self._process_results_with_mode(results, item_identifier, accept_uncached=True, item=item)
+                    # Call again, getting all three return values
+                    torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
+                        results, item_identifier, accept_uncached=True, item=item
+                    )
 
                 updated_item = get_media_item_by_id(item['id']) # Check state after processing
                 if updated_item and updated_item.get('state') == 'Pending Uncached':
@@ -251,11 +257,15 @@ class AddingQueue:
                     self.remove_item(item) # Remove from memory queue
                     continue # Move to next item
 
+                # Use torrent_info and magnet for the check, chosen_result_info is handled later
                 if (not torrent_info or not magnet): # Check again after potential uncached attempt
                     logging.error(f"No valid torrent info or magnet found for {item_identifier} after checking cache/uncached modes.")
                     # Try to get torrent_id for potential removal in handle_failed_item
                     if torrent_info and torrent_info.get('id'):
                        item['torrent_id'] = torrent_info.get('id')
+                    elif chosen_result_info: # If torrent_info is None but we got a result (e.g. Pending Uncached), try getting ID from there
+                        # This might not be reliable if the result wasn't added yet
+                        pass # Cannot reliably get torrent_id here if not added
                     self._handle_failed_item(item, "No valid results found after cache/uncached processing", queue_manager)
                     continue
 
@@ -293,63 +303,40 @@ class AddingQueue:
                     self._handle_failed_item(item, "No valid video files found in torrent", queue_manager)
                     continue
 
-                # --- Apply XEM Mapping (Simplified - needs review for robustness) ---
-                # XEM mapping from scrape results is tricky here as we process the primary item first.
-                # We'll use the primary item's absolute S/E for its own matching for now.
-                # Related item matching in find_related_items also uses absolute S/E currently.
-                # TODO: Revisit how XEM mapping context from scrape results should influence primary/related matching.
-                item_for_matching = item # Use original item details for primary match
-
-                # --- Find Primary Match using Parsed Files ---
-                match_result = self.media_matcher.find_best_match_from_parsed(parsed_torrent_files, item_for_matching)
-
-                if not match_result:
-                    logging.error(f"No matching files found in parsed files for primary item {item_identifier}")
-                    item['torrent_id'] = torrent_info.get('id') # Ensure torrent_id is set for removal
-                    self._handle_failed_item(item, "No matching files found in torrent (parsed)", queue_manager)
-                    continue
-
-                matched_file_basename = match_result[0] # Now contains basename
-                logging.info(f"Best matching file (basename) for {item_identifier}: {matched_file_basename}")
-
-                # --- Extract Score and Update DB (Keep existing logic) ---
+                # --- Extract Score and Update DB (Use chosen_result_info directly) ---
                 current_score = 0
-                chosen_result_info = None
-                chosen_hash = torrent_info.get('hash', '').lower()
-                chosen_magnet = magnet.lower() if magnet and magnet.startswith('magnet:') else magnet or ''
-
-                for result in results:
-                    result_magnet_raw = result.get('magnet', '')
-                    result_magnet = result_magnet_raw.lower() if result_magnet_raw.startswith('magnet:') else result_magnet_raw
-                    from debrid.common import extract_hash_from_magnet
-                    result_hash = extract_hash_from_magnet(result_magnet) if result_magnet else None
-
-                    if chosen_hash and result_hash and chosen_hash == result_hash:
-                        chosen_result_info = result
-                        break
-                    elif chosen_magnet and result_magnet and chosen_magnet == result_magnet:
-                        chosen_result_info = result
-                        break
+                # chosen_result_info is now directly available from _process_results_with_mode
+                # Remove the loop that tries to find it again
+                # chosen_hash = torrent_info.get('hash', '').lower() # Keep hash for logging/debugging if needed
+                # chosen_magnet = magnet.lower() if magnet and magnet.startswith('magnet:') else magnet or ''
+                # --- REMOVED LOOP: for result in results: ... ---
 
                 original_scraped_torrent_title = None
                 resolution = None
+                xem_mapping = None # Initialize xem_mapping
+
                 if chosen_result_info:
+                    # Now directly use the chosen_result_info returned by _process_results_with_mode
                     score_breakdown_debug = chosen_result_info.get('score_breakdown', {})
                     current_score = score_breakdown_debug.get('total_score', 0)
                     original_scraped_torrent_title = chosen_result_info.get('original_scraped_torrent_title') or chosen_result_info.get('original_title')
                     resolution = chosen_result_info.get('resolution')
-                    logging.info(f"Extracted score {current_score:.2f} for the chosen torrent.")
+                    xem_mapping = chosen_result_info.get('xem_scene_mapping') # Extract XEM mapping directly
+                    logging.info(f"Using chosen result: Score {current_score:.2f}, XEM mapping {xem_mapping}")
                 else:
-                    # Fallback
+                    # This fallback should ideally not be needed if _process_results returns None on failure
+                    # But keep it as a safeguard, although XEM mapping won't be available here
+                    logging.warning(f"Could not obtain chosen_result_info directly. Falling back to first result for score/details (XEM unavailable).")
                     if results:
                          first_result = results[0]
                          score_breakdown_debug = first_result.get('score_breakdown', {})
                          current_score = score_breakdown_debug.get('total_score', 0)
                          original_scraped_torrent_title = first_result.get('original_scraped_torrent_title') or first_result.get('original_title')
                          resolution = first_result.get('resolution')
-                         logging.warning(f"Could not definitively match chosen torrent. Using score {current_score:.2f} from first result.")
+                         # xem_mapping remains None here
                     else:
-                         logging.warning(f"No result to extract score from. Defaulting score to 0.")
+                         logging.warning(f"No results available for fallback score/details.")
+
 
                 update_data = {
                     'current_score': current_score,
@@ -360,13 +347,44 @@ class AddingQueue:
                 update_media_item(item['id'], **update_data)
                 # --- END Score Update ---
 
+                # --- Determine Torrent Title ---
+                torrent_title = torrent_info.get('title') # Use title from info dict if available
+                if not torrent_title and chosen_result_info: # Fallback to result title
+                    torrent_title = chosen_result_info.get('title')
+                if not torrent_title: # Final fallback
+                    torrent_title = "Unknown Torrent Title"
+
+
+                # --- Apply XEM Mapping (Simplified - needs review for robustness) ---
+                # XEM mapping is now available in the `xem_mapping` variable extracted above.
+                item_for_matching = item # Use original item details for primary match
+
+                # --- Find Primary Match using Parsed Files ---
+                # Pass the extracted xem_mapping (which might be None) to the matcher
+                match_result = self.media_matcher.find_best_match_from_parsed(
+                    parsed_torrent_files,
+                    item_for_matching,
+                    xem_mapping=xem_mapping # Pass the extracted mapping
+                )
+
+                if not match_result:
+                    logging.error(f"No matching files found in parsed files for primary item {item_identifier} (XEM used: {xem_mapping is not None})")
+                    item['torrent_id'] = torrent_info.get('id') # Ensure torrent_id is set for removal
+                    # Update error message slightly
+                    self._handle_failed_item(item, f"No matching files found in torrent (parsed, XEM used: {xem_mapping is not None})", queue_manager)
+                    continue
+
+                matched_file_basename = match_result[0] # Now contains basename
+                logging.info(f"Best matching file (basename) for {item_identifier}: {matched_file_basename}")
+
+
                 # --- Move Primary Item to Checking ---
-                torrent_title = self.debrid_provider.get_cached_torrent_title(torrent_info.get('hash')) # Assuming hash exists
+                # torrent_title calculation moved up
                 logging.info(f"Moving {item_identifier} to checking queue")
                 queue_manager.move_to_checking(
                     item=item,
                     from_queue="Adding",
-                    title=torrent_title,
+                    title=torrent_title, # Use calculated title
                     link=magnet,
                     filled_by_file=matched_file_basename, # Pass the basename
                     torrent_id=torrent_info.get('id')
@@ -379,6 +397,7 @@ class AddingQueue:
                 # --- Process Related Items using Parsed Files ---
                 if item.get('type') == 'episode':
                     # Pass the pre-parsed files to find_related_items
+                    # TODO: How should XEM affect related item matching? Currently uses item's absolute S/E.
                     related_matches = self.media_matcher.find_related_items(
                         parsed_torrent_files,
                         scraping_items, # Fetched before loop
@@ -398,6 +417,7 @@ class AddingQueue:
                                 'current_score': current_score,
                                 'original_scraped_torrent_title': original_scraped_torrent_title,
                                 'resolution': resolution
+                                # Note: We are NOT applying XEM mapping specifically to related items here
                             }
                             logging.info(f"Updating related item {related_item['id']} with score and details: {related_update_data}")
                             update_media_item(related_item['id'], **related_update_data)
@@ -428,7 +448,7 @@ class AddingQueue:
 
         return success
 
-    def _process_results_with_mode(self, results: List[Dict], item_identifier: str, accept_uncached: bool, item: Dict) -> Tuple[Optional[Dict], Optional[str]]:
+    def _process_results_with_mode(self, results: List[Dict], item_identifier: str, accept_uncached: bool, item: Dict) -> Tuple[Optional[Dict], Optional[str], Optional[Dict]]:
         """
         Process results with specific caching mode
         
@@ -439,21 +459,22 @@ class AddingQueue:
             item: Media item being processed
             
         Returns:
-            Tuple of (torrent_info, magnet_link) if successful, (None, None) otherwise
+            Tuple of (torrent_info, magnet_link, chosen_result) if successful, (None, None, None) otherwise
         """
         try:
-            torrent_info, magnet = self.torrent_processor.process_results(
+            # Call process_results which now returns chosen_result as well
+            torrent_info, magnet, chosen_result = self.torrent_processor.process_results(
                 results,
                 accept_uncached=accept_uncached,
                 item=item
             )
-            
-            return torrent_info, magnet
+
+            return torrent_info, magnet, chosen_result # Return all three
         except Exception as e:
             logging.error(f"Error processing results for {item_identifier}: {str(e)}", exc_info=True) # Added exc_info
             # Cannot call _handle_failed_item reliably without queue_manager instance here
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
-            return None, None
+            return None, None, None # Return None for all three on error
 
     def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any):
         """

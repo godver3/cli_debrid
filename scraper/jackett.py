@@ -70,7 +70,10 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     jackett_url = settings.get('url', '')
     jackett_api = settings.get('api', '')
     enabled_indexers = settings.get('enabled_indexers', '').lower()
-    seeders_only = settings.get('seeders_only', False)
+    
+    # Get the global setting instead
+    global_seeders_only = get_setting('Scraping', 'jackett_seeders_only', True)
+    #logging.debug(f"Using global 'jackett_seeders_only' setting: {global_seeders_only} for instance {instance}")
 
     search_queries = []
 
@@ -126,7 +129,8 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
             
             if response.status_code == 200:
                 data = response.json()
-                results = parse_jackett_results(data.get('Results', []), instance, seeders_only)
+                # Pass the global setting to the parser
+                results = parse_jackett_results(data.get('Results', []), instance, global_seeders_only)
                 all_results.extend(results)
             else:
                 logging.error(f"Jackett API error for {instance}: Status code {response.status_code}")
@@ -171,9 +175,10 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
             continue
 
         seeders = item.get('Seeders', 0)
+
         if seeders_only and seeders == 0:
             filtered_no_seeders += 1
-            logging.debug(f"Filtered out '{title}' due to no seeders (seeders_only=True)")
+            logging.debug(f"Filtered out '{title}' due to no seeders (global seeders_only={seeders_only})")
             continue
             
         # Extract basic info

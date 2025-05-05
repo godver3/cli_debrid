@@ -547,13 +547,30 @@ class MetadataManager:
                 # Type should be correctly set in data_to_save now
                 item_type_create = data_to_save.get('type')
                 logger.info(f"Creating new Item record for {imdb_id} (Title: {item_title}, Type: {item_type_create}) within session.")
-                item = Item(imdb_id=imdb_id, title=item_title, year=item_year, type=item_type_create)
-                sess.add(item)
+                new_item = Item(imdb_id=imdb_id, title=item_title, year=item_year, type=item_type_create)
+                sess.add(new_item)
                 # Flush to ensure the item exists before the atomic update tries to query it.
                 # This is crucial when passing a session down.
                 try:
-                    sess.flush()
+                    sess.flush() # Attempt to save the new item
                     logger.debug(f"Flushed session after adding new item {imdb_id}")
+                    item = new_item # Use the newly added item
+                except IntegrityError as ie:
+                    # Handle the race condition where another process inserted the item between our check and flush
+                    if "UNIQUE constraint failed: items.imdb_id" in str(ie):
+                        logger.warning(f"Race condition detected for item {imdb_id}. Another process likely inserted it. Rolling back add and fetching existing.")
+                        sess.rollback() # Roll back the failed flush/add
+                        # Now query for the item that *must* exist
+                        item = sess.query(Item).filter_by(imdb_id=imdb_id).first()
+                        if not item:
+                            # This should be extremely rare, but handle it just in case
+                            logger.error(f"Failed to fetch item {imdb_id} after handling IntegrityError. Aborting refresh.")
+                            raise # Re-raise the original error or a new one
+                        logger.info(f"Successfully fetched existing item {imdb_id} after race condition.")
+                    else:
+                        # If it's a different IntegrityError, re-raise it
+                        logger.error(f"Unhandled IntegrityError during item creation flush for {imdb_id}: {ie}", exc_info=True)
+                        raise
                 except Exception as flush_err:
                     logger.error(f"Error flushing session after adding item {imdb_id}: {flush_err}", exc_info=True)
                     # Re-raise the exception to ensure transaction rollback if session was provided
@@ -564,7 +581,15 @@ class MetadataManager:
 
             logger.info(f"Calling atomic update for {imdb_id} with {'detailed seasons' if 'seasons' in data_to_save and data_to_save.get('seasons') else 'summary only'} data.")
             # Pass the *same session context* down
-            success = MetadataManager._update_metadata_atomic(imdb_id, data_to_save.copy(), 'Trakt', session=sess)
+            # Ensure 'item' is correctly assigned from either the initial query, the successful flush, or the race condition handling
+            if not item:
+                 logger.error(f"Item object is unexpectedly None before calling _update_metadata_atomic for {imdb_id}. Aborting.")
+                 return None # Or raise an error
+
+            # --- MODIFICATION FOR ATOMIC UPDATE ---
+            # Pass the item object directly instead of just imdb_id to avoid re-querying inside atomic
+            success = MetadataManager._update_metadata_atomic(item, data_to_save.copy(), 'Trakt', session=sess)
+            # --- END MODIFICATION ---
 
             if success:
                 logger.info(f"Successfully refreshed metadata for {imdb_id} (atomic update returned success).")
@@ -600,19 +625,18 @@ class MetadataManager:
         #     return None
 
     @staticmethod
-    def _update_metadata_atomic(imdb_id: str, metadata_dict: dict, provider: str, session: Optional[SqlAlchemySession] = None) -> bool:
+    def _update_metadata_atomic(item: Item, metadata_dict: dict, provider: str, session: Optional[SqlAlchemySession] = None) -> bool: # Changed signature
         from metadata.metadata import _get_local_timezone
         session_context = session if session else DbSession()
-        logger.debug(f"_update_metadata_atomic called for {imdb_id}. Session provided: {session is not None}")
+        # Use the provided item directly
+        imdb_id = item.imdb_id
+        logger.debug(f"_update_metadata_atomic called for {imdb_id} (Item ID: {item.id}). Session provided: {session is not None}")
         try:
             if session: # Use provided session directly
                 logger.debug(f"Using provided session for atomic update: {imdb_id}")
-                item = session_context.query(Item).filter_by(imdb_id=imdb_id).first()
-                if not item:
-                    logger.error(f"Item with IMDB ID {imdb_id} not found for atomic metadata update.")
-                    return False # Indicate failure
+                # No need to query item again, we already have it
 
-                # ... rest of the logic using session_context ...
+                # ... rest of the logic using session_context and item ...
                 seasons_data = metadata_dict.pop('seasons', None)
 
                 # --- MODIFIED LINE ---
@@ -621,21 +645,26 @@ class MetadataManager:
                 deleted_count = session_context.query(Metadata).filter(Metadata.item_id == item.id).delete(synchronize_session='fetch')
                 logger.debug(f"Deleted {deleted_count} existing Metadata records for item_id {item.id}")
                 # --- END MODIFICATION ---
+                # Need to flush the delete before adding new metadata if keys could overlap in the same transaction
+                session_context.flush()
+                logger.debug(f"Flushed session after deleting metadata for {imdb_id}")
+
 
                 metadata_entries = []
                 current_time = datetime.now(_get_local_timezone())
 
                 for key, value in metadata_dict.items():
                     # ... value processing ...
+                    processed_value = value
                     if isinstance(value, (dict, list)):
-                        try: value = json.dumps(value)
+                        try: processed_value = json.dumps(value)
                         except TypeError as e:
                             logger.error(f"JSON Error for key '{key}' in {imdb_id}: {e}. Storing as string.")
-                            value = str(value)
+                            processed_value = str(value)
                     else:
-                         if not isinstance(value, str): value = str(value)
+                         if not isinstance(value, str): processed_value = str(value)
 
-                    metadata = Metadata(item_id=item.id, key=key, value=value, provider=provider, last_updated=current_time)
+                    metadata = Metadata(item_id=item.id, key=key, value=processed_value, provider=provider, last_updated=current_time)
                     metadata_entries.append(metadata)
 
                 if metadata_entries: session_context.add_all(metadata_entries)
@@ -659,12 +688,11 @@ class MetadataManager:
             else: # Create local session
                  logger.debug(f"Creating local session for atomic update: {imdb_id}")
                  with session_context as local_session:
-                    item = local_session.query(Item).filter_by(imdb_id=imdb_id).first()
-                    if not item:
-                        logger.error(f"Item with IMDB ID {imdb_id} not found for atomic metadata update.")
-                        return False
+                    # Use the item passed into the function, but ensure it's attached to this new session
+                    logger.debug(f"Merging provided item {item.id} into local session.")
+                    item = local_session.merge(item) # Attach the item to the local session
 
-                    # ... rest of the logic using local_session ...
+                    # ... rest of the logic using local_session and item ...
                     seasons_data = metadata_dict.pop('seasons', None)
 
                     # --- MODIFIED LINE ---
@@ -673,6 +701,9 @@ class MetadataManager:
                     deleted_count = local_session.query(Metadata).filter(Metadata.item_id == item.id).delete(synchronize_session='fetch')
                     logger.debug(f"Deleted {deleted_count} existing Metadata records for item_id {item.id}")
                     # --- END MODIFICATION ---
+                    # Need to flush the delete before adding new metadata if keys could overlap in the same transaction
+                    local_session.flush()
+                    logger.debug(f"Flushed session after deleting metadata for {imdb_id} (local session)")
 
 
                     metadata_entries = []
@@ -680,15 +711,16 @@ class MetadataManager:
 
                     for key, value in metadata_dict.items():
                         # ... value processing ...
+                        processed_value = value
                         if isinstance(value, (dict, list)):
-                            try: value = json.dumps(value)
+                            try: processed_value = json.dumps(value)
                             except TypeError as e:
                                 logger.error(f"JSON Error for key '{key}' in {imdb_id}: {e}. Storing as string.")
-                                value = str(value)
+                                processed_value = str(value)
                         else:
-                            if not isinstance(value, str): value = str(value)
+                            if not isinstance(value, str): processed_value = str(value)
 
-                        metadata = Metadata(item_id=item.id, key=key, value=value, provider=provider, last_updated=current_time)
+                        metadata = Metadata(item_id=item.id, key=key, value=processed_value, provider=provider, last_updated=current_time)
                         metadata_entries.append(metadata)
 
                     if metadata_entries: local_session.add_all(metadata_entries)

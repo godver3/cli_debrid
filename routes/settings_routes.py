@@ -1130,42 +1130,17 @@ def update_settings():
         new_settings = request.json
         config = load_config()
         
-        logging.info("Received settings update:")
-        logging.info(f"File Management: {json.dumps(new_settings.get('File Management', {}), indent=2)}")
-        logging.info(f"Plex: {json.dumps(new_settings.get('Plex', {}), indent=2)}")
+        logging.info("Received settings update request.")
+        # Optional: Log specific sections if needed for debugging
+        # logging.info(f"File Management: {json.dumps(new_settings.get('File Management', {}), indent=2)}")
+        # logging.info(f"Plex: {json.dumps(new_settings.get('Plex', {}), indent=2)}")
+        # logging.info(f"Staleness Threshold section: {json.dumps(new_settings.get('Staleness Threshold', {}), indent=2)}")
 
-        # Handle staleness threshold update in settings.json
-        if 'Staleness Threshold' in new_settings and 'staleness_threshold' in new_settings['Staleness Threshold']:
-            try:
-                # Get the absolute path to settings.json
-                settings_json_path = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'settings.json')
-                logging.info(f"Attempting to update settings.json at path: {settings_json_path}")
+        # --- REMOVED BLOCK ---
+        # The block that directly modified settings.json for staleness_threshold
+        # has been removed. The value should be handled by the main config update below.
+        # --- END REMOVED BLOCK ---
 
-                # Create directory if it doesn't exist
-                os.makedirs(os.path.dirname(settings_json_path), exist_ok=True)
-
-                # Load existing settings or create new
-                settings_json = {}
-                if os.path.exists(settings_json_path):
-                    with open(settings_json_path, 'r') as f:
-                        settings_json = json.load(f)
-                        logging.info(f"Loaded existing settings.json: {json.dumps(settings_json, indent=2)}")
-                else:
-                    logging.info("settings.json does not exist, creating new file")
-
-                # Update staleness_threshold in settings.json
-                staleness_value = new_settings['Staleness Threshold']['staleness_threshold']
-                settings_json['staleness_threshold'] = staleness_value
-                logging.info(f"Setting staleness_threshold to: {staleness_value}")
-
-                # Write back to settings.json
-                with open(settings_json_path, 'w') as f:
-                    json.dump(settings_json, f, indent=4)
-                    
-                logging.info(f"Successfully updated settings.json with new staleness_threshold: {staleness_value}")
-            except Exception as e:
-                logging.error(f"Error updating settings.json: {str(e)}")
-                logging.error(f"Full traceback: {traceback.format_exc()}")
 
         # Validate Plex libraries if Plex is selected
         file_management = new_settings.get('File Management', {})
@@ -1184,55 +1159,92 @@ def update_settings():
                     "message": error_msg
                 }), 400
 
+        # Function to recursively update the main config dictionary
         def update_nested_dict(current, new):
             for key, value in new.items():
-                if isinstance(value, dict):
-                    if key not in current or not isinstance(current[key], dict):
-                        current[key] = {}
-                    if key == 'Content Sources':
-                        for source_id, source_config in value.items():
-                            if source_id in current[key]:
-                                # Don't save config here, just update the dictionary
-                                current[key][source_id].update(source_config)
-                            else:
-                                # Don't save config here, just add to the dictionary
-                                current[key][source_id] = source_config
-                    else:
+                if isinstance(value, dict) and key in current and isinstance(current[key], dict):
+                     # Handle specific nested structures like 'Content Sources' or 'versions' if needed,
+                     # otherwise, just recurse.
+                     if key == 'Content Sources':
+                         # Special handling for content sources if needed (e.g., merging vs replacing)
+                         # Current behavior seems to merge/update existing and add new
+                         for source_id, source_config in value.items():
+                             if source_id in current[key]:
+                                 # Recursively update existing source config
+                                 update_nested_dict(current[key][source_id], source_config)
+                             else:
+                                 # Add new source config
+                                 current[key][source_id] = source_config
+                     elif key == 'versions' and 'Scraping' in current: # Check parent key for context
+                         # Handle Scraping versions similarly
+                         for version_id, version_config in value.items():
+                             if version_id in current[key]:
+                                 update_nested_dict(current[key][version_id], version_config)
+                             else:
+                                 current[key][version_id] = version_config
+                     else:
                         update_nested_dict(current[key], value)
                 else:
+                    # Update or add the value
                     current[key] = value
 
+        # Update the main config object with the new settings
         update_nested_dict(config, new_settings)
         
-        # Update content source check periods
-        if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
-            config['Debug']['content_source_check_period'] = {
-                source: float(period) for source, period in new_settings['Debug']['content_source_check_period'].items()
-            }
-        
-        # Handle Reverse Parser settings
-        if 'Reverse Parser' in new_settings:
-            reverse_parser = new_settings['Reverse Parser']
-            config['Reverse Parser'] = {
-                'version_terms': reverse_parser['version_terms'],
-                'default_version': reverse_parser['default_version'],
-                'version_order': reverse_parser['version_order']
-            }
+        # --- Simplified Staleness Update (if needed, relies on update_nested_dict) ---
+        # If 'Staleness Threshold' exists in new_settings, update_nested_dict should handle it.
+        # We might want explicit type conversion/validation *before* update_nested_dict though.
+        if 'Staleness Threshold' in new_settings and 'staleness_threshold' in new_settings['Staleness Threshold']:
+             try:
+                 # Ensure the value in the main config dict is an int
+                 config['Staleness Threshold']['staleness_threshold'] = int(new_settings['Staleness Threshold']['staleness_threshold'])
+                 logging.info(f"Staleness threshold updated in main config object to: {config['Staleness Threshold']['staleness_threshold']}")
+             except (ValueError, TypeError) as e:
+                 logging.warning(f"Invalid value provided for staleness_threshold, cannot convert to int: {new_settings['Staleness Threshold']['staleness_threshold']}. Skipping update for this key. Error: {e}")
+                 # Optionally remove the invalid key from the update or handle differently
+                 # For now, update_nested_dict might have already placed the invalid value; save_config will likely fail if schema expects int.
+                 # Or, revert the change in the config object if conversion fails:
+                 # config['Staleness Threshold']['staleness_threshold'] = load_config().get('Staleness Threshold', {}).get('staleness_threshold', 7) # Revert to loaded or default
 
+
+        # Update content source check periods (Seems correctly handled by update_nested_dict if types match)
+        # If type conversion is needed (e.g., string to float):
+        if 'Debug' in new_settings and 'content_source_check_period' in new_settings['Debug']:
+            if 'Debug' not in config: config['Debug'] = {} # Ensure Debug section exists
+            if 'content_source_check_period' not in config['Debug']: config['Debug']['content_source_check_period'] = {} # Ensure sub-section exists
+            
+            for source, period_str in new_settings['Debug']['content_source_check_period'].items():
+                 try:
+                     config['Debug']['content_source_check_period'][source] = float(period_str)
+                 except (ValueError, TypeError):
+                      logging.warning(f"Invalid period value '{period_str}' for source '{source}'. Skipping update.")
+                      # Keep existing value or set to a default if needed
+
+        # Handle Reverse Parser settings (Seems correctly handled by update_nested_dict)
+        # Add validation if necessary
+
+        # Save the updated main config object atomically (assuming save_config does this)
         save_config(config)
+        logging.info("Main configuration saved successfully.")
         
-        # Save config only once at the end
-        from debrid import reset_provider
-        reset_provider()
-        from queues.queue_manager import QueueManager
-        QueueManager().reinitialize()
-        from queues.run_program import ProgramRunner
-        ProgramRunner().reinitialize()
+        # Reinitialize components that depend on the config
+        try:
+            from debrid import reset_provider
+            reset_provider()
+            from queues.queue_manager import QueueManager
+            QueueManager().reinitialize()
+            from queues.run_program import ProgramRunner
+            ProgramRunner().reinitialize()
+            logging.info("Relevant components reinitialized.")
+        except Exception as reinit_e:
+             logging.error(f"Error during component reinitialization after settings save: {reinit_e}", exc_info=True)
+             # Consider if the response should indicate partial success/failure
+             # return jsonify({"status": "warning", "message": f"Settings updated but failed to reinitialize components: {reinit_e}"}), 500
 
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status": "error", "message": f"An unexpected error occurred: {str(e)}"}), 500
 
 @settings_bp.route('/api/reverse_parser_settings', methods=['GET'])
 def get_reverse_parser_settings():

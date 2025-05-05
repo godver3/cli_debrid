@@ -373,8 +373,7 @@
     <!-- Reset Notification Banner -->
     <div id="resetNotification" class="reset-notification-banner" style="display: none;"> <!-- Initially hidden -->
         <p>
-            <i class="fas fa-exclamation-triangle"></i> <strong>Notice:</strong> As part of the update to version 0.6.34, all task toggles have been reset to their default states. Please review and save your preferred toggle settings.
-        </p>
+            <i class="fas fa-exclamation-triangle"></i> <strong>Notice:</strong> As part of the update to version 0.6.34, all task toggles have been reset to their default states. Please review and save your preferred toggle settings. Saved intervals apply on program restart unless live updates are successful.</p>
         <button class="dismiss-btn" onclick="dismissResetNotification()">&times;</button>
     </div>
     <!-- End Reset Notification Banner -->
@@ -772,7 +771,7 @@ function createTaskTile(taskName, taskData) {
         <small style="display: block; text-align: center; color: #888;">until next run</small>
         <div class="task-toggle">
             <label class="toggle-switch">
-                <input type="checkbox" ${enabled ? 'checked' : ''} ${enabled ? '' : 'disabled'}>
+                <input type="checkbox" ${enabled ? 'checked' : ''}>
                 <span class="toggle-slider"></span>
             </label>
             <span class="toggle-label">${enabled ? 'Enabled' : 'Disabled'}</span>
@@ -1030,7 +1029,6 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
                     taskTile.querySelector('.status-indicator').classList.remove('disabled');
                     taskTile.querySelector('.status-indicator').classList.add('enabled');
                     taskTile.querySelector('.toggle-label').textContent = 'Enabled';
-                    taskTile.querySelector('input[type="checkbox"]').disabled = false; // Enable checkbox
                     if (intervalInput) intervalInput.disabled = false; // Enable interval input
                     // Add click handler for triggering
                     taskTile.onclick = (e) => {
@@ -1049,7 +1047,6 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
                     taskTile.querySelector('.status-indicator').classList.remove('enabled');
                     taskTile.querySelector('.status-indicator').classList.add('disabled');
                     taskTile.querySelector('.toggle-label').textContent = 'Disabled';
-                    taskTile.querySelector('input[type="checkbox"]').disabled = true; // Disable checkbox itself
                     if (intervalInput) intervalInput.disabled = true; // Disable interval input
                     // Remove click handler
                     taskTile.onclick = null;

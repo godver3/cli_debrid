@@ -317,6 +317,28 @@
                 <button type="submit" class="btn btn-danger">Delete Battery DB Files</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Rclone Mount to Symlinks</h3>
+            <p class="description">Scan an Rclone mount, fetch metadata, create DB entries, and generate symlinks.</p>
+            <form id="rclone-to-symlinks-form">
+                <div class="form-group">
+                    <label for="rclone_mount_path">Rclone Mount Path:</label>
+                    <input type="text" id="rclone_mount_path" name="rclone_mount_path" placeholder="/mnt/rclone_mount" required>
+                </div>
+                <div class="form-group">
+                    <label for="symlink_base_path">Symlink Base Path:</label>
+                    <input type="text" id="symlink_base_path" name="symlink_base_path" placeholder="/mnt/symlinked_media" required>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="rclone_dry_run" name="dry_run">
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Start Scan</button>
+                <div id="rclone-scan-progress" class="progress-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -1209,30 +1231,47 @@
                     let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
 
                     // Display specific counts if available
-                    if (data.total_items !== undefined) {
-                        progressHtml += `<p>Progress: ${data.processed_items || 0} / ${data.total_items}</p>`;
-                        progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
-                        progressHtml += `<p>Moved to Wanted: ${data.items_to_wanted || 0}</p>`;
-                        progressHtml += `<p>Deleted (Duplicates): ${data.items_deleted || 0}</p>`;
-                        progressHtml += `<p>Skipped (Already Symlinks): ${data.items_skipped || 0}</p>`;
+                    progressHtml += `<p>Files Scanned: ${data.total_files_scanned || 0}</p>`;
+                    progressHtml += `<p>Media Files Found: ${data.media_files_found || 0}</p>`;
+                    progressHtml += `<p>Items Processed: ${data.items_processed || 0}</p>`;
+                    progressHtml += `<p>DB Entries Added: ${data.items_added_to_db || 0}</p>`;
+                    progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                    progressHtml += `<p>Skipped (Duplicates): ${data.skipped_duplicates || 0}</p>`;
+
+                    let errorsHtml = '';
+                    if (data.parser_errors > 0) errorsHtml += `<li>Parser Errors: ${data.parser_errors}</li>`;
+                    if (data.metadata_errors > 0) errorsHtml += `<li>Metadata Errors: ${data.metadata_errors}</li>`;
+                    if (data.db_errors > 0) errorsHtml += `<li>Database Errors: ${data.db_errors}</li>`;
+                    if (data.symlink_errors > 0) errorsHtml += `<li>Symlink Errors: ${data.symlink_errors}</li>`;
+                    if (data.errors && data.errors.length > 0) {
+                         errorsHtml += `<li>General Errors: ${data.errors.length}</li>`;
+                         // Optionally list first few general errors
+                         // data.errors.slice(0, 3).forEach(err => { errorsHtml += `<li style="margin-left: 15px;">- ${err}</li>`; });
                     }
 
-                    if (data.errors && data.errors.length > 0) { // Check if backend sends errors array
-                        progressHtml += '<p class="error">Errors encountered:</p><ul>';
-                        data.errors.forEach(err => { progressHtml += `<li>${err}</li>`; });
+                    if (errorsHtml) {
+                        progressHtml += `<p class="error">Errors Encountered:</p><ul>${errorsHtml}</ul>`;
+                    }
+
+                    // Display Dry Run Preview
+                    if (data.preview && data.preview.length > 0) {
+                        progressHtml += '<h4>Dry Run Preview (First 5):</h4><ul>';
+                        data.preview.forEach(item => {
+                            progressHtml += `<li>${item.original_file} -> ${item.symlink_path || 'Error'} (Title: ${item.fetched_title || 'N/A'})</li>`;
+                        });
                         progressHtml += '</ul>';
                     }
+
 
                     targetDiv.innerHTML = progressHtml;
 
                     if (data.complete) {
                         eventSource.close();
                         console.log(`Progress stream closed for conversion task ${taskId}`);
-                        // Show final popup based on backend success status
                         showPopup({
                              type: data.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
                              message: data.message || (data.success ? 'Conversion complete.' : 'Conversion failed or finished with errors.'),
-                             title: data.success ? 'Conversion Complete' : 'Conversion Finished' // Use "Finished" if success is false
+                             title: data.success ? 'Conversion Complete' : 'Conversion Finished'
                         });
                     }
                 } catch (e) {
@@ -1246,7 +1285,7 @@
                 console.error("EventSource failed:", error);
                 targetDiv.innerHTML = `<p class="error">Connection to progress stream lost.</p>`;
                 eventSource.close();
-                 showPopup({ // Add popup on connection error too
+                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     message: 'Lost connection to the progress stream. Please check server logs.',
                     title: 'Connection Error'
@@ -1763,119 +1802,107 @@
         }
         // --- End Symlink Path Modification Logic ---
 
-        // --- Plex Debug Scan Logic ---
-        const plexDebugScanForm = document.getElementById('plex-debug-scan-form');
-        const debugModeSelect = document.getElementById('debug_mode');
-        const concurrencyGroup = document.getElementById('concurrency-group');
-        const pageSizeGroup = document.getElementById('page-size-group');
-        const libraryKeyGroup = document.getElementById('library-key-group');
-        const progressDiv = document.getElementById('plex-debug-scan-progress');
+        // --- Rclone Mount to Symlinks Logic ---
+        const rcloneScanForm = document.getElementById('rclone-to-symlinks-form');
+        const rcloneProgressDiv = document.getElementById('rclone-scan-progress');
 
-        function toggleDebugInputs() {
-            const mode = debugModeSelect.value;
-            concurrencyGroup.style.display = (mode === 'Concurrency Test' || mode === 'Custom Test') ? 'block' : 'none';
-            pageSizeGroup.style.display = (mode === 'Page Size Test' || mode === 'Custom Test') ? 'block' : 'none';
-            libraryKeyGroup.style.display = (mode === 'Specific Library Test' || mode === 'Custom Test') ? 'block' : 'none';
-            
-            // Reset progress area
-            progressDiv.innerHTML = ''; 
-        }
-
-        debugModeSelect.addEventListener('change', toggleDebugInputs);
-        toggleDebugInputs(); // Initial setup
-
-        if (plexDebugScanForm) {
-            plexDebugScanForm.addEventListener('submit', function(e) {
+        if (rcloneScanForm) {
+            rcloneScanForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                progressDiv.innerHTML = ''; // Clear previous progress
-                Loading.show();
+                rcloneProgressDiv.innerHTML = ''; // Clear previous progress
+                const isDryRun = document.getElementById('rclone_dry_run').checked;
+                const confirmMessage = isDryRun
+                    ? 'Start Rclone mount scan (Dry Run)? This will analyze files but make no changes.'
+                    : 'Start Rclone mount scan and create symlinks? This will add items to the database and create symlinks on your filesystem.';
 
-                const formData = new FormData(plexDebugScanForm);
-                const mode = formData.get('debug_mode');
-                
-                // Validation based on mode
-                let valid = true;
-                if (mode === 'Concurrency Test' && !formData.get('concurrency_limit')) valid = false;
-                if (mode === 'Page Size Test' && !formData.get('page_size_limit')) valid = false;
-                if (mode === 'Specific Library Test' && !formData.get('library_key')) valid = false;
-                if (mode === 'Custom Test') {
-                    // Custom needs at least one optional field or defaults will be used
-                    // No specific validation needed here based on current backend logic
-                }
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: confirmMessage,
+                    title: 'Confirm Rclone Scan',
+                    onConfirm: () => {
+                        Loading.show();
+                        const formData = new FormData(rcloneScanForm);
 
-                if (!valid) {
-                    Loading.hide();
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: 'Please provide the required input for the selected debug mode.',
-                        title: 'Input Error'
-                    });
-                    return;
-                }
-
-                fetch('/debug/api/plex_debug_scan', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    Loading.hide();
-                    if (data.success && data.scan_id) {
-                        progressDiv.innerHTML = `<p>Scan started (ID: ${data.scan_id}). Monitoring progress...</p>`;
-                        monitorPlexScanProgress(data.scan_id, progressDiv);
-                    } else {
-                        throw new Error(data.error || 'Failed to start debug scan.');
+                        fetch('/debug/api/rclone_to_symlinks', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            if (data.success && data.task_id) {
+                                rcloneProgressDiv.innerHTML = `<p>Scan task started (ID: ${data.task_id}). Monitoring progress...</p>`;
+                                monitorRcloneScanProgress(data.task_id, rcloneProgressDiv);
+                            } else {
+                                throw new Error(data.error || 'Failed to start Rclone scan task.');
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error starting Rclone scan:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message,
+                                title: 'Error'
+                            });
+                            rcloneProgressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                        });
                     }
-                })
-                .catch(error => {
-                    Loading.hide();
-                    console.error('Error starting Plex debug scan:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error'
-                    });
-                    progressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
                 });
             });
         }
 
-        function monitorPlexScanProgress(scanId, targetDiv) {
-            targetDiv.innerHTML = `<p>Connecting to progress stream for scan ${scanId}...</p>`;
-            const eventSource = new EventSource(`/debug/api/plex_scan_progress/${scanId}`);
+        function monitorRcloneScanProgress(taskId, targetDiv) {
+            targetDiv.innerHTML = `<p>Connecting to progress stream for task ${taskId}...</p>`;
+            const eventSource = new EventSource(`/debug/api/rclone_scan_progress/${taskId}`); // Use the correct endpoint
 
             eventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
                     let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
-                    
+
                     // Display specific counts if available
-                    if (data.total_shows !== undefined) {
-                        progressHtml += `<p>Shows: ${data.shows_processed || 0} / ${data.total_shows}</p>`;
-                    }
-                    if (data.total_movies !== undefined) {
-                         progressHtml += `<p>Movies: ${data.movies_processed || 0} / ${data.total_movies}</p>`;
-                    }
-                     if (data.episodes_found !== undefined) {
-                         progressHtml += `<p>Episodes Found: ${data.episodes_found}</p>`;
+                    progressHtml += `<p>Files Scanned: ${data.total_files_scanned || 0}</p>`;
+                    progressHtml += `<p>Media Files Found: ${data.media_files_found || 0}</p>`;
+                    progressHtml += `<p>Items Processed: ${data.items_processed || 0}</p>`;
+                    progressHtml += `<p>DB Entries Added: ${data.items_added_to_db || 0}</p>`;
+                    progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                    progressHtml += `<p>Skipped (Duplicates): ${data.skipped_duplicates || 0}</p>`;
+
+                    let errorsHtml = '';
+                    if (data.parser_errors > 0) errorsHtml += `<li>Parser Errors: ${data.parser_errors}</li>`;
+                    if (data.metadata_errors > 0) errorsHtml += `<li>Metadata Errors: ${data.metadata_errors}</li>`;
+                    if (data.db_errors > 0) errorsHtml += `<li>Database Errors: ${data.db_errors}</li>`;
+                    if (data.symlink_errors > 0) errorsHtml += `<li>Symlink Errors: ${data.symlink_errors}</li>`;
+                    if (data.errors && data.errors.length > 0) {
+                         errorsHtml += `<li>General Errors: ${data.errors.length}</li>`;
+                         // Optionally list first few general errors
+                         // data.errors.slice(0, 3).forEach(err => { errorsHtml += `<li style="margin-left: 15px;">- ${err}</li>`; });
                     }
 
-                    if (data.error_details && data.error_details.length > 0) {
-                        progressHtml += '<p class="error">Errors encountered:</p><ul>';
-                        data.error_details.forEach(err => { progressHtml += `<li>${err}</li>`; });
+                    if (errorsHtml) {
+                        progressHtml += `<p class="error">Errors Encountered:</p><ul>${errorsHtml}</ul>`;
+                    }
+
+                    // Display Dry Run Preview
+                    if (data.preview && data.preview.length > 0) {
+                        progressHtml += '<h4>Dry Run Preview (First 5):</h4><ul>';
+                        data.preview.forEach(item => {
+                            progressHtml += `<li>${item.original_file} -> ${item.symlink_path || 'Error'} (Title: ${item.fetched_title || 'N/A'})</li>`;
+                        });
                         progressHtml += '</ul>';
                     }
+
 
                     targetDiv.innerHTML = progressHtml;
 
                     if (data.complete) {
                         eventSource.close();
-                        console.log(`Progress stream closed for scan ${scanId}`);
-                        // Optionally show a final success/error popup
+                        console.log(`Progress stream closed for Rclone scan task ${taskId}`);
                         showPopup({
                              type: data.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
-                             message: data.message || (data.success ? 'Scan complete.' : 'Scan failed.'),
-                             title: data.success ? 'Scan Complete' : 'Scan Error'
+                             message: data.message || (data.success ? 'Scan complete.' : 'Scan failed or finished with errors.'),
+                             title: data.success ? 'Scan Complete' : 'Scan Finished'
                         });
                     }
                 } catch (e) {
@@ -1889,9 +1916,14 @@
                 console.error("EventSource failed:", error);
                 targetDiv.innerHTML = `<p class="error">Connection to progress stream lost.</p>`;
                 eventSource.close();
+                 showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Lost connection to the progress stream. Please check server logs.',
+                    title: 'Connection Error'
+                });
             };
         }
-        // --- End Plex Debug Scan Logic ---
+        // --- End Rclone Mount to Symlinks Logic ---
 
         // --- Handler for Delete Battery DB Form ---
         const deleteBatteryDbForm = document.getElementById('delete-battery-db-form');

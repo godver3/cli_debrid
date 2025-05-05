@@ -541,3 +541,65 @@ body {
 .debug-container #manage-cache-files-form .btn-danger:hover {
     background-color: #c82333;
 }
+
+/* Ensure progress area handles errors */
+.debug-container .progress-area {
+    margin-top: 15px;
+    padding: 10px;
+    background-color: #3a3a3a;
+    border-radius: 4px;
+    border: 1px solid #555;
+    min-height: 50px; /* Ensure space for messages */
+    max-height: 400px; /* Limit height */
+    overflow-y: auto; /* Add scroll for long output */
+}
+
+.debug-container .progress-area p {
+    margin: 5px 0;
+    color: #ddd;
+}
+
+.debug-container .progress-area .error,
+.debug-container .results-area .error { /* Also style errors in results area */
+    color: #ff6b6b; /* More visible error color */
+    font-weight: bold;
+}
+
+.debug-container .progress-area ul,
+.debug-container .results-area ul { /* Style lists within progress/results */
+    margin-top: 5px;
+    padding-left: 20px;
+}
+
+.debug-container .progress-area li,
+.debug-container .results-area li {
+     margin-bottom: 3px;
+     color: #ccc; /* Slightly dimmer for list items */
+}
+
+/* Add styling for dry run preview table if needed (optional) */
+.preview-results-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 0.9em;
+}
+
+.preview-results-table th,
+.preview-results-table td {
+    border: 1px solid #555;
+    padding: 6px 8px;
+    text-align: left;
+}
+
+.preview-results-table th {
+    background-color: #444;
+}
+
+.preview-results-table td.path-cell {
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    word-break: break-all; /* Allow breaking long paths */
+}
