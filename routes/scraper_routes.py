@@ -436,7 +436,8 @@ def add_torrent_to_debrid():
                     'original_scraped_torrent_title': original_scraped_torrent_title,
                     'release_date': release_date,
                     'genres': json.dumps(genres),  # JSON encode the genres list
-                    'current_score': current_score
+                    'current_score': current_score,
+                    'real_debrid_original_title': torrent_info.get('original_filename')
                 }
 
                 # Add TV show specific fields if this is a TV show

@@ -310,7 +310,30 @@ function initializeHelpModal() {
     const helpModalBody = document.getElementById('help-modal-body');
 
     if (!helpButton || !helpOverlay || !helpModalBox || !helpModalClose || !helpModalBody) {
+        // If helpButton is not here, no need to proceed with its specific logic
+        if (!helpButton && helpOverlay && helpModalBox && helpModalClose) {
+             // Still set up close listeners for overlay and ESC if modal box parts exist
+            helpModalClose.addEventListener('click', hideHelpModal); // Assuming hideHelpModal is defined
+            helpOverlay.addEventListener('click', function(event) {
+                if (event.target === helpOverlay) {
+                    hideHelpModal(); // Assuming hideHelpModal is defined
+                }
+            });
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && helpModalBox.classList.contains('visible')) {
+                    hideHelpModal(); // Assuming hideHelpModal is defined
+                }
+            });
+        }
         return;
+    }
+
+    // Animation logic for the help button
+    if (!localStorage.getItem('helpButtonInteracted')) {
+        // 1 in 20 chance to animate
+        if (Math.random() < 1) {
+            helpButton.classList.add('help-button-animate-appear');
+        }
     }
 
     function showHelpModal() {
@@ -354,7 +377,13 @@ function initializeHelpModal() {
         }
     }
 
-    helpButton.addEventListener('click', showHelpModal);
+    helpButton.addEventListener('click', function() {
+        // User has interacted, store this information
+        localStorage.setItem('helpButtonInteracted', 'true');
+        // Remove animation class if it was applied
+        helpButton.classList.remove('help-button-animate-appear');
+        showHelpModal();
+    });
     helpModalClose.addEventListener('click', hideHelpModal);
 
     helpOverlay.addEventListener('click', function(event) {

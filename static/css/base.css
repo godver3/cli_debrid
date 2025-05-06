@@ -1779,6 +1779,31 @@ body.modal-open {
     margin: 0; 
 }
 
+/* START NEW CODE */
+@keyframes helpButtonAppearBounce {
+    0% {
+        left: -50px; /* MODIFIED: Was -40px. Start further off-screen to hide the full 50px width */
+        opacity: 0.5;
+    }
+    60% {
+        left: 0px; /* Overshoot */
+        opacity: 1;
+    }
+    80% {
+        left: -5px; /* Bounce back */
+    }
+    100% {
+        left: 0px; /* Settle in fully visible state */
+        opacity: 1;
+    }
+}
+
+.help-button-animate-appear {
+    animation: helpButtonAppearBounce 1s ease-out forwards;
+    /* 'forwards' ensures it stays at the animation's end state (left: 0px) */
+}
+/* END NEW CODE */
+
 /* Show Help Button only on Desktop (No changes made here in the last step) */
 @media (min-width: 1046px) {
     .help-button {

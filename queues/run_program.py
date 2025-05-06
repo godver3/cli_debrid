@@ -2221,8 +2221,8 @@ class ProgramRunner:
                 filled_by_title = item_dict['filled_by_title']
                 filled_by_file = item_dict['filled_by_file']
                 # --- START: Ensure new field is fetched ---
-                original_scraped_torrent_title = item_dict.get('original_scraped_torrent_title', '')
-                real_debrid_original_title = item_dict.get('real_debrid_original_title', '')
+                original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
+                real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
@@ -2436,8 +2436,8 @@ class ProgramRunner:
                 filled_by_title = item_dict['filled_by_title']
                 filled_by_file = item_dict['filled_by_file']
                 # --- START: Ensure new field is fetched ---
-                original_scraped_torrent_title = item_dict.get('original_scraped_torrent_title', '')
-                real_debrid_original_title = item_dict.get('real_debrid_original_title', '')
+                original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
+                real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
