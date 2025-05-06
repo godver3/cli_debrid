@@ -359,6 +359,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             # --- Get potential folder names ---
             filled_by_title = item.get('filled_by_title', '')
             original_torrent_title = item.get('original_scraped_torrent_title', '')
+            real_debrid_original_title = item.get('real_debrid_original_title', '')
             current_filename = item['filled_by_file'] # The actual file we are looking for
 
             found_file = False
@@ -386,30 +387,50 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         found_file = True
                         logging.info(f"Found file using original_scraped_torrent_title (trimmed): {source_file}")
 
-            # 3. Check filled_by_title (raw)
+            # 3. Check real_debrid_original_title (raw) (NEW)
+            if not found_file and real_debrid_original_title:
+                potential_path = os.path.join(original_path, real_debrid_original_title, current_filename)
+                logging.debug(f"Attempt 3 (New): Checking path using real_debrid_original_title: {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
+                    found_file = True
+                    logging.info(f"Found file using real_debrid_original_title (raw): {source_file}")
+            
+            # 4. Check real_debrid_original_title (trimmed) (NEW)
+            if not found_file and real_debrid_original_title:
+                real_debrid_original_title_trimmed = os.path.splitext(real_debrid_original_title)[0]
+                if real_debrid_original_title_trimmed != real_debrid_original_title:
+                    potential_path = os.path.join(original_path, real_debrid_original_title_trimmed, current_filename)
+                    logging.debug(f"Attempt 4 (New): Checking path using trimmed real_debrid_original_title: {potential_path}")
+                    if os.path.exists(potential_path):
+                        source_file = potential_path
+                        found_file = True
+                        logging.info(f"Found file using real_debrid_original_title (trimmed): {source_file}")
+
+            # 5. Check filled_by_title (raw)
             if not found_file and filled_by_title:
                 potential_path = os.path.join(original_path, filled_by_title, current_filename)
-                logging.debug(f"Attempt 3: Checking path using filled_by_title: {potential_path}")
+                logging.debug(f"Attempt 5: Checking path using filled_by_title: {potential_path}")
                 if os.path.exists(potential_path):
                     source_file = potential_path
                     found_file = True
                     logging.info(f"Found file using filled_by_title (raw): {source_file}")
 
-            # 4. Check filled_by_title (trimmed)
+            # 6. Check filled_by_title (trimmed)
             if not found_file and filled_by_title:
                 filled_by_title_trimmed = os.path.splitext(filled_by_title)[0]
                 if filled_by_title_trimmed != filled_by_title: # Only check if trimming actually changed the name
                     potential_path = os.path.join(original_path, filled_by_title_trimmed, current_filename)
-                    logging.debug(f"Attempt 4: Checking path using trimmed filled_by_title: {potential_path}")
+                    logging.debug(f"Attempt 6: Checking path using trimmed filled_by_title: {potential_path}")
                     if os.path.exists(potential_path):
                         source_file = potential_path
                         found_file = True
                         logging.info(f"Found file using filled_by_title (trimmed): {source_file}")
 
-            # 5. Check direct path (less common, added for completeness)
+            # 7. Check direct path (less common, added for completeness)
             if not found_file:
                  potential_path = os.path.join(original_path, current_filename)
-                 logging.debug(f"Attempt 5: Checking direct path under original_files_path: {potential_path}")
+                 logging.debug(f"Attempt 7: Checking direct path under original_files_path: {potential_path}")
                  if os.path.exists(potential_path):
                      source_file = potential_path
                      found_file = True

@@ -72,6 +72,9 @@ analysis_progress = {}
 # Global dictionary for Rclone to Symlink progress tracking
 rclone_scan_progress = {}
 
+# Global dictionary for Riven symlink analysis progress
+riven_analysis_progress = {}
+
 # --- Helper function to get cache files ---
 def get_cache_files():
     """Returns a list of content source cache filenames."""
@@ -2884,6 +2887,35 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
     """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
     global rclone_scan_progress
 
+    # --- Progress File Setup ---
+    db_content_dir = os.environ.get('USER_DB_CONTENT')
+    if not db_content_dir:
+        # Fallback if env var is not set (should not happen if main.py runs first)
+        logging.error(f"[RcloneScan {task_id}] USER_DB_CONTENT environment variable not found. Progress persistence will be disabled for this run.")
+        progress_file_path = None 
+    else:
+        progress_file_path = os.path.join(db_content_dir, 'rclone_to_symlink_processed_files.json')
+
+    processed_original_files = set()
+    if progress_file_path:
+        try:
+            if os.path.exists(progress_file_path):
+                with open(progress_file_path, 'r') as f:
+                    processed_original_files = set(json.load(f))
+                logging.info(f"[RcloneScan {task_id}] Loaded {len(processed_original_files)} previously processed file paths.")
+        except (json.JSONDecodeError, OSError) as e:
+            logging.warning(f"[RcloneScan {task_id}] Could not load progress file {progress_file_path}: {e}. Starting with empty progress.")
+            processed_original_files = set()
+
+    def save_rclone_progress():
+        if progress_file_path:
+            try:
+                with open(progress_file_path, 'w') as f:
+                    json.dump(list(processed_original_files), f, indent=2)
+            except OSError as e:
+                logging.error(f"[RcloneScan {task_id}] Could not save progress file {progress_file_path}: {e}")
+    # --- End Progress File Setup ---
+
     rclone_scan_progress[task_id] = {
         'status': 'starting',
         'message': 'Initializing Rclone scan...',
@@ -2897,16 +2929,51 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         'db_errors': 0,
         'symlink_errors': 0,
         'skipped_duplicates': 0,
-        'preview': [], # For dry run
-        'errors': [], # General errors
+        'skipped_smaller_movies_in_folder': 0,
+        'skipped_previously_processed': 0, # New counter
+        'preview': [], 
+        'errors': [], 
         'complete': False
     }
+
+    # --- Helper to find largest video file in a folder ---
+    def get_largest_video_file_in_folder(folder_path, video_extensions_set):
+        largest_file = None
+        max_size = -1
+        potential_files = []
+        try:
+            for f_path in folder_path.iterdir():
+                if f_path.is_file() and f_path.suffix.lower() in video_extensions_set:
+                    try:
+                        # Skip if already processed
+                        if str(f_path) in processed_original_files:
+                            # If this *already processed* file is the one we are looking for,
+                            # it implies the folder's champion was processed.
+                            # We'll handle this check more explicitly where this function is called.
+                            logging.debug(f"[RcloneScan {task_id}] File {f_path} in folder scan is already in processed_original_files.")
+                            # We still consider it for size comparison in case it *is* the largest.
+                        
+                        size = f_path.stat().st_size
+                        potential_files.append(f_path)
+                        if size > max_size:
+                            max_size = size
+                            largest_file = f_path
+                    except OSError as e:
+                        logging.warning(f"[RcloneScan {task_id}] Could not get stats for file {f_path} in folder {folder_path}: {e}")
+            return largest_file, [pf for pf in potential_files if pf != largest_file]
+        except Exception as e:
+            logging.error(f"[RcloneScan {task_id}] Error iterating folder {folder_path} to find largest file: {e}")
+            return None, []
+    # --- End Helper ---
+
+    processed_movie_folders = {} 
+    files_to_skip_in_movie_folders = set() 
+    skipped_previously_processed_count = 0 # Local counter
 
     def update_progress(**kwargs):
         if task_id in rclone_scan_progress:
             progress_data = rclone_scan_progress[task_id]
             progress_data.update(kwargs)
-            # Limit preview size
             if 'preview' in progress_data and len(progress_data['preview']) > 5:
                  progress_data['preview'] = progress_data['preview'][:5]
         else:
@@ -2914,29 +2981,20 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
 
     try:
         rclone_mount_path = Path(rclone_mount_path_str)
-        symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path') # Backup setting
+        symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path')
 
         if not rclone_mount_path.is_dir():
             raise ValueError(f"Rclone Mount Path is not a valid directory: {rclone_mount_path_str}")
         if not symlink_base_path_str:
              raise ValueError("Symlink Base Path cannot be empty.")
-
-        # Temporarily override the setting for get_symlink_path
-        # NOTE: This is not thread-safe if multiple tasks modify settings concurrently.
-        # A better approach might involve passing the base path directly to get_symlink_path if possible,
-        # or creating a context manager for settings. For now, we proceed with caution.
+        
         logging.info(f"[RcloneScan {task_id}] Temporarily setting symlink path to: {symlink_base_path_str}")
-        # This function needs to exist and handle the setting change properly.
-        # Let's assume set_setting exists and works for this context.
         try:
              set_setting('File Management', 'symlinked_files_path', symlink_base_path_str)
         except Exception as set_setting_err:
              raise RuntimeError(f"Failed to temporarily set symlink base path: {set_setting_err}")
 
-
         update_progress(status='scanning', message='Scanning Rclone mount path...')
-
-        # Supported video extensions
         video_extensions = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg'}
         total_files_scanned = 0
         media_files_found = 0
@@ -2948,305 +3006,408 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         db_errors = 0
         symlink_errors = 0
         skipped_duplicates = 0
+        skipped_smaller_movies_in_folder_count = 0
         preview_list = []
         error_list = []
-
-        direct_api = DirectAPI() # Initialize DirectAPI for metadata fetching
+        direct_api = DirectAPI()
 
         for item_path in rclone_mount_path.rglob('*'):
             total_files_scanned += 1
             if total_files_scanned % 100 == 0:
                  update_progress(total_files_scanned=total_files_scanned, message=f'Scanned {total_files_scanned} files...')
 
-            if item_path.is_file() and item_path.suffix.lower() in video_extensions:
-                media_files_found += 1
-                original_file_path = str(item_path)
-                logging.debug(f"[RcloneScan {task_id}] Processing media file: {original_file_path}")
-                update_progress(media_files_found=media_files_found, message=f'Processing: {item_path.name}')
+            if not (item_path.is_file() and item_path.suffix.lower() in video_extensions):
+                continue
+            
+            original_file_path_str = str(item_path) # Used for progress tracking
 
-                # 1. Parse filename/path using parse_with_ptt and reverse_parser
+            # Check if this specific file was already processed and recorded
+            if original_file_path_str in processed_original_files:
+                logging.info(f"[RcloneScan {task_id}] Skipping previously processed file: {item_path.name}")
+                skipped_previously_processed_count += 1
+                update_progress(skipped_previously_processed=skipped_previously_processed_count)
+                continue
+
+            if item_path in files_to_skip_in_movie_folders:
+                logging.debug(f"[RcloneScan {task_id}] Skipping {item_path.name} as it's a smaller movie file in an already processed folder (this run).")
+                skipped_smaller_movies_in_folder_count +=1
+                update_progress(skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count)
+                continue
+            
+            media_files_found += 1
+            logging.debug(f"[RcloneScan {task_id}] Evaluating media file: {original_file_path_str}")
+
+            # --- Start of merged parsing logic ---
+            parsed_info_folder = {}
+            parsed_version_folder = None
+            folder_name = item_path.parent.name
+            if folder_name:
                 try:
-                    parsed_info = parse_with_ptt(item_path.name)
-                    if parsed_info.get('parsing_error'):
-                         raise ValueError("PTT parsing indicated an error")
-                    # Use reverse_parser for version
-                    parsed_version = parse_filename_for_version(item_path.name)
-                    items_processed += 1
-                except Exception as e:
-                    # ... (parser error handling) ...
-                    logging.warning(f"[RcloneScan {task_id}] PTT/Reverse parsing failed for {item_path.name}: {e}")
-                    parser_errors += 1
-                    update_progress(parser_errors=parser_errors)
-                    continue
+                    parsed_info_folder = parse_with_ptt(folder_name)
+                    if parsed_info_folder.get('parsing_error'): parsed_info_folder = {}
+                    parsed_version_folder = parse_filename_for_version(folder_name)
+                except Exception: parsed_info_folder, parsed_version_folder = {}, None
+            
+            parsed_info_file, parsed_version_file = {}, None
+            try:
+                parsed_info_file = parse_with_ptt(item_path.name)
+                if parsed_info_file.get('parsing_error'): logging.warning(f"[RcloneScan {task_id}] PTT filename parse error for {item_path.name}")
+                parsed_version_file = parse_filename_for_version(item_path.name)
+            except Exception as e:
+                logging.error(f"[RcloneScan {task_id}] PTT/Reverse filename parse failed for {item_path.name}: {e}. Skipping.")
+                parser_errors += 1; update_progress(parser_errors=parser_errors); continue
 
-                # Extract essential info from parsed_info
-                parsed_title = parsed_info.get('title')
-                parsed_year = parsed_info.get('year')
-                parsed_season = parsed_info.get('season')
-                parsed_episode = parsed_info.get('episode')
-                if parsed_season or parsed_episode:
-                    parsed_type = 'episode'
+            def get_prioritized_value(key, from_folder, from_file, default=None):
+                folder_val = from_folder.get(key)
+                file_val = from_file.get(key)
+                is_folder_val_empty = folder_val is None or (isinstance(folder_val, str) and not folder_val.strip())
+                is_file_val_empty = file_val is None or (isinstance(file_val, str) and not file_val.strip())
+                if not is_folder_val_empty: return folder_val
+                if not is_file_val_empty: return file_val
+                return default
+
+            parsed_title = get_prioritized_value('title', parsed_info_folder, parsed_info_file)
+            parsed_year = get_prioritized_value('year', parsed_info_folder, parsed_info_file)
+            parsed_season_folder_val, parsed_season_file_val = parsed_info_folder.get('season'), parsed_info_file.get('season')
+            parsed_episode_folder_val, parsed_episode_file_val = parsed_info_folder.get('episode'), parsed_info_file.get('episode')
+            parsed_season = parsed_season_folder_val if parsed_season_folder_val is not None else parsed_season_file_val
+            parsed_episode = parsed_episode_folder_val if parsed_episode_folder_val is not None else parsed_episode_file_val
+            if isinstance(parsed_season, list) and parsed_season: parsed_season = parsed_season[0]
+            if isinstance(parsed_episode, list) and parsed_episode: parsed_episode = parsed_episode[0]
+
+            is_version_folder_empty = parsed_version_folder is None or not str(parsed_version_folder).strip()
+            is_version_file_empty = parsed_version_file is None or not str(parsed_version_file).strip()
+            current_parsed_version = 'Default'
+            if not is_version_folder_empty: current_parsed_version = str(parsed_version_folder)
+            elif not is_version_file_empty: current_parsed_version = str(parsed_version_file)
+            current_parsed_version = current_parsed_version.strip('*') if current_parsed_version else 'Default'
+            if not current_parsed_version: current_parsed_version = 'Default'
+
+            current_parsed_type = 'episode' if parsed_season is not None or parsed_episode is not None else 'movie'
+            if not parsed_title:
+                logging.warning(f"[RcloneScan {task_id}] No title for {item_path.name}. Skipping.")
+                parser_errors += 1; update_progress(parser_errors=parser_errors); continue
+            # --- End of merged parsing logic ---
+
+            # --- Movie: Largest file in folder logic (with progress check) ---
+            if current_parsed_type == 'movie':
+                parent_folder_path = item_path.parent
+                
+                if parent_folder_path in processed_movie_folders:
+                    # Decision for this folder was made in this run.
+                    # The item_path should either be the chosen one or already in files_to_skip_in_movie_folders.
+                    # The initial skip check `if item_path in files_to_skip_in_movie_folders:` handles most of these.
+                    if item_path != processed_movie_folders[parent_folder_path]:
+                        # This is a safeguard.
+                        logging.debug(f"[RcloneScan {task_id}] Safeguard skip (movie): {item_path.name}, folder already decided this run.")
+                        continue 
                 else:
-                    parsed_type = 'movie'
-                # parsed_version is now assigned above using reverse_parser
+                    # First time seeing this movie folder *in this run* or making a decision.
+                    logging.info(f"[RcloneScan {task_id}] Movie file '{item_path.name}' in new folder '{parent_folder_path.name}'. Finding largest...")
+                    largest_file_in_folder, other_files_in_folder = get_largest_video_file_in_folder(parent_folder_path, video_extensions)
 
-                if not parsed_title or not parsed_type:
-                    # ... (missing title/type handling) ...
-                    logging.warning(f"[RcloneScan {task_id}] Could not parse title or type for {item_path.name}")
-                    parser_errors += 1
-                    update_progress(parser_errors=parser_errors)
-                    continue
+                    if largest_file_in_folder:
+                        # Check if this identified largest file was *already processed in a previous run*
+                        if str(largest_file_in_folder) in processed_original_files:
+                            logging.info(f"[RcloneScan {task_id}] Largest file '{largest_file_in_folder.name}' for folder '{parent_folder_path.name}' was already processed. Skipping this folder.")
+                            processed_movie_folders[parent_folder_path] = largest_file_in_folder # Mark folder as "decided" for this run
+                            # Add all files from this folder (including current item_path) to skip list for this run
+                            files_to_skip_in_movie_folders.add(item_path)
+                            for other_file in other_files_in_folder: files_to_skip_in_movie_folders.add(other_file)
+                            if item_path != largest_file_in_folder : skipped_smaller_movies_in_folder_count +=1 # if current wasn't the (already processed) largest
+                                
+                            # The current item_path itself will be caught by the top-level "previously_processed" check if it IS the largest,
+                            # or by files_to_skip_in_movie_folders if it's not.
+                            # We need to make sure to update the global skip counter if the current item_path leads to this folder skip.
+                            if str(item_path) not in processed_original_files: # only count if current wasn't the one causing the "previously processed" skip
+                                skipped_previously_processed_count +=1 # this item leads to skipping the folder due to prior processing of its champion
+                            update_progress(skipped_previously_processed=skipped_previously_processed_count, skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count)
+                            continue # Skip current item_path as its folder's champion is done
 
-                # 2. Fetch Metadata (Revised Logic v3 - Simpler Episode Handling)
-                metadata = None
-                show_metadata_full = None
-                final_imdb_id = None
-                final_tmdb_id = None
-                try:
-                    item_id_to_use = None
-                    # --- Search for the item first to get an ID ---
-                    if parsed_season or parsed_episode:
-                        search_parsed_type = 'show'
+                        # Largest file not previously processed, so proceed with this run's decision
+                        processed_movie_folders[parent_folder_path] = largest_file_in_folder
+                        logging.info(f"[RcloneScan {task_id}] Largest for '{parent_folder_path.name}' is '{largest_file_in_folder.name}'.")
+                        for other_file in other_files_in_folder:
+                            files_to_skip_in_movie_folders.add(other_file)
+                        
+                        if item_path != largest_file_in_folder:
+                            logging.info(f"[RcloneScan {task_id}] '{item_path.name}' is not largest. Skipping for '{largest_file_in_folder.name}'.")
+                            files_to_skip_in_movie_folders.add(item_path)
+                            skipped_smaller_movies_in_folder_count += 1
+                            update_progress(skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count)
+                            continue
                     else:
-                        search_parsed_type = parsed_type
-                    search_results, _ = direct_api.search_media(query=parsed_title, year=parsed_year, media_type=search_parsed_type)
+                        logging.warning(f"[RcloneScan {task_id}] No largest file in '{parent_folder_path.name}'. Processing '{item_path.name}' standalone.")
+            # --- End Movie Logic ---
+            
+            update_progress(message=f'Processing: {item_path.name} ({current_parsed_type})')
+            items_processed += 1
 
-                    if search_results and isinstance(search_results, list) and len(search_results) > 0:
-                        first_match = search_results[0]
-                        item_id_to_use = first_match.get('imdb_id') or first_match.get('tmdb_id')
-                        logging.debug(f"[RcloneScan {task_id}] Found {parsed_type} match: {first_match.get('title')} ({first_match.get('year')}), ID: {item_id_to_use}")
-                    else:
-                         logging.warning(f"[RcloneScan {task_id}] {parsed_type.capitalize()} search returned no results for '{parsed_title}' ({parsed_year})")
+            # 2. Fetch Metadata (No changes to this section from previous logic)
+            metadata = None
+            final_imdb_id, final_tmdb_id = None, None
+            try:
+                item_id_to_use = None
+                search_type_for_api = 'show' if current_parsed_type == 'episode' else 'movie'
+                search_results, _ = direct_api.search_media(query=parsed_title, year=parsed_year, media_type=search_type_for_api)
+                if search_results:
+                    first_match = search_results[0]
+                    item_id_to_use = first_match.get('imdb_id') or first_match.get('tmdb_id')
+                
+                if item_id_to_use:
+                    is_imdb = str(item_id_to_use).startswith('tt')
+                    if current_parsed_type == 'movie':
+                        imdb_to_fetch_with = None
+                        tmdb_known_from_search = None
+                        if is_imdb:
+                            imdb_to_fetch_with = item_id_to_use
+                        else: 
+                            tmdb_known_from_search = item_id_to_use # item_id_to_use is TMDB ID string
+                            converted_imdb, _ = direct_api.tmdb_to_imdb(tmdb_known_from_search, 'movie')
+                            if converted_imdb and str(converted_imdb).strip():
+                                imdb_to_fetch_with = str(converted_imdb).strip()
+                        
+                        if imdb_to_fetch_with:
+                            metadata_result, _ = direct_api.get_movie_metadata(imdb_id=imdb_to_fetch_with)
+                            if metadata_result and isinstance(metadata_result, dict):
+                                metadata = metadata_result
+                                final_imdb_id = str(metadata.get('imdb_id')).strip() if metadata.get('imdb_id') and str(metadata.get('imdb_id')).strip() else imdb_to_fetch_with
+                                final_tmdb_id = str(metadata.get('id')).strip() if metadata.get('id') and str(metadata.get('id')).strip() else tmdb_known_from_search
+                            else: 
+                                logging.warning(f"[RcloneScan {task_id}] get_movie_metadata for {imdb_to_fetch_with} returned invalid. Using known IDs.")
+                                final_imdb_id = imdb_to_fetch_with
+                                final_tmdb_id = tmdb_known_from_search
+                                metadata = None 
+                        elif tmdb_known_from_search: 
+                            logging.warning(f"[RcloneScan {task_id}] Only TMDB ID {tmdb_known_from_search} for movie '{parsed_title}'. No IMDb fetch.")
+                            final_tmdb_id = tmdb_known_from_search
+                            metadata = {'title': parsed_title, 'year': parsed_year, 'id': final_tmdb_id}
+                        # If neither imdb_to_fetch_with nor tmdb_known_from_search, IDs remain None.
 
-                    if item_id_to_use:
-                        is_imdb = str(item_id_to_use).startswith('tt')
-
-                        # --- Get definitive metadata using the found ID ---
-                        if parsed_type == 'movie':
-                            # --- MODIFICATION START ---
-                            imdb_id_for_fetch = None
-                            if is_imdb:
-                                imdb_id_for_fetch = item_id_to_use
-                            else:
-                                # It's a TMDB ID, try to convert
-                                logging.debug(f"[RcloneScan {task_id}] Movie search returned TMDB ID ({item_id_to_use}), attempting conversion to IMDb ID...")
-                                imdb_id_converted, conversion_source = direct_api.tmdb_to_imdb(tmdb_id=str(item_id_to_use), media_type='movie')
-                                if imdb_id_converted:
-                                    imdb_id_for_fetch = imdb_id_converted
-                                    logging.debug(f"[RcloneScan {task_id}] Successfully converted TMDB ID {item_id_to_use} to IMDb ID {imdb_id_for_fetch} via {conversion_source}.")
-                                else:
-                                    logging.warning(f"[RcloneScan {task_id}] Failed to convert TMDB ID {item_id_to_use} to IMDb ID. Skipping metadata fetch.")
-
-                            if imdb_id_for_fetch:
-                                metadata_result, _ = direct_api.get_movie_metadata(imdb_id=imdb_id_for_fetch)
-                                if metadata_result and isinstance(metadata_result, dict):
-                                    metadata = metadata_result
-                                    # Ensure both IDs are stored if available
-                                    final_imdb_id = metadata.get('imdb_id') # Should match imdb_id_for_fetch
-                                    final_tmdb_id = metadata.get('id') or (str(item_id_to_use) if not is_imdb else None) # Prioritize from metadata, fallback to original if it was TMDB
-                                else:
-                                     logging.warning(f"[RcloneScan {task_id}] get_movie_metadata failed for IMDb ID {imdb_id_for_fetch}.")
-                            # --- MODIFICATION END ---
-
-                        elif parsed_type == 'episode':
-                             if parsed_season is None or parsed_episode is None:
-                                 raise ValueError("Missing season/episode number from PTT parse for episode type")
-
-                             show_imdb_id = item_id_to_use if is_imdb else None
-                             if not show_imdb_id:
-                                 logging.warning(f"[RcloneScan {task_id}] Show search returned non-IMDb ID ({item_id_to_use}). Skipping.")
-
-                             if show_imdb_id:
-                                 # Get the full show metadata (which includes all episodes)
-                                 show_metadata_full, _ = direct_api.get_show_metadata(imdb_id=show_imdb_id)
-
-                                 if show_metadata_full and isinstance(show_metadata_full, dict):
-                                     # === FIX: Use the confirmed ID directly ===
-                                     final_imdb_id = show_imdb_id
-                                     # =========================================
-                                     final_tmdb_id = show_metadata_full.get('id') # Show's TMDB ID
-
-                                     # Now, extract the specific episode's data from the full show data
-                                     try:
-                                         # ... (episode extraction logic using final_imdb_id) ...
-                                         season_data = show_metadata_full.get('seasons', {}).get(str(parsed_season))
-                                         if season_data is None: season_data = show_metadata_full.get('seasons', {}).get(int(parsed_season))
-                                         episode_data = season_data.get('episodes', {}).get(str(parsed_episode)) if season_data else None
-                                         if episode_data is None and season_data: episode_data = season_data.get('episodes', {}).get(int(parsed_episode))
-
-                                         if episode_data and isinstance(episode_data, dict):
-                                             metadata = {
-                                                 'title': show_metadata_full.get('title'),
-                                                 'year': show_metadata_full.get('year'),
-                                                 'imdb_id': final_imdb_id, # Use the fixed final_imdb_id
-                                                 'tmdb_id': final_tmdb_id,
-                                                 'season_number': parsed_season,
-                                                 'episode_number': parsed_episode,
-                                                 'episode_title': episode_data.get('title'),
-                                                 'air_date': episode_data.get('first_aired'),
-                                                 'genres': show_metadata_full.get('genres', [])
-                                             }
-                                         else:
-                                             logging.warning(f"[RcloneScan {task_id}] Episode S{parsed_season}E{parsed_episode} not found within show metadata for {final_imdb_id}")
-                                     except Exception as ex:
-                                          logging.error(f"[RcloneScan {task_id}] Error extracting episode data from show metadata for S{parsed_season}E{parsed_episode} of {final_imdb_id}: {ex}")
-                                 else:
-                                      logging.warning(f"[RcloneScan {task_id}] Failed to get show metadata using ID: {show_imdb_id}")
-
-
-                    # Final check if metadata object was populated
-                    if not metadata: # Check the final metadata dict
-                         raise ValueError("Metadata fetch/extraction failed or missing necessary IDs")
-
-                    # Extract IDs from the correct location within the final metadata object
-                    ids_dict = metadata.get('ids', {}) # Get the 'ids' dict, default to empty if not found
-                    final_imdb_id = ids_dict.get('imdb')
-                    final_tmdb_id = ids_dict.get('tmdb')
-                    # Fallback for TMDB ID if it wasn't in the ids dict but the original search was TMDB
-                    if not final_imdb_id:
-                        final_imdb_id = item_id_to_use
-
-                    # Ensure we have at least one valid ID after extraction
-                    if not final_imdb_id and not final_tmdb_id:
-                        raise ValueError("Failed to extract either IMDb or TMDB ID from metadata['ids']")
-
-
-                except Exception as e:
-                    # ... (metadata error handling) ...
-                    logging.warning(f"[RcloneScan {task_id}] Metadata fetch/extraction failed for {item_path.name}: {e}")
-                    metadata_errors += 1
-                    update_progress(metadata_errors=metadata_errors)
-                    continue # Skip to the next file if metadata fails
-
-                # 3. Prepare DB Item (using parsed_version)
-                now_iso = datetime.now().isoformat()
-                item_for_db = {
-                    'imdb_id': final_imdb_id,
-                    'tmdb_id': final_tmdb_id,
-                    'title': metadata.get('title'),
-                    'year': metadata.get('year'),
-                    'release_date': metadata.get('release_date') if parsed_type == 'movie' else metadata.get('air_date'),
-                    'state': 'Collected',
-                    'type': parsed_type,
-                    'season_number': metadata.get('season_number'),
-                    'episode_number': metadata.get('episode_number'),
-                    'episode_title': metadata.get('episode_title'),
-                    'collected_at': now_iso,
-                    'original_collected_at': now_iso,
-                    'original_path_for_symlink': original_file_path,
-                    'version': parsed_version, # Use version from reverse_parser
-                    'filled_by_file': item_path.name,
-                    'metadata_updated': now_iso,
-                    'genres': json.dumps(metadata.get('genres', [])),
-                }
-                item_for_db_filtered = {k: v for k, v in item_for_db.items() if v is not None}
-
-                # 4. Generate Symlink Path
-                try:
-                    # Pass the filtered item dict which now contains the correct version
-                    symlink_dest_path = get_symlink_path(item_for_db_filtered, item_path.name, skip_jikan_lookup=True)
-                    if not symlink_dest_path:
-                        raise ValueError("get_symlink_path returned None")
-                    item_for_db_filtered['location_on_disk'] = symlink_dest_path
-                except Exception as e:
-                    # ... (symlink path error handling) ...
-                    logging.warning(f"[RcloneScan {task_id}] Failed to generate symlink path for {item_path.name}: {e}")
-                    symlink_errors += 1
-                    update_progress(symlink_errors=symlink_errors)
-                    continue
-
-                # 5. Dry Run or Execution
-                if dry_run:
-                    # ... (dry run preview logic) ...
-                    preview_data = {
-                        'original_file': original_file_path,
-                        'parsed_title': parsed_title,
-                        'parsed_type': parsed_type,
-                        'fetched_title': item_for_db_filtered.get('title'),
-                        'imdb_id': final_imdb_id,
-                        'tmdb_id': final_tmdb_id,
-                        'version': parsed_version, # Include version in preview
-                        'symlink_path': symlink_dest_path,
-                        'action': 'CREATE DB Entry & Symlink'
-                    }
-                    preview_list.append(preview_data)
-                    update_progress(preview=preview_list)
-                else:
-                    # ... (DB add and symlink creation logic) ...
-                    item_id = None
-                    try:
-                        item_id = add_media_item(item_for_db_filtered)
-                        if item_id:
-                             items_added_to_db += 1
-                             update_progress(items_added_to_db=items_added_to_db)
-                    except sqlite3.IntegrityError:
-                        # ... (duplicate handling) ...
-                        logging.warning(f"[RcloneScan {task_id}] Item already exists in DB (IntegrityError), skipping DB add for: {item_for_db_filtered.get('title')} V:{parsed_version}")
-                        skipped_duplicates += 1
-                        update_progress(skipped_duplicates=skipped_duplicates)
-                        continue
-                    except Exception as e:
-                        # ... (db error handling) ...
-                        logging.error(f"[RcloneScan {task_id}] Error adding item to DB for {item_path.name}: {e}", exc_info=True)
-                        db_errors += 1
-                        error_list.append(f"DB Add Error ({item_path.name}): {e}")
-                        update_progress(db_errors=db_errors, errors=error_list)
-                        continue
-
-                    if item_id:
+                    elif current_parsed_type == 'episode':
+                        s_num_int, e_num_int = None, None
                         try:
-                            symlink_success = create_symlink(original_file_path, symlink_dest_path, media_item_id=item_id, skip_verification=True)
-                            if symlink_success:
-                                symlinks_created += 1
-                                update_progress(symlinks_created=symlinks_created)
-                            else:
-                                raise Exception("create_symlink returned False")
-                        except Exception as e:
-                             # ... (symlink creation error handling) ...
-                            logging.error(f"[RcloneScan {task_id}] Error creating symlink {symlink_dest_path}: {e}", exc_info=True)
-                            symlink_errors += 1
-                            error_list.append(f"Symlink Error ({item_path.name}): {e}")
-                            update_progress(symlink_errors=symlink_errors, errors=error_list)
+                            if parsed_season is not None: s_num_int = int(parsed_season)
+                        except (ValueError, TypeError):
+                            logging.warning(f"[RcloneScan {task_id}] Could not convert parsed_season '{parsed_season}' to int for {parsed_title}")
+                        try:
+                            if parsed_episode is not None: e_num_int = int(parsed_episode)
+                        except (ValueError, TypeError):
+                            logging.warning(f"[RcloneScan {task_id}] Could not convert parsed_episode '{parsed_episode}' to int for {parsed_title} S{s_num_int}")
+
+                        if s_num_int is None or e_num_int is None:
+                            logging.warning(f"[RcloneScan {task_id}] Missing or invalid S ({s_num_int}) or E ({e_num_int}) number for episode-type '{parsed_title}'. Cannot fetch specific episode metadata.")
+                            # Keep existing final_imdb_id/final_tmdb_id if they were show IDs from search, but episode metadata is None
+                            # This will be caught by 'if not metadata:' later.
+                            # To ensure final_imdb_id and final_tmdb_id are set if show search was successful:
+                            if is_imdb: final_imdb_id = item_id_to_use
+                            else: final_tmdb_id = item_id_to_use # if show search gave TMDB
+                        else:
+                            # Both s_num_int and e_num_int are valid integers here
+                            show_imdb_to_fetch_with = None
+                            show_tmdb_known_from_search = None
+                            if is_imdb: 
+                                show_imdb_to_fetch_with = item_id_to_use
+                            else: 
+                                show_tmdb_known_from_search = item_id_to_use
+                                converted_imdb, _ = direct_api.tmdb_to_imdb(show_tmdb_known_from_search, 'show')
+                                if converted_imdb and str(converted_imdb).strip():
+                                    show_imdb_to_fetch_with = str(converted_imdb).strip()
+                                    
+                            if show_imdb_to_fetch_with:
+                                show_meta_full, _ = direct_api.get_show_metadata(imdb_id=show_imdb_to_fetch_with)
+                                if show_meta_full and isinstance(show_meta_full, dict):
+                                    # Set show's final IDs
+                                    final_imdb_id = str(show_meta_full.get('imdb_id')).strip() if show_meta_full.get('imdb_id') and str(show_meta_full.get('imdb_id')).strip() else show_imdb_to_fetch_with
+                                    final_tmdb_id = str(show_meta_full.get('id')).strip() if show_meta_full.get('id') and str(show_meta_full.get('id')).strip() else show_tmdb_known_from_search
+                                    
+                                    season_data_dict = show_meta_full.get('seasons', {})
+                                    season_data = season_data_dict.get(str(s_num_int)) # API uses string keys for seasons
+                                    if season_data is None: # Fallback for int key, though less likely
+                                        season_data = season_data_dict.get(s_num_int)
+
+                                    episode_data = None
+                                    if season_data:
+                                        episode_data_dict = season_data.get('episodes', {})
+                                        episode_data = episode_data_dict.get(str(e_num_int)) # API uses string keys for episodes
+                                        if episode_data is None: # Fallback for int key
+                                            episode_data = episode_data_dict.get(e_num_int)
+                                            
+                                    if episode_data:
+                                        metadata = {
+                                            'title': show_meta_full.get('title'), 'year': show_meta_full.get('year'), 
+                                            'imdb_id': final_imdb_id, 'tmdb_id': final_tmdb_id,
+                                            'season_number': s_num_int, 'episode_number': e_num_int,
+                                            'episode_title': episode_data.get('title'), 'air_date': episode_data.get('first_aired'),
+                                            'release_date': episode_data.get('first_aired'), 'genres': show_meta_full.get('genres', [])
+                                        }
+                                    else: 
+                                        logging.warning(f"[RcloneScan {task_id}] Episode S{s_num_int}E{e_num_int} not in show data for {final_imdb_id if final_imdb_id else show_imdb_to_fetch_with}")
+                                else: 
+                                    logging.warning(f"[RcloneScan {task_id}] get_show_metadata for {show_imdb_to_fetch_with} invalid. Using known show IDs.")
+                                    final_imdb_id = show_imdb_to_fetch_with
+                                    final_tmdb_id = show_tmdb_known_from_search
+                            elif show_tmdb_known_from_search: 
+                                logging.warning(f"[RcloneScan {task_id}] Only Show TMDB ID {show_tmdb_known_from_search} for '{parsed_title}'.")
+                                final_tmdb_id = show_tmdb_known_from_search
+                
+                if not metadata: 
+                    # If metadata is still None, but we have at least one ID (show or movie), log it.
+                    # The previous ValueError for "Both IMDb and TMDB IDs missing" is only if *both* are missing *after* this whole block.
+                    if final_imdb_id or final_tmdb_id:
+                         logging.warning(f"[RcloneScan {task_id}] Full metadata object not constructed for '{parsed_title}', but found IDs: IMDb={final_imdb_id}, TMDB={final_tmdb_id} (File: {item_path.name})")
+                    else: # This case should now be rarer with fallback ID assignments
+                         raise ValueError(f"Metadata fetch failed AND no usable search/conversion ID ultimately found for '{parsed_title}' (File: {item_path.name})")
+
+                # This final check remains important
+                if not final_imdb_id and not final_tmdb_id: 
+                    raise ValueError(f"Both IMDb and TMDB IDs are missing post-metadata processing for '{parsed_title}' (File: {item_path.name})")
+
+            except Exception as e: 
+                logging.warning(f"[RcloneScan {task_id}] Metadata processing stage for {item_path.name} failed: {e}", exc_info=True)
+                metadata_errors += 1; update_progress(metadata_errors=metadata_errors); continue
+            
+            # 3. Prepare DB Item (original_file_path_str for original_path_for_symlink)
+            now_iso = datetime.now().isoformat()
+            
+            # Use parsed values as defaults if metadata object is None or lacks keys
+            db_title = metadata.get('title') if metadata else parsed_title
+            db_year = metadata.get('year') if metadata else parsed_year
+            # For episodes, metadata.get('title') would be show title. parsed_title might be more specific from filename if metadata is None.
+            # Let's stick to metadata if available, otherwise parsed_title which is our best guess.
+            if current_parsed_type == 'episode' and metadata and metadata.get('title'):
+                db_title = metadata.get('title') # Show title from metadata
+            elif not db_title: # Fallback if metadata was None or metadata had no title
+                 db_title = parsed_title
+
+            if current_parsed_type == 'episode' and metadata and metadata.get('year'):
+                db_year = metadata.get('year') # Show year from metadata
+            elif not db_year: # Fallback if metadata was None or metadata had no year
+                db_year = parsed_year
+
+            item_for_db = {
+                'imdb_id': final_imdb_id, 
+                'tmdb_id': final_tmdb_id,
+                'title': db_title,
+                'year': db_year,
+                'release_date': metadata.get('release_date') if metadata else (metadata.get('air_date') if metadata else None), # Prefers movie release_date, then episode air_date
+                'state': 'Collected', 
+                'type': current_parsed_type,
+                'season_number': metadata.get('season_number') if metadata else (s_num_int if current_parsed_type == 'episode' else None),
+                'episode_number': metadata.get('episode_number') if metadata else (e_num_int if current_parsed_type == 'episode' else None),
+                'episode_title': metadata.get('episode_title') if metadata else None, # Episode title specific, None if no metadata
+                'collected_at': now_iso,
+                'original_collected_at': now_iso, 
+                'original_path_for_symlink': original_file_path_str,
+                'version': current_parsed_version, 
+                'filled_by_file': item_path.name,
+                'metadata_updated': now_iso, 
+                'genres': json.dumps(metadata.get('genres', [])) if metadata else json.dumps([]),
+            }
+            item_for_db_filtered = {k: v for k, v in item_for_db.items() if v is not None}
+
+            # 4. Generate Symlink Path
+            try:
+                symlink_dest_path = get_symlink_path(item_for_db_filtered, item_path.name, skip_jikan_lookup=True)
+                if not symlink_dest_path: raise ValueError("get_symlink_path returned None")
+                item_for_db_filtered['location_on_disk'] = symlink_dest_path
+            except Exception as e:
+                logging.warning(f"[RcloneScan {task_id}] Symlink path gen failed for {item_path.name}: {e}")
+                symlink_errors += 1; update_progress(symlink_errors=symlink_errors); continue
+
+            # 5. Dry Run or Execution
+            if dry_run:
+                preview_data = {
+                    'original_file': original_file_path_str, 'parsed_title': parsed_title, 
+                    'parsed_type': current_parsed_type, 'fetched_title': item_for_db_filtered.get('title'),
+                    'imdb_id': final_imdb_id, 'tmdb_id': final_tmdb_id,
+                    'version': current_parsed_version, 'symlink_path': symlink_dest_path,
+                    'action': 'CREATE DB Entry & Symlink'
+                }
+                preview_list.append(preview_data)
+                update_progress(preview=preview_list, items_processed=items_processed)
+            else:
+                item_id_from_db = None
+                try:
+                    item_id_from_db = add_media_item(item_for_db_filtered)
+                    if not item_id_from_db: raise Exception("add_media_item no ID returned")
+                    items_added_to_db += 1; update_progress(items_added_to_db=items_added_to_db)
+                except sqlite3.IntegrityError:
+                    logging.warning(f"[RcloneScan {task_id}] DB IntegrityError for {item_path.name}, V:{current_parsed_version}. Likely duplicate.")
+                    skipped_duplicates += 1; update_progress(skipped_duplicates=skipped_duplicates)
+                    # If it's a duplicate, we should still mark original_file_path_str as processed if we intend to skip it next time
+                    # However, if symlink creation was the goal, and DB entry exists, maybe try to symlink?
+                    # For now, if DB entry is duplicate, we skip symlink and don't add to processed_original_files,
+                    # as it implies another file (perhaps the original duplicate) is the canonical one.
+                    # This needs careful thought if we want to "adopt" existing DB entries.
+                    # Current logic: if DB duplicate, then this file is not "successfully processed" into a *new* DB entry.
+                    continue 
+                except Exception as e:
+                    logging.error(f"[RcloneScan {task_id}] DB add error for {item_path.name}: {e}", exc_info=True)
+                    db_errors += 1; error_list.append(f"DB Add Error ({item_path.name}): {e}"); update_progress(db_errors=db_errors, errors=error_list)
+                    continue
+
+                if item_id_from_db:
+                    try:
+                        symlink_success = create_symlink(original_file_path_str, symlink_dest_path, media_item_id=item_id_from_db, skip_verification=True)
+                        if not symlink_success: raise Exception("create_symlink returned False")
+                        symlinks_created += 1; update_progress(symlinks_created=symlinks_created)
+                        
+                        # Successfully processed, add to persistent progress and save
+                        processed_original_files.add(original_file_path_str)
+                        save_rclone_progress()
+                        
+                    except Exception as e:
+                        logging.error(f"[RcloneScan {task_id}] Symlink creation error for {symlink_dest_path} (DB ID {item_id_from_db}): {e}", exc_info=True)
+                        symlink_errors += 1; error_list.append(f"Symlink Error ({item_path.name}): {e}"); update_progress(symlink_errors=symlink_errors, errors=error_list)
+            update_progress(items_processed=items_processed)
 
 
-            update_progress(items_processed=items_processed) # Update items_processed count outside the if block
-
-        # ... (Scan complete logic - construct final_message) ...
-        final_message = f"Rclone scan finished. Scanned: {total_files_scanned}, Media Files: {media_files_found}, Processed: {items_processed}."
-        # ... (append stats to final_message) ...
+        final_message_parts = [
+            f"Rclone scan finished. Scanned: {total_files_scanned}, Media Files Initially Found: {media_files_found}, Items Chosen for Processing: {items_processed}."
+        ]
         if dry_run:
-            final_message += f" Dry Run Results: {len(preview_list)} items would be processed."
+            final_message_parts.append(f"Dry Run Preview: {len(preview_list)} items.")
         else:
-             final_message += f" DB Entries Added: {items_added_to_db}, Symlinks Created: {symlinks_created}."
-        if skipped_duplicates > 0: final_message += f" Skipped Duplicates: {skipped_duplicates}."
-        if parser_errors > 0: final_message += f" Parser Errors: {parser_errors}."
-        if metadata_errors > 0: final_message += f" Metadata Errors: {metadata_errors}."
-        if db_errors > 0: final_message += f" DB Errors: {db_errors}."
-        if symlink_errors > 0: final_message += f" Symlink Errors: {symlink_errors}."
+             final_message_parts.append(f"DB Added: {items_added_to_db}, Symlinks Created: {symlinks_created}.")
+        if skipped_previously_processed_count > 0: final_message_parts.append(f"Skipped (Previously Processed): {skipped_previously_processed_count}.")
+        if skipped_smaller_movies_in_folder_count > 0: final_message_parts.append(f"Skipped (Smaller Movie in Folder): {skipped_smaller_movies_in_folder_count}.")
+        if skipped_duplicates > 0: final_message_parts.append(f"Skipped (DB Duplicates): {skipped_duplicates}.")
+        # ... (other error counts) ...
+        error_counts_str = []
+        if parser_errors > 0: error_counts_str.append(f"Parser: {parser_errors}")
+        if metadata_errors > 0: error_counts_str.append(f"Metadata: {metadata_errors}")
+        if db_errors > 0: error_counts_str.append(f"DB: {db_errors}")
+        if symlink_errors > 0: error_counts_str.append(f"Symlink: {symlink_errors}")
+        if error_counts_str: final_message_parts.append(f"Errors ({', '.join(error_counts_str)}).")
+
+        final_message = " ".join(final_message_parts)
+        success_status = (parser_errors == 0 and metadata_errors == 0 and db_errors == 0 and symlink_errors == 0)
 
         update_progress(
-            status='complete',
-            message=final_message,
-            complete=True,
-            success=(db_errors == 0 and symlink_errors == 0 and parser_errors == 0 and metadata_errors == 0)
+            status='complete', message=final_message, complete=True, success=success_status,
+            total_files_scanned=total_files_scanned, media_files_found=media_files_found, 
+            items_processed=items_processed, items_added_to_db=items_added_to_db,
+            symlinks_created=symlinks_created, parser_errors=parser_errors,
+            metadata_errors=metadata_errors, db_errors=db_errors, symlink_errors=symlink_errors,
+            skipped_duplicates=skipped_duplicates, 
+            skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count,
+            skipped_previously_processed=skipped_previously_processed_count
         )
 
     except Exception as e:
-        # ... (Error handling) ...
-        logging.error(f"[RcloneScan {task_id}] Error during Rclone scan task: {e}", exc_info=True)
+        logging.error(f"[RcloneScan {task_id}] Critical error in Rclone scan task: {e}", exc_info=True)
         update_progress(status='error', message=f'Task failed: {e}', complete=True, success=False)
     finally:
-        # ... (Setting restore and cleanup) ...
         try:
              if symlink_base_path_setting_backup is not None:
-                 logging.info(f"[RcloneScan {task_id}] Restoring original symlink path setting.")
                  set_setting('File Management', 'symlinked_files_path', symlink_base_path_setting_backup)
         except Exception as restore_err:
-             logging.error(f"[RcloneScan {task_id}] Failed to restore original symlink path setting: {restore_err}")
-             if task_id in rclone_scan_progress:
-                 rclone_scan_progress[task_id].setdefault('errors', []).append(f"Failed to restore setting: {restore_err}")
+             logging.error(f"[RcloneScan {task_id}] Failed to restore symlink path setting: {restore_err}")
+             # ... (append to errors in progress dict) ...
+        # Save final progress one last time, e.g. if loop broke early
+        if not dry_run: save_rclone_progress() 
         threading.Timer(300, lambda: rclone_scan_progress.pop(task_id, None)).start()
-
 
 @debug_bp.route('/api/rclone_to_symlinks', methods=['POST'])
 @admin_required
@@ -3297,3 +3458,634 @@ def rclone_scan_progress_stream(task_id):
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
 
 # --- End Rclone Mount to Symlinks Logic ---
+
+# --- Riven Symlink Recovery Routes ---
+
+@debug_bp.route('/recover_riven_symlinks')
+@admin_required
+def recover_riven_symlinks_page():
+    """Renders the Riven symlink recovery page."""
+    # For now, it can render the same template. A new template recover_riven_symlinks.html might be needed later.
+    return render_template('recover_symlinks.html', recovery_type='riven') # Pass type for potential JS differentiation
+
+def parse_riven_symlink(symlink_path: Path):
+    """Parses a Riven symlink path based on filename patterns, not templates."""
+    filename = symlink_path.name
+    parsed_data = {
+        'symlink_path': str(symlink_path),
+        'original_path_for_symlink': None, # Populated in analyze_riven_symlinks
+        'media_type': None, # Determined below
+        'imdb_id': None, # Determined below
+        'tmdb_id': None, # Populated by get_metadata
+        'title': None, # Populated by get_metadata
+        'year': None, # Populated by get_metadata
+        'season_number': None, # Determined below
+        'episode_number': None, # Determined below
+        'episode_title': None, # Populated by get_metadata
+        'version': None, # Populated by reverse_parser in analyze_riven_symlinks
+        'original_filename': None, # Populated in analyze_riven_symlinks
+        'is_anime': False # Populated by get_metadata
+    }
+
+    # Robust S/E matching from filename
+    se_filename_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3})|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
+
+    parent_dir_name = symlink_path.parent.name if symlink_path.parent else ""
+    season_from_parent_match = re.search(r'[Ss](?:eason)?\s?(\d+)', parent_dir_name)
+
+    # Determine if it's an episode
+    if se_filename_match:
+        parsed_data['media_type'] = 'episode'
+        # Extract S/E from filename groups
+        if se_filename_match.group(1) is not None and se_filename_match.group(2) is not None: # SxxExx
+            parsed_data['season_number'] = int(se_filename_match.group(1))
+            parsed_data['episode_number'] = int(se_filename_match.group(2))
+        elif se_filename_match.group(3) is not None and se_filename_match.group(4) is not None: # Season xx Episode xx
+            parsed_data['season_number'] = int(se_filename_match.group(3))
+            parsed_data['episode_number'] = int(se_filename_match.group(4))
+        elif se_filename_match.group(5) is not None and se_filename_match.group(6) is not None: # xxXx
+            parsed_data['season_number'] = int(se_filename_match.group(5))
+            parsed_data['episode_number'] = int(se_filename_match.group(6))
+    elif season_from_parent_match: # Season in parent folder, check filename for simple episode number
+        parsed_data['media_type'] = 'episode'
+        parsed_data['season_number'] = int(season_from_parent_match.group(1))
+        # Try to get simple episode number from filename, e.g., "01.mkv", "E01.mkv"
+        ep_num_match = re.search(r'(?:[Ee](?:pisode)?)?\s?(\d+)\.[^.]+$', filename) # Matches "01.mkv", "E01.mkv", "episode 01.mkv"
+        if ep_num_match:
+            ep_val = int(ep_num_match.group(1))
+            if 1 <= ep_val <= 200: # Sanity check
+                parsed_data['episode_number'] = ep_val
+    else:
+        parsed_data['media_type'] = 'movie'
+
+    # IMDb ID Extraction
+    if parsed_data['media_type'] == 'episode':
+        if not (symlink_path.parent and symlink_path.parent.parent):
+            logging.warning(f"RIVEN (EPISODE): Path '{symlink_path}' too short for IMDb ID from grandfather directory.")
+            return None
+        grandfather_dir_name = symlink_path.parent.parent.name
+        imdb_match = re.search(r'(tt\d{7,})', grandfather_dir_name, re.IGNORECASE)
+        if imdb_match:
+            parsed_data['imdb_id'] = imdb_match.group(1)
+        else:
+            logging.warning(f"RIVEN (EPISODE): IMDb ID not found in grandfather directory '{grandfather_dir_name}' for episode file '{symlink_path}'.")
+            return None
+        
+        # Final check for S/E numbers for episodes
+        if parsed_data.get('season_number') is None or parsed_data.get('episode_number') is None:
+            logging.warning(f"RIVEN (EPISODE): Incomplete S/E numbers for '{symlink_path}'. S={parsed_data.get('season_number')}, E={parsed_data.get('episode_number')}. Filename: '{filename}', Parent: '{parent_dir_name}'.")
+            return None
+
+    elif parsed_data['media_type'] == 'movie':
+        # Try filename first for movie IMDb
+        imdb_match_file = re.search(r'(tt\d{7,})', filename, re.IGNORECASE)
+        if imdb_match_file:
+            parsed_data['imdb_id'] = imdb_match_file.group(1)
+        # If not in filename, try immediate parent directory for movie IMDb
+        elif symlink_path.parent:
+            imdb_match_parent = re.search(r'(tt\d{7,})', parent_dir_name, re.IGNORECASE)
+            if imdb_match_parent:
+                parsed_data['imdb_id'] = imdb_match_parent.group(1)
+            else:
+                logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' or parent directory '{parent_dir_name}' for movie file '{symlink_path}'.")
+                return None
+        else: # No parent, and not in filename
+            logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' and no parent directory for movie file '{symlink_path}'.")
+            return None
+    else: # Should not happen if media_type is always set
+        logging.error(f"RIVEN: media_type not determined for {symlink_path}")
+        return None
+
+    # Final check for any IMDb ID
+    if not parsed_data.get('imdb_id'):
+        logging.warning(f"RIVEN: IMDb ID could not be resolved for path '{symlink_path}'.")
+        return None
+
+    logging.debug(f"RIVEN: Parsed initial data from {filename}: IMDb={parsed_data['imdb_id']}, Type={parsed_data['media_type']}, S={parsed_data.get('season_number')}, E={parsed_data.get('episode_number')}")
+    return parsed_data
+
+def _run_riven_analysis_thread(symlink_root_path_str, original_root_path_str, task_id):
+    """The actual Riven analysis logic, run in a background thread."""
+    global riven_analysis_progress
+
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    temp_recovery_dir = os.path.join(db_content_dir, 'tmp_riven_recovery')
+    try:
+        os.makedirs(temp_recovery_dir, exist_ok=True)
+    except OSError as e:
+        logging.error(f"RIVEN: Failed to create temporary recovery directory {temp_recovery_dir}: {e}")
+        pass 
+    
+    recovery_file_path = os.path.join(temp_recovery_dir, f"riven_recovery_{task_id}.jsonl")
+
+    riven_analysis_progress[task_id] = {
+        'status': 'starting',
+        'message': 'Initializing Riven analysis...',
+        'total_items_scanned': 0,
+        'total_symlinks_processed': 0,
+        'total_files_processed': 0,
+        'items_found': 0,
+        'parser_errors': 0,
+        'metadata_errors': 0,
+        'recoverable_items_preview': [],
+        'recovery_file_path': None,
+        'complete': False
+    }
+
+    def update_progress(**kwargs):
+        if task_id in riven_analysis_progress:
+            riven_analysis_progress[task_id].update(kwargs)
+            preview = riven_analysis_progress[task_id]['recoverable_items_preview']
+            if len(preview) > 5:
+                 riven_analysis_progress[task_id]['recoverable_items_preview'] = preview[:5]
+        else:
+            logging.warning(f"RIVEN: Task ID {task_id} not found in progress dict during update.")
+
+    recovery_file = None
+    try:
+        recovery_file = open(recovery_file_path, 'a', encoding='utf-8')
+
+        symlink_root_path = Path(symlink_root_path_str)
+        original_root_path = Path(original_root_path_str) if original_root_path_str else None
+
+        if not symlink_root_path.is_dir():
+            raise ValueError('RIVEN: Symlink Root Path must be a valid directory.')
+        if original_root_path and not original_root_path.is_dir():
+            raise ValueError('RIVEN: Original Root Path must be valid if provided.')
+
+        symlink_organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False)
+        ignored_extensions = {'.srt', '.sub', '.idx', '.nfo', '.txt', '.jpg', '.png', '.db', '.partial', '.!qB'}
+        riven_type_folders = ["anime_movies", "anime_shows", "movies", "shows"]
+        
+        # Define actual resolution subfolder names to check if organization is on
+        actual_resolution_subfolder_names = ["2160p", "1080p"] 
+
+        total_items_scanned = 0
+        total_symlinks_processed = 0
+        total_files_processed = 0
+        items_found = 0
+        parser_errors = 0
+        metadata_errors = 0
+        recoverable_items_preview = []
+
+        # --- Nested helper function to process items in a directory ---
+        def _scan_riven_directory_recursive(path_to_scan: Path, scan_description: str):
+            nonlocal total_items_scanned, total_symlinks_processed, total_files_processed, items_found, parser_errors, metadata_errors, recoverable_items_preview
+            
+            update_progress(message=f'RIVEN: Scanning {scan_description}...')
+            try:
+                for item_path in path_to_scan.rglob('*'):
+                    total_items_scanned += 1
+                    if total_items_scanned % 100 == 0:
+                        update_progress(
+                            total_items_scanned=total_items_scanned,
+                            total_symlinks_processed=total_symlinks_processed,
+                            total_files_processed=total_files_processed,
+                            items_found=items_found,
+                            parser_errors=parser_errors,
+                            metadata_errors=metadata_errors,
+                            message=f'RIVEN: Scanned {total_items_scanned} items...'
+                         )
+
+                    if item_path.suffix.lower() in ignored_extensions:
+                        continue
+
+                    if item_path.is_file() or item_path.is_symlink():
+                        if item_path.is_symlink():
+                            total_symlinks_processed += 1
+                        else:
+                            total_files_processed += 1
+
+                        parsed_data = parse_riven_symlink(item_path)
+                        if not parsed_data:
+                            parser_errors += 1
+                            continue
+
+                        original_path_obj = None
+                        if item_path.is_symlink():
+                            try:
+                                target_path_str = os.readlink(str(item_path))
+                                if not os.path.isabs(target_path_str):
+                                    target_path_str = os.path.abspath(os.path.join(item_path.parent, target_path_str))
+                                original_path_obj = Path(target_path_str)
+                            except Exception as e:
+                                logging.error(f"RIVEN: Error reading symlink target for {item_path}: {e}")
+                                parsed_data['original_path_for_symlink'] = f"Error: Cannot read link target ({e})"
+                                parsed_data['original_filename'] = item_path.name
+                        elif item_path.is_file():
+                            original_path_obj = item_path
+
+                        if original_path_obj and original_path_obj.is_file():
+                            parsed_data['original_path_for_symlink'] = str(original_path_obj)
+                            parsed_data['original_filename'] = original_path_obj.name
+                        elif 'original_path_for_symlink' not in parsed_data :
+                            if original_path_obj:
+                                 logging.warning(f"RIVEN: Symlink target {original_path_obj} is not a file for {item_path}.")
+                                 parsed_data['original_path_for_symlink'] = f"Error: Target not a file ({original_path_obj})"
+                            else:
+                                logging.warning(f"RIVEN: Could not determine original file for {item_path}.")
+                                parsed_data['original_path_for_symlink'] = "Error: Original path unknown"
+                            parsed_data['original_filename'] = item_path.name
+                        
+                        if not parsed_data.get('original_filename') or "Error:" in str(parsed_data.get('original_path_for_symlink')):
+                            parser_errors += 1
+                            logging.warning(f"RIVEN: Skipping item {item_path.name} due to missing original file information.")
+                            continue
+                        
+                        filename_for_version = parsed_data.get('original_filename')
+                        if filename_for_version:
+                            try:
+                                version_raw = parse_filename_for_version(filename_for_version)
+                                parsed_data['version'] = version_raw.strip('*') if version_raw else 'Default'
+                            except Exception as e:
+                                parsed_data['version'] = 'Default'
+                        else:
+                            parsed_data['version'] = 'Default'
+                            
+                        if parsed_data['imdb_id']:
+                            metadata_args = {
+                                'imdb_id': parsed_data['imdb_id'],
+                                'item_media_type': parsed_data.get('media_type')
+                                # season_number and episode_number are not directly used by get_metadata for initial fetch
+                            }
+                            try:
+                                metadata_args['original_item'] = parsed_data 
+                                from metadata.metadata import get_metadata
+                                # This metadata is likely show-level for episodes
+                                metadata = get_metadata(**metadata_args) 
+
+                                if metadata:
+                                    # Populate base parsed_data from show-level metadata
+                                    parsed_data['title'] = metadata.get('title', parsed_data.get('title')) # Prefer metadata title
+                                    parsed_data['year'] = metadata.get('year', parsed_data.get('year'))
+                                    parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
+                                    # Use show's release_date as a fallback if episode-specific one isn't found
+                                    parsed_data['release_date'] = metadata.get('release_date') 
+                                    genres = metadata.get('genres', []) # Use genres from show metadata
+                                    if isinstance(genres, str): # Ensure genres is a list
+                                        try: genres = json.loads(genres)
+                                        except json.JSONDecodeError: genres = [g.strip() for g in genres.split(',') if g.strip()]
+                                    if not isinstance(genres, list): genres = [str(genres)]
+                                    parsed_data['is_anime'] = any('anime' in genre.lower() for genre in genres)
+
+                                    # If it's an episode, try to get specific episode title and air date
+                                    if parsed_data['media_type'] == 'episode' and parsed_data.get('season_number') is not None and parsed_data.get('episode_number') is not None:
+                                        try:
+                                            # Use integer keys for lookup
+                                            s_num_int = int(parsed_data['season_number'])
+                                            e_num_int = int(parsed_data['episode_number'])
+                                            
+                                            # Fetch full show details to navigate to episode
+                                            direct_api = DirectAPI() # Initialize DirectAPI
+                                            # The imdb_id in parsed_data should be the show's IMDb ID
+                                            full_show_details, _ = direct_api.get_show_metadata(imdb_id=parsed_data['imdb_id']) 
+                                            
+                                            if full_show_details:
+                                                # Access seasons and episodes using integer keys
+                                                season_data = full_show_details.get('seasons', {}).get(s_num_int)
+                                                if season_data:
+                                                    episode_data = season_data.get('episodes', {}).get(e_num_int)
+                                                    if episode_data:
+                                                        parsed_data['episode_title'] = episode_data.get('title')
+                                                        # Prefer episode's air_date if available
+                                                        episode_air_date = episode_data.get('first_aired')
+                                                        if episode_air_date:
+                                                            parsed_data['release_date'] = episode_air_date
+                                                        logging.debug(f"RIVEN: Fetched episode title '{parsed_data['episode_title']}' and air_date '{parsed_data['release_date']}' for S{s_num_int}E{e_num_int}")
+                                                    else:
+                                                        logging.warning(f"RIVEN: Episode S{s_num_int}E{e_num_int} not found in details for {parsed_data['imdb_id']}.")
+                                                else:
+                                                    logging.warning(f"RIVEN: Season {s_num_int} not found in details for {parsed_data['imdb_id']}.")
+                                            else:
+                                                logging.warning(f"RIVEN: Could not fetch full show details via DirectAPI for {parsed_data['imdb_id']} to get episode title.")
+                                        except ValueError: # Handles case where season_number or episode_number can't be int
+                                            logging.error(f"RIVEN: Invalid non-integer season/episode number for {parsed_data['imdb_id']}: S='{parsed_data.get('season_number')}', E='{parsed_data.get('episode_number')}'. Cannot fetch episode details.")
+                                        except Exception as ep_fetch_exc:
+                                            logging.error(f"RIVEN: Error fetching specific episode details for {parsed_data['imdb_id']} S{parsed_data.get('season_number')}E{parsed_data.get('episode_number')}: {ep_fetch_exc}", exc_info=False)
+                                    
+                                    # Ensure 'genres' key exists in parsed_data for prospective_db_item
+                                    parsed_data['genres'] = genres # Store the list of genres
+
+                                    # --- Calculate new symlink path ---
+                                    current_original_filename_with_ext = parsed_data.get('original_filename')
+                                    prospective_db_item = {
+                                        'title': parsed_data.get('title'), 
+                                        'year': parsed_data.get('year'),
+                                        'type': parsed_data.get('media_type'), 
+                                        'imdb_id': parsed_data.get('imdb_id'),
+                                        'tmdb_id': parsed_data.get('tmdb_id'), 
+                                        'season_number': parsed_data.get('season_number'),
+                                        'episode_number': parsed_data.get('episode_number'), 
+                                        'version': parsed_data.get('version', 'Default'),
+                                        'is_anime': parsed_data.get('is_anime', False), 
+                                        'episode_title': parsed_data.get('episode_title'), # Now this should be populated
+                                        'release_date': parsed_data.get('release_date'), # And this might be more specific
+                                        'filled_by_file': current_original_filename_with_ext,
+                                        'genres': parsed_data.get('genres') # Pass genres to get_symlink_path
+                                    }
+                                    prospective_db_item_filtered = {k: v for k, v in prospective_db_item.items() if v is not None}
+
+                                    try:
+                                        new_symlink_location = get_symlink_path(
+                                            prospective_db_item_filtered, # This now contains 'filled_by_file'
+                                            parsed_data.get('original_filename'), # This is the second argument 'original_file'
+                                            skip_jikan_lookup=True
+                                        )
+                                        if not new_symlink_location:
+                                            raise ValueError("get_symlink_path returned None or empty.")
+                                        parsed_data['newly_calculated_symlink_path'] = new_symlink_location
+                                    except Exception as e_sym_path:
+                                        logging.error(f"RIVEN: Error calculating new symlink path for {parsed_data.get('title')}: {e_sym_path}")
+                                        metadata_errors += 1
+                                        continue
+
+                                    items_found += 1
+                                    try:
+                                        recovery_file.write(json.dumps(parsed_data) + '\n')
+                                    except Exception as write_err:
+                                        logging.error(f"RIVEN: Error writing item to recovery file {recovery_file_path}: {write_err}")
+                                    
+                                    if len(recoverable_items_preview) < 5:
+                                         recoverable_items_preview.append(parsed_data)
+                                    update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
+                                else: # metadata fetch failed
+                                    metadata_errors += 1
+                                    logging.warning(f"RIVEN: Metadata fetch failed for IMDb {parsed_data['imdb_id']} ({item_path.name}).")
+                            except Exception as e: # Error during metadata processing block
+                                logging.error(f"RIVEN: Metadata processing error for {parsed_data.get('imdb_id', 'Unknown IMDb')} ({item_path.name}): {e}", exc_info=False)
+                                metadata_errors += 1
+                        else: # No IMDb ID was parsed
+                            parser_errors += 1 # This case should be caught by parse_riven_symlink returning None now
+                            logging.warning(f"RIVEN: Skipping {item_path.name} as no IMDb ID was parsed (should have been caught earlier).")
+
+            except Exception as e_rglob:
+                logging.error(f"RIVEN: Error during rglob scan of {path_to_scan}: {e_rglob}", exc_info=True)
+        # --- End of nested helper function ---
+
+        update_progress(status='scanning', message='Starting Riven directory scan...')
+
+        # Iterate through the Riven-specific type folders
+        for type_folder_name in riven_type_folders:
+            # Path 1: Scan directly within the type folder (e.g., /mnt/zurg-symlinked/movies)
+            base_type_path = symlink_root_path / type_folder_name
+            if base_type_path.is_dir():
+                _scan_riven_directory_recursive(base_type_path, type_folder_name)
+            else:
+                logging.warning(f"RIVEN: Base directory not found or not accessible: {base_type_path}")
+
+            # Path 2: If resolution organization is enabled, scan within resolution subfolders 
+            # (e.g., /mnt/zurg-symlinked/movies/2160p)
+            if symlink_organize_by_resolution:
+                for res_subfolder_name in actual_resolution_subfolder_names:
+                    resolution_specific_path = base_type_path / res_subfolder_name
+                    scan_target_description = f'{type_folder_name}/{res_subfolder_name}'
+                    if resolution_specific_path.is_dir():
+                        _scan_riven_directory_recursive(resolution_specific_path, scan_target_description)
+                    else:
+                        # This is not necessarily an error, could just be that this resolution isn't used for this type
+                        logging.debug(f"RIVEN: Optional resolution directory not found, skipping: {resolution_specific_path}")
+                    
+        update_progress(
+            status='complete',
+            message='Riven analysis finished.',
+            complete=True,
+            recovery_file_path=recovery_file_path if items_found > 0 else None,
+            total_items_scanned=total_items_scanned,
+            total_symlinks_processed=total_symlinks_processed,
+            total_files_processed=total_files_processed,
+            items_found=items_found,
+            parser_errors=parser_errors,
+            metadata_errors=metadata_errors
+        )
+
+    except Exception as e:
+        logging.error(f"RIVEN: Analysis thread error for task {task_id}: {e}", exc_info=True)
+        update_progress(status='error', message=f'RIVEN: Analysis failed: {e}', complete=True)
+    finally:
+        if recovery_file:
+            try:
+                recovery_file.close()
+            except Exception as close_err:
+                 logging.error(f"RIVEN: Error closing recovery file {recovery_file_path}: {close_err}")
+        pass
+
+@debug_bp.route('/analyze_riven_symlinks', methods=['POST'])
+@admin_required
+def analyze_riven_symlinks():
+    """Initiates the Riven symlink analysis in a background thread and returns a task ID."""
+    import uuid
+    symlink_root_path_str = request.form.get('symlink_root_path')
+    original_root_path_str = request.form.get('original_root_path')
+
+    if not symlink_root_path_str:
+        return jsonify({'success': False, 'error': 'RIVEN: Symlink Root Path is required.'}), 400
+
+    task_id = str(uuid.uuid4())
+    
+    thread = threading.Thread(
+        target=_run_riven_analysis_thread, # Call new analysis thread
+        args=(symlink_root_path_str, original_root_path_str, task_id)
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({'success': True, 'task_id': task_id})
+
+@debug_bp.route('/riven_analysis_progress/<task_id>') # New route
+def riven_analysis_progress_stream(task_id): # New function
+    """SSE endpoint for tracking Riven analysis progress."""
+    def generate():
+        while True:
+            if task_id not in riven_analysis_progress: # Use new global
+                progress = {'status': 'error', 'message': 'RIVEN: Task not found or expired', 'complete': True}
+                yield f"data: {json.dumps(progress)}\n\n"
+                break
+                
+            progress = riven_analysis_progress[task_id] # Use new global
+            yield f"data: {json.dumps(progress)}\n\n"
+            
+            if progress.get('complete', False):
+                break
+                
+            time.sleep(1)
+            
+    return Response(stream_with_context(generate()), mimetype='text/event-stream')
+
+@debug_bp.route('/perform_riven_recovery', methods=['POST']) # New route
+@admin_required
+def perform_riven_recovery(): # New function
+    """Recovers all items found during a specific Riven analysis task by reading from its recovery file."""
+    from database import add_media_item
+    # Ensure create_symlink is available
+    from utilities.local_library_scan import create_symlink
+
+    data = request.get_json()
+    task_id = data.get('task_id')
+
+    if not task_id:
+        return jsonify({'success': False, 'error': 'RIVEN: Missing task_id.'}), 400
+
+    if task_id not in riven_analysis_progress or not riven_analysis_progress[task_id].get('complete'): # Use new global
+        return jsonify({'success': False, 'error': f'RIVEN: Analysis task {task_id} not found or not complete.'}), 404
+
+    analysis_result = riven_analysis_progress[task_id] # Use new global
+    recovery_file_path = analysis_result.get('recovery_file_path')
+    expected_items = analysis_result.get('items_found', 0)
+
+    if not recovery_file_path:
+        if expected_items == 0:
+             return jsonify({'success': True, 'message': 'RIVEN: Analysis found no items to recover.', 'successful_recoveries': 0, 'failed_recoveries': 0}), 200
+        else:
+            return jsonify({'success': False, 'error': f'RIVEN: Recovery file path not found for completed task {task_id}. Analysis might have failed partially?'}), 404
+
+    if not os.path.exists(recovery_file_path):
+         return jsonify({'success': False, 'error': f'RIVEN: Recovery file not found at {recovery_file_path}. It might have been deleted or analysis failed.'}), 404
+
+    recovery_file = None
+    successful_recoveries = 0
+    failed_recoveries = 0
+    errors = []
+
+    try:
+        recovery_file = open(recovery_file_path, 'r', encoding='utf-8')
+        logging.info(f"RIVEN: Starting recovery from file: {recovery_file_path} for task {task_id}")
+
+        for line_num, line in enumerate(recovery_file):
+            item_data = None
+            try:
+                line = line.strip()
+                if not line: continue
+
+                item_data = json.loads(line)
+                now_iso = datetime.now().isoformat()
+
+                # Paths for DB entry and symlink creation
+                original_source_file = item_data.get('original_path_for_symlink')
+                newly_calculated_symlink_dest = item_data.get('newly_calculated_symlink_path')
+
+                if not original_source_file or not newly_calculated_symlink_dest:
+                    failed_recoveries += 1
+                    error_msg = f"RIVEN: Skipped recovery for item on line {line_num + 1} due to missing original_path or newly_calculated_symlink_path."
+                    errors.append(error_msg)
+                    logging.warning(error_msg)
+                    continue
+
+                db_item_for_insert = {
+                    'imdb_id': item_data.get('imdb_id'),
+                    'tmdb_id': item_data.get('tmdb_id'),
+                    'title': item_data.get('title'),
+                    'year': item_data.get('year'),
+                    'release_date': item_data.get('release_date'),
+                    'state': 'Collected',
+                    'type': item_data.get('media_type'),
+                    'season_number': item_data.get('season_number'),
+                    'episode_number': item_data.get('episode_number'),
+                    'episode_title': item_data.get('episode_title'),
+                    'collected_at': now_iso,
+                    'original_collected_at': now_iso,
+                    'original_path_for_symlink': original_source_file, # Store the true original
+                    'version': item_data.get('version', 'Default'),
+                    'filled_by_file': item_data.get('original_filename'), # Original filename
+                    'metadata_updated': now_iso,
+                    'wake_count': 0,
+                    'location_on_disk': newly_calculated_symlink_dest # The new symlink path
+                }
+                db_item_filtered = {k: v for k, v in db_item_for_insert.items() if v is not None}
+
+                if not db_item_filtered.get('imdb_id') or not db_item_filtered.get('type'):
+                    raise ValueError(f"Missing essential data (imdb_id or type) after filtering")
+
+                try:
+                    item_id = add_media_item(db_item_filtered)
+                    if item_id:
+                        # --- Create the new symlink ---
+                        try:
+                            symlink_created_successfully = create_symlink(
+                                original_source_file, 
+                                newly_calculated_symlink_dest, 
+                                media_item_id=item_id, # Pass media_item_id for verification queue
+                                skip_verification=True # Or False if you want immediate verification
+                            )
+                            if symlink_created_successfully:
+                                successful_recoveries += 1
+                                logging.info(f"RIVEN: Successfully created DB entry (ID: {item_id}) and symlink for: {newly_calculated_symlink_dest}")
+                            else:
+                                # Symlink creation failed, this is a partial failure for this item
+                                failed_recoveries += 1
+                                error_msg = f"RIVEN: DB entry created (ID: {item_id}) but FAILED to create symlink from '{original_source_file}' to '{newly_calculated_symlink_dest}'."
+                                errors.append(error_msg)
+                                logging.error(error_msg)
+                                # Consider if the DB entry should be rolled back or marked differently.
+                                # For now, it's a failed recovery.
+                        except Exception as e_sym_create:
+                            failed_recoveries += 1
+                            error_msg = f"RIVEN: DB entry created (ID: {item_id}) but EXCEPTION during symlink creation for '{newly_calculated_symlink_dest}': {e_sym_create}"
+                            errors.append(error_msg)
+                            logging.error(error_msg, exc_info=True)
+                        # --- End symlink creation ---
+                    else:
+                        # add_media_item returning None or False (not an ID)
+                        failed_recoveries += 1 # Count as a failed recovery
+                        item_desc = f"item on line {line_num + 1} (Path: {item_data.get('scanned_path', 'Unknown')}, Original: {original_source_file})"
+                        error_msg = f"RIVEN: Failed to add DB entry for {item_desc} (add_media_item returned no ID)."
+                        errors.append(error_msg)
+                        logging.error(error_msg)
+                except sqlite3.IntegrityError:
+                     failed_recoveries += 1
+                     item_desc = f"item on line {line_num + 1} (Path: {item_data.get('scanned_path', 'Unknown')})"
+                     error_msg = f"RIVEN: Skipped recovery for {item_desc}: Item likely already exists in DB (UNIQUE constraint violation)."
+                     errors.append(error_msg)
+                     logging.warning(error_msg)
+
+            except json.JSONDecodeError as json_err:
+                 failed_recoveries += 1
+                 error_msg = f"RIVEN: Failed to parse JSON on line {line_num + 1}: {json_err}"
+                 errors.append(error_msg)
+                 logging.error(error_msg)
+            except ValueError as val_err:
+                failed_recoveries += 1
+                item_desc = f"item on line {line_num + 1} (Path: {item_data.get('symlink_path', 'Unknown') if item_data else 'Unknown'})"
+                error_msg = f"RIVEN: Validation error for {item_desc}: {val_err}"
+                errors.append(error_msg)
+                logging.error(error_msg)
+            except Exception as e:
+                failed_recoveries += 1
+                item_desc = f"item on line {line_num + 1} (Path: {item_data.get('symlink_path', 'Unknown') if item_data else 'Unknown'})"
+                error_msg = f"RIVEN: Failed to recover {item_desc}: {str(e)}"
+                errors.append(error_msg)
+                logging.error(error_msg, exc_info=True)
+
+        logging.info(f"RIVEN: Recovery processing complete for task {task_id}. Total successful: {successful_recoveries}, Failed/Skipped: {failed_recoveries}")
+
+    except Exception as outer_err:
+        error_msg = f"RIVEN: Error during recovery process: {str(outer_err)}"
+        errors.append(error_msg)
+        logging.error(error_msg, exc_info=True)
+        failed_recoveries = expected_items - successful_recoveries
+    finally:
+        if recovery_file:
+            try:
+                recovery_file.close()
+            except Exception as close_err:
+                 logging.error(f"RIVEN: Error closing recovery file {recovery_file_path}: {close_err}")
+        
+        if recovery_file_path and os.path.exists(recovery_file_path) and not errors:
+            try:
+                os.remove(recovery_file_path)
+                logging.info(f"RIVEN: Successfully deleted recovery file: {recovery_file_path}")
+            except Exception as del_err:
+                logging.error(f"RIVEN: Failed to delete recovery file {recovery_file_path}: {del_err}")
+                errors.append(f"Note: RIVEN: Failed to automatically delete recovery file {os.path.basename(recovery_file_path)}. Please delete it manually.")
+        elif errors:
+             logging.warning(f"RIVEN: Recovery file {recovery_file_path} was not deleted due to errors during the recovery process.")
+             errors.append(f"Note: RIVEN: Recovery file {os.path.basename(recovery_file_path)} was kept due to errors. Please review and delete it manually.")
+
+    return jsonify({
+        'success': failed_recoveries == 0,
+        'successful_recoveries': successful_recoveries,
+        'failed_recoveries': failed_recoveries,
+        'errors': errors
+    })
+
+# --- End Riven Symlink Recovery Routes ---
+# --- Symlink Path Modification ---

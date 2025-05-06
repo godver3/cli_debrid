@@ -611,6 +611,7 @@ class TorrentProcessor:
                     info['title'] = torrent_title or result.get('title', '')
                     info['original_scraped_torrent_title'] = result.get('original_title')
                     info['downloading'] = not is_cached
+                    logging.debug(f"[{item_identifier}] [Result {idx}/{len(results)}] Full torrent info response: {info}")
                     if len(info.get('files', [])) > 0:
                         if item and 'magnet' in result:
                             result_magnet = result['magnet']

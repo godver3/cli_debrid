@@ -126,6 +126,9 @@ def request_content():
         if media_type == 'tv' and selected_seasons:
             wanted_item['requested_seasons'] = selected_seasons
             
+        # Add the versions to the wanted_item
+        wanted_item['versions'] = versions
+            
         # Process metadata
         processed_items = process_metadata([wanted_item])
         if not processed_items:

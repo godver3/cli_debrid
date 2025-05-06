@@ -204,8 +204,14 @@ def filter_results(
                 if 'complete' in original_title.lower():
                     #logging.debug("Complete series pack detected")
                     season_episode_info['season_pack'] = 'Complete'
-                    season_episode_info['seasons'] = list(season_episode_counts.keys())
-                    season_episode_info['episodes'] = list(range(1, max(season_episode_counts.values()) + 1))
+                    if season_episode_counts: # Check if the dictionary is not empty
+                        season_episode_info['seasons'] = list(season_episode_counts.keys())
+                        season_episode_info['episodes'] = list(range(1, max(season_episode_counts.values()) + 1))
+                    else:
+                        # If season_episode_counts is empty, we can't determine seasons or max episodes
+                        season_episode_info['seasons'] = []
+                        season_episode_info['episodes'] = []
+                        # logging.debug("Complete pack detected but season_episode_counts is empty. Setting seasons/episodes to empty.")
                     result['parsed_info']['season_episode_info'] = season_episode_info
                 
                 if multi:

@@ -2190,7 +2190,7 @@ class ProgramRunner:
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version FROM media_items WHERE state = "Checking"').fetchall()
+            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title FROM media_items WHERE state = "Checking"').fetchall()
         except sqlite3.Error as db_err:
             logging.error(f"Database error fetching items for Plex check: {db_err}")
             conn.close()
@@ -2220,41 +2220,55 @@ class ProgramRunner:
                 item_id = item_dict['id']
                 filled_by_title = item_dict['filled_by_title']
                 filled_by_file = item_dict['filled_by_file']
+                # --- START: Ensure new field is fetched ---
+                original_scraped_torrent_title = item_dict.get('original_scraped_torrent_title', '')
+                real_debrid_original_title = item_dict.get('real_debrid_original_title', '')
+                # --- END: Ensure new field is fetched ---
 
-                if not filled_by_title or not filled_by_file:
+                if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
                     logging.debug(f"Item {item_id} missing filled_by_title or filled_by_file. Skipping.")
                     continue
 
                 # --- Get potential folder names ---
-                filled_by_title = item_dict['filled_by_title']
-                original_torrent_title = item_dict.get('original_scraped_torrent_title', '') # Use .get() for safety
+                # filled_by_title already fetched
+                # original_torrent_title already fetched (as original_scraped_torrent_title)
                 current_filename = item_dict['filled_by_file']
 
                 # --- Construct potential paths in order of priority ---
                 paths_to_check = []
                 base_path = plex_file_location # Base path to check within
 
-                # 1. Original Torrent Title (raw)
-                if original_torrent_title:
-                    paths_to_check.append(os.path.join(base_path, original_torrent_title, current_filename))
+                # 1. Original Scraped Torrent Title (raw)
+                if original_scraped_torrent_title:
+                    paths_to_check.append(os.path.join(base_path, original_scraped_torrent_title, current_filename))
 
-                # 2. Original Torrent Title (trimmed)
-                if original_torrent_title:
-                    original_torrent_title_trimmed = os.path.splitext(original_torrent_title)[0]
-                    if original_torrent_title_trimmed != original_torrent_title:
-                        paths_to_check.append(os.path.join(base_path, original_torrent_title_trimmed, current_filename))
+                # 2. Original Scraped Torrent Title (trimmed)
+                if original_scraped_torrent_title:
+                    original_scraped_torrent_title_trimmed = os.path.splitext(original_scraped_torrent_title)[0]
+                    if original_scraped_torrent_title_trimmed != original_scraped_torrent_title:
+                        paths_to_check.append(os.path.join(base_path, original_scraped_torrent_title_trimmed, current_filename))
+                
+                # 3. Real Debrid Original Title (raw) (NEW)
+                if real_debrid_original_title:
+                    paths_to_check.append(os.path.join(base_path, real_debrid_original_title, current_filename))
 
-                # 3. Filled By Title (raw)
+                # 4. Real Debrid Original Title (trimmed) (NEW)
+                if real_debrid_original_title:
+                    real_debrid_original_title_trimmed = os.path.splitext(real_debrid_original_title)[0]
+                    if real_debrid_original_title_trimmed != real_debrid_original_title:
+                        paths_to_check.append(os.path.join(base_path, real_debrid_original_title_trimmed, current_filename))
+
+                # 5. Filled By Title (raw)
                 if filled_by_title:
                     paths_to_check.append(os.path.join(base_path, filled_by_title, current_filename))
 
-                # 4. Filled By Title (trimmed)
+                # 6. Filled By Title (trimmed)
                 if filled_by_title:
                     filled_by_title_trimmed = os.path.splitext(filled_by_title)[0]
                     if filled_by_title_trimmed != filled_by_title:
                         paths_to_check.append(os.path.join(base_path, filled_by_title_trimmed, current_filename))
 
-                # 5. Direct path under base
+                # 7. Direct path under base
                 paths_to_check.append(os.path.join(base_path, current_filename))
 
                 # --- Check paths in order ---
@@ -2421,8 +2435,12 @@ class ProgramRunner:
                 item_id = item_dict['id']
                 filled_by_title = item_dict['filled_by_title']
                 filled_by_file = item_dict['filled_by_file']
+                # --- START: Ensure new field is fetched ---
+                original_scraped_torrent_title = item_dict.get('original_scraped_torrent_title', '')
+                real_debrid_original_title = item_dict.get('real_debrid_original_title', '')
+                # --- END: Ensure new field is fetched ---
 
-                if not filled_by_title or not filled_by_file:
+                if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
                     logging.debug(f"Item {item_id} missing filled_by_title or filled_by_file. Skipping Plex scan trigger check.")
                     continue
 
@@ -2436,15 +2454,28 @@ class ProgramRunner:
                 # Check if the file exists on disk (remains the same)
                 file_found_on_disk = False
                 actual_file_path = None
-                if os.path.exists(file_path):
-                    file_found_on_disk = True
-                    actual_file_path = file_path
-                elif os.path.exists(file_path_no_ext):
-                    file_found_on_disk = True
-                    actual_file_path = file_path_no_ext
-                elif os.path.exists(file_path_direct):
-                    file_found_on_disk = True
-                    actual_file_path = file_path_direct
+                found_path_type_log = "None"
+                folder_name_for_plex_scan = filled_by_title # Default folder name for scan
+
+                log_checked_paths = []
+                for p_info in [
+                    {'path': file_path, 'type': 'direct', 'source_title': None},
+                    {'path': file_path_no_ext, 'type': 'no_ext', 'source_title': title_without_ext},
+                    {'path': file_path_direct, 'type': 'direct', 'source_title': None}
+                ]:
+                    log_checked_paths.append(p_info['path'])
+                    if os.path.exists(p_info['path']):
+                        file_found_on_disk = True
+                        actual_file_path = p_info['path']
+                        found_path_type_log = p_info['type']
+                        if p_info['source_title']: # If found in a subfolder based on a title
+                            folder_name_for_plex_scan = p_info['source_title']
+                        else: # If found directly (e.g. type 'direct')
+                            folder_name_for_plex_scan = None # Indicates direct file, scan path will be section location itself
+                        logging.info(f"Plex Check (checks enabled): Found file for item {item_id} at: {actual_file_path} (Type: {found_path_type_log}, Folder for scan: '{folder_name_for_plex_scan}')")
+                        break
+                
+                # --- END: Expand path checking for "checks enabled" mode ---
 
                 should_trigger_scan = False
                 if file_found_on_disk:
@@ -2488,9 +2519,12 @@ class ProgramRunner:
                         logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
                         for location in section.locations:
                             # Construct the path Plex *should* see for this item within this location
-                            # Assumes the item folder name is `filled_by_title`
-                            constructed_plex_path = os.path.join(location, filled_by_title)
-                            logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}'")
+                            # Assumes the item folder name is `filled_by_title` (now `folder_name_for_plex_scan`)
+                            if folder_name_for_plex_scan:
+                                constructed_plex_path = os.path.join(location, folder_name_for_plex_scan)
+                            else: # File was found directly in plex_file_location
+                                constructed_plex_path = location # Scan the root of the section location
+                            logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}' and determined folder '{folder_name_for_plex_scan}'")
 
                             # Add this section/path combination to our list
                             if section.title not in paths_to_scan_by_section:

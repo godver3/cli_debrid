@@ -555,6 +555,9 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     global trakt_metadata_instance
     global direct_api # Ensure direct_api is accessible
 
+    # Fetch the granular version additions setting
+    enable_granular_version_additions = get_setting('Debug', 'enable_granular_version_additions', False)
+
     movie_imdb_ids_to_fetch = set()
     show_imdb_ids_to_fetch = set()
     items_by_imdb_id = defaultdict(list) # Store original items keyed by potential IMDb ID
@@ -770,16 +773,20 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         # Use pre-fetched DB state
         db_state_info = db_item_states.get(imdb_id, {})
         movie_presence_state = db_state_info.get("movie_state")
+        already_collected_qualities_db_for_imdb_id = db_state_info.get("collected_movie_qualities", set()) 
         existing_episodes_in_db = db_state_info.get("episode_identifiers", set())
         has_requested_episodes_in_db = db_state_info.get("has_requested", False)
 
-        # --- Skip Logic (using pre-fetched data and fetched metadata) ---
-        should_skip = False
+        # --- IMDb ID Level Skip Logic (modified) ---
+        should_skip_this_entire_imdb_id = False
         if media_type == 'movie':
             if movie_presence_state == "Collected":
-                logging.debug(f"Skipping collected movie: {metadata.get('title')} (IMDb: {imdb_id})")
-                skipped_collected_movie += len(original_items_list)
-                should_skip = True
+                if not enable_granular_version_additions:
+                    logging.debug(f"Skipping (non-granular) collected movie: {metadata.get('title')} (IMDb: {imdb_id}) as granular additions are disabled.")
+                    skipped_collected_movie += len(original_items_list) # All items for this IMDb ID are skipped
+                    should_skip_this_entire_imdb_id = True
+                # If enable_granular_version_additions is TRUE, we DON'T skip the entire IMDb ID here.
+                # The check will happen per-item inside the original_items_list loop.
         elif media_type in ['tv', 'show', 'episode']:
              # Check Trakt status *needs* IMDb ID, bulk fetch doesn't guarantee it if conversion failed
             show_status = metadata.get('status', '').lower() # Get status from fetched metadata if available
@@ -809,7 +816,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     if all_metadata_episodes_found_in_db and total_metadata_episodes > 0:
                         logging.debug(f"Skipping ended show '{metadata.get('title')}' (IMDb: {imdb_id}) as all {total_metadata_episodes} known episodes are already present.")
                         skipped_ended_show += len(original_items_list)
-                        should_skip = True
+                        should_skip_this_entire_imdb_id = True
                     else:
                         logging.debug(f"Ended show '{metadata.get('title')}' requires processing (missing episodes or none found in metadata).")
                 else:
@@ -818,16 +825,51 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                  logging.debug(f"Show '{metadata.get('title')}' (IMDb: {imdb_id}) status '{show_status}' (not ended). Proceeding.")
             # else: status unknown, proceed
 
-        if should_skip:
+        if should_skip_this_entire_imdb_id:
             continue # Skip to next IMDb ID
 
         # --- Process each original item associated with this IMDb ID ---
         for item in original_items_list:
              # Make a copy of the potentially updated metadata for this specific item
              item_metadata = metadata.copy()
-             processed_count += 1
+             # item_media_type_lower should be specific to the item
              item_media_type_lower = item.get('media_type', '').lower()
 
+             item_should_be_skipped_due_to_versions = False # Flag to determine if the current item should be skipped
+
+             # Per-item skip/modification logic for granular movie versions
+             if media_type == 'movie' and movie_presence_state == "Collected" and enable_granular_version_additions:
+                original_requested_qualities_for_item = {q for q, wanted in item.get('versions', {}).items() if wanted}
+
+                if not original_requested_qualities_for_item:
+                    # This item doesn't specify a quality, and the movie (any version) is already collected.
+                    logging.debug(f"Granular check: Movie {metadata.get('title')} (IMDb: {imdb_id}) is 'Collected'. Item requests no specific quality. Skipping this item.")
+                    item_should_be_skipped_due_to_versions = True
+                else:
+                    # Determine which of the originally requested qualities are new
+                    qualities_to_actually_process = original_requested_qualities_for_item - already_collected_qualities_db_for_imdb_id
+                    
+                    if not qualities_to_actually_process:
+                        # All qualities originally requested for this item are already collected.
+                        logging.debug(f"Granular check: Movie {metadata.get('title')} (IMDb: {imdb_id}) is 'Collected'. All originally requested qualities ({original_requested_qualities_for_item}) are already in collected set ({already_collected_qualities_db_for_imdb_id}). Skipping this item.")
+                        item_should_be_skipped_due_to_versions = True
+                    else:
+                        # There are some new qualities to process for this item.
+                        # Update the item's 'versions' to only include these new qualities.
+                        if qualities_to_actually_process != original_requested_qualities_for_item:
+                            logging.info(f"Granular check: Movie {metadata.get('title')} (IMDb: {imdb_id}) is 'Collected'. Modifying item's versions. Originally requested: {original_requested_qualities_for_item}. Already collected: {already_collected_qualities_db_for_imdb_id}. Will now process only: {qualities_to_actually_process}.")
+                        
+                        item['versions'] = {q: True for q in qualities_to_actually_process} # Update item's versions
+                        logging.debug(f"Granular check: Proceeding with item for movie {metadata.get('title')} (IMDb: {imdb_id}) with filtered versions: {item['versions']}.")
+                        # The item will proceed with the modified (potentially smaller) set of versions.
+             
+             if item_should_be_skipped_due_to_versions:
+                 skipped_collected_movie += 1 # Increment for this specific skipped item
+                 continue # Skip this item, proceed to the next in original_items_list
+
+             # If not skipped by granular logic (or not applicable), increment processed_count and proceed with try-block.
+             processed_count += 1
+             
              try:
                  # Re-integrate essential fields from original item into metadata copy
                  item_metadata['content_source'] = item.get('content_source')

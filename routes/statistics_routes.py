@@ -16,7 +16,8 @@ import json
 import math
 from functools import wraps
 from debrid.real_debrid.client import RealDebridProvider
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
+import calendar
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
@@ -146,6 +147,51 @@ def get_upcoming_releases():
     ]
     
     return formatted_results
+
+#@cache_for_seconds(300) # Consider caching if appropriate
+def get_movies_for_calendar():
+    from database import get_db_connection
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Define date range: e.g., 7 days in the past to 28 days in the future
+    # Adjust these timedelta values as needed
+    today = datetime.now().date()
+    start_range_date = today - timedelta(days=7)
+    end_range_date = today + timedelta(days=28)
+    
+    # Query to get movies within the date range, along with their current state.
+    # We group by essential fields to get unique movie releases.
+    # MAX(m.state) is used to get a definitive state if there happen to be multiple entries
+    # for the exact same movie release (which should be rare for type 'movie').
+    query = """
+    SELECT 
+        m.title, 
+        m.release_date, 
+        m.tmdb_id, 
+        m.imdb_id,
+        COALESCE(MAX(m.state), 'Unknown') as state 
+    FROM media_items m
+    WHERE m.type = 'movie' 
+      AND m.release_date BETWEEN ? AND ?
+    GROUP BY m.title, m.release_date, m.tmdb_id, m.imdb_id
+    ORDER BY m.release_date ASC, m.title ASC
+    """
+    
+    cursor.execute(query, (start_range_date.isoformat(), end_range_date.isoformat()))
+    results = cursor.fetchall()
+    conn.close()
+    
+    movies_data = []
+    for title, release_date_str, tmdb_id, imdb_id, state in results:
+        movies_data.append({
+            'title': title,
+            'release_date': release_date_str, # This is a string 'YYYY-MM-DD'
+            'tmdb_id': tmdb_id,
+            'imdb_id': imdb_id,
+            'state': state # Current state from DB
+        })
+    return movies_data
 
 #@cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
 def get_recently_aired_and_airing_soon():
@@ -1214,3 +1260,181 @@ def get_library_size_api():
              size_str = calculation_error # Return server error if cache fails
 
     return jsonify({'total_library_size': size_str})
+
+@statistics_bp.route('/calendar')
+@user_required
+@onboarding_required
+def calendar_view():
+    events: List[Dict[str, Any]] = []
+    use_24hour_format = get_setting('UI Settings', 'use_24hour_format', True)
+    compact_view = get_setting('UI Settings', 'compact_view', False)
+
+    from metadata.metadata import _get_local_timezone
+    local_tz = _get_local_timezone()
+    now_aware = datetime.now(local_tz) # Timezone-aware current time
+    today_date = now_aware.date()
+
+    # 1. Get TV Show Data
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+
+    for item in recently_aired + airing_soon:
+        event_date = item['air_datetime'].date()
+        time_str = item['air_datetime'].strftime("%H:%M" if use_24hour_format else "%I:%M %p")
+        if not use_24hour_format and time_str.startswith("0"):
+            time_str = time_str[1:]
+
+        events.append({
+            'date': event_date,
+            'time': time_str,
+            'title': item['title'],
+            'type': 'tv_show',
+            'display_status': item.get('display_status', 'uncollected').lower().replace(' ', '_'),
+            'imdb_id': item.get('imdb_id'),
+            'tmdb_id': item.get('tmdb_id'),
+            'sort_datetime': item['air_datetime']
+        })
+
+    # 2. Get Movies (Recently Premiered and Upcoming)
+    calendar_movies = get_movies_for_calendar()
+
+    for movie in calendar_movies:
+        try:
+            release_date_str = movie['release_date']
+            if not isinstance(release_date_str, str):
+                release_date_str = release_date_str.isoformat()
+
+            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+        except (ValueError, TypeError) as e:
+            logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
+            continue
+
+        naive_movie_datetime = datetime.combine(release_date_obj, datetime.min.time())
+        aware_movie_datetime = local_tz.localize(naive_movie_datetime) if hasattr(local_tz, 'localize') and naive_movie_datetime.tzinfo is None else naive_movie_datetime.replace(tzinfo=local_tz)
+
+        movie_state = movie.get('state', 'Unknown').lower()
+        display_status = movie_state
+
+        if release_date_obj < today_date:
+            if movie_state in ['wanted', 'searching', 'unknown', 'not_collected']:
+                display_status = 'premiered_uncollected'
+            elif movie_state == 'collected':
+                display_status = 'collected'
+            elif movie_state == 'upgrading':
+                display_status = 'upgrading'
+            elif movie_state == 'checking':
+                 display_status = 'checking_upgrade'
+        elif release_date_obj >= today_date:
+            if movie_state in ['wanted', 'searching', 'unknown', 'not_collected']:
+                 display_status = 'upcoming_uncollected'
+            elif movie_state == 'collected':
+                 display_status = 'upcoming_collected'
+            else:
+                 display_status = 'upcoming'
+
+        events.append({
+            'date': release_date_obj,
+            'time': None,
+            'title': movie['title'],
+            'type': 'movie',
+            'display_status': display_status.replace(' ', '_'),
+            'imdb_id': movie.get('imdb_id'),
+            'tmdb_id': movie.get('tmdb_id'),
+            'sort_datetime': aware_movie_datetime
+        })
+
+    # 3. Sort all events
+    events.sort(key=lambda x: x['sort_datetime'])
+
+    # --- NEW: Determine Date Range for Calendar Grid ---
+    if not events:
+        # Default to current month if no events
+        min_event_date_for_grid = today_date
+        max_event_date_for_grid = today_date
+    else:
+        all_event_dates = [e['date'] for e in events]
+        min_event_date_for_grid = min(all_event_dates)
+        max_event_date_for_grid = max(all_event_dates)
+
+    # --- NEW: Data for Calendar Grid (potentially multiple months) ---
+    cal = calendar.Calendar()
+    displayed_calendar_months = []
+    # Start from the first day of the month of the min_event_date
+    current_iter_date = min_event_date_for_grid.replace(day=1)
+
+    # Ensure we don't create an excessive number of month grids if data spans very far
+    # Also handle the case where min_event_date_for_grid might be after max_event_date_for_grid if events list was empty and defaults were used.
+    # The loop condition `current_iter_date <= max_event_date_for_grid` naturally handles the default case (shows current month).
+    
+    month_count = 0
+    max_months_to_display = 12 # Safety limit for the number of months
+
+    while current_iter_date.year < max_event_date_for_grid.year or \
+          (current_iter_date.year == max_event_date_for_grid.year and current_iter_date.month <= max_event_date_for_grid.month):
+        if month_count >= max_months_to_display:
+            logging.warning(f"Calendar view: Exceeded maximum of {max_months_to_display} months to display. Stopping.")
+            break
+
+        year = current_iter_date.year
+        month = current_iter_date.month
+
+        month_days_data = cal.monthdatescalendar(year, month)
+        month_name_str = datetime(year, month, 1).strftime("%B %Y")
+
+        displayed_calendar_months.append({
+            'name': month_name_str,
+            'month_days_in_weeks': month_days_data,
+            'month_number': month,
+            'year_number': year
+        })
+
+        month_count += 1
+        # Advance to the next month
+        if month == 12:
+            current_iter_date = current_iter_date.replace(year=year + 1, month=1)
+        else:
+            current_iter_date = current_iter_date.replace(month=month + 1)
+    # --- END NEW Grid Data Preparation ---
+
+    # 4. Group events by date (this `grouped_events` will be used by both grid and timeline)
+    grouped_events: Dict[str, List[Dict[str, Any]]] = {}
+    for event in events:
+        date_str = event['date'].isoformat()
+        if date_str not in grouped_events:
+            day_name = event['date'].strftime("%A")
+            month_day_str = event['date'].strftime("%B %d") # For display_str
+            year_str = event['date'].strftime("%Y")
+            
+            # Create display_str for timeline headers
+            display_date_str_for_timeline = ""
+            if event['date'] == today_date:
+                display_date_str_for_timeline = f"Today, {month_day_str}"
+            elif event['date'] == (today_date + timedelta(days=1)):
+                display_date_str_for_timeline = f"Tomorrow, {month_day_str}"
+            elif event['date'] == (today_date - timedelta(days=1)):
+                display_date_str_for_timeline = f"Yesterday, {month_day_str}"
+            else:
+                display_date_str_for_timeline = f"{day_name}, {month_day_str}, {year_str}"
+
+            grouped_events[date_str] = {'display_str_timeline': display_date_str_for_timeline, 'items': []}
+        
+        grouped_events[date_str]['items'].append(event)
+        
+    # sorted_dates_for_timeline is primarily for ordering the timeline section if needed
+    # The grid will iterate through month_days_for_grid and access grouped_events by date_iso_str
+    sorted_dates_for_timeline = sorted(grouped_events.keys())
+
+    return render_template('calendar_view.html',
+                           # NEW Data for Grid Calendar
+                           displayed_calendar_months=displayed_calendar_months,
+                           
+                           today_date=today_date, # Still needed
+                           
+                           # Data for Timeline (and for populating grid cells)
+                           grouped_events=grouped_events,
+                           sorted_dates_for_timeline=sorted_dates_for_timeline,
+                           
+                           # Make timedelta available to the template
+                           timedelta=timedelta,
+                           
+                           use_24hour_format=use_24hour_format,
+                           compact_view=compact_view)

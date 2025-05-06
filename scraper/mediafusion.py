@@ -42,6 +42,10 @@ def scrape_mediafusion_instance(instance: str, settings: Dict[str, Any], imdb_id
         return []
 
 def construct_url(base_url: str, imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
+    logging.info(f"Constructing MediaFusion URL for {imdb_id} with content_type: {content_type}, season: {season}, episode: {episode}")
+    if season is not None and episode is None:
+        logging.info(f"Multi-episode mode detected. Setting episode to 1 for {imdb_id}")
+        episode = 1
     if content_type == "movie":
         return f"{base_url}stream/movie/{imdb_id}.json"
     elif content_type == "episode" and season is not None and episode is not None:

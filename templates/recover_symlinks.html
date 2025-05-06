@@ -205,6 +205,23 @@
         let currentTaskId = null;
         let totalItemsFound = 0;
 
+        // Determine which set of URLs to use based on recovery_type
+        const recoveryType = "{{ recovery_type or 'standard' }}"; // Default to 'standard' if not provided
+        let analyzeUrl, progressUrlTemplate, recoverUrl;
+
+        if (recoveryType === 'riven') {
+            analyzeUrl = '{{ url_for("debug.analyze_riven_symlinks") }}';
+            progressUrlTemplate = '{{ url_for("debug.riven_analysis_progress_stream", task_id="TASK_ID_PLACEHOLDER") }}';
+            recoverUrl = '{{ url_for("debug.perform_riven_recovery") }}';
+            document.querySelector('.symlink-recovery h2').textContent = 'Riven Symlink Library Recovery'; // Update title
+            document.querySelector('.symlink-recovery .description').textContent = 'This tool attempts to scan your Riven symlink directory, parse filenames, and recreate database entries. This will use your current symlink settings.'; // Update description
+        } else {
+            analyzeUrl = '{{ url_for("debug.analyze_symlinks") }}';
+            progressUrlTemplate = '{{ url_for("debug.analysis_progress_stream", task_id="TASK_ID_PLACEHOLDER") }}';
+            recoverUrl = '{{ url_for("debug.perform_recovery") }}';
+            // Standard title and description are already set by default in the HTML
+        }
+
         analyzeForm.addEventListener('submit', function(e) {
             e.preventDefault();
             analyzeButton.disabled = true;
@@ -223,7 +240,7 @@
 
             const formData = new FormData(analyzeForm);
 
-            fetch('{{ url_for("debug.analyze_symlinks") }}', {
+            fetch(analyzeUrl, { // Use dynamic analyzeUrl
                 method: 'POST',
                 body: formData
             })
@@ -261,7 +278,7 @@
         });
 
         function startListeningForProgress(taskId) {
-            const progressUrl = `{{ url_for("debug.analysis_progress_stream", task_id="TASK_ID_PLACEHOLDER") }}`.replace("TASK_ID_PLACEHOLDER", taskId);
+            const progressUrl = progressUrlTemplate.replace("TASK_ID_PLACEHOLDER", taskId); // Use dynamic progressUrlTemplate
             console.log("Connecting to SSE:", progressUrl);
             eventSource = new EventSource(progressUrl);
 
@@ -352,7 +369,7 @@
                 title: 'Confirm Recovery',
                 onConfirm: () => {
                     Loading.show('Recovering selected items...');
-                    fetch('{{ url_for("debug.perform_recovery") }}', {
+                    fetch(recoverUrl, { // Use dynamic recoverUrl
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
