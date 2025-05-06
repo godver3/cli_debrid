@@ -216,6 +216,9 @@ def migrate_schema():
         if 'final_check_add_timestamp' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN final_check_add_timestamp TIMESTAMP')
             logging.info("Successfully added final_check_add_timestamp column to media_items table.")
+        if 'real_debrid_original_title' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN real_debrid_original_title TEXT')
+            logging.info("Successfully added real_debrid_original_title column to media_items table.")
 
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
@@ -401,7 +404,8 @@ def create_tables():
                 upgrading_from_version TEXT,
                 no_early_release BOOLEAN DEFAULT FALSE,
                 current_score REAL DEFAULT 0,
-                final_check_add_timestamp TIMESTAMP
+                final_check_add_timestamp TIMESTAMP,
+                real_debrid_original_title TEXT
             )
         ''')
 

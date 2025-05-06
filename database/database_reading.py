@@ -579,6 +579,7 @@ def get_media_item_ids(imdb_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         A dictionary where keys are the input IMDb IDs and values are dictionaries
         containing:
         - 'movie_state': State of the movie item ('Collected', 'Wanted', etc.), or None if no movie found.
+        - 'collected_movie_qualities': A set of version strings for collected movies (e.g., {'1080p', '2160p'}).
         - 'episode_identifiers': A set of (season_number, episode_number) tuples for existing episodes.
         - 'has_requested': Boolean indicating if any episode for this show has requested_season=TRUE.
     """
@@ -589,6 +590,7 @@ def get_media_item_ids(imdb_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     results = {
         imdb_id: {
             "movie_state": None,
+            "collected_movie_qualities": set(),
             "episode_identifiers": set(),
             "has_requested": False
         }
@@ -604,7 +606,8 @@ def get_media_item_ids(imdb_ids: List[str]) -> Dict[str, Dict[str, Any]]:
                 state,
                 season_number,
                 episode_number,
-                requested_season
+                requested_season,
+                version 
             FROM media_items
             WHERE imdb_id IN ({placeholders})
         '''
@@ -618,10 +621,13 @@ def get_media_item_ids(imdb_ids: List[str]) -> Dict[str, Dict[str, Any]]:
             if imdb_id_from_row in results:
                 item_type = row['type']
                 state = row['state']
+                version = row['version']
                 
                 if item_type == 'movie':
                     # Store the movie state (last one wins if multiple movie rows exist for same ID, though unlikely)
                     results[imdb_id_from_row]['movie_state'] = state
+                    if state == 'Collected' and version:
+                        results[imdb_id_from_row]['collected_movie_qualities'].add(version)
                 elif item_type == 'episode':
                     season_num = row['season_number']
                     episode_num = row['episode_number']

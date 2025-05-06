@@ -341,7 +341,8 @@ class AddingQueue:
                 update_data = {
                     'current_score': current_score,
                     'original_scraped_torrent_title': original_scraped_torrent_title,
-                    'resolution': resolution
+                    'resolution': resolution,
+                    'real_debrid_original_title': torrent_info.get('original_filename')
                 }
                 logging.info(f"Updating item {item_id} with score and details: {update_data}")
                 update_media_item(item['id'], **update_data)

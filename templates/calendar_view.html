@@ -1,0 +1,131 @@
+{% extends "base.html" %}  {# Or your actual base template #}
+
+{% block title %}Event Calendar{% endblock %}
+
+{% block head_content %}
+{{ super() }}
+{# Link to your main CSS file that will contain calendar styles #}
+{# <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar_view.css') }}"> #}
+{# For now, styles are in base.css or added directly below in a <style> tag for this example #}
+{% endblock %}
+
+{% block content %}
+<div class="container calendar-page-container">
+
+    <!-- New Calendar Grid View -->
+    {% if displayed_calendar_months %}
+        {% for calendar_data in displayed_calendar_months %}
+            <div class="calendar-grid-section"> {# This section now repeats for each month in the range #}
+                <div class="calendar-grid-header">
+                    <h2>{{ calendar_data.name }}</h2> {# Display name of the current month in the loop #}
+                    {# Placeholder for Prev/Next month buttons - context might change if we show multiple months #}
+                    {# <div class="calendar-nav"> <button>&lt; Prev</button> <button>Next &gt;</button> </div> #}
+                </div>
+                <table class="calendar-grid">
+                    <thead>
+                        <tr>
+                            <th>Mon</th>
+                            <th>Tue</th>
+                            <th>Wed</th>
+                            <th>Thu</th>
+                            <th>Fri</th>
+                            <th>Sat</th>
+                            <th>Sun</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for week_of_dates in calendar_data.month_days_in_weeks %} {# Use weeks from current month_data #}
+                        <tr>
+                            {% for day_date_obj in week_of_dates %}
+                                {% set day_iso_str = day_date_obj.isoformat() %}
+                                {# Check if the day is in the month being currently displayed by this grid #}
+                                {% set is_in_displayed_month = day_date_obj.month == calendar_data.month_number %}
+                                {% set td_classes = [] %}
+                                {% if day_date_obj == today_date %}
+                                    {% set td_classes = td_classes + ["is-today"] %}
+                                {% endif %}
+                                {% if not is_in_displayed_month %}
+                                    {% set td_classes = td_classes + ["other-month"] %}
+                                {% endif %}
+                                
+                                <td class="{{ td_classes | join(' ') }}">
+                                    <div class="day-number">{{ day_date_obj.day }}</div>
+                                    {# Show events if the day belongs to the displayed month and has events #}
+                                    {% if is_in_displayed_month and grouped_events.get(day_iso_str) and grouped_events[day_iso_str]['items'] %}
+                                        <ul class="grid-event-list">
+                                            {% for event in grouped_events[day_iso_str]['items'] | sort(attribute='sort_datetime') %}
+                                                {# Limit to a few events per cell for brevity in grid #}
+                                                {% if loop.index <= 3 %} 
+                                                <li class="grid-event-item event-type-{{ event.type }}"
+                                                    title="{{ event.title }} - {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %}">
+                                                    {{ event.title | truncate(20, True) }}
+                                                </li>
+                                                {% elif loop.index == 4 %}
+                                                <li class="grid-event-item more-events">...</li>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </ul>
+                                    {% endif %}
+                                </td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endfor %}
+    {% else %}
+        {# Fallback if no calendar months were generated (e.g., an issue or no data and default also failed) #}
+        <div class="calendar-grid-section">
+             <div class="calendar-grid-header">
+                <h2>Calendar</h2>
+            </div>
+            <p style="text-align: center; padding: 20px;">No event data available to display in the calendar grid.</p>
+        </div>
+    {% endif %}
+
+    <!-- Existing Timeline View (modified to use new variable names) -->
+    <div class="calendar-timeline-section">
+        <h2 class="timeline-header">Media Schedule</h2>
+
+        {% if not sorted_dates_for_timeline %}
+            <p class="no-timeline-events">No events found for the timeline view.</p>
+        {% else %}
+            {% for date_iso_str in sorted_dates_for_timeline %}
+                {% set group = grouped_events[date_iso_str] %}
+                {# Ensure group['items'] exists and is not empty before accessing [0] #}
+                {% if group['items'] %} 
+                    {% set current_event_date_obj = group['items'][0].date %} {# Use ['items'] to access the list #}
+                    
+                    {# Example filter for timeline: Show events from 3 days ago up to 28 days in the future #}
+                    {% if (today_date - timedelta(days=3)) <= current_event_date_obj <= (today_date + timedelta(days=28)) %}
+                        <div class="calendar-day-group">
+                            {# Use the display_str_timeline prepared in Python #}
+                            <h3>{{ group.display_str_timeline }}</h3>
+                            <ul class="calendar-event-list">
+                                {% for event in group['items'] %} {# Also use ['items'] here for consistency #}
+                                    <li class="calendar-event event-type-{{ event.type }}">
+                                        <div class="event-time">
+                                            {% if event.time %}
+                                                {{ event.time }}
+                                            {% else %}
+                                                <span class="all-day-indicator">All Day</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="event-details">
+                                            <span class="event-title">{{ event.title }}</span>
+                                            <span class="event-category">
+                                                {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %}
+                                            </span>
+                                        </div>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
