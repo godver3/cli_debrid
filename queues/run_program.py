@@ -82,6 +82,10 @@ from utilities.local_library_scan import check_local_file_for_item # Add local s
 from utilities.rclone_processing import handle_rclone_file # Add this import
 from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
 import json # Added for loading intervals
+# --- START EDIT: Add Debrid imports for library size task ---
+from debrid import get_debrid_provider, ProviderUnavailableError
+from debrid.real_debrid.client import RealDebridProvider
+# --- END EDIT ---
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -235,6 +239,9 @@ class ProgramRunner:
             'task_plex_full_scan': 1800, # Run every hour (Can be adjusted)
             # NEW Load Adjustment Task
             'task_adjust_intervals_for_load': 120, # Run every 2 minutes
+            # --- START EDIT: Add new task for library size refresh ---
+            'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
+            # --- END EDIT ---
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -365,8 +372,10 @@ class ProgramRunner:
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
             'task_precompute_airing_shows', 'task_process_pending_rclone_paths',
-            'task_update_tv_show_status'
-            # Content source tasks will be added later based on their interval
+            'task_update_tv_show_status',
+            # --- START EDIT: Add new task to dynamic intervals ---
+            'task_refresh_library_size_cache',
+            # --- END EDIT ---
         }
         # Add content source tasks with interval > 900s (15 min) to dynamic set
         # This needs to happen *after* content sources are processed, let's refine this later if needed
@@ -422,7 +431,10 @@ class ProgramRunner:
             # NEW Load Adjustment Task
             'task_adjust_intervals_for_load',
             # --- START EDIT: Add 'task_verify_plex_removals' back to default set ---
-            'task_verify_plex_removals'
+            'task_verify_plex_removals',
+            # --- END EDIT ---
+            # --- START EDIT: Enable new library size task by default ---
+            'task_refresh_library_size_cache',
             # --- END EDIT ---
         }
         logging.info("Initialized base enabled tasks.")
@@ -3935,6 +3947,33 @@ class ProgramRunner:
             except Exception as e:
                 logging.error(f"Error rescheduling job '{normalized_name}' with new interval: {e}", exc_info=True)
                 return False
+    # --- END EDIT ---
+
+    # --- START EDIT: Modified task for library size cache refresh (now fully synchronous structure) ---
+    def task_refresh_library_size_cache(self):
+        """Scheduled task to refresh the Debrid library size cache."""
+        logging.info("Initiating scheduled library size cache refresh task.")
+        try:
+            provider = get_debrid_provider()
+            if isinstance(provider, RealDebridProvider):
+                logging.info("Background task: Refreshing library size cache via Debrid provider...")
+                # The provider's get_total_library_size is async, so we run it in a new event loop.
+                # This call is expected to fetch the size and update the cache file itself.
+                calculated_size = asyncio.run(provider.get_total_library_size())
+                if calculated_size is not None and not str(calculated_size).startswith("Error"):
+                    logging.info(f"Background task: Library size cache refresh successful. Provider reported size: {calculated_size}")
+                else:
+                    logging.warning(f"Background task: Library size cache refresh via provider failed or returned error. Result: {calculated_size}")
+            else:
+                logging.info("Background task: Library size cache refresh skipped (provider is not RealDebrid or not configured).")
+        except ProviderUnavailableError:
+            logging.warning("Background task: Debrid provider unavailable during library size cache refresh.")
+        except RuntimeError as e_runtime:
+            # This might happen if asyncio.run() is called from an already running loop,
+            # though less likely with BackgroundScheduler's default thread-based execution.
+             logging.error(f"Background task: Runtime error during library size cache refresh: {e_runtime}", exc_info=True)
+        except Exception as e:
+            logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
     # --- END EDIT ---
 
 def process_overseerr_webhook(data):
