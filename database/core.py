@@ -12,6 +12,7 @@ from datetime import datetime
 
 # --- Constants ---
 MAX_STORED_NOTIFICATIONS = 50 # Define max notifications to keep in DB
+DEFAULT_LONG_EXECUTION_THRESHOLD_SECONDS = 1.0 # Define a default threshold
 
 # --- String Normalization ---
 def normalize_string(input_str):
@@ -25,27 +26,90 @@ def row_to_dict(row: Row) -> Dict[str, Any]:
     return {key: row[key] for key in row.keys()}
 
 # --- Retry Decorator --- Moved UP ---
-def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
+def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2,
+                     long_execution_threshold_seconds=DEFAULT_LONG_EXECUTION_THRESHOLD_SECONDS):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            attempt = 0
+            overall_start_time = time.monotonic()
+            attempt = 0 # Number of failed attempts so far
+            last_exception = None
+
             while attempt < max_attempts:
                 try:
-                    return func(*args, **kwargs)
+                    result = func(*args, **kwargs)
+                    # Successful execution
+                    overall_end_time = time.monotonic()
+                    duration = overall_end_time - overall_start_time
+                    if duration > long_execution_threshold_seconds:
+                        logging.warning(
+                            f"Function {func.__name__} executed successfully but took {duration:.3f}s "
+                            f"(threshold: {long_execution_threshold_seconds:.1f}s). "
+                            f"This may indicate a long-running transaction or operation."
+                        )
+                    return result
                 except sqlite3.OperationalError as e:
-                    if "database is locked" in str(e) and attempt < max_attempts - 1:
-                        attempt += 1
-                        # Apply jitter: Add a small random delay to the backoff
-                        wait_time = initial_wait * (backoff_factor ** attempt) + random.uniform(0, 0.1 * (backoff_factor ** attempt))
-                        logging.warning(f"Database locked executing {func.__name__}. Retrying in {wait_time:.2f} seconds... (Attempt {attempt + 1}/{max_attempts})")
-                        time.sleep(wait_time)
+                    last_exception = e
+                    if "database is locked" in str(e):
+                        # Check if we have retries left.
+                        # attempt is 0-indexed count of failures. So, if attempt = max_attempts - 1, all retries are exhausted.
+                        if attempt < max_attempts - 1:
+                            current_failed_attempt_count = attempt + 1
+                            # For the 1st retry (current_failed_attempt_count=1), power is 1.
+                            base_wait = initial_wait * (backoff_factor ** current_failed_attempt_count)
+                            jitter = random.uniform(0, 0.1 * base_wait)
+                            actual_wait_time = base_wait + jitter
+                            
+                            logging.warning(
+                                f"Database locked executing {func.__name__} (attempt {current_failed_attempt_count} of {max_attempts -1} retries). "
+                                f"Retrying in {actual_wait_time:.3f}s..."
+                            )
+                            time.sleep(actual_wait_time)
+                            attempt += 1 # Increment after sleep, before next try
+                        else:
+                            # All retries used up for "database is locked"
+                            attempt += 1 # Reflect this last failed attempt
+                            break # Exit loop to handle final failure
                     else:
-                        logging.error(f"Database error in {func.__name__} not related to lock or retries exhausted: {e}", exc_info=True)
-                        raise # Re-raise the exception if it's not a lock or retries are done
-            # This part should ideally not be reached if the loop finishes without returning or raising
-            logging.error(f"Failed to execute {func.__name__} after {max_attempts} attempts due to persistent database locks.")
-            raise sqlite3.OperationalError(f"Failed to execute {func.__name__} after {max_attempts} attempts due to database locks") # Raise the specific error
+                        # Database error not related to lock
+                        overall_end_time = time.monotonic()
+                        duration = overall_end_time - overall_start_time
+                        logging.error(
+                            f"Database error in {func.__name__} (not a lock): {e}. "
+                            f"Total execution time before this error: {duration:.3f}s.",
+                            exc_info=True
+                        )
+                        raise # Re-raise this specific non-lock operational error
+                except Exception as e: # Catch any other unexpected exception from func
+                    overall_end_time = time.monotonic()
+                    duration = overall_end_time - overall_start_time
+                    logging.error(
+                        f"Unexpected error in {func.__name__}: {e}. "
+                        f"Total execution time before this error: {duration:.3f}s.",
+                        exc_info=True
+                    )
+                    raise # Re-raise unexpected error
+
+            # If loop finishes, it means all attempts failed (most likely due to DB lock if last_exception is set)
+            overall_end_time = time.monotonic()
+            duration = overall_end_time - overall_start_time
+            
+            if last_exception and "database is locked" in str(last_exception):
+                final_message = (
+                    f"Failed to execute {func.__name__} after {max_attempts} attempts ({duration:.3f}s total) "
+                    f"due to persistent database locks. Last error: {last_exception}"
+                )
+                logging.error(final_message)
+                raise last_exception # Re-raise the last "database is locked" error
+            elif last_exception: # Should have been handled by raises inside the loop
+                # This case should ideally not be reached if non-lock errors raise immediately
+                logging.error(f"Failed to execute {func.__name__} after {duration:.3f}s with unhandled error: {last_exception}", exc_info=True)
+                raise last_exception
+            else:
+                # Should not happen if func always runs or raises
+                fallback_message = f"Failed to execute {func.__name__} after {max_attempts} attempts ({duration:.3f}s total), reason unclear."
+                logging.error(fallback_message)
+                raise sqlite3.OperationalError(fallback_message)
         return wrapper
     return decorator
 

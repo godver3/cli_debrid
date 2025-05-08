@@ -710,6 +710,49 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                 else:
                     logging.warning(f"<-- Email notification for {notification_id} FAILED.")
 
+            elif notification_type == 'Telegram':
+                # Add a flag for processed_telegram if you are tracking it
+                # processed_telegram = True 
+                bot_token = notification_config.get('bot_token')
+                chat_id = notification_config.get('chat_id')
+                if not bot_token or not chat_id:
+                    logging.warning(f"Skipping Telegram notification ({notification_id}): bot_token or chat_id is empty")
+                    continue
+
+                logging.info(f"--> Attempting to send Telegram notification for {notification_id}...")
+                try:
+                    send_result = send_telegram_notification(bot_token, chat_id, content)
+                    if send_result:
+                        logging.info(f"<-- Telegram notification for {notification_id} SUCCEEDED.")
+                    else:
+                        logging.warning(f"<-- Telegram notification for {notification_id} FAILED after retries.")
+                except Exception as e: # send_telegram_notification can raise exceptions
+                    logging.error(f"<-- Telegram notification for {notification_id} FAILED with exception: {str(e)}")
+                    send_result = False
+
+            elif notification_type == 'NTFY':
+                # Add a flag for processed_ntfy if you are tracking it
+                # processed_ntfy = True
+                host = notification_config.get('host')
+                api_key = notification_config.get('api_key') # Optional
+                priority = notification_config.get('priority') # Optional
+                topic = notification_config.get('topic')
+
+                if not host or not topic:
+                    logging.warning(f"Skipping NTFY notification ({notification_id}): host or topic is empty")
+                    continue
+
+                logging.info(f"--> Attempting to send NTFY notification for {notification_id}...")
+                try:
+                    # send_ntfy_notification doesn't explicitly return True/False
+                    # but logs success/failure. We'll assume success if no exception.
+                    send_ntfy_notification(host, api_key, priority, topic, content)
+                    logging.info(f"<-- NTFY notification for {notification_id} attempt logged by sender function.")
+                    send_result = True # Assume success if no exception
+                except Exception as e:
+                    logging.error(f"<-- NTFY notification for {notification_id} FAILED with exception: {str(e)}")
+                    send_result = False
+
             # ... other types ...
 
             # If a sender function returned False, update overall status

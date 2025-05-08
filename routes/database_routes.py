@@ -13,17 +13,26 @@ from database.database_reading import get_media_item_by_id
 import os
 from datetime import datetime
 from time import sleep
+import time # Added for caching
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from database.torrent_tracking import get_torrent_history
 from utilities.web_scraper import get_media_meta
-from queues.config_manager import get_content_source_display_names
+from queues.config_manager import get_content_source_display_names, load_config
 from database import update_media_item_state
 # import math # Removed unused import
 database_bp = Blueprint('database', __name__)
 
+# Module-level cache for statistics
+cached_stats_data = None
+stats_cache_timestamp = 0
+STATS_CACHE_DURATION_SECONDS = 60  # Cache statistics for 60 seconds
+
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
+    request_start_time = time.perf_counter() # Start timer for the whole request
+    logging.info(f"Database index route started. Request method: {request.method}, Args: {request.args}")
+    global cached_stats_data, stats_cache_timestamp # Allow modification of module-level cache variables
     # Initialize data dictionary with default values (removed pagination fields)
     data = {
         'items': [],
@@ -52,9 +61,19 @@ def index():
         # Removed 'page', 'per_page', 'total_items', 'total_pages'
     }
 
-    # Get collection counts
-    from database.statistics import get_statistics_summary
-    counts = get_statistics_summary()
+    # Get collection counts (with caching)
+    current_time = time.time()
+    if cached_stats_data and (current_time - stats_cache_timestamp < STATS_CACHE_DURATION_SECONDS):
+        logging.info("Using cached statistics summary.")
+        counts = cached_stats_data
+    else:
+        logging.info("Fetching fresh statistics summary.")
+        from database.statistics import get_statistics_summary
+        counts = get_statistics_summary()
+        cached_stats_data = counts
+        stats_cache_timestamp = current_time
+        logging.info(f"Statistics summary cached for {STATS_CACHE_DURATION_SECONDS} seconds.")
+
     data['stats'] = {
         'total_movies': counts['total_movies'],
         'total_shows': counts['total_shows'],
@@ -340,36 +359,67 @@ def index():
         # Convert items to a list of dictionaries, always including 'id'
         items_dict_list = [dict(zip(query_columns, item)) for item in items]
 
-        # --- BEGIN Replace content_source ID with display name ---
-        if 'content_source' in query_columns:
-            for item_dict in items_dict_list:
-                source_id = item_dict.get('content_source')
-                # Use the map to get the display name, fallback to the ID itself
-                item_dict['content_source'] = content_source_display_map.get(source_id, source_id)
-        # --- END Replace content_source ID with display name ---
-
         # Get unique values for each column for filter dropdowns
+        logging.info("Starting to fetch distinct column values for filters.")
+        time_before_all_distinct_values = time.perf_counter()
         column_values = {}
-        for column in all_columns:
-            # Special handling for content_source: use display map
-            if column == 'content_source':
-                 # We provide the map separately; don't query distinct values
-                 # But we might want to know *which* source IDs are *actually* present
-                 # to only show relevant filter options. Let's query distinct IDs.
+        
+        for column_for_distinct_fetch in all_columns:
+            loop_iteration_start_time = time.perf_counter()
+            if column_for_distinct_fetch == 'content_source':
                 try:
-                    cursor.execute(f"SELECT DISTINCT \"{column}\" FROM media_items WHERE \"{column}\" IS NOT NULL")
+                    cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items WHERE \"{column_for_distinct_fetch}\" IS NOT NULL")
                     distinct_source_ids = [row[0] for row in cursor.fetchall()]
-                    # Store the actual IDs present for the frontend filter logic
-                    column_values[column] = distinct_source_ids
+                    column_values[column_for_distinct_fetch] = distinct_source_ids
+                    logging.info(f"Fetched {len(distinct_source_ids)} distinct values for 'content_source' in {time.perf_counter() - loop_iteration_start_time:.4f}s.")
                 except Exception as e:
-                    logging.error(f"Error fetching distinct content_source IDs: {e}")
-                    column_values[column] = [] # Fallback to empty list
-            elif column in ['state', 'type', 'version']: # Keep existing logic for others
-                cursor.execute(f"SELECT DISTINCT \"{column}\" FROM media_items ORDER BY \"{column}\"") # Quote column names
-                values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
-                column_values[column] = values
+                    logging.error(f"Error fetching distinct content_source IDs for '{column_for_distinct_fetch}': {e}")
+                    column_values[column_for_distinct_fetch] = [] 
+            elif column_for_distinct_fetch == 'state' or column_for_distinct_fetch == 'type': # Removed 'version' from DB query
+                try:
+                    cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items ORDER BY \"{column_for_distinct_fetch}\"")
+                    values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
+                    column_values[column_for_distinct_fetch] = values
+                    logging.info(f"Fetched {len(values)} distinct values for '{column_for_distinct_fetch}' in {time.perf_counter() - loop_iteration_start_time:.4f}s.")
+                except Exception as e:
+                    logging.error(f"Error fetching distinct values for '{column_for_distinct_fetch}': {e}")
+                    column_values[column_for_distinct_fetch] = []
+            
+            elif column_for_distinct_fetch == 'version': # Handle 'version' using DB query
+                version_fetch_start_time = time.perf_counter()
+                try:
+                    # Query distinct versions from the database
+                    # The index on 'version' should make this fast.
+                    cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items")
+                    # Fetchall and handle potential None values from the query itself
+                    db_versions_raw = [row[0] for row in cursor.fetchall()]
+                    
+                    version_list_for_dropdown = []
+                    has_actual_none_or_empty = False
 
-        # Update data dictionary instead of creating new one
+                    for v_name_raw in db_versions_raw:
+                        if v_name_raw is None or v_name_raw == "":
+                            has_actual_none_or_empty = True
+                            continue # Handle "None" option separately after the loop
+                        
+                        # Ensure v_name is treated as a string for appending * and **
+                        v_name = str(v_name_raw) 
+                        version_list_for_dropdown.append(v_name)
+
+                    
+                    if has_actual_none_or_empty:
+                        version_list_for_dropdown.append("None")
+
+                    # Sort the final list
+                    column_values[column_for_distinct_fetch] = sorted(list(set(version_list_for_dropdown)))
+                    logging.info(f"Fetched and generated {len(column_values[column_for_distinct_fetch])} distinct values for 'version' from DB in {time.perf_counter() - version_fetch_start_time:.4f}s.")
+                except Exception as e:
+                    logging.error(f"Error fetching distinct versions from DB: {e}", exc_info=True)
+                    column_values[column_for_distinct_fetch] = ["None"] # Fallback
+
+
+        logging.info(f"Finished fetching all distinct column values in {time.perf_counter() - time_before_all_distinct_values:.4f}s.")
+        
         data.update({
             'items': items_dict_list, # Use the modified list
             'selected_columns': selected_columns,
@@ -384,25 +434,33 @@ def index():
         })
 
         if request.args.get('ajax') == '1':
+            logging.info(f"Database index route finished (AJAX). Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
             return jsonify(data)
         else:
+            logging.info(f"Database index route finished (HTML). Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
             return render_template('database.html', **data)
 
     except sqlite3.Error as e:
         logging.error(f"SQLite error in database route: {str(e)}")
         error_message = f"Database error: {str(e)}"
+        logging.info(f"Database index route finished with SQLite error. Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
+        if request.args.get('ajax') == '1':
+            return jsonify({'error': error_message}), 500
+        else:
+            flash(error_message, "error")
+            return render_template('database.html', **data)
     except Exception as e:
-        logging.error(f"Unexpected error in database route: {str(e)}")
+        logging.error(f"Unexpected error in database route: {str(e)}", exc_info=True) 
         error_message = "An unexpected error occurred. Please try again later."
+        logging.info(f"Database index route finished with unexpected error. Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
+        if request.args.get('ajax') == '1':
+            return jsonify({'error': error_message}), 500
+        else:
+            flash(error_message, "error")
+            return render_template('database.html', **data) 
     finally:
         if conn:
             conn.close()
-
-    if request.args.get('ajax') == '1':
-        return jsonify({'error': error_message}), 500
-    else:
-        flash(error_message, "error")
-        return render_template('database.html', **data)
 
 @database_bp.route('/bulk_queue_action', methods=['POST'])
 def bulk_queue_action():

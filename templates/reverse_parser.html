@@ -38,7 +38,6 @@
         </div>
     </div>
     <button type="button" id="applyParsedVersionsButton" class="save-button">Apply Parsed Versions</button>
-    <button type="button" id="saveSettingsButton" class="save-button">Save Settings</button>
     
     <h3>Collected Items</h3>
     <div class="table-container">
@@ -75,6 +74,7 @@
 
 <script type="module">
 import { initializeTooltips, setUpdatingContent } from '/static/js/tooltips.js';
+import { splitRespectingParentheses } from '/static/js/settings.js';
 
 document.addEventListener('DOMContentLoaded', function() {
     console.log("DOMContentLoaded event fired");
@@ -82,7 +82,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // DOM Elements
     const versionTermsContainer = document.getElementById('version-terms-container');
     const defaultVersionSelect = document.getElementById('default-version');
-    const saveSettingsButton = document.getElementById('saveSettingsButton');
     const filterDefaultButton = document.getElementById('filterDefaultButton');
     const applyParsedVersionsButton = document.getElementById('applyParsedVersionsButton');
 
@@ -96,10 +95,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Event Listeners Setup
     function setupEventListeners() {
-        if (saveSettingsButton) {
-            saveSettingsButton.addEventListener('click', handleSaveSettings);
-        }
-
         if (filterDefaultButton) {
             filterDefaultButton.addEventListener('click', handleFilterDefault);
         }
@@ -110,16 +105,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Event Handlers
-    function handleSaveSettings() {
-        if (typeof updateSettings === 'function') {
-            updateSettings().then(() => {
-                updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
-            });
-        } else {
-            console.error('updateSettings function not found. Make sure it is exported from settings.js');
-        }
-    }
-
     function handleFilterDefault() {
         isFilteringDefault = !isFilteringDefault;
         console.log("Filtering default:", isFilteringDefault);
@@ -219,6 +204,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         sibling.style.transition = '';
                         updateMoveButtons();
                         updateDefaultVersionOptions();
+                        updateVersionSettings();
                     }, 0);
                 }, 300);
             }, 300);
@@ -269,14 +255,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const versionOrder = [];
         document.querySelectorAll('.version-terms-input').forEach(div => {
             const version = div.getAttribute('data-version');
-            const terms = div.querySelector('.version-terms').value.split(',').map(term => term.trim()).filter(Boolean);
+            const termsValue = div.querySelector('.version-terms').value;
+            const terms = splitRespectingParentheses(termsValue).filter(Boolean);
             versionSettings[version] = terms;
             versionOrder.push(version);
         });
 
         const defaultVersion = document.getElementById('default-version').value;
 
-        const settings = {
+        const settingsToUpdate = {
             'Reverse Parser': {
                 version_terms: versionSettings,
                 version_order: versionOrder,
@@ -289,18 +276,18 @@ document.addEventListener('DOMContentLoaded', function() {
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(settings)
+            body: JSON.stringify(settingsToUpdate)
         }).then(response => response.json())
         .then(data => {
             if (data.status === 'success') {
-                console.log('Settings updated:', data);
+                console.log('Reverse Parser settings updated via dedicated updateVersionSettings:', data);
                 // Optionally, show a success message to the user
             } else {
-                console.error('Error updating settings:', data.message);
+                console.error('Error updating Reverse Parser settings:', data.message);
                 // Optionally, show an error message to the user
             }
         }).catch(error => {
-            console.error('Error updating settings:', error);
+            console.error('Error updating Reverse Parser settings:', error);
             // Optionally, show an error message to the user
         });
     }
@@ -463,5 +450,4 @@ document.addEventListener('DOMContentLoaded', function() {
     }  
 });
 </script>
-<script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 {% endblock %}

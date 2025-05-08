@@ -104,10 +104,18 @@ class ProgramRunner:
         self._initialized = True
         self.running = False
         self.initializing = False
-        self.pause_reason = None  # Track why the queue is paused
-        self.connectivity_failure_time = None  # Track when connectivity failed
-        self.connectivity_retry_count = 0  # Track number of retries
-        self.queue_paused = False # Initialize the pause state flag
+        # --- START EDIT: Use pause_info instead of pause_reason ---
+        self.pause_info = {
+            "reason_string": None,
+            "error_type": None,  # e.g., "CONNECTION_ERROR", "UNAUTHORIZED", "SYSTEM_SCHEDULED", "RATE_LIMIT", "DB_HEALTH"
+            "service_name": None, # e.g., "Real-Debrid API", "Plex", "System"
+            "status_code": None,  # HTTP status code if applicable
+            "retry_count": 0
+        }
+        # --- END EDIT ---
+        self.connectivity_failure_time = None
+        self.connectivity_retry_count = 0 # This will now primarily be for logging/timing, actual count in pause_info
+        self.queue_paused = False
         
         # Add a queue for pending rclone paths (using deque for efficiency)
         self.pending_rclone_paths = deque() 
@@ -266,11 +274,13 @@ class ProgramRunner:
                     logging.debug(f"Normalized task name: '{normalized_name}'")
                     # --- END EDIT ---
 
-                    # Check if this task exists in our defaults
-                    if normalized_name in self.task_intervals:
+                    # Check if this task exists in our task_intervals (which start as defaults)
+                    if normalized_name in self.task_intervals: # Check against task_intervals
                         # --- START EDIT: Log default interval ---
-                        default_interval = self.task_intervals[normalized_name]
-                        logging.debug(f"Task '{normalized_name}' exists. Default interval: {default_interval}s")
+                        # default_interval here refers to the current value in self.task_intervals,
+                        # which might have already been set by a previous custom rule if keys overlap, or is the hardcoded default.
+                        current_effective_interval = self.task_intervals[normalized_name]
+                        logging.debug(f"Task '{normalized_name}' exists. Current effective interval: {current_effective_interval}s")
                         # --- END EDIT ---
 
                         if interval_seconds_val is not None: # Ignore None values (means reset)
@@ -281,30 +291,57 @@ class ProgramRunner:
                                 logging.debug(f"Parsed custom interval for '{normalized_name}' as {interval_sec_int} seconds.")
                                 # --- END EDIT ---
 
-                                # Use the minimum interval defined elsewhere (e.g., 10 seconds)
                                 MIN_INTERVAL_SECONDS = 10 # Define or import this constant
                                 if interval_sec_int >= MIN_INTERVAL_SECONDS:
                                     # --- START EDIT: Log comparison ---
-                                    logging.debug(f"Comparing default ({default_interval}s) with custom ({interval_sec_int}s) for '{normalized_name}'")
+                                    # Compare with current effective, not original_task_intervals necessarily
+                                    logging.debug(f"Comparing current effective ({current_effective_interval}s) with custom ({interval_sec_int}s) for '{normalized_name}'")
                                     # --- END EDIT ---
-                                    if default_interval != interval_sec_int:
+                                    if current_effective_interval != interval_sec_int: # Apply if different
                                         # --- START EDIT: Log application ---
-                                        logging.info(f"Applying custom interval for '{normalized_name}': {interval_sec_int} seconds (Previous: {default_interval}s)")
+                                        logging.info(f"Applying custom interval to '{normalized_name}': {interval_sec_int} seconds (Previous effective: {current_effective_interval}s)")
                                         # --- END EDIT ---
-                                        self.task_intervals[normalized_name] = interval_sec_int
+                                        self.task_intervals[normalized_name] = interval_sec_int # MODIFIES task_intervals ONLY
                                         custom_intervals_applied += 1
                                     else:
                                         # --- START EDIT: Log skipping ---
-                                        logging.debug(f"Custom interval ({interval_sec_int}s) for '{normalized_name}' matches default ({default_interval}s). Skipping update.")
+                                        logging.debug(f"Custom interval ({interval_sec_int}s) for '{normalized_name}' matches current effective ({current_effective_interval}s). Skipping update.")
                                         # --- END EDIT ---
                                 else:
                                     logging.warning(f"Skipping invalid custom interval for '{normalized_name}': {interval_sec_int}s (must be >= {MIN_INTERVAL_SECONDS} seconds).")
                             except (ValueError, TypeError) as parse_e:
                                 logging.warning(f"Skipping invalid custom interval format for '{normalized_name}': {interval_seconds_val}. Error: {parse_e}")
                         else:
-                             logging.debug(f"Custom interval for '{normalized_name}' is None. Will use default.")
+                             # Custom interval is None, reset to original default for this task
+                             if normalized_name in self.original_task_intervals:
+                                 original_default = self.original_task_intervals[normalized_name]
+                                 if self.task_intervals.get(normalized_name) != original_default:
+                                     logging.info(f"Resetting custom interval for '{normalized_name}' to its original default: {original_default}s.")
+                                     self.task_intervals[normalized_name] = original_default
+                                     custom_intervals_applied += 1 # Count as an applied change
+                                 else:
+                                     logging.debug(f"Custom interval for '{normalized_name}' is None, and it already matches original default. No change.")
+                             else:
+                                 logging.warning(f"Custom interval for '{normalized_name}' is None, but no original default found. Cannot reset.")
                     else:
-                        logging.warning(f"Custom interval found for task '{normalized_name}' but task is not defined in default intervals. Ignoring.")
+                        # Task from custom file is not in our initial defaults. Add it to task_intervals
+                        # but NOT to original_task_intervals.
+                        if interval_seconds_val is not None:
+                            try:
+                                interval_sec_int = int(interval_seconds_val)
+                                MIN_INTERVAL_SECONDS = 10
+                                if interval_sec_int >= MIN_INTERVAL_SECONDS:
+                                    logging.info(f"Custom interval for new task '{normalized_name}' found: {interval_sec_int}s. Adding to effective intervals.")
+                                    self.task_intervals[normalized_name] = interval_sec_int
+                                    # DO NOT ADD TO self.original_task_intervals
+                                    custom_intervals_applied += 1
+                                else:
+                                    logging.warning(f"Skipping invalid custom interval for new task '{normalized_name}': {interval_sec_int}s.")
+                            except (ValueError, TypeError) as parse_e:
+                                logging.warning(f"Skipping invalid custom interval format for new task '{normalized_name}': {interval_seconds_val}. Error: {parse_e}")
+                        else:
+                            logging.debug(f"Custom interval for new task '{normalized_name}' is None. Ignoring.")
+
 
             else:
                 logging.info("No custom task_intervals.json found, using default intervals.")
@@ -313,7 +350,7 @@ class ProgramRunner:
             logging.error(f"Error loading custom task intervals{log_path_str}: {e}", exc_info=True)
 
         if custom_intervals_applied > 0:
-             logging.info(f"Applied {custom_intervals_applied} custom task intervals.")
+             logging.info(f"Applied {custom_intervals_applied} custom task intervals to effective set.")
         # --- END EDIT ---
 
         # --- START EDIT: Define constants for dynamic interval adjustment ---
@@ -430,7 +467,7 @@ class ProgramRunner:
 
         # 3. Get Content Sources (populates intervals AND updates enabled_tasks based on source settings)
         logging.info("Populating content source intervals and updating enabled tasks based on source settings...")
-        self.get_content_sources(force_refresh=True) # This populates intervals and toggles sources
+        self.get_content_sources(force_refresh=True) # This populates task_intervals and toggles sources
         logging.info("Content source processing complete.")
 
         # 4. Apply remaining get_setting() checks for specific tasks
@@ -537,8 +574,8 @@ class ProgramRunner:
         # --- END REVERT ---
 
         # 6. Finalize original task intervals *after* content sources potentially added intervals
-        self.original_task_intervals = self.task_intervals.copy()
-        logging.info("Finalized original task intervals after all task definitions and settings.")
+        # self.original_task_intervals = self.task_intervals.copy() # REMOVE THIS LINE
+        logging.info("Finalized original task intervals after all task definitions and settings.") # Comment becomes slightly less accurate but fine
 
         # --- END: Task Enabling Logic Reorder ---
 
@@ -867,7 +904,7 @@ class ProgramRunner:
                 'My Friends Trakt Watchlist': 900
             }
             
-            log_intervals_message = ["Content source intervals:"] # Prepare log message
+            log_intervals_message = ["Content source intervals being applied to effective set:"] # Prepare log message
             
             for source, data in self.content_sources.items():
                 if isinstance(data, str):
@@ -931,74 +968,124 @@ class ProgramRunner:
             logging.error("Service connectivity check failed")
             self.handle_connectivity_failure(failed_services)
 
-    def handle_connectivity_failure(self, failed_services=None):
-        from routes.program_operation_routes import stop_program, check_service_connectivity
-        from routes.extensions import app  # Import the Flask app
+    def handle_connectivity_failure(self, failed_services_details=None): # MODIFIED: expects detailed list
+        from routes.program_operation_routes import check_service_connectivity # Keep this for potential re-check logic
+        from routes.extensions import app
 
-        # Create a descriptive message about which services failed
-        if failed_services and len(failed_services) > 0:
-            failed_services_str = ", ".join(failed_services)
-            reason = f"Connectivity failure - {failed_services_str} unavailable"
-        else:
-            reason = "Connectivity failure - waiting for services to be available"
-            
-        logging.warning(f"Pausing program queue due to connectivity failure: {reason}")
-        self.pause_reason = reason
-        self.pause_queue()
+        current_pause_info = {
+            "reason_string": "Connectivity failure - waiting for services to be available",
+            "error_type": "CONNECTION_ERROR", # Generic default
+            "service_name": "Multiple Services", # Generic default
+            "status_code": None,
+            "retry_count": 0 # Initial failure
+        }
+
+        if failed_services_details and len(failed_services_details) > 0:
+            # Construct a detailed reason string
+            reason_parts = []
+            primary_error_set = False
+            for detail in failed_services_details:
+                service = detail.get("service", "Unknown Service")
+                message = detail.get("message", "unavailable")
+                reason_parts.append(f"{service}: {message}")
+
+                # Set the primary error based on the first critical issue found
+                # Prioritize Debrid Unauthorized/Forbidden
+                if not primary_error_set:
+                    error_type = detail.get("type", "CONNECTION_ERROR")
+                    if "Debrid" in service and error_type in ["UNAUTHORIZED", "FORBIDDEN"]:
+                        current_pause_info["error_type"] = error_type
+                        current_pause_info["status_code"] = detail.get("status_code")
+                        current_pause_info["service_name"] = service
+                        primary_error_set = True
+                    elif not primary_error_set and error_type == "CONNECTION_ERROR": # Catch first connection error
+                        current_pause_info["error_type"] = "CONNECTION_ERROR"
+                        current_pause_info["status_code"] = detail.get("status_code")
+                        current_pause_info["service_name"] = service
+                        # Don't set primary_error_set = True here, to allow critical errors to override
+
+            current_pause_info["reason_string"] = "Connectivity failure - " + "; ".join(reason_parts)
+            if not primary_error_set and failed_services_details: # If no specific critical error, use the first service
+                 current_pause_info["service_name"] = failed_services_details[0].get("service", "Unknown Service")
+
+
+        logging.warning(f"Pausing program queue due to connectivity failure: {current_pause_info['reason_string']}")
+        # --- START EDIT: Update self.pause_info ---
+        self.pause_info = current_pause_info
+        # --- END EDIT ---
+        self.pause_queue() 
         
-        # Set the initial failure time if not already set
         if not self.connectivity_failure_time:
             self.connectivity_failure_time = time.time()
-            self.connectivity_retry_count = 0
+            self.connectivity_retry_count = 0 # Reset legacy retry counter
 
     def check_connectivity_status(self):
-        """Check connectivity status during normal program cycle"""
-        from routes.program_operation_routes import stop_program, check_service_connectivity
+        from routes.program_operation_routes import check_service_connectivity
         from routes.extensions import app
 
         if not self.connectivity_failure_time:
-            return
+            return 
             
-        # Check if we should retry connectivity check
+        # Use the legacy self.connectivity_retry_count for retry timing logic
         time_since_failure = time.time() - self.connectivity_failure_time
         if time_since_failure >= 60 * (self.connectivity_retry_count + 1):
-            self.connectivity_retry_count += 1
+            self.connectivity_retry_count += 1 # Increment legacy counter for timing
             
             try:
-                connectivity_ok, failed_services = check_service_connectivity()
+                connectivity_ok, failed_services_details = check_service_connectivity()
                 if connectivity_ok:
                     logging.info("Service connectivity restored")
                     self.connectivity_failure_time = None
                     self.connectivity_retry_count = 0
+                    # --- START EDIT: Clear pause_info on resume ---
+                    self.pause_info = {
+                        "reason_string": None, "error_type": None, "service_name": None,
+                        "status_code": None, "retry_count": 0
+                    }
+                    # --- END EDIT ---
                     self.resume_queue()
                     return
             except Exception as e:
                 logging.error(f"Error checking service connectivity: {str(e)}")
-                
-            # --- START EDIT: Remove the stop condition ---
-            # Log the retry count without stopping
-            logging.warning(f"Service connectivity check failed. Retry attempt {self.connectivity_retry_count}")
-            # --- END EDIT ---
-            if failed_services and len(failed_services) > 0:
-                failed_services_str = ", ".join(failed_services)
-                # --- START EDIT: Update pause reason without retry limit ---
-                self.pause_reason = f"Connectivity failure - {failed_services_str} unavailable (Retry attempt {self.connectivity_retry_count})"
-                # --- END EDIT ---
-            else:
-                # --- START EDIT: Update pause reason without retry limit ---
-                self.pause_reason = f"Connectivity failure - waiting for services to be available (Retry attempt {self.connectivity_retry_count})"
-                # --- END EDIT ---
+            
+            logging.warning(f"Service connectivity check failed. Overall retry attempt {self.connectivity_retry_count}")
 
-            # --- START EDIT: Remove the block that stops the program after 5 retries ---
-            # # After 5 minutes (5 retries), stop the program
-            # if self.connectivity_retry_count >= 5:
-            #     logging.error("Service connectivity not restored after 5 minutes. Stopping the program.")
-            #     with app.app_context():
-            #         stop_result = stop_program()
-            #         logging.info(f"Program stop result: {stop_result}")
-            #     self.connectivity_failure_time = None
-            #     self.connectivity_retry_count = 0
+            # --- START EDIT: Update self.pause_info with new details ---
+            updated_pause_info = {
+                "reason_string": f"Connectivity failure - waiting for services (Retry {self.connectivity_retry_count})",
+                "error_type": "CONNECTION_ERROR",
+                "service_name": "Multiple Services",
+                "status_code": None,
+                "retry_count": self.connectivity_retry_count
+            }
+
+            if failed_services_details and len(failed_services_details) > 0:
+                reason_parts = []
+                primary_error_set = False
+                for detail in failed_services_details:
+                    service = detail.get("service", "Unknown Service")
+                    message = detail.get("message", "unavailable")
+                    reason_parts.append(f"{service}: {message}")
+
+                    if not primary_error_set:
+                        error_type = detail.get("type", "CONNECTION_ERROR")
+                        if "Debrid" in service and error_type in ["UNAUTHORIZED", "FORBIDDEN"]:
+                            updated_pause_info["error_type"] = error_type
+                            updated_pause_info["status_code"] = detail.get("status_code")
+                            updated_pause_info["service_name"] = service
+                            primary_error_set = True
+                        elif not primary_error_set and error_type == "CONNECTION_ERROR":
+                             updated_pause_info["error_type"] = "CONNECTION_ERROR"
+                             updated_pause_info["status_code"] = detail.get("status_code")
+                             updated_pause_info["service_name"] = service
+                
+                updated_pause_info["reason_string"] = f"Connectivity failure - {'; '.join(reason_parts)} (Retry {self.connectivity_retry_count})"
+                if not primary_error_set and failed_services_details:
+                    updated_pause_info["service_name"] = failed_services_details[0].get("service", "Unknown Service")
+
+            self.pause_info = updated_pause_info
             # --- END EDIT ---
+            # The old logic to stop the program after 5 retries is already commented out, which is good.
 
     def pause_queue(self):
         # *** START EDIT: Pause ALL running jobs ***
@@ -1035,12 +1122,16 @@ class ProgramRunner:
 
             # Use the existing QueueManager pause state if needed for UI/status
         from queues.queue_manager import QueueManager
-        QueueManager().pause_queue(reason=self.pause_reason) # Keep for status reporting
+        # --- START EDIT: Pass the reason_string to QueueManager's pause ---
+        reason_for_qm = self.pause_info.get("reason_string") if self.pause_info else "Unknown reason"
+        QueueManager().pause_queue(reason=reason_for_qm)
+        # --- END EDIT ---
 
-        self.queue_paused = True # Keep internal flag if used elsewhere
-        # Updated log to reflect pausing *all* running jobs
-        logging.info(f"Queue paused. Attempted to pause all running jobs, newly paused: {paused_count}. Tracked paused jobs: {len(self.paused_jobs_by_queue)}. Reason: {self.pause_reason}")
-        # *** END EDIT ***
+        self.queue_paused = True
+        # --- START EDIT: Log using pause_info ---
+        log_reason = self.pause_info.get('reason_string', 'Unknown') if self.pause_info else 'Unknown'
+        logging.info(f"Queue paused. Attempted to pause all running jobs... Reason: {log_reason}")
+        # --- END EDIT ---
 
     def resume_queue(self):
         # *** START EDIT: Resume logic remains the same, but update log context ***
@@ -1087,13 +1178,16 @@ class ProgramRunner:
 
             # Use the existing QueueManager resume state if needed for UI/status
         from queues.queue_manager import QueueManager
-        QueueManager().resume_queue() # Keep for status reporting
+        QueueManager().resume_queue()
 
-        self.queue_paused = False # Keep internal flag
-        self.pause_reason = None  # Clear pause reason on resume
-        # Updated log to reflect resuming *all* tracked jobs
-        logging.info(f"Queue resumed. Attempted to resume {len(jobs_to_resume)} tracked jobs, successfully resumed: {resumed_count}.")
-        # *** END EDIT ***
+        self.queue_paused = False
+        # --- START EDIT: Clear pause_info ---
+        self.pause_info = {
+            "reason_string": None, "error_type": None, "service_name": None,
+            "status_code": None, "retry_count": 0
+        }
+        # --- END EDIT ---
+        logging.info(f"Queue resumed. Attempted to resume ... tracked jobs...") # Keep existing log details
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
@@ -1103,10 +1197,20 @@ class ProgramRunner:
         
     def process_content_source(self, source, data):
         source_type = source.split('_')[0]
-        versions = data.get('versions', {})
+        versions_from_config = data.get('versions', []) # Default to empty list if missing
         source_media_type = data.get('media_type', 'All')
 
-        logging.debug(f"Processing content source: {source} (type: {source_type}, media_type: {source_media_type})")
+        # Convert versions_from_config to the expected dictionary format
+        if isinstance(versions_from_config, list):
+            versions_dict = {version_name: True for version_name in versions_from_config}
+            logging.debug(f"Converted versions list for {source} to dict: {versions_dict}")
+        elif isinstance(versions_from_config, dict):
+            versions_dict = versions_from_config # Use as is if already a dict
+        else:
+            logging.warning(f"Unexpected format for versions in source {source} (type: {type(versions_from_config)}). Defaulting to empty versions.")
+            versions_dict = {} # Default to empty dict for safety
+
+        logging.debug(f"Processing content source: {source} (type: {source_type}, media_type: {source_media_type}, versions (as dict): {versions_dict})")
 
         try:
             # Load cache for this source
@@ -1118,16 +1222,18 @@ class ProgramRunner:
             media_type_skipped = 0
 
             wanted_content = []
+            # Pass the original versions_from_config to fetchers, assuming they expect list/dict as per config
             if source_type == 'Overseerr':
-                wanted_content = get_wanted_from_overseerr(versions)
+                wanted_content = get_wanted_from_overseerr(versions_from_config)
             elif source_type == 'MDBList':
                 mdblist_urls = data.get('urls', '').split(',')
                 for mdblist_url in mdblist_urls:
                     mdblist_url = mdblist_url.strip()
-                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
+                    if mdblist_url: # Ensure not empty
+                        wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
             elif source_type == 'Trakt Watchlist':
                 try:
-                    wanted_content = get_wanted_from_trakt_watchlist(versions)
+                    wanted_content = get_wanted_from_trakt_watchlist(versions_from_config)
                 except (ValueError, api.exceptions.RequestException) as e:
                     logging.error(f"Failed to fetch Trakt watchlist: {str(e)}")
                     return
@@ -1135,47 +1241,56 @@ class ProgramRunner:
                 trakt_lists = data.get('trakt_lists', '').split(',')
                 for trakt_list in trakt_lists:
                     trakt_list = trakt_list.strip()
-                    try:
-                        wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
-                    except (ValueError, api.exceptions.RequestException) as e:
-                        logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
-                        continue
+                    if trakt_list: # Ensure not empty
+                        try:
+                            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config))
+                        except (ValueError, api.exceptions.RequestException) as e:
+                            logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
+                            continue
             elif source_type == 'Trakt Collection':
-                wanted_content = get_wanted_from_trakt_collection(versions)
+                wanted_content = get_wanted_from_trakt_collection(versions_from_config)
             elif source_type == 'Friends Trakt Watchlist':
-                wanted_content = get_wanted_from_friend_trakt_watchlist(data, versions)
+                # This function takes data (source_config) and versions
+                wanted_content = get_wanted_from_friend_trakt_watchlist(data, versions_from_config)
             elif source_type == 'Collected':
-                wanted_content = get_wanted_from_collected()
+                wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':
                 from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
-                wanted_content = get_wanted_from_plex_watchlist(versions)
+                wanted_content = get_wanted_from_plex_watchlist(versions_from_config)
             elif source_type == 'My Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
-                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions)
+                wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config)
             elif source_type == 'My Friends Plex RSS Watchlist':
                 plex_rss_url = data.get('url', '')
-                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
+                wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
             elif source_type == 'Other Plex Watchlist':
                 # Import the function here
                 from content_checkers.plex_watchlist import get_wanted_from_other_plex_watchlist
                 
                 other_watchlists = []
-                for source_id, source_data in self.get_content_sources().items():
+                # Use self.content_sources which should be populated
+                all_sources = self.get_content_sources() if hasattr(self, 'get_content_sources') else {}
+                for source_id, source_data in all_sources.items():
                     if source_id.startswith('Other Plex Watchlist_') and source_data.get('enabled', False):
+                        # Fetch versions specific to this 'Other' source config
+                        other_source_versions = source_data.get('versions', []) # Default list
                         other_watchlists.append({
                             'username': source_data.get('username', ''),
                             'token': source_data.get('token', ''),
-                            'versions': source_data.get('versions', versions)
+                            'versions': other_source_versions # Pass its specific config
                         })
                 
                 for watchlist in other_watchlists:
                     if watchlist['username'] and watchlist['token']:
                         try:
+                             # Pass the versions specific to this friend's config
                             watchlist_content = get_wanted_from_other_plex_watchlist(
                                 username=watchlist['username'],
                                 token=watchlist['token'],
-                                versions=watchlist['versions']
+                                versions=watchlist['versions'] # Use the versions from the loop
                             )
+                            # Extend the main wanted_content list
+                            # Note: This assumes get_wanted_from_other_plex_watchlist returns the same tuple format
                             wanted_content.extend(watchlist_content)
                         except Exception as e:
                             logging.error(f"Failed to fetch Other Plex watchlist for {watchlist['username']}: {str(e)}")
@@ -1186,28 +1301,45 @@ class ProgramRunner:
 
             if wanted_content:
                 if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
-                    # Handle list of tuples (e.g., from Plex sources)
-                    for items, item_versions in wanted_content:
+                    # Handle list of tuples
+                    for items, item_versions_from_source_tuple in wanted_content:
                         logging.debug(f"Processing batch of {len(items)} items from {source}")
-                        
+
+                        # Convert versions from tuple if necessary
+                        if isinstance(item_versions_from_source_tuple, list):
+                            versions_to_inject = {v: True for v in item_versions_from_source_tuple}
+                        elif isinstance(item_versions_from_source_tuple, dict):
+                            versions_to_inject = item_versions_from_source_tuple
+                        else:
+                            logging.warning(f"Unexpected format for versions in tuple for {source}. Using main source versions dict.")
+                            versions_to_inject = versions_dict # Fallback to the converted source versions
+
                         # Filter items by media type first
                         if source_media_type != 'All' and not source_type.startswith('Collected'):
-                            items = [
+                            items_filtered_type = [
                                 item for item in items
                                 if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
                                    (source_media_type == 'Shows' and item.get('media_type') == 'tv')
                             ]
-                            media_type_skipped += len(items) - len(items)
+                            media_type_skipped += len(items) - len(items_filtered_type)
+                            items = items_filtered_type # Update items
                         
                         # Then filter items based on cache
-                        items_to_process = [
+                        items_to_process_raw = [
                             item for item in items 
                             if should_process_item(item, source, source_cache)
                         ]
-                        items_skipped = len(items) - len(items_to_process)
+                        items_skipped = len(items) - len(items_to_process_raw)
                         cache_skipped += items_skipped
                         
-                        if items_to_process:
+                        if items_to_process_raw:
+                            # Inject CONVERTED versions into each item before metadata processing
+                            items_to_process = []
+                            for item_dict_raw in items_to_process_raw:
+                                item_dict_processed = item_dict_raw.copy()
+                                item_dict_processed['versions'] = versions_to_inject # Use the converted dict
+                                items_to_process.append(item_dict_processed)
+                            
                             from metadata.metadata import process_metadata
                             processed_items = process_metadata(items_to_process)
                             if processed_items:
@@ -1219,11 +1351,12 @@ class ProgramRunner:
                                     item = append_content_source_detail(item, source_type=source_type)
                                 
                                 # Update cache for the original items (pre-metadata processing)
-                                for item in items_to_process:
-                                    update_cache_for_item(item, source, source_cache)
+                                for item_raw in items_to_process_raw:
+                                    update_cache_for_item(item_raw, source, source_cache)
 
                                 from database import add_collected_items, add_wanted_items
-                                add_wanted_items(all_items, item_versions or versions)
+                                # Pass the CONVERTED versions dict to add_wanted_items
+                                add_wanted_items(all_items, versions_to_inject or versions_dict)
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
                 else:
@@ -1232,22 +1365,32 @@ class ProgramRunner:
                     
                     # Filter items by media type first
                     if source_media_type != 'All' and not source_type.startswith('Collected'):
-                        wanted_content = [
+                        wanted_content_filtered_type = [
                             item for item in wanted_content
                             if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
                                (source_media_type == 'Shows' and item.get('media_type') == 'tv')
                         ]
-                        media_type_skipped += len(wanted_content) - len(wanted_content)
+                        media_type_skipped += len(wanted_content) - len(wanted_content_filtered_type)
+                        wanted_content = wanted_content_filtered_type # Update wanted_content after filtering
                     
                     # Then filter items based on cache
-                    items_to_process = [
+                    items_to_process_raw = [
                         item for item in wanted_content 
                         if should_process_item(item, source, source_cache)
                     ]
-                    items_skipped = len(wanted_content) - len(items_to_process)
+                    items_skipped = len(wanted_content) - len(items_to_process_raw)
                     cache_skipped += items_skipped
                     
-                    if items_to_process:
+                    if items_to_process_raw:
+                        # Inject CONVERTED versions into each item before metadata processing
+                        items_to_process = []
+                        for item_dict_raw in items_to_process_raw:
+                            item_dict_processed = item_dict_raw.copy()
+                            # Use the CONVERTED source-level versions_dict here
+                            item_dict_processed['versions'] = versions_dict 
+                            items_to_process.append(item_dict_processed)
+
+                        from metadata.metadata import process_metadata
                         processed_items = process_metadata(items_to_process)
                         if processed_items:
                             all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) + processed_items.get('anime', [])
@@ -1258,11 +1401,12 @@ class ProgramRunner:
                                 item = append_content_source_detail(item, source_type=source_type)
                             
                             # Update cache for the original items (pre-metadata processing)
-                            for item in items_to_process:
-                                update_cache_for_item(item, source, source_cache)
+                            for item_raw in items_to_process_raw:
+                                update_cache_for_item(item_raw, source, source_cache)
 
                             from database import add_collected_items, add_wanted_items
-                            add_wanted_items(all_items, versions)
+                            # Pass the CONVERTED versions_dict to add_wanted_items
+                            add_wanted_items(all_items, versions_dict)
                             total_items += len(all_items)
                             items_processed += len(items_to_process)
                 
@@ -1382,21 +1526,35 @@ class ProgramRunner:
                     # e.g., connectivity checks that might pause/resume scheduler jobs
                     self.check_connectivity_status()
 
-                    # Check scheduled pause (pauses/resumes scheduler jobs)
                     is_scheduled_pause = self._is_within_pause_schedule()
-                    # Use the internal self.queue_paused flag which is set by pause_queue/resume_queue
-                    if is_scheduled_pause and not self.queue_paused:
+                    current_pause_type = self.pause_info.get("error_type") if self.pause_info else None
+
+                    if is_scheduled_pause and not self.queue_paused: # Or if paused for a different, non-schedule reason
                         pause_start = get_setting('Queue', 'pause_start_time', '00:00')
                         pause_end = get_setting('Queue', 'pause_end_time', '00:00')
-                        new_reason = f"Scheduled pause active ({pause_start} - {pause_end})"
-                        # Check if reason needs update (or if already paused for another reason)
-                        if self.pause_reason != new_reason:
-                             self.pause_reason = new_reason
-                             self.pause_queue() # Pauses scheduler jobs
-                             logging.info(f"Queue automatically paused due to schedule: {self.pause_reason}")
-                    elif not is_scheduled_pause and self.queue_paused and self.pause_reason and "Scheduled pause active" in self.pause_reason:
+                        new_reason_string = f"Scheduled pause active ({pause_start} - {pause_end})"
+                        
+                        # --- START EDIT: Update pause_info for scheduled pause ---
+                        self.pause_info = {
+                            "reason_string": new_reason_string,
+                            "error_type": "SYSTEM_SCHEDULED",
+                            "service_name": "System",
+                            "status_code": None,
+                            "retry_count": 0
+                        }
+                        # --- END EDIT ---
+                        self.pause_queue()
+                        logging.info(f"Queue automatically paused due to schedule: {new_reason_string}")
+                    elif not is_scheduled_pause and self.queue_paused and current_pause_type == "SYSTEM_SCHEDULED":
                         logging.info("Scheduled pause period ended. Resuming queue.")
-                        self.resume_queue() # Resumes scheduler jobs
+                        # --- START EDIT: Clear pause_info on resume ---
+                        self.pause_info = {
+                            "reason_string": None, "error_type": None, "service_name": None,
+                            "status_code": None, "retry_count": 0
+                        }
+                        # --- END EDIT ---
+                        self.resume_queue()
+                    # ... (sleep) ...
 
                     # --- START EDIT: Fetch and use main loop sleep setting ---
                     # Main loop sleep
@@ -2049,7 +2207,13 @@ class ProgramRunner:
             )
 
         # Set pause reason for status (though queue might not be fully paused)
-        self.pause_reason = f"Debrid Rate Limit - Resuming tasks around {resume_time.strftime('%H:%M:%S')}"
+        self.pause_info = {
+            "reason_string": f"Debrid Rate Limit - Resuming tasks around {resume_time.strftime('%H:%M:%S')}",
+            "error_type": "RATE_LIMIT",
+            "service_name": "Debrid Service", # Or be more specific if possible
+            "status_code": None, # Typically rate limits are 429, but we might not get it directly here
+            "retry_count": 0 # Not a retry scenario in the same way as connection
+        }
         # Optionally pause the entire queue manager status reporting
         # from queues.queue_manager import QueueManager
         # QueueManager().pause_queue(reason=self.pause_reason)
@@ -2078,12 +2242,13 @@ class ProgramRunner:
 
         logging.info(f"Rate Limit: Resumed {resumed_count} jobs.")
         # Clear the rate limit pause reason and state
-        if self.pause_reason and "Rate Limit" in self.pause_reason:
-             self.pause_reason = None
-             self.queue_paused = False
-             # Optionally resume the entire queue manager status reporting
-             # from queues.queue_manager import QueueManager
-             # QueueManager().resume_queue()
+        if self.pause_info and self.pause_info.get("error_type") == "RATE_LIMIT":
+            self.pause_info = {
+                "reason_string": None, "error_type": None, "service_name": None,
+                "status_code": None, "retry_count": 0
+            }
+            self.queue_paused = False
+        # --- END EDIT ---
 
 
     def task_local_library_scan(self):
@@ -2850,8 +3015,15 @@ class ProgramRunner:
         try:
             if not verify_database_health():
                 logging.error("Database health check failed during periodic check")
-                # Pause the queue if database is corrupted
-                self.pause_reason = "Database corruption detected - check logs for details"
+                # --- START EDIT: Update pause_info for DB health ---
+                self.pause_info = {
+                    "reason_string": "Database corruption detected - check logs for details",
+                    "error_type": "DB_HEALTH",
+                    "service_name": "System Database",
+                    "status_code": None,
+                    "retry_count": 0
+                }
+                # --- END EDIT ---
                 self.pause_queue()
 
                 # Send notification about database corruption

@@ -296,7 +296,13 @@
     }
 </style>
 
-<script>
+<script type="module">
+    // Import necessary functions from tooltips.js
+    import { 
+        addTooltipEventListeners, 
+        initializeTooltips as initializeGlobalTooltips 
+    } from '{{ url_for('static', filename='js/tooltips.js') }}';
+
     let filenameToggleState = localStorage.getItem('filenameToggleState') === 'true' || false;
     let hasReceivedFirstResponse = false;
     let eventSource = null;
@@ -315,6 +321,8 @@
         }
     }
 
+    window.toggleQueue = toggleQueue;
+
     function toggleFilenames(event) {
         event.stopPropagation();
         filenameToggleState = !filenameToggleState;
@@ -323,6 +331,8 @@
         toggle.classList.toggle('active', filenameToggleState);
         updateFilenameVisibility();
     }
+
+    window.toggleFilenames = toggleFilenames;
 
     function updateFilenameVisibility() {
         const filenames = document.querySelectorAll('.filename-content');
@@ -701,7 +711,7 @@
                         let hasContent = false;
                         let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Sleeping', 'Unreleased', 'Blacklisted'];
                         
-                        queueContents.innerHTML = '';
+                        queueContents.innerHTML = ''; // Clear previous content
                         
                         queueOrder.forEach(queueName => {
                             // Check if the queue exists in the data.contents object AND has items
@@ -709,7 +719,14 @@
                                 hasContent = true;
                                 let queueDiv = document.createElement('div');
                                 queueDiv.className = 'queue';
+                                // Generate ID that matches tooltip_schema.json keys (e.g., "queue-box-wanted")
+                                const queueDivId = `queue-box-${queueName.toLowerCase().replace(/ /g, '_')}`;
                                 queueDiv.setAttribute('data-queue-name', queueName);
+                                queueDiv.id = queueDivId; // Set the ID for potential CSS/JS targeting
+                                
+                                // Add data-tooltip attribute for the tooltip system
+                                queueDiv.setAttribute('data-tooltip', `queues.${queueDivId}`);
+                                
                                 let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
                                 
                                 const totalItems = data.queue_counts[queueName];
@@ -726,6 +743,9 @@
                                     </div>
                                 `;
                                 queueContents.appendChild(queueDiv);
+
+                                // Apply tooltip event listeners to the newly created queueDiv
+                                addTooltipEventListeners(queueDiv);
                             }
                         });
 
@@ -734,18 +754,20 @@
                         } else {
                             // Add summary of hidden items if any
                             const hiddenCounts = data.hidden_counts;
-                            if (Object.keys(hiddenCounts).length > 0) {
+                            if (hiddenCounts && Object.keys(hiddenCounts).length > 0) {
                                 let hiddenSummary = document.createElement('div');
                                 hiddenSummary.className = 'hidden-items-summary';
                                 let summaryText = '<h5>Additional Items Not Shown:</h5><ul>';
                                 for (const [queueName, count] of Object.entries(hiddenCounts)) {
                                     if (count > 0) {
-                                        summaryText += `<li>${queueName}: ${count} items</li>`;
+                                        summaryText += `<li>${queueName.replace(/_/g, ' ')}: ${count} items</li>`;
                                     }
                                 }
                                 summaryText += '</ul>';
-                                hiddenSummary.innerHTML = summaryText;
-                                queueContents.appendChild(hiddenSummary);
+                                if (Object.values(hiddenCounts).some(c => c > 0)) { // Only add if there's actually content
+                                    hiddenSummary.innerHTML = summaryText;
+                                    queueContents.appendChild(hiddenSummary);
+                                }
                             }
                         }
                         
@@ -765,21 +787,25 @@
                 let errorDetails = '';
                 try {
                     // Try to identify the problematic character
-                    const errorPosition = parseInt(e.message.match(/column (\d+)/)?.[1]);
+                    const errorPositionMatch = e.message.match(/position (\d+)|column (\d+)/);
+                    const errorPosition = errorPositionMatch ? parseInt(errorPositionMatch[1] || errorPositionMatch[2]) : NaN;
+
                     if (!isNaN(errorPosition)) {
                         const start = Math.max(0, errorPosition - 50);
                         const end = Math.min(event.data.length, errorPosition + 50);
                         const snippet = event.data.substring(start, end);
+                        const charAtError = event.data[errorPosition] || (errorPosition > 0 ? event.data[errorPosition-1] : ''); // Adjust for 0-indexed vs 1-indexed
                         errorDetails = `
                             <div class="error-details">
-                                <p>Error Position: ${errorPosition}</p>
+                                <p>Error Position: ~${errorPosition}</p>
                                 <p>Data snippet around error (± 50 chars):</p>
                                 <pre>${escapeHtml(snippet)}</pre>
-                                <p>Character at error position: "${escapeHtml(event.data[errorPosition-1] || '')}"</p>
+                                <p>Character near error position: "${escapeHtml(charAtError || '')}"</p>
                             </div>
                         `;
                     }
                 } catch (detailError) {
+                    console.error("Error generating detail snippet:", detailError);
                     errorDetails = '<p>Could not extract detailed error information</p>';
                 }
                 
@@ -787,7 +813,7 @@
                 showError(`
                     <div class="parse-error">
                         <h4>JSON Parse Error</h4>
-                        <p>${e.message}</p>
+                        <p>${escapeHtml(e.message)}</p>
                         ${errorDetails}
                     </div>
                 `);
@@ -809,7 +835,7 @@
         errorDiv.innerHTML = message;
         
         // Remove any existing error messages
-        const existingErrors = document.querySelectorAll('.alert-danger');
+        const existingErrors = document.querySelectorAll('.container > .alert-danger');
         existingErrors.forEach(el => el.remove());
         
         // Insert the new error at the top of the container
@@ -818,6 +844,9 @@
     }
 
     function escapeHtml(unsafe) {
+        if (typeof unsafe !== 'string') {
+            return '';
+        }
         return unsafe
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
@@ -881,8 +910,14 @@
         }
     }
 
+    window.copyItemToClipboard = copyItemToClipboard;
+
     // Initial setup
     document.addEventListener('DOMContentLoaded', function() {
+        // Initialize global tooltips (fetches data, sets up static ones if any)
+        initializeGlobalTooltips(); 
+        
+        // Then set up the queue stream which will dynamically add its own tooltips
         setupQueueStream();
     });
 
@@ -893,6 +928,6 @@
         }
     });
 
-    console.log('Queue script loaded and running');
+    console.log('Queue script loaded and running (module mode)');
 </script>
 {% endblock %}

@@ -117,15 +117,20 @@ class ScraperManager:
                         "instance": instance, "settings": settings, "imdb_id": imdb_id,
                         "title": title, "year": year, "content_type": content_type,
                         "season": season, "episode": episode, "multi": multi
+                        # tmdb_id will be added specifically below if needed by the scraper type
                     }
                     # Add specific args only if the scraper accepts them
                     if scraper_type == 'Jackett':
                          common_args["genres"] = genres
-                         common_args["tmdb_id"] = tmdb_id # Assuming Jackett might use this too
+                         common_args["tmdb_id"] = tmdb_id 
                          common_args["is_translated_search"] = is_translated
                     elif scraper_type == 'Prowlarr':
-                         common_args["tmdb_id"] = tmdb_id # Assuming Prowlarr might use this
-                         # Prowlarr function likely doesn't accept is_translated_search directly
+                         common_args["tmdb_id"] = tmdb_id 
+                         # Prowlarr's scrape_prowlarr_instance function signature:
+                         # (instance, settings, imdb_id, title, year, content_type, 
+                         #  season, episode, multi, tmdb_id)
+                         # Most are in common_args. tmdb_id is added here.
+                         # It doesn't take 'genres' or 'is_translated_search'.
                     # Add more elif for other scrapers if they need specific args
 
                     results = self.scrapers[scraper_type](**common_args)

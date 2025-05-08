@@ -18,6 +18,54 @@ from debrid import get_debrid_provider
 from debrid.real_debrid.client import RealDebridProvider
 import time
 
+# NEW ASYNC HELPER FUNCTION
+async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, media_type: str, tmdb_api_key: Optional[str]) -> Optional[Tuple[Optional[str], str, list, float, str]]:
+    """
+    Asynchronously fetches media metadata (details and poster URL) from TMDB.
+    This function is designed to be called in a batch for multiple items.
+    It does not handle caching internally; caching should be done by the caller.
+    Returns a tuple: (poster_url, overview, genres, vote_average, backdrop_path)
+    Poster_url can be None if not found or if an error occurs during its fetch.
+    """
+    if not tmdb_api_key:
+        placeholder_path = "static/images/placeholder.png"
+        return (placeholder_path, "No overview available", [], 0.0, "")
+
+    if media_type == 'tv' or media_type == 'show':
+        details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+    else:
+        details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+    
+    details_data = None
+    try:
+        # Perform synchronous network call in a separate thread
+        details_response = await asyncio.to_thread(api.get, details_url)
+        details_response.raise_for_status()
+        details_data = details_response.json()
+    except Exception as e:
+        logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
+        return None 
+
+    if not details_data:
+        return None
+
+    poster_url_val: Optional[str] = None
+    try:
+        poster_url_val = await get_poster_url(session, tmdb_id, media_type)
+    except Exception as e:
+        logging.error(f"Error fetching poster URL for {media_type} {tmdb_id} via get_poster_url: {e}")
+        # Continue without poster if this specific call fails, poster_url_val remains None
+
+    overview = details_data.get('overview', '')
+    genres = [genre['name'] for genre in details_data.get('genres', [])]
+    vote_average = details_data.get('vote_average', 0)
+    backdrop_path_val = details_data.get('backdrop_path', '')
+    if backdrop_path_val:
+        backdrop_path_val = backdrop_path_val
+
+    return (poster_url_val, overview, genres, vote_average, backdrop_path_val)
+
+
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
     trakt_client_id = get_setting('Trakt', 'client_id')
     tmdb_api_key = get_setting('TMDB', 'api_key')
@@ -33,7 +81,6 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
         'trakt-api-key': trakt_client_id
     }
 
-    # Build search URL for page 1 with a limit of 20
     limit_per_page = 20
     search_url = f"https://api.trakt.tv/search/movie,show?query={api.utils.quote(search_term)}&extended=full&page=1&limit={limit_per_page}"
     if year:
@@ -41,18 +88,16 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
 
     logging.info(f"Querying Trakt API (limit {limit_per_page}): {search_url}")
 
-    # Initialize retry parameters
     max_retries = 3
-    retry_delay = 1  # Initial delay in seconds
+    retry_delay = 1  
     attempt = 0
-    fetched_data = []
+    raw_trakt_results = []
 
     while attempt < max_retries:
         try:
             response = api.get(search_url, headers=headers, timeout=30)
             response.raise_for_status()
             
-            # Check for rate limit headers
             if 'X-RateLimit-Remaining' in response.headers:
                 remaining = int(response.headers['X-RateLimit-Remaining'])
                 if remaining < 5:
@@ -60,28 +105,25 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                     if remaining == 0:
                         reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
                         logging.error(f"Trakt API rate limit exceeded. Reset at timestamp: {reset_time}")
-                        # Return empty if rate limited on the first try
                         return [] 
 
-            # Log pagination info from headers (even though we only fetch one page)
             page_count = response.headers.get('X-Pagination-Page-Count', 'N/A')
             item_count = response.headers.get('X-Pagination-Item-Count', 'N/A')
             logging.info(f"Trakt Headers: Page Count={page_count}, Item Count={item_count}")
 
-            fetched_data = response.json()
+            raw_trakt_results = response.json()
             
-            if fetched_data:
-                logging.info(f"Successfully received {len(fetched_data)} result(s) from Trakt.")
-                break # Exit retry loop on success
+            if raw_trakt_results:
+                logging.info(f"Successfully received {len(raw_trakt_results)} result(s) from Trakt.")
+                break 
             else:
-                # No data found on the first page
                 logging.info(f"No results found for the query.")
-                return [] # Return empty list immediately
+                return [] 
 
         except api.exceptions.RequestException as e:
             attempt += 1
             if attempt < max_retries:
-                wait_time = retry_delay * (2 ** (attempt - 1)) # Exponential backoff
+                wait_time = retry_delay * (2 ** (attempt - 1)) 
                 logging.warning(f"Attempt {attempt} failed. Retrying in {wait_time} seconds. Error: {str(e)}")
                 time.sleep(wait_time)
                 continue
@@ -90,21 +132,18 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 if isinstance(e, api.exceptions.HTTPError):
                     logging.error(f"HTTP Status Code: {e.response.status_code}")
                     logging.error(f"Response Headers: {e.response.headers}")
-                return [] # Return empty on repeated failure
+                return [] 
         except Exception as e:
             logging.error(f"Unexpected error searching Trakt: {str(e)}", exc_info=True)
-            return [] # Return empty on unexpected error
+            return [] 
 
-    # If loop finished without break (e.g., error), fetched_data might be empty
-    if not fetched_data:
+    if not raw_trakt_results:
         logging.warning(f"No results obtained for search term: {search_term}")
         return []
     
-    # --- Process fetched results ---
-    # Sort results using the original multi-criteria logic
-    logging.info(f"Sorting {len(fetched_data)} fetched results...")
+    logging.info(f"Sorting {len(raw_trakt_results)} fetched results...")
     sorted_results = sorted(
-        fetched_data,
+        raw_trakt_results,
         key=lambda x: (
             x['movie' if x['type'] == 'movie' else 'show']['title'].lower() == search_term.lower(),
             (str(x['movie' if x['type'] == 'movie' else 'show']['year']) == str(year) if year else False),
@@ -115,23 +154,81 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     )
     
     logging.info("Top results after sorting:")
-    for result in sorted_results[:20]: # Log top 20 titles after sorting
-        if result['type'] == 'movie':
-            logging.debug(f"  Sorted Result: {result['movie']['title']} (Votes: {result['movie'].get('votes', 0)})")
+    for res_log in sorted_results[:20]: 
+        if res_log['type'] == 'movie':
+            logging.debug(f"  Sorted Result: {res_log['movie']['title']} (Votes: {res_log['movie'].get('votes', 0)})")
         else:
-            logging.debug(f"  Sorted Result: {result['show']['title']} (Votes: {result['show'].get('votes', 0)})")
+            logging.debug(f"  Sorted Result: {res_log['show']['title']} (Votes: {res_log['show'].get('votes', 0)})")
 
-    # Convert Trakt results and include poster paths
+    # --- Batch fetch metadata for cache misses ---
+    all_media_metadata_map: Dict[Tuple[str, str], Optional[Tuple[Optional[str], str, list, float, str]]] = {}
+    items_to_fetch_concurrently = []
+
+    for result_item in sorted_results:
+        media_type = result_item['type']
+        item_details = result_item['movie' if media_type == 'movie' else 'show']
+        tmdb_id = item_details['ids'].get('tmdb')
+
+        if not tmdb_id:
+            continue
+
+        cached_poster = get_cached_poster_url(tmdb_id, media_type)
+        cached_meta = get_cached_media_meta(tmdb_id, media_type)
+
+        if cached_poster and cached_meta:
+            all_media_metadata_map[(str(tmdb_id), media_type)] = cached_meta
+        else:
+            if has_tmdb: # Only fetch if TMDB API key is present
+                items_to_fetch_concurrently.append({'tmdb_id': str(tmdb_id), 'media_type': media_type, 'title': item_details['title']})
+            else: # No TMDB key, use placeholder data directly
+                 placeholder_path = "static/images/placeholder.png"
+                 all_media_metadata_map[(str(tmdb_id), media_type)] = (placeholder_path, "No overview available", [], 0.0, "")
+
+
+    if items_to_fetch_concurrently:
+        logging.info(f"Identified {len(items_to_fetch_concurrently)} items for concurrent metadata fetching.")
+        
+        async def _run_batch_fetch():
+            async with aiohttp.ClientSession() as session:
+                tasks = []
+                for item_to_fetch in items_to_fetch_concurrently:
+                    tasks.append(
+                        _fetch_media_meta_async(
+                            session, 
+                            item_to_fetch['tmdb_id'], 
+                            item_to_fetch['media_type'], 
+                            tmdb_api_key
+                        )
+                    )
+                
+                fetched_results_list = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for i, meta_or_exception in enumerate(fetched_results_list):
+                    item_info = items_to_fetch_concurrently[i]
+                    key = (item_info['tmdb_id'], item_info['media_type'])
+                    
+                    if isinstance(meta_or_exception, Exception):
+                        logging.error(f"Failed to fetch metadata for {item_info['title']} (TMDB ID: {item_info['tmdb_id']}): {meta_or_exception}")
+                        all_media_metadata_map[key] = None # Mark as failed
+                    elif meta_or_exception:
+                        all_media_metadata_map[key] = meta_or_exception
+                        # Cache the successfully fetched data
+                        poster_p = meta_or_exception[0]
+                        if poster_p: # poster_p could be None if get_poster_url failed
+                            cache_poster_url(item_info['tmdb_id'], item_info['media_type'], poster_p)
+                        cache_media_meta(item_info['tmdb_id'], item_info['media_type'], meta_or_exception)
+                        logging.info(f"Fetched and cached metadata for {item_info['media_type']} {item_info['title']} (TMDB ID: {item_info['tmdb_id']})")
+                    else:
+                        all_media_metadata_map[key] = None # Fetch returned None (e.g. details 404)
+                        logging.warning(f"No metadata returned from fetch for {item_info['media_type']} {item_info['title']} (TMDB ID: {item_info['tmdb_id']})")
+        
+        asyncio.run(_run_batch_fetch())
+        logging.info("Finished batch metadata fetching.")
+
+    # --- Process results using cached or newly fetched data ---
     converted_results = []
-    filter_stats = {
-        'total': len(sorted_results), # Use length of sorted results
-        'no_tmdb': 0,
-        'no_poster': 0,
-        'no_year': 0
-    }
-    
+    filter_stats = {'total': len(sorted_results), 'no_tmdb': 0, 'no_poster': 0, 'no_year': 0}
     processed_count = 0
-    # We fetched max 20, so processing limit isn't strictly needed, but keep it high just in case
     results_to_process_limit = 100 
 
     for result in sorted_results:
@@ -141,74 +238,62 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
             
         media_type = result['type']
         item = result['movie' if media_type == 'movie' else 'show']
-        
+        tmdb_id_str = str(item['ids'].get('tmdb'))
+
         if not item['ids'].get('tmdb'):
             filter_stats['no_tmdb'] += 1
             logging.debug(f"No TMDB ID found for {item['title']}")
             continue
 
-        tmdb_id = item['ids']['tmdb']
-        cached_poster_url = get_cached_poster_url(tmdb_id, media_type)
-        cached_media_meta = get_cached_media_meta(tmdb_id, media_type)
+        media_meta_tuple = all_media_metadata_map.get((tmdb_id_str, media_type))
+        current_poster_path: Optional[str] = None
 
-        poster_path = None
-        media_meta = None
-
-        if cached_poster_url and cached_media_meta:
-            poster_path = cached_poster_url
-            media_meta = cached_media_meta
-        else:
-            logging.info(f"Fetching data for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
-            media_meta = get_media_meta(tmdb_id, media_type)
-            if media_meta and media_meta[0]:
-                poster_path = media_meta[0]
-                cache_poster_url(tmdb_id, media_type, poster_path)
-                cache_media_meta(tmdb_id, media_type, media_meta)
-                logging.info(f"Cached poster and metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id})")
-            else:
-                if has_tmdb:
-                    filter_stats['no_poster'] += 1
-                    logging.debug(f"No poster found for {media_type} {item['title']} (TMDB ID: {tmdb_id}) after fetch attempt")
-                    continue
-                else:
-                    poster_path = "static/images/placeholder.png"
-                    media_meta = (poster_path, "No overview available", [], 0.0, "")
+        if media_meta_tuple and media_meta_tuple[0]: # Check if meta exists and poster path (media_meta_tuple[0]) is not None or empty
+            current_poster_path = media_meta_tuple[0]
+        else: # Metadata fetch failed, or was placeholder, or poster path is None
+            if has_tmdb: # If TMDB key exists, failed fetch means no poster.
+                filter_stats['no_poster'] += 1
+                logging.debug(f"No poster/valid metadata for {media_type} {item['title']} (TMDB ID: {tmdb_id_str}) after processing. Meta: {media_meta_tuple}")
+                continue
+            else: # No TMDB key, use placeholder if not already set (it should be)
+                current_poster_path = "static/images/placeholder.png"
+                if not media_meta_tuple: # Ensure media_meta_tuple is the placeholder structure
+                     media_meta_tuple = (current_poster_path, "No overview available", [], 0.0, "")
         
-        if not media_meta or len(media_meta) < 5:
-            logging.warning(f"Incomplete media_meta for {item['title']} ({tmdb_id}). Skipping.")
+        if not media_meta_tuple or len(media_meta_tuple) < 5 : # Should be caught by above, but as a safeguard
+            logging.warning(f"Incomplete media_meta_tuple for {item['title']} ({tmdb_id_str}). Skipping. Meta: {media_meta_tuple}")
             filter_stats['no_poster'] += 1 
             continue
 
         if not item.get('year'):
             filter_stats['no_year'] += 1
-            logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to no year")
+            logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id_str}) due to no year in Trakt data")
             continue
         
-        if has_tmdb and (not poster_path or 'placeholder' in poster_path):
+        # This check might be slightly redundant if the above logic correctly sets current_poster_path or continues
+        if has_tmdb and (not current_poster_path or 'placeholder' in current_poster_path):
              filter_stats['no_poster'] += 1
-             logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id}) due to invalid poster path after processing: {poster_path}")
+             logging.debug(f"Skipping {media_type} {item['title']} (TMDB ID: {tmdb_id_str}) due to invalid/placeholder poster path when TMDB key is set: {current_poster_path}")
              continue
 
         converted_results.append({
             'mediaType': media_type,
-            'id': tmdb_id,
+            'id': tmdb_id_str, # Use tmdb_id_str which is confirmed to be string
             'title': item['title'],
             'year': item['year'],
-            'posterPath': poster_path,
-            'show_overview' if media_type == 'show' else 'overview': media_meta[1],
-            'genres': media_meta[2],
-            'voteAverage': media_meta[3],
-            'backdropPath': media_meta[4],
+            'posterPath': current_poster_path,
+            'show_overview' if media_type == 'show' else 'overview': media_meta_tuple[1],
+            'genres': media_meta_tuple[2],
+            'voteAverage': media_meta_tuple[3],
+            'backdropPath': media_meta_tuple[4],
             'votes': item.get('votes', 0)
         })
         processed_count += 1
 
-    # Limit to top 100 final results (though unlikely needed with limit=20)
     if len(converted_results) > 100:
         logging.info(f"Limiting final results from {len(converted_results)} to 100")
         converted_results = converted_results[:100]
     
-    # Log filtering report
     logging.info("=== Search Results Filtering Report ===")
     logging.info(f"Total raw results fetched from Trakt (limit {limit_per_page}): {filter_stats['total']}")
     logging.info(f"Items processed for metadata/filtering: {processed_count}")
@@ -796,7 +881,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
             torrent_url = None
             
             # Check if this is a Jackett/Prowlarr source (which could be a torrent URL)
-            if magnet_link and ('jackett' in magnet_link.lower() or 'prowlarr' in magnet_link.lower()):
+            source_info = result.get('source', '').lower() # Get the source information
+            if magnet_link and ('jackett' in source_info or 'prowlarr' in source_info): # Check source_info instead of magnet_link
                 # Try to detect if this is a torrent file URL
                 if not magnet_link.startswith('magnet:'):
                     torrent_url = magnet_link

@@ -789,11 +789,11 @@ def get_and_add_wanted_content(source_id):
         return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Source {source_id} not found"}
 
     source_type = source_id.split('_')[0]
-    versions = source_data.get('versions', {})
+    versions_from_config = source_data.get('versions', []) # Default to empty list if missing
     source_media_type = source_data.get('media_type', 'All')
 
     logging.info(f"Processing source: {source_id}")
-    logging.debug(f"Source type: {source_type}, media type: {source_media_type}")
+    logging.debug(f"Source type: {source_type}, media type: {source_media_type}, versions (as dict): {versions_from_config}")
     
     source_cache = load_source_cache(source_id)
     logging.debug(f"Initial cache state for {source_id}: {len(source_cache)} entries")
@@ -805,49 +805,49 @@ def get_and_add_wanted_content(source_id):
     wanted_content = []
     try: # Add try block for source fetching
         if source_type == 'Overseerr':
-            wanted_content = get_wanted_from_overseerr(versions)
+            wanted_content = get_wanted_from_overseerr(versions_from_config)
         elif source_type == 'My Plex Watchlist':
-            wanted_content = get_wanted_from_plex_watchlist(versions)
+            wanted_content = get_wanted_from_plex_watchlist(versions_from_config)
         elif source_type == 'My Plex RSS Watchlist':
             plex_rss_url = source_data.get('url', '')
             if not plex_rss_url:
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
-            wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions)
+            wanted_content = get_wanted_from_plex_rss(plex_rss_url, versions_from_config)
         elif source_type == 'My Friends Plex RSS Watchlist':
             plex_rss_url = source_data.get('url', '')
             if not plex_rss_url:
                 logging.error(f"Missing URL for source: {source_id}")
                 return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Missing URL for {source_id}"}
-            wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions)
+            wanted_content = get_wanted_from_friends_plex_rss(plex_rss_url, versions_from_config)
         elif source_type == 'Other Plex Watchlist':
             wanted_content = get_wanted_from_other_plex_watchlist(
                 username=source_data.get('username', ''),
                 token=source_data.get('token', ''),
-                versions=versions
+                versions=versions_from_config
             )
         elif source_type == 'MDBList':
             mdblist_urls = source_data.get('urls', '').split(',')
             for mdblist_url in mdblist_urls:
                 mdblist_url = mdblist_url.strip()
                 if mdblist_url: # Check if url is not empty
-                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions))
+                    wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
         elif source_type == 'Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_watchlist(versions)
+            wanted_content = get_wanted_from_trakt_watchlist(versions_from_config)
         elif source_type == 'Trakt Lists':
             update_trakt_settings(content_sources)
             trakt_lists = source_data.get('trakt_lists', '').split(',')
             for trakt_list in trakt_lists:
                 trakt_list = trakt_list.strip()
                 if trakt_list: # Check if list name is not empty
-                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions))
+                    wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config))
         elif source_type == 'Friends Trakt Watchlist':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions)
+            wanted_content = get_wanted_from_friend_trakt_watchlist(source_data, versions_from_config)
         elif source_type == 'Trakt Collection':
             update_trakt_settings(content_sources)
-            wanted_content = get_wanted_from_trakt_collection(versions)
+            wanted_content = get_wanted_from_trakt_collection(versions_from_config)
         elif source_type == 'Collected':
             wanted_content = get_wanted_from_collected()
         else:
@@ -865,7 +865,7 @@ def get_and_add_wanted_content(source_id):
         try: # Add try block for processing
             if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
                 # Handle list of tuples
-                for items, item_versions in wanted_content:
+                for items, item_versions_from_source_tuple in wanted_content: # Renamed item_versions to avoid conflict
                     batch_items_processed = 0
                     batch_total_items_added = 0
                     batch_cache_skipped = 0
@@ -877,37 +877,55 @@ def get_and_add_wanted_content(source_id):
                         original_count = len(items)
                         # Filter by media type
                         if source_media_type != 'All' and not source_type.startswith('Collected'):
-                            items = [
+                            items_filtered_type = [
                                 item for item in items
                                 if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
                                    (source_media_type == 'Shows' and item.get('media_type') == 'tv')
                             ]
-                            batch_media_type_skipped += original_count - len(items)
+                            batch_media_type_skipped += original_count - len(items_filtered_type)
+                            items = items_filtered_type # Update items after filtering
                             if batch_media_type_skipped > 0:
                                 logging.debug(f"Batch {source_id}: Skipped {batch_media_type_skipped} items due to media type mismatch")
 
                         # Filter by cache
-                        items_to_process = [
+                        items_to_process_raw = [
                             item for item in items
                             if should_process_item(item, source_id, source_cache)
                         ]
-                        batch_cache_skipped += len(items) - len(items_to_process)
-                        logging.debug(f"Batch {source_id}: Cache filtering results: {batch_cache_skipped} skipped, {len(items_to_process)} to process")
+                        batch_cache_skipped += len(items) - len(items_to_process_raw)
+                        logging.debug(f"Batch {source_id}: Cache filtering results: {batch_cache_skipped} skipped, {len(items_to_process_raw)} to process")
 
-                        if items_to_process:
-                            batch_items_processed += len(items_to_process)
-                            processed_items_meta = process_metadata(items_to_process)
+                        if items_to_process_raw:
+                            batch_items_processed += len(items_to_process_raw)
+                            
+                            # Convert versions from tuple if necessary
+                            if isinstance(item_versions_from_source_tuple, list):
+                                versions_to_inject = {v: True for v in item_versions_from_source_tuple}
+                            elif isinstance(item_versions_from_source_tuple, dict):
+                                versions_to_inject = item_versions_from_source_tuple
+                            else:
+                                logging.warning(f"Unexpected format for versions in tuple for {source_id}. Using main source versions dict.")
+                                versions_to_inject = versions_from_config # Fallback to the converted source versions
+
+                            # Inject the CONVERTED versions dictionary into each item
+                            items_for_metadata = []
+                            for item_dict_raw in items_to_process_raw:
+                                item_dict_processed = item_dict_raw.copy()
+                                item_dict_processed['versions'] = versions_to_inject # Inject the dict
+                                items_for_metadata.append(item_dict_processed)
+
+                            processed_items_meta = process_metadata(items_for_metadata)
                             if processed_items_meta:
                                 all_items_meta = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
                                 for item in all_items_meta:
                                     item['content_source'] = source_id
                                     item = append_content_source_detail(item, source_type=source_type)
 
-                                for item_original in items_to_process:
+                                for item_original in items_to_process_raw: # Use raw items for cache update
                                     update_cache_for_item(item_original, source_id, source_cache)
 
                                 from database import add_wanted_items
-                                added_count = add_wanted_items(all_items_meta, item_versions or versions) # Assuming add_wanted_items returns count
+                                added_count = add_wanted_items(all_items_meta, versions_to_inject or versions_from_config) 
                                 batch_total_items_added += added_count or 0
 
                     except Exception as batch_error:
@@ -924,37 +942,47 @@ def get_and_add_wanted_content(source_id):
                 original_count = len(wanted_content)
                 # Filter by media type
                 if source_media_type != 'All' and not source_type.startswith('Collected'):
-                    wanted_content = [
+                    wanted_content_filtered_type = [
                         item for item in wanted_content
                         if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
                            (source_media_type == 'Shows' and item.get('media_type') == 'tv')
                     ]
-                    media_type_skipped += original_count - len(wanted_content)
+                    media_type_skipped += original_count - len(wanted_content_filtered_type)
+                    wanted_content = wanted_content_filtered_type # Update wanted_content
                     if media_type_skipped > 0:
                         logging.debug(f"{source_id}: Skipped {media_type_skipped} items due to media type mismatch")
 
                 # Filter by cache
-                items_to_process = [
+                items_to_process_raw = [
                     item for item in wanted_content
                     if should_process_item(item, source_id, source_cache)
                 ]
-                cache_skipped += len(wanted_content) - len(items_to_process)
-                logging.debug(f"{source_id}: Cache filtering results: {cache_skipped} skipped, {len(items_to_process)} to process")
+                cache_skipped += len(wanted_content) - len(items_to_process_raw)
+                logging.debug(f"{source_id}: Cache filtering results: {cache_skipped} skipped, {len(items_to_process_raw)} to process")
 
-                if items_to_process:
-                    items_processed += len(items_to_process)
-                    processed_items_meta = process_metadata(items_to_process)
+                if items_to_process_raw:
+                    items_processed += len(items_to_process_raw)
+
+                    # Convert the CONVERTED versions dictionary into each item
+                    items_for_metadata = []
+                    for item_dict_raw in items_to_process_raw:
+                        item_dict_processed = item_dict_raw.copy()
+                        # Use the CONVERTED source-level versions_dict here
+                        item_dict_processed['versions'] = versions_from_config 
+                        items_for_metadata.append(item_dict_processed)
+                        
+                    processed_items_meta = process_metadata(items_for_metadata)
                     if processed_items_meta:
                         all_items_meta = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
                         for item in all_items_meta:
                             item['content_source'] = source_id
                             item = append_content_source_detail(item, source_type=source_type)
 
-                        for item_original in items_to_process:
+                        for item_original in items_to_process_raw: # Use raw items for cache update
                             update_cache_for_item(item_original, source_id, source_cache)
 
                         from database import add_wanted_items
-                        added_count = add_wanted_items(all_items_meta, versions) # Assuming add_wanted_items returns count
+                        added_count = add_wanted_items(all_items_meta, versions_from_config) 
                         total_items_added += added_count or 0
 
             # Save the updated cache

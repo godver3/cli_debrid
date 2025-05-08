@@ -169,22 +169,39 @@ class WantedQueue:
             if source_priority_list:
                 def get_source_priority(item):
                     source = item.get('content_source', '')
-                    try:
-                        # Maintain existing season/episode order for items with the same priority
-                        priority_index = source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
-                        return (
-                            priority_index,
-                            item.get('imdb_id', ''), # Keep show grouping stable
-                            item.get('season_number') if item['type'] == 'episode' else float('inf'), # Keep season order stable
-                            item.get('episode_number') if item['type'] == 'episode' else float('inf') # Keep episode order stable
-                        )
-                    except ValueError:
-                        return (
-                            len(source_priority_list),
-                            item.get('imdb_id', ''),
-                            item.get('season_number') if item['type'] == 'episode' else float('inf'),
-                            item.get('episode_number') if item['type'] == 'episode' else float('inf')
-                         )
+                    # Determine priority_index based on source
+                    if source in source_priority_list:
+                        priority_index = source_priority_list.index(source)
+                    else:
+                        priority_index = len(source_priority_list)
+
+                    # Safely get imdb_id, defaulting None to an empty string for consistent sorting
+                    imdb_id_val = item.get('imdb_id')
+                    safe_imdb_id = imdb_id_val if imdb_id_val is not None else ''
+
+                    # Safely get season_number
+                    # For episodes, if season_number is None, use float('-inf') to sort them first.
+                    # For non-episodes, use float('inf') to sort them after episodes on this key part.
+                    if item['type'] == 'episode':
+                        season_num_val = item.get('season_number')
+                        safe_season_num = season_num_val if season_num_val is not None else float('-inf')
+                    else:
+                        safe_season_num = float('inf')
+
+                    # Safely get episode_number
+                    # Similar logic as season_number.
+                    if item['type'] == 'episode':
+                        episode_num_val = item.get('episode_number')
+                        safe_episode_num = episode_num_val if episode_num_val is not None else float('-inf')
+                    else:
+                        safe_episode_num = float('inf')
+
+                    return (
+                        priority_index,
+                        safe_imdb_id,
+                        safe_season_num,
+                        safe_episode_num
+                    )
                 candidate_items.sort(key=get_source_priority)
 
             # 3. Process Candidate Items
