@@ -2,13 +2,16 @@ let tooltips = {};
 let tooltipElement = null;
 let tooltipTimeout = null;
 let hideTooltipTimeout = null;
+let actualHideProcessTimeout = null;
 let lastMousePosition = { x: 0, y: 0 };
 const TOOLTIP_DELAY = 500; // Delay in milliseconds (0.5 seconds)
 const TOOLTIP_FADE_IN = 250; // Fade in duration in milliseconds
 const TOOLTIP_FADE_OUT = 600; // Fade out duration in milliseconds
 const TOOLTIP_PADDING = 10; // Padding from screen edges
+const HIDE_GRACE_PERIOD = 75; // ms, short delay before hide starts
 
 let activeTooltipElement = null;
+let currentTooltipKeyForHide = null; // Store the key that a hide was initiated for
 
 let mobileTooltipContent = null;
 
@@ -16,6 +19,11 @@ let scrollTimeout = null;
 const SCROLL_HIDE_DELAY = 100; // ms to wait after scrolling stops before hiding tooltip
 
 let isUpdatingContent = false;
+
+// Declare finalPosition at a higher scope
+let finalPosition = { x: 0, y: 0 };
+let isMoving = false;
+let moveTimer = null;
 
 function isMobileDevice() {
     // Check if the device has a touch screen AND a small viewport
@@ -45,122 +53,6 @@ async function fetchTooltips() {
     } catch (error) {
         console.error('Failed to fetch tooltips:', error);
     }
-}
-
-function showTooltip(event) {
-    if (isMobileDevice() || isUpdatingContent) return;
-
-    const element = event.currentTarget;
-    const tooltipKey = element.dataset.tooltip;
-    
-    console.log('Preparing to show tooltip for:', tooltipKey);
-    
-    // Clear any existing timeouts
-    if (tooltipTimeout) {
-        clearTimeout(tooltipTimeout);
-    }
-    if (hideTooltipTimeout) {
-        clearTimeout(hideTooltipTimeout);
-        hideTooltipTimeout = null;
-    }
-
-    // Create tooltip element immediately if it doesn't exist
-    if (!tooltipElement) {
-        tooltipElement = document.createElement('div');
-        tooltipElement.className = 'tooltip';
-        document.body.appendChild(tooltipElement);
-    }
-
-    // Position the tooltip immediately, but keep it invisible
-    tooltipElement.style.opacity = '0';
-    tooltipElement.style.display = 'block';
-    tooltipElement.style.visibility = 'visible';
-
-    activeTooltipElement = element;
-
-    let finalPosition = { x: event.pageX, y: event.pageY };
-    let isMoving = false;
-    let moveTimer = null;
-
-    const showTooltipContent = () => {
-        if (!activeTooltipElement || activeTooltipElement !== element) return;
-
-        let tooltipText;
-        if (tooltipKey) {
-            if (tooltipKey.startsWith('database|||')) {
-                // For database tooltips, everything after the delimiter is the content
-                tooltipText = tooltipKey.split('|||')[1];
-                tooltipElement.className = 'tooltip database-tooltip';
-            } else {
-                // For regular tooltips, split on period
-                const [section, key] = tooltipKey.split('.');
-                tooltipText = tooltips[section][key];
-                tooltipElement.className = 'tooltip';
-            }
-            console.log(`Showing tooltip for ${tooltipKey}: "${tooltipText}"`);
-        } else {
-            console.log('No tooltip content found');
-            tooltipElement.style.display = 'none';
-            return;
-        }
-        
-        tooltipElement.textContent = tooltipText;
-        
-        // Force layout recalculation to get accurate dimensions
-        tooltipElement.style.visibility = 'hidden';
-        tooltipElement.style.display = 'block';
-        
-        // Position tooltip at the final mouse position
-        positionTooltipAtPoint(finalPosition.x, finalPosition.y);
-        
-        // Make visible with transition
-        tooltipElement.style.visibility = 'visible';
-        tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
-        tooltipElement.style.opacity = '1';
-        
-        console.log('Tooltip displayed:', tooltipText);
-    };
-
-    // Track mouse movement
-    const handleMouseMove = (e) => {
-        finalPosition = { x: e.pageX, y: e.pageY };
-        
-        if (!isMoving) {
-            isMoving = true;
-            if (tooltipTimeout) {
-                clearTimeout(tooltipTimeout);
-            }
-        }
-
-        // Clear existing move timer
-        if (moveTimer) {
-            clearTimeout(moveTimer);
-        }
-
-        // Set new move timer
-        moveTimer = setTimeout(() => {
-            isMoving = false;
-            tooltipTimeout = setTimeout(showTooltipContent, TOOLTIP_DELAY);
-        }, 100); // Wait for 100ms of no movement before starting tooltip timer
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-
-    // Set up cleanup on mouse leave
-    element.hideTooltip = () => {
-        if (moveTimer) {
-            clearTimeout(moveTimer);
-        }
-        if (tooltipTimeout) {
-            clearTimeout(tooltipTimeout);
-        }
-        document.removeEventListener('mousemove', handleMouseMove);
-        hideTooltip();
-    };
-    element.addEventListener('mouseleave', element.hideTooltip);
-
-    // Start initial timer
-    tooltipTimeout = setTimeout(showTooltipContent, TOOLTIP_DELAY);
 }
 
 function positionTooltipAtPoint(x, y) {
@@ -195,33 +87,295 @@ function positionTooltipAtPoint(x, y) {
     tooltipElement.style.top = `${tooltipY}px`;
 }
 
-function hideTooltip() {
+function handleGlobalMouseMove(e) {
+    finalPosition = { x: e.pageX, y: e.pageY };
+    if (!isMoving) {
+        isMoving = true;
+        if (tooltipTimeout && activeTooltipElement) { 
+            clearTimeout(tooltipTimeout);
+            tooltipTimeout = null;
+        }
+    }
+    if (moveTimer) clearTimeout(moveTimer);
+    moveTimer = setTimeout(() => {
+        isMoving = false;
+        if (activeTooltipElement && 
+            tooltipElement && 
+            tooltipElement.dataset.currentKey &&
+            tooltipElement.dataset.isHiding !== 'true' && 
+            !actualHideProcessTimeout) { 
+
+            if (tooltipTimeout) clearTimeout(tooltipTimeout);
+            console.log("Mouse stopped, scheduling show for:", tooltipElement.dataset.currentKey);
+            tooltipTimeout = setTimeout(() => showTooltipContentInternal(activeTooltipElement, tooltipElement.dataset.currentKey, true), TOOLTIP_DELAY);
+        } else if (tooltipElement && tooltipElement.dataset.isHiding === 'true') {
+            console.log("Mouse stopped, but tooltip is flagged as 'isHiding'. Not scheduling show.");
+        } else if (actualHideProcessTimeout) {
+            console.log("Mouse stopped, but tooltip is in actualHideProcess. Not scheduling show.");
+        }
+    }, 100);
+}
+
+function showTooltipContentInternal(elementForTooltip, keyForTooltip, animate) {
+    if (!tooltipElement || activeTooltipElement !== elementForTooltip || tooltipElement.dataset.currentKey !== keyForTooltip) {
+        if (activeTooltipElement === null && tooltipElement && tooltipElement.dataset.currentKey === keyForTooltip && tooltipElement.dataset.isHiding === 'true') {
+            console.log('showTooltipContentInternal: Aborted because tooltip is marked as hiding, even if keys match.');
+            return;
+        }
+        console.log('showTooltipContentInternal: Aborted due to mismatched active element/key.');
+        return;
+    }
+    
+    tooltipElement.removeAttribute('data-is-hiding'); 
+    
+    let tooltipText;
+    if (keyForTooltip) {
+        if (keyForTooltip.startsWith('database|||')) {
+            tooltipText = keyForTooltip.split('|||')[1];
+            tooltipElement.className = 'tooltip database-tooltip';
+        } else {
+            const [section, key] = keyForTooltip.split('.');
+            if (tooltips && tooltips[section] && tooltips[section][key]) {
+                tooltipText = tooltips[section][key];
+            } else {
+                console.warn(`Tooltip content not found for ${keyForTooltip}. Section: '${section}', Key: '${key}'. Tooltips loaded:`, Object.keys(tooltips || {}).length > 0);
+                tooltipText = 'Info not available'; 
+            }
+            tooltipElement.className = 'tooltip';
+        }
+    } else {
+        console.log('No tooltip content key provided to showTooltipContentInternal.');
+        if (tooltipElement) tooltipElement.style.display = 'none';
+        return;
+    }
+    
+    tooltipElement.textContent = tooltipText;
+
+    tooltipElement.style.visibility = 'hidden'; 
+    tooltipElement.style.display = 'block';    
+    positionTooltipAtPoint(finalPosition.x, finalPosition.y); 
+    tooltipElement.style.visibility = 'visible'; 
+
+    if (animate) {
+        console.log(`Tooltip displayed (animate: true) for ${keyForTooltip}`);
+        tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_IN}ms ease-in`;
+        tooltipElement.style.opacity = '1';
+    } else {
+        console.log(`Tooltip displayed (animate: false - snap) for ${keyForTooltip}`);
+        tooltipElement.style.transition = 'none'; 
+        tooltipElement.style.opacity = '1';
+        requestAnimationFrame(() => { 
+            if (tooltipElement) {
+                tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_OUT}ms ease-out`;
+            }
+        });
+    }
+}
+
+function showTooltip(event) {
+    if (isMobileDevice() || isUpdatingContent) return;
+
+    const element = event.currentTarget;
+    const tooltipKey = element.dataset.tooltip;
+    
+    console.log(`Preparing to show tooltip for: ${tooltipKey}`);
+
+    if (tooltipElement) {
+        tooltipElement.removeAttribute('data-is-hiding'); 
+    }
+
+    // Scenario 1: Re-affirming an already visible tooltip for the SAME key
+    if (tooltipElement && 
+        tooltipElement.dataset.currentKey === tooltipKey && 
+        tooltipElement.style.display !== 'none' && 
+        parseFloat(tooltipElement.style.opacity) > 0.1) {
+
+        console.log(`ShowTooltip: Re-affirming (Scenario 1) for key "${tooltipKey}".`);
+        clearTimeout(hideTooltipTimeout); 
+        clearTimeout(actualHideProcessTimeout); 
+        hideTooltipTimeout = null;
+        actualHideProcessTimeout = null;
+        currentTooltipKeyForHide = null;
+
+        if (tooltipTimeout) clearTimeout(tooltipTimeout);
+        tooltipTimeout = null;
+
+        activeTooltipElement = element; 
+        if (element.hideTooltipHandler) element.removeEventListener('mouseleave', element.hideTooltipHandler);
+        document.removeEventListener('mousemove', handleGlobalMouseMove);
+        document.addEventListener('mousemove', handleGlobalMouseMove);
+        element.hideTooltipHandler = () => {
+            document.removeEventListener('mousemove', handleGlobalMouseMove);
+            hideTooltip(element, tooltipKey);
+        };
+        element.addEventListener('mouseleave', element.hideTooltipHandler);
+        
+        showTooltipContentInternal(element, tooltipKey, false);
+        return;
+    }
+
+    // Scenario 2: Intercept a PENDING HIDE (grace period) for this exact key
+    if (hideTooltipTimeout && currentTooltipKeyForHide === tooltipKey) {
+        console.log(`ShowTooltip: Intercepting PENDING hide (Scenario 2) for key "${tooltipKey}".`);
+        clearTimeout(hideTooltipTimeout);
+        hideTooltipTimeout = null;
+        
+        if (actualHideProcessTimeout) { 
+            clearTimeout(actualHideProcessTimeout);
+            actualHideProcessTimeout = null;
+        }
+        
+        if (tooltipTimeout) clearTimeout(tooltipTimeout); 
+        tooltipTimeout = null;
+
+        activeTooltipElement = element;
+        if (!tooltipElement) { 
+            tooltipElement = document.createElement('div');
+            document.body.appendChild(tooltipElement);
+            tooltipElement.style.opacity = '0';
+        }
+        tooltipElement.style.display = 'block';
+        tooltipElement.style.visibility = 'visible';
+        tooltipElement.dataset.currentKey = tooltipKey;
+
+        if (element.hideTooltipHandler) element.removeEventListener('mouseleave', element.hideTooltipHandler);
+        document.removeEventListener('mousemove', handleGlobalMouseMove);
+        document.addEventListener('mousemove', handleGlobalMouseMove);
+        element.hideTooltipHandler = () => {
+            document.removeEventListener('mousemove', handleGlobalMouseMove);
+            hideTooltip(element, tooltipKey);
+        };
+        element.addEventListener('mouseleave', element.hideTooltipHandler);
+
+        const wasMostlyVisible = parseFloat(tooltipElement.style.opacity) > 0.1;
+        showTooltipContentInternal(element, tooltipKey, !wasMostlyVisible); 
+        return; 
+    }
+
+    // Normal new tooltip show path
+    console.log(`ShowTooltip: Normal path for key "${tooltipKey}".`);
+    if (tooltipTimeout) clearTimeout(tooltipTimeout);
+    if (hideTooltipTimeout) clearTimeout(hideTooltipTimeout); 
+    if (actualHideProcessTimeout) clearTimeout(actualHideProcessTimeout);
+
+    currentTooltipKeyForHide = null; 
+
+    if (!tooltipElement) {
+        tooltipElement = document.createElement('div');
+        document.body.appendChild(tooltipElement);
+    }
+
+    tooltipElement.style.opacity = '0'; 
+    tooltipElement.style.display = 'block';
+    tooltipElement.style.visibility = 'visible';
+    tooltipElement.dataset.currentKey = tooltipKey;
+    tooltipElement.removeAttribute('data-is-hiding');
+
+
+    activeTooltipElement = element;
+    finalPosition = { x: event.pageX, y: event.pageY }; 
+
+    document.removeEventListener('mousemove', handleGlobalMouseMove);
+    document.addEventListener('mousemove', handleGlobalMouseMove);
+    
+    if (element.hideTooltipHandler) element.removeEventListener('mouseleave', element.hideTooltipHandler);
+    element.hideTooltipHandler = () => {
+        document.removeEventListener('mousemove', handleGlobalMouseMove);
+        hideTooltip(element, tooltipKey);
+    };
+    element.addEventListener('mouseleave', element.hideTooltipHandler);
+
+    tooltipTimeout = setTimeout(() => showTooltipContentInternal(element, tooltipKey, true), TOOLTIP_DELAY);
+}
+
+function hideTooltip(originatingElement = null, originatingKey = null) {
     if (isUpdatingContent) return;
 
-    if (tooltipTimeout) {
+    if (tooltipTimeout && activeTooltipElement === originatingElement && tooltipElement && tooltipElement.dataset.currentKey === originatingKey) {
         clearTimeout(tooltipTimeout);
         tooltipTimeout = null;
     }
     
-    // If there's already a hide operation in progress, don't queue another one
-    if (hideTooltipTimeout) {
+    if ((hideTooltipTimeout && currentTooltipKeyForHide === originatingKey) || actualHideProcessTimeout) {
+         // If an actual fade out is in progress FOR ANY KEY, or grace period for THIS key, let it be.
+        if (actualHideProcessTimeout) {
+             console.log("hideTooltip: Aborted, an actualHideProcessTimeout is already active.");
+             return;
+        }
+        if (hideTooltipTimeout && currentTooltipKeyForHide === originatingKey) {
+            console.log("hideTooltip: Aborted, grace period already active for this key.");
+            return;
+        }
+    }
+
+    if (!tooltipElement || tooltipElement.style.display === 'none') return;
+    if (originatingKey && tooltipElement.dataset.currentKey !== originatingKey && parseFloat(tooltipElement.style.opacity) > 0.1) {
+        console.log(`hideTooltip: Aborted. Originating key ${originatingKey} != current key ${tooltipElement.dataset.currentKey}`);
         return;
     }
-    
+
+    const keyToHide = originatingKey || (tooltipElement ? tooltipElement.dataset.currentKey : null);
+    if (!keyToHide) {
+        console.log("hideTooltip: No key to hide. Aborting.");
+        return;
+    }
+    console.log(`hideTooltip: Starting grace period for: ${keyToHide}`);
+    currentTooltipKeyForHide = keyToHide;
+
+    if (hideTooltipTimeout) clearTimeout(hideTooltipTimeout); // Clear any old grace period
+
     hideTooltipTimeout = setTimeout(() => {
-        if (tooltipElement) {
-            tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_OUT}ms ease-out`;
-            tooltipElement.style.opacity = '0';
-            setTimeout(() => {
-                if (hideTooltipTimeout) {  // Only hide if we haven't started showing again
-                    tooltipElement.style.display = 'none';
-                    activeTooltipElement = null;
-                }
-            }, TOOLTIP_FADE_OUT);
-            console.log('Tooltip hidden');
+        hideTooltipTimeout = null; 
+        
+        if (!tooltipElement || tooltipElement.dataset.currentKey !== keyToHide) {
+             console.log(`hideTooltip (grace expired): Aborted. Key changed from ${keyToHide} to ${tooltipElement.dataset.currentKey}, or tooltip gone.`);
+             currentTooltipKeyForHide = null;
+             return;
         }
-        hideTooltipTimeout = null;  // Clear the timeout reference
-    }, 50); // Reduced delay before hiding
+        
+        console.log(`hideTooltip (grace expired): Starting actual fade out for ${keyToHide}.`);
+        
+        tooltipElement.dataset.isHiding = 'true'; // Mark as actively hiding
+        
+        // Important: If this hide is for the currently active element, nullify activeTooltipElement
+        // This prevents handleGlobalMouseMove from re-showing it.
+        if (activeTooltipElement === originatingElement) {
+            activeTooltipElement = null; 
+            console.log("hideTooltip: activeTooltipElement nulled for", originatingKey);
+        }
+        
+        tooltipElement.style.transition = `opacity ${TOOLTIP_FADE_OUT}ms ease-out`;
+        tooltipElement.style.opacity = '0';
+        
+        currentTooltipKeyForHide = null; 
+
+        if (actualHideProcessTimeout) clearTimeout(actualHideProcessTimeout); // Clear any previous lingering one
+        actualHideProcessTimeout = setTimeout(() => {
+            const currentActualHideId = actualHideProcessTimeout;
+            
+            // Check if it's still marked as hiding THIS key and opacity is low
+            if (tooltipElement && tooltipElement.dataset.isHiding === 'true' && tooltipElement.dataset.currentKey === keyToHide && parseFloat(tooltipElement.style.opacity) < 0.1) {
+                tooltipElement.style.display = 'none';
+                tooltipElement.removeAttribute('data-current-key'); 
+                tooltipElement.removeAttribute('data-is-hiding');   
+                console.log(`hideTooltip (fade complete): Display none for key ${keyToHide}`);
+            } else if (tooltipElement) {
+                console.log(`hideTooltip (fade complete): Display:none aborted for ${keyToHide}. Opacity: ${tooltipElement.style.opacity}, IsHiding: ${tooltipElement.dataset.isHiding}, CurrentKey: ${tooltipElement.dataset.currentKey}`);
+                if (parseFloat(tooltipElement.style.opacity) < 0.1 && tooltipElement.dataset.isHiding === 'true') { // Still hide if low opacity and marked
+                    tooltipElement.style.display = 'none';
+                    tooltipElement.removeAttribute('data-is-hiding');
+                    console.log("hideTooltip (fade complete): Forced display:none for low opacity ghost marked as hiding.");
+                } else if (tooltipElement.dataset.isHiding !== 'true' && parseFloat(tooltipElement.style.opacity) > 0.9){
+                    console.log("hideTooltip (fade complete): A new tooltip likely took over. Not setting display:none for old key.");
+                }
+
+            }
+            if (actualHideProcessTimeout === currentActualHideId) { // Only clear if it's this instance
+                actualHideProcessTimeout = null;
+            }
+        }, TOOLTIP_FADE_OUT);
+
+    }, HIDE_GRACE_PERIOD);
 }
 
 function createMobileTooltipButtons() {
@@ -586,4 +740,34 @@ function setUpdatingContent(value) {
     isUpdatingContent = value;
 }
 
-export { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips };
+function addTooltipEventListeners(element) {
+    if (element && element.dataset && element.dataset.tooltip) {
+        if (!isMobileDevice()) {
+            // Ensure we don't add duplicate listeners if called multiple times on the same element
+            element.removeEventListener('mouseenter', showTooltip); 
+            element.addEventListener('mouseenter', showTooltip);
+
+            // The hideTooltip function is designed to be called with the element and its key.
+            // We create a specific handler for mouseleave.
+            const specificMouseLeaveHandler = (event) => {
+                // When mouse leaves, call hideTooltip with the element and its tooltip key
+                hideTooltip(event.currentTarget, event.currentTarget.dataset.tooltip);
+            };
+            
+            // To prevent multiple listeners if this function is called again for the same element,
+            // we store a reference to the handler and remove it first.
+            if (element.specificMouseLeaveHandlerRef) {
+                 element.removeEventListener('mouseleave', element.specificMouseLeaveHandlerRef);
+            }
+            element.specificMouseLeaveHandlerRef = specificMouseLeaveHandler;
+            element.addEventListener('mouseleave', specificMouseLeaveHandler);
+
+            console.log(`Tooltip listeners dynamically added for: ${element.dataset.tooltip}`);
+        }
+    } else {
+        // This console log can help debug if elements without tooltips are being processed
+        // console.warn("addTooltipEventListeners called on invalid element or element without data-tooltip", element);
+    }
+}
+
+export { initializeTooltips, setUpdatingContent, initializeDatabaseTooltips, addTooltipEventListeners };

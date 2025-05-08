@@ -211,31 +211,63 @@ def add_torrent_to_debrid():
         logging.info(f"Link: {obfuscated_link}")
 
         temp_file = None
+        actual_magnet_to_add = magnet_link # Assume initially it's the one to add
+
         # If it's a URL rather than a magnet link
         if magnet_link.startswith('http'):
             try:
-                # For Jackett URLs or any other torrent URLs, download to temp file
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
-                    response = requests.get(magnet_link, timeout=30)
-                    response.raise_for_status()
-                    tmp.write(response.content)
-                    tmp.flush()
-                    temp_file = tmp.name
-                    logging.info("Downloaded torrent file")
+                # For Jackett URLs or any other torrent URLs, attempt to download
+                # but handle redirects to magnet links.
+                response = requests.get(magnet_link, timeout=30, allow_redirects=False) # Key change: allow_redirects=False
+                
+                if response.status_code >= 200 and response.status_code < 300:
+                    # Direct download successful
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                        tmp.write(response.content)
+                        tmp.flush()
+                        temp_file = tmp.name
+                        logging.info(f"Downloaded torrent file to {temp_file}")
+                        actual_magnet_to_add = None # We'll use the temp_file for adding
+                elif response.status_code >= 300 and response.status_code < 400 and 'Location' in response.headers:
+                    redirect_url = response.headers['Location']
+                    if redirect_url.startswith('magnet:'):
+                        logging.info(f"HTTP link redirected to magnet link: {redirect_url[:60]}...")
+                        actual_magnet_to_add = redirect_url # This is the magnet link to add
+                        temp_file = None # No temp file in this case
+                    elif redirect_url.startswith('http'):
+                        # Handle HTTP to HTTP redirect if necessary, or error out
+                        # For simplicity, we'll try to download from the new HTTP URL once.
+                        logging.info(f"HTTP link redirected to another HTTP URL: {redirect_url}. Attempting download again.")
+                        response = requests.get(redirect_url, timeout=30) # Allow redirects for this second attempt by default
+                        response.raise_for_status() # Raise an error if this also fails or redirects badly
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                            tmp.write(response.content)
+                            tmp.flush()
+                            temp_file = tmp.name
+                            logging.info(f"Downloaded torrent file from redirected URL to {temp_file}")
+                            actual_magnet_to_add = None # Use temp_file
+                    else:
+                        raise Exception(f"Unhandled redirect location: {redirect_url}")
+                else:
+                    response.raise_for_status() # Raise an exception for other error codes
+
             except Exception as e:
                 error_message = str(e)
-                logging.error(f"Failed to process torrent URL: {error_message}")
+                logging.error(f"Failed to process torrent URL '{magnet_link}': {error_message}")
                 if temp_file and os.path.exists(temp_file):
                     try:
                         os.unlink(temp_file)
-                    except Exception as e:
-                        logging.warning(f"Failed to delete temp file {temp_file}: {e}")
+                    except Exception as e_del:
+                        logging.warning(f"Failed to delete temp file {temp_file}: {e_del}")
                 return jsonify({'error': error_message}), 400
 
         # Add magnet/torrent to debrid provider
         debrid_provider = get_debrid_provider()
         try:
-            torrent_id = debrid_provider.add_torrent(magnet_link, temp_file)
+            # Use 'actual_magnet_to_add' which could be the original magnet, 
+            # the redirected magnet, or None if a temp_file was successfully created.
+            # The debrid_provider.add_torrent method should prioritize temp_file if provided.
+            torrent_id = debrid_provider.add_torrent(actual_magnet_to_add, temp_file)
             logging.info(f"Torrent result: {torrent_id}")
             
             if not torrent_id:
@@ -245,9 +277,9 @@ def add_torrent_to_debrid():
 
             # Extract torrent hash from magnet link or torrent file
             torrent_hash = None
-            if magnet_link.startswith('magnet:'):
+            if actual_magnet_to_add and actual_magnet_to_add.startswith('magnet:'):
                 # Extract hash from magnet link
-                hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
+                hash_match = re.search(r'btih:([a-fA-F0-9]{40})', actual_magnet_to_add)
                 if hash_match:
                     torrent_hash = hash_match.group(1).lower()
             elif temp_file:
@@ -429,7 +461,7 @@ def add_torrent_to_debrid():
                     'tmdb_id': tmdb_id,
                     'imdb_id': imdb_id,
                     'state': 'Checking',
-                    'filled_by_magnet': magnet_link,
+                    'filled_by_magnet': actual_magnet_to_add,
                     'filled_by_torrent_id': torrent_id,
                     'filled_by_title': filled_by_title,
                     'filled_by_file': filled_by_file,

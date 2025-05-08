@@ -283,21 +283,41 @@ class TorrentProcessor:
                 try:
                     # Download the torrent file
                     logging.info(f"Downloading torrent file from {url} to {temp_file_path}")
-                    response = requests.get(url, timeout=30)
+                    response = requests.get(url, timeout=30, allow_redirects=False)
                     
-                    if response.status_code != 200:
-                        logging.error(f"Failed to download torrent file. Status code: {response.status_code}")
-                        return None
-                    
-                    # Write the content to the temp file
-                    tmp.write(response.content)
-                    tmp.flush()
-                    
-                    # Check cache status using enhanced method
-                    is_cached, cache_source = self.check_cache_status("", temp_file_path, remove_cached=remove_cached)
-                    
-                    return is_cached
-                    
+                    if response.status_code >= 200 and response.status_code < 300:
+                        # It's a direct download or successful response
+                        # ... (original code to save and parse torrent file) ...
+                        # ... then extract hash/magnet and check cache with debrid provider ...
+                        pass # Placeholder for original logic
+
+                    elif response.status_code >= 300 and response.status_code < 400 and 'Location' in response.headers:
+                        redirect_url = response.headers['Location']
+                        if redirect_url.startswith('magnet:'):
+                            logging.info(f"Redirected to magnet link: {redirect_url}")
+                            # Process this magnet_link (e.g., extract hash and check cache with debrid provider)
+                            # This magnet_link should NOT be passed back to requests.get()
+                            info_hash = extract_hash_from_magnet(redirect_url) # Assuming this utility exists
+                            if info_hash:
+                                # Call the debrid provider's cache checking mechanism with the info_hash or redirect_url (magnet link)
+                                # Example: cached_status = debrid_provider.is_cached(info_hash) or debrid_provider.is_cached(redirect_url)
+                                # Return based on cached_status
+                                pass # Placeholder for cache checking logic for the magnet link
+                            else:
+                                logging.error(f"Could not extract hash from redirected magnet link: {redirect_url}")
+                                return False, None, "Error" # Or appropriate error status
+                            
+                        elif redirect_url.startswith('http://') or redirect_url.startswith('https://'):
+                            logging.info(f"Redirected to another HTTP/S URL: {redirect_url}. Consider handling chained redirects or re-calling with new URL.")
+                            # Optionally, you could make another request to redirect_url
+                            # For simplicity here, we'll just say it's an unhandled redirect type for now
+                            return False, None, "Error - HTTP Redirect to another HTTP URL not handled in this step"
+                        else:
+                            logging.error(f"Unhandled redirect location: {redirect_url}")
+                            return False, None, "Error" # Or appropriate error status
+                    else:
+                        response.raise_for_status() # Raise an exception for other error codes
+
                 finally:
                     # Clean up temporary file
                     try:

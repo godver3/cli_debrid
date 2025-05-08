@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing"%}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -13,7 +13,7 @@
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
-                {% if key != 'tab' and not (section == "UI Settings" and key == "enable_phalanx_db") %}
+                {% if key != 'tab' and not (section == "UI Settings" and key == "enable_phalanx_db") and key != 'blacklist_duration' %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}
@@ -269,7 +269,7 @@
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
-                {% if key != 'tab' %}
+                {% if key != 'tab' and key != 'blacklist_duration' %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}

@@ -220,6 +220,20 @@ def migrate_schema():
             conn.execute('ALTER TABLE media_items ADD COLUMN real_debrid_original_title TEXT')
             logging.info("Successfully added real_debrid_original_title column to media_items table.")
 
+        # Add new indexes for version and content_source if they don't exist
+        existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
+        existing_indexes = [row[0] for row in existing_indexes_cursor.fetchall()]
+
+        if 'idx_media_items_version' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_version...")
+            conn.execute('CREATE INDEX idx_media_items_version ON media_items(version);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_version.")
+        
+        if 'idx_media_items_content_source' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_content_source...")
+            conn.execute('CREATE INDEX idx_media_items_content_source ON media_items(content_source);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_content_source.")
+
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
         if not cursor.fetchone():
@@ -296,8 +310,9 @@ def migrate_schema():
                 logging.info("Successfully added is_up_to_date column to tv_show_version_status table.")
             # Add checks for other columns here if needed in the future
 
+        logging.info("Attempting to commit schema migrations...")
         conn.commit()
-        logging.info("Schema migration checks completed successfully.")
+        logging.info("Schema migrations committed successfully.")
     except Exception as e:
         conn.rollback()
         logging.error(f"Unexpected error during schema migration: {str(e)}", exc_info=True)

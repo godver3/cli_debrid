@@ -3,6 +3,43 @@ import { showPopup, POPUP_TYPES } from './notifications.js';
 // Declare settingsData globally
 let settingsData = {};
 
+// Helper function for splitting strings while respecting parentheses
+export function splitRespectingParentheses(str, delimiter = ',') {
+    const result = [];
+    let currentToken = "";
+    let parenthesesCount = 0;
+
+    for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (char === '(') {
+            parenthesesCount++;
+        } else if (char === ')') {
+            parenthesesCount--;
+            if (parenthesesCount < 0) {
+                // Gracefully handle mismatched parentheses, though ideally input is well-formed
+                parenthesesCount = 0; 
+            }
+        }
+
+        if (char === delimiter && parenthesesCount === 0) {
+            const trimmedToken = currentToken.trim();
+            if (trimmedToken !== "") {
+                result.push(trimmedToken);
+            }
+            currentToken = "";
+        } else {
+            currentToken += char;
+        }
+    }
+    
+    const trimmedToken = currentToken.trim();
+    if (trimmedToken !== "") {
+        result.push(trimmedToken);
+    }
+    
+    return result;
+}
+
 // Function to load settings data
 function loadSettingsData() {
     return fetch('/settings/api/program_settings')
@@ -371,10 +408,11 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
-            if (settingsData['Scrapers'][key] && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+            if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+                console.log(`Removing invalid scraper type: ${settingsData['Scrapers'][key].type} for ID: ${key}`);
                 delete settingsData['Scrapers'][key];
             }
         });
@@ -651,9 +689,10 @@ export function updateSettings() {
     // Get all version inputs in their current order
     const versionInputs = Array.from(versionContainer.children);
     
-    versionInputs.forEach((input, index) => {
-        const version = input.getAttribute('data-version');
-        const terms = input.querySelector('.version-terms').value.split(',').map(term => term.trim()).filter(term => term);
+    versionInputs.forEach((inputElement, index) => {
+        const version = inputElement.getAttribute('data-version');
+        const termsValue = inputElement.querySelector('.version-terms').value;
+        const terms = splitRespectingParentheses(termsValue);
         reverseParserSettings.version_terms[version] = terms;
         reverseParserSettings.version_order.push(version); // Add version to order array
     });

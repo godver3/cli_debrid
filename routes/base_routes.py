@@ -387,7 +387,10 @@ def task_stream():
 
                 running_tasks_list = []
                 is_paused = False
-                pause_reason = None
+                pause_info_to_send = {
+                    "reason_string": None, "error_type": None, "service_name": None,
+                    "status_code": None, "retry_count": 0
+                }
                 tasks_info = []
                 program_running_state = False
 
@@ -405,7 +408,8 @@ def task_stream():
 
                     # Get pause state
                     is_paused = program_runner.queue_paused
-                    pause_reason = program_runner.pause_reason
+                    if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
+                        pause_info_to_send = program_runner.pause_info.copy() # Send a copy
 
                     # Get task list if scheduler is running
                     if program_running_state and hasattr(program_runner, 'scheduler'):
@@ -449,7 +453,7 @@ def task_stream():
                     'running': program_running_state,
                     'tasks': tasks_info,
                     'paused': is_paused,
-                    'pause_reason': pause_reason,
+                    'pause_info': pause_info_to_send,
                     'running_tasks_list': running_tasks_list
                 }
 
@@ -457,7 +461,11 @@ def task_stream():
 
             except Exception as e:
                 logging.error(f"Error in task stream generate loop: {str(e)}", exc_info=True)
-                yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_reason': None, 'running_tasks_list': [], 'error': str(e)})}\n\n" # Send empty list on error
+                default_error_pause_info = {
+                    "reason_string": "Error in task stream.", "error_type": "STREAM_ERROR", 
+                    "service_name": "System", "status_code": None, "retry_count": 0
+                }
+                yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_info': default_error_pause_info, 'running_tasks_list': [], 'error': str(e)})}\n\n" # Send empty list on error
 
             time.sleep(1) # Stream updates every 1 second
 

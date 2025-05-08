@@ -49,26 +49,34 @@ function updateTaskList(taskList, data) {
         return;
     }
     if (data.success) {
-        const availableTasks = data.tasks || []; // All scheduled tasks with details
-        const runningTaskNamesSet = new Set(data.running_tasks_list || []); // Set of names for running tasks
+        const availableTasks = data.tasks || [];
+        const runningTaskNamesSet = new Set(data.running_tasks_list || []);
 
-        if (data.running) { // Check if the overall program runner is active
+        if (data.running) {
              let runningTasksHtml = '';
              let scheduledTasksHtml = '';
              let finalHtml = '';
 
-             // Add pause message if paused - this takes priority
-             if (data.paused && data.pause_reason) {
+             // --- START EDIT: Use pause_info for task list pause message ---
+             if (data.paused && data.pause_info && data.pause_info.reason_string) {
                  finalHtml = `
                      <div class="task-item paused">
                          <div class="task-name">Queue Paused</div>
                          <div class="task-timing">
-                             <span>${data.pause_reason}</span>
+                             <span>${data.pause_info.reason_string}</span>
                          </div>
                      </div>`;
                  taskList.innerHTML = finalHtml;
-                 return; // Don't show task lists if paused
+                 // Update the main current task display as well if paused
+                 if (currentTaskNameElement) currentTaskNameElement.textContent = 'Queue Paused';
+                 if (currentTaskTimeElement) currentTaskTimeElement.textContent = data.pause_info.reason_string.substring(0, 50) + (data.pause_info.reason_string.length > 50 ? '...' : ''); // Show truncated reason
+                 if (currentTaskDisplay) currentTaskDisplay.classList.add('paused');
+                 return; 
+             } else if (currentTaskDisplay && currentTaskDisplay.classList.contains('paused') && !data.paused) {
+                 // If it was paused but no longer is, clear the current task display pause state
+                 if (currentTaskDisplay) currentTaskDisplay.classList.remove('paused');
              }
+             // --- END EDIT ---
 
              // --- START EDIT: Separate running and scheduled tasks ---
              const runningTaskObjects = [];
@@ -169,10 +177,16 @@ function updateTaskList(taskList, data) {
 
         } else { // Program runner not active
             taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
+            if (currentTaskNameElement) currentTaskNameElement.textContent = 'Program Stopped';
+            if (currentTaskTimeElement) currentTaskTimeElement.textContent = '';
+            if (currentTaskDisplay) currentTaskDisplay.classList.remove('running', 'paused');
         }
     } else { // data.success is false
         taskList.innerHTML = '<div class="error">Failed to load tasks</div>';
         console.warn('Task fetch failed:', data.error);
+        if (currentTaskNameElement) currentTaskNameElement.textContent = 'Error Loading Tasks';
+        if (currentTaskTimeElement) currentTaskTimeElement.textContent = '';
+         if (currentTaskDisplay) currentTaskDisplay.classList.remove('running', 'paused');
     }
 }
 
@@ -206,55 +220,72 @@ function setupTaskStream() {
             if (data.success) {
                 const tasks = data.tasks || [];
                 const isPaused = data.paused;
-                const pauseReason = data.pause_reason;
-                // --- START EDIT: Get list and pass to updateTaskDisplay ---
+                const pauseInfo = data.pause_info || { reason_string: null, error_type: null, status_code: null }; // Default if undefined
                 const runningTasksList = data.running_tasks_list || [];
-                console.log('[Task Stream] Received running_tasks_list:', runningTasksList);
-
-                // Pass the list to updateTaskDisplay
-                updateTaskDisplay(tasks, isPaused, pauseReason, runningTasksList);
-                // Also pass the correct data to updateTaskList
-                updateTaskList(taskListElement, data);
+                
+                // --- START EDIT: Pass pauseInfo to updateTaskDisplay ---
+                updateTaskDisplay(tasks, isPaused, pauseInfo, runningTasksList);
                 // --- END EDIT ---
+                updateTaskList(taskListElement, data); // updateTaskList will also use data.pause_info
 
-                // --- START: Update Pause Banner ---
+                // --- START EDIT: Update Pause Banner with new logic ---
                 if (pauseBannerElement && pauseReasonTextElement) {
-                    if (isPaused) {
-                        pauseReasonTextElement.textContent = `Queue Paused: ${pauseReason || 'Unknown reason'}`;
+                    if (isPaused && pauseInfo && pauseInfo.reason_string) {
+                        let displayMessage = `Queue Paused: ${pauseInfo.reason_string}`; // Default detailed message
+
+                        if (pauseInfo.error_type === 'UNAUTHORIZED' || pauseInfo.status_code === 401) {
+                            const serviceName = pauseInfo.service_name || 'Debrid service';
+                            displayMessage = `Queue Paused: ${serviceName} API Key is invalid or unauthorized. Please check your settings.`;
+                        } else if (pauseInfo.error_type === 'FORBIDDEN' || pauseInfo.status_code === 403) {
+                            const serviceName = pauseInfo.service_name || 'Debrid service';
+                            displayMessage = `Queue Paused: ${serviceName} API access forbidden. Check API key, IP, or account status.`;
+                        } else if (pauseInfo.error_type === 'CONNECTION_ERROR') {
+                             // Keep the detailed reason_string for general connection errors as it includes retry counts.
+                            displayMessage = `Queue Paused: ${pauseInfo.reason_string}. This will likely resolve on its own.`;
+                        }
+                        // Add more conditions for other error_types (RATE_LIMIT, DB_HEALTH, SYSTEM_SCHEDULED) if needed for banner.
+                        // For now, they will use the default pauseInfo.reason_string.
+
+                        pauseReasonTextElement.textContent = displayMessage;
                         pauseBannerElement.classList.remove('hidden');
-                        // No need to manage body class here, that's for top overlays
                     } else {
                         pauseBannerElement.classList.add('hidden');
                     }
                 }
-                // --- END: Update Pause Banner ---
+                // --- END EDIT ---
 
             } else {
                 console.error('Task stream reported an error:', data.error);
                 displayError('Error fetching task status.');
-                // --- START EDIT: Pass empty list on error ---
-                updateTaskDisplay([], false, null, []);
+                // --- START EDIT: Pass default pauseInfo on error ---
+                updateTaskDisplay([], false, { reason_string: null, error_type: null, status_code: null }, []);
                 // --- END EDIT ---
                 if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
             }
         } catch (error) {
             console.error('Error parsing task stream data:', error);
             displayError('Error parsing task data.');
-            // --- START EDIT: Pass empty list on error ---
-            updateTaskDisplay([], false, null, []);
+            // --- START EDIT: Pass default pauseInfo on error ---
+            updateTaskDisplay([], false, { reason_string: null, error_type: null, status_code: null }, []);
             // --- END EDIT ---
              if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
         }
     };
 
     eventSource.onerror = (error) => {
-        console.error('EventSource failed:', error);
-        if (taskListElement) {
-             taskListElement.innerHTML = '<div class="error">Connection lost. Reconnecting...</div>';
+        console.error('Task stream connection error:', error);
+        displayError('Connection error with task stream.');
+        // --- START EDIT: Pass default pauseInfo on stream error ---
+        updateTaskDisplay([], false, { reason_string: null, error_type: null, status_code: null }, []);
+        // --- END EDIT ---
+        if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
+        // Optionally, you might want to attempt to re-establish the EventSource connection here
+        // For simplicity, this example doesn't include reconnection logic.
+        if (eventSource) {
+            eventSource.close();
+            // Consider a delay before retrying setupTaskStream()
+            // setTimeout(setupTaskStream, 5000); // e.g., retry after 5 seconds
         }
-        updateTaskDisplay([], false, null, []);
-         if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
-        // EventSource will automatically try to reconnect
     };
 }
 
@@ -438,20 +469,25 @@ export function initializeTaskMonitor() {
 }
 
 // --- START EDIT: Rewrite updateTaskDisplay to handle list ---
-function updateTaskDisplay(scheduledTasks, isPaused, pauseReason, runningTasksList) {
+function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList) {
     if (!currentTaskDisplay || !currentTaskNameElement || !currentTaskTimeElement) {
         console.warn("Task display elements not found during update.");
         return;
     }
 
-    // --- START EDIT: Clear tooltip initially ---
-    currentTaskDisplay.removeAttribute('title');
-    // --- END EDIT ---
+    const effectivePauseInfo = pauseInfo || { reason_string: null, error_type: null, status_code: null };
 
-    // Priority 1: Check for Paused State
     if (isPaused) {
-        currentTaskNameElement.textContent = `Queue Paused`;
-        currentTaskTimeElement.textContent = pauseReason || 'No reason specified';
+        currentTaskNameElement.textContent = 'Queue Paused';
+        let reasonForDisplay = effectivePauseInfo.reason_string || 'Processing is currently paused.';
+        if (effectivePauseInfo.error_type === 'UNAUTHORIZED') {
+            reasonForDisplay = 'API Key Unauthorized. Check Settings.';
+        } else if (effectivePauseInfo.error_type === 'FORBIDDEN') {
+            reasonForDisplay = 'API Access Forbidden. Check Settings/IP.';
+        } else if (effectivePauseInfo.error_type === 'CONNECTION_ERROR' && effectivePauseInfo.reason_string) {
+            reasonForDisplay = effectivePauseInfo.reason_string;
+        }
+        currentTaskTimeElement.textContent = reasonForDisplay.substring(0, 50) + (reasonForDisplay.length > 50 ? '...' : '');
         currentTaskDisplay.classList.add('paused');
         currentTaskDisplay.classList.remove('running');
         return;
@@ -459,81 +495,55 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseReason, runningTasksLi
         currentTaskDisplay.classList.remove('paused');
     }
 
-    // Priority 2: Check for Currently Running Tasks
     if (runningTasksList && runningTasksList.length > 0) {
-        let taskToShow = null;
-        let isPriorityTask = false;
+        let displayTaskName = 'Multiple Tasks Running';
+        let displayTime = `${runningTasksList.length} active`;
 
-        // Find the highest priority task running
-        for (const priority of TASK_DISPLAY_PRIORITY) {
-            if (runningTasksList.includes(priority)) {
-                taskToShow = priority;
-                isPriorityTask = true;
-                break;
-            }
+        let primaryRunningTask = runningTasksList.find(taskName => {
+            return TASK_DISPLAY_PRIORITY.some(priority => taskName.toLowerCase().includes(priority.toLowerCase())) ||
+                   taskName.endsWith('_wanted');
+        });
+        if (!primaryRunningTask && runningTasksList.length > 0) {
+            primaryRunningTask = runningTasksList[0];
         }
-        if (!taskToShow) {
-            for (const runningTask of runningTasksList) {
-                if (runningTask.endsWith('_wanted')) {
-                    taskToShow = runningTask;
-                    isPriorityTask = true; // Treat content sources as priority
-                    break;
-                }
-            }
-        }
-        if (!taskToShow) {
-            taskToShow = runningTasksList[0];
-        }
-
-        // Construct display name
-        let displayName = `Running: ${taskToShow}`;
-        const otherTasksCount = runningTasksList.length - 1;
-        if (otherTasksCount > 0) {
-            displayName += ` (+${otherTasksCount} other)`;
-            // --- START EDIT: Add tooltip when multiple tasks run ---
-            const allRunningTasksString = runningTasksList.join(', ');
-            currentTaskDisplay.setAttribute('title', `Running Tasks: ${allRunningTasksString}`);
-            // --- END EDIT ---
-        }
-
-        currentTaskNameElement.textContent = displayName;
-        currentTaskTimeElement.textContent = 'In Progress...';
-        currentTaskDisplay.classList.add('running');
-        currentTaskDisplay.classList.remove('paused');
-        return;
-    } else {
-        currentTaskDisplay.classList.remove('running');
-        // Ensure tooltip is removed if no tasks are running
-        currentTaskDisplay.removeAttribute('title');
-    }
-
-    // Priority 3: Show Next Scheduled Task
-    const upcomingTasks = scheduledTasks
-        .filter(task => task.enabled && task.next_run_timestamp)
-        .sort((a, b) => a.next_run_timestamp - b.next_run_timestamp);
-
-    if (upcomingTasks.length > 0) {
-        const nextTask = upcomingTasks[0];
-        currentTaskNameElement.textContent = `Next: ${nextTask.name}`;
-
-        if (nextTask.next_run !== null) {
-            const timeUntilNext = nextTask.next_run;
-            if (timeUntilNext <= 1) {
-                 currentTaskTimeElement.textContent = 'Due now';
-            } else if (timeUntilNext < 60) {
-                currentTaskTimeElement.textContent = `in ${Math.round(timeUntilNext)}s`;
+        
+        if (primaryRunningTask) {
+            displayTaskName = primaryRunningTask;
+            const taskDetails = scheduledTasks.find(st => st.name === primaryRunningTask);
+            if (taskDetails && taskDetails.interval) {
+                displayTime = `Running (Interval: ${formatTime(taskDetails.interval)})`;
             } else {
-                currentTaskTimeElement.textContent = `in ${Math.round(timeUntilNext / 60)}m`;
+                 displayTime = 'Running';
             }
-        } else {
-             currentTaskTimeElement.textContent = 'Scheduled';
         }
+        
+        currentTaskNameElement.textContent = displayTaskName;
+        currentTaskTimeElement.textContent = displayTime;
+        currentTaskDisplay.classList.add('running');
+    } else if (scheduledTasks && scheduledTasks.length > 0) {
+        let nextTask = null;
+        let minNextRun = Infinity;
+
+        scheduledTasks.forEach(task => {
+            if (task.enabled && typeof task.next_run === 'number' && task.next_run < minNextRun) {
+                minNextRun = task.next_run;
+                nextTask = task;
+            }
+        });
+
+        if (nextTask) {
+            currentTaskNameElement.textContent = nextTask.name;
+            currentTaskTimeElement.textContent = `in ${formatTime(nextTask.next_run)}`;
+        } else {
+            currentTaskNameElement.textContent = 'No upcoming tasks';
+            currentTaskTimeElement.textContent = '';
+        }
+        currentTaskDisplay.classList.remove('running');
     } else {
-        currentTaskNameElement.textContent = 'No upcoming tasks';
+        currentTaskNameElement.textContent = 'No tasks scheduled';
         currentTaskTimeElement.textContent = '';
+        currentTaskDisplay.classList.remove('running');
     }
-    // Ensure tooltip is removed when showing next task
-    currentTaskDisplay.removeAttribute('title');
 }
 // --- END EDIT ---
 

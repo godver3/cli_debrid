@@ -257,7 +257,7 @@ SETTINGS_SCHEMA = {
         },
         "blacklist_duration": {
             "type": "string",
-            "description": "Number of days after which to automatically remove blacklisted items for a re-scrape",
+            "description": "Number of days after which to automatically remove blacklisted items for a re-scrape, if enabled",
             "default": "30"
         },
         "enable_pause_schedule": {
@@ -730,6 +730,16 @@ SETTINGS_SCHEMA = {
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "api": {"type": "string", "default": "", "sensitive": True},
                 "enabled_indexers": {"type": "string", "default": ""}
+            },
+            "Prowlarr": {
+                "enabled": {"type": "boolean", "default": False},
+                "url": {"type": "string", "default": "", "validate": "url"},
+                "api": {"type": "string", "default": "", "sensitive": True},
+                "tags": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Comma-separated list of numeric Prowlarr Indexer IDs. If provided, searches through this Prowlarr instance will only use these specified indexers."
+                }
             },
             "Torrentio": {
                 "enabled": {"type": "boolean", "default": False},

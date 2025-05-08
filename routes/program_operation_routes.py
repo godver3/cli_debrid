@@ -257,7 +257,7 @@ def check_service_connectivity():
     debrid_api_key = get_setting('Debrid Provider', 'api_key')
 
     services_reachable = True
-    failed_services = []
+    failed_services_details = []
 
     # Check Symlink paths if using symlink management
     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
@@ -268,7 +268,7 @@ def check_service_connectivity():
         if not os.path.exists(original_path):
             logging.error(f"Cannot access original files path: {original_path}")
             services_reachable = False
-            failed_services.append(f"Original files path ({original_path})")
+            failed_services_details.append({"service": f"Original files path ({original_path})", "type": "CONFIG_ERROR", "message": "Cannot access original files path."})
         elif not os.listdir(original_path):
             logging.warning(f"Original files path is empty: {original_path}")
             
@@ -280,7 +280,7 @@ def check_service_connectivity():
             except Exception as e:
                 logging.error(f"Cannot create symlinked files path: {symlinked_path}. Error: {str(e)}")
                 services_reachable = False
-                failed_services.append(f"Symlinked files path ({symlinked_path})")
+                failed_services_details.append({"service": f"Symlinked files path ({symlinked_path})", "type": "CONFIG_ERROR", "message": f"Cannot create symlinked files path. Error: {str(e)}"})
                 
         # Check Plex connectivity for symlink updates if enabled
         plex_url_symlink = get_setting('File Management', 'plex_url_for_symlink')
@@ -297,7 +297,7 @@ def check_service_connectivity():
                     error_msg = "Invalid Plex response for symlink updates - token may be incorrect"
                     logging.error(error_msg)
                     services_reachable = False
-                    failed_services.append("Plex (for symlink updates)")
+                    failed_services_details.append({"service": "Plex (for symlink updates)", "type": "INVALID_TOKEN", "message": error_msg})
                 else:
                     services_reachable = True  # Set to True when Plex is reachable
                     logging.debug("Plex connectivity check passed")
@@ -305,7 +305,7 @@ def check_service_connectivity():
                 error_msg = f"Cannot connect to Plex server for symlink updates. Error: {str(e)}"
                 logging.error(error_msg)
                 services_reachable = False
-                failed_services.append("Plex (for symlink updates)")
+                failed_services_details.append({"service": "Plex (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
     # Check Plex connectivity and libraries
     if get_setting('File Management', 'file_collection_management') == 'Plex':
@@ -321,16 +321,16 @@ def check_service_connectivity():
                     error_msg = "Invalid Plex response - token may be incorrect"
                     logging.error(error_msg)
                     services_reachable = False
-                    failed_services.append("Plex (invalid token)")
-                    return services_reachable, failed_services
+                    failed_services_details.append({"service": "Plex", "type": "INVALID_TOKEN", "message": error_msg})
+                    return services_reachable, failed_services_details
                 else:
                     logging.info(f"Successfully validated Plex connection (Server: {root.get('friendlyName', 'Unknown')})")
             except ET.ParseError as e:
                 error_msg = f"Invalid Plex response format: {str(e)}"
                 logging.error(error_msg)
                 services_reachable = False
-                failed_services.append("Plex (invalid response format)")
-                return services_reachable, failed_services
+                failed_services_details.append({"service": "Plex", "type": "INVALID_RESPONSE_FORMAT", "message": error_msg})
+                return services_reachable, failed_services_details
 
             # Then check library existence
             libraries_response = api.get(f"{plex_url}/library/sections?X-Plex-Token={plex_token}", timeout=5)
@@ -359,8 +359,8 @@ def check_service_connectivity():
                 if not available_library_titles:
                     logging.error("No libraries found in Plex response")
                     services_reachable = False
-                    failed_services.append("Plex (no libraries found)")
-                    return services_reachable, failed_services
+                    failed_services_details.append({"service": "Plex", "type": "NO_LIBRARIES_FOUND", "message": "No libraries found in Plex response."})
+                    return services_reachable, failed_services_details
 
                 # Verify all configured libraries exist (check IDs case-sensitively, names case-insensitively)
                 missing_libraries = []
@@ -381,21 +381,21 @@ def check_service_connectivity():
                     error_msg += "</ul>Please verify your Plex library names in settings."
                     logging.error(error_msg)
                     services_reachable = False
-                    failed_services.append(f"Plex (missing libraries: {', '.join(missing_libraries)})")
-                    return services_reachable, failed_services
+                    failed_services_details.append({"service": f"Plex (missing libraries: {', '.join(missing_libraries)})", "type": "CONFIG_ERROR", "message": error_msg})
+                    return services_reachable, failed_services_details
 
             except ET.ParseError as e:
                 error_msg = f"Failed to parse Plex libraries response (XML): {str(e)}"
                 logging.error(error_msg)
                 services_reachable = False
-                failed_services.append("Plex (invalid libraries response)")
-                return services_reachable, failed_services
+                failed_services_details.append({"service": "Plex", "type": "INVALID_LIBRARIES_RESPONSE", "message": error_msg})
+                return services_reachable, failed_services_details
 
         except RequestException as e:
             error_msg = f"Cannot start program: Failed to connect to Plex server. Error: {str(e)}"
             logging.error(error_msg)
             services_reachable = False
-            failed_services.append("Plex (connection error)")
+            failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
     # Check Debrid Provider connectivity
     if debrid_provider.lower() == 'realdebrid':
@@ -405,11 +405,21 @@ def check_service_connectivity():
         except RequestException as e:
             logging.error(f"Failed to connect to Real-Debrid API: {str(e)}")
             services_reachable = False
-            failed_services.append("Real-Debrid API")
+            error_detail = {"service": "Real-Debrid API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)}
+            if hasattr(e, 'response') and e.response is not None:
+                error_detail["status_code"] = e.response.status_code
+                if e.response.status_code == 401:
+                    error_detail["type"] = "UNAUTHORIZED"
+                    error_detail["message"] = "Real-Debrid API Key is invalid or unauthorized."
+                elif e.response.status_code == 403: # Forbidden, could also be an API key issue or IP block
+                    error_detail["type"] = "FORBIDDEN"
+                    error_detail["message"] = "Real-Debrid API access forbidden. Check API key, IP, or account status."
+                # Add other specific status code checks if needed
+            failed_services_details.append(error_detail)
     else:
         logging.error(f"Unknown debrid provider: {debrid_provider}")
         services_reachable = False
-        failed_services.append(f"Unknown debrid provider ({debrid_provider})")
+        failed_services_details.append({"service": f"Unknown debrid provider ({debrid_provider})", "type": "CONFIG_ERROR", "message": "Invalid Debrid provider configured."})
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
@@ -424,7 +434,7 @@ def check_service_connectivity():
         if trakt_status != 'authorized':
             logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
             services_reachable = False
-            failed_services.append("Trakt (not authorized)")
+            failed_services_details.append({"service": "Trakt", "type": "UNAUTHORIZED", "message": "Trakt not authorized via Metadata Battery."})
     except RequestException as e:
         if hasattr(e, 'response') and e.response is not None:
             logging.error(f"Failed to connect to Metadata Battery: {e.response.status_code} {e.response.reason}")
@@ -432,20 +442,23 @@ def check_service_connectivity():
         else:
             logging.error(f"Failed to connect to Metadata Battery: {str(e)}")
         services_reachable = False
-        failed_services.append("Metadata Battery")
+        status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
+        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": status_code, "message": str(e)})
 
-    return services_reachable, failed_services
+    return services_reachable, failed_services_details
 
 @program_operation_bp.route('/api/start_program', methods=['POST'])
 def start_program():
     global program_runner
-    # Check service connectivity *before* attempting to create/start the runner
-    check_result, failed_services = check_service_connectivity()
+    check_result, failed_services_info = check_service_connectivity()
     if not check_result:
-        # Construct a more informative error message
-        error_message = "Cannot start program: Failed to connect to required services. Failed: " + ", ".join(failed_services) + ". Check logs for details."
-        logging.error(error_message) # Log the error as well
-        return jsonify({"status": "error", "message": error_message, "failed_services": failed_services})
+        # Construct a more informative error message using the structured details
+        # For now, let's just join the 'message' fields for simplicity,
+        # but ProgramRunner will use the full structure.
+        error_messages = [fs_info.get('message', fs_info.get('service', 'Unknown service error')) for fs_info in failed_services_info]
+        error_summary = "Cannot start program: Failed to connect to required services. Failures: " + "; ".join(error_messages) + ". Check logs for details."
+        logging.error(error_summary)
+        return jsonify({"status": "error", "message": error_summary, "failed_services_details": failed_services_info})
 
     if program_runner is not None:
         # Always clean up existing instance if stop/start is called
@@ -838,6 +851,11 @@ def _get_task_intervals_file_path():
     return os.path.join(db_content_dir, 'task_intervals.json')
 # --- END EDIT ---
 
+def _get_task_toggles_file_path():
+    """Gets the absolute path for the task_toggles.json file."""
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    return os.path.join(db_content_dir, 'task_toggles.json')
+
 # --- START EDIT: Add routes for saving/loading custom intervals ---
 @program_operation_bp.route('/save_task_intervals', methods=['POST'])
 @admin_required
@@ -938,9 +956,58 @@ def load_task_intervals():
                 saved_intervals_seconds = json.load(f) # Load seconds
         except Exception as e:
             logging.error(f"Error loading saved task intervals (seconds) from {intervals_file_path}: {e}")
+            # Return empty on error but indicate success to not break UI, error is logged
             return jsonify(success=True, task_intervals={})
 
     return jsonify(success=True, task_intervals=saved_intervals_seconds) # Return seconds
+
+# --- START EDIT: Modify reset_all_task_settings endpoint ---
+@program_operation_bp.route('/api/reset_all_task_settings', methods=['POST'])
+@admin_required
+def reset_all_task_settings():
+    toggles_file_path = _get_task_toggles_file_path()
+    intervals_file_path = _get_task_intervals_file_path()
+    files_deleted_count = 0
+    deletion_errors = []
+    files_not_found_count = 0
+
+    try:
+        # Delete settings files
+        for file_path, file_desc in [(toggles_file_path, "task toggles"), (intervals_file_path, "task intervals")]:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    files_deleted_count += 1
+                    logging.info(f"Deleted {file_desc} file: {file_path}")
+                except OSError as e:
+                    logging.error(f"Error deleting {file_desc} file {file_path}: {e}")
+                    deletion_errors.append(f"Error deleting {file_desc} file: {str(e)}")
+            else:
+                files_not_found_count +=1
+                logging.info(f"{file_desc} file not found, no action needed: {file_path}")
+        
+        if deletion_errors:
+            error_message = f"Errors occurred while deleting settings files: {'; '.join(deletion_errors)}. {files_deleted_count} files deleted. Restart the program for changes to take effect."
+            logging.error(error_message)
+            return jsonify({
+                "status": "error", 
+                "message": error_message,
+                "files_deleted": files_deleted_count,
+                "deletion_errors": deletion_errors
+            }), 500
+
+        success_message = f"Task settings reset. {files_deleted_count} configuration files deleted."
+        if files_not_found_count > 0:
+            success_message += f" {files_not_found_count} files were already absent."
+        success_message += " Please restart the program for changes to take full effect."
+        
+        logging.info(success_message)
+        return jsonify({"status": "success", "message": success_message, "files_deleted": files_deleted_count})
+
+    except Exception as e:
+        logging.error(f"Critical error in reset_all_task_settings: {str(e)}", exc_info=True)
+        return jsonify({'status': 'error', 'message': f"An unexpected critical error occurred during reset: {str(e)}"}), 500
+# --- END EDIT ---
 
 # --- START EDIT: Define the missing helper function ---
 def _format_task_display_name(task_name, queue_map, content_sources_map):

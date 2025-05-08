@@ -149,16 +149,23 @@ def get_upcoming_releases():
     return formatted_results
 
 #@cache_for_seconds(300) # Consider caching if appropriate
-def get_movies_for_calendar():
+def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None):
     from database import get_db_connection
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Define date range: e.g., 7 days in the past to 28 days in the future
-    # Adjust these timedelta values as needed
     today = datetime.now().date()
-    start_range_date = today - timedelta(days=7)
-    end_range_date = today + timedelta(days=28)
+    
+    if start_date_override_iso and end_date_override_iso:
+        query_start_date_iso = start_date_override_iso
+        query_end_date_iso = end_date_override_iso
+    else:
+        # Define date range: e.g., 7 days in the past to 28 days in the future
+        # Adjust these timedelta values as needed
+        start_range_date = today - timedelta(days=days_past)
+        end_range_date = today + timedelta(days=days_future)
+        query_start_date_iso = start_range_date.isoformat()
+        query_end_date_iso = end_range_date.isoformat()
     
     # Query to get movies within the date range, along with their current state.
     # We group by essential fields to get unique movie releases.
@@ -178,7 +185,7 @@ def get_movies_for_calendar():
     ORDER BY m.release_date ASC, m.title ASC
     """
     
-    cursor.execute(query, (start_range_date.isoformat(), end_range_date.isoformat()))
+    cursor.execute(query, (query_start_date_iso, query_end_date_iso))
     results = cursor.fetchall()
     conn.close()
     
@@ -194,7 +201,7 @@ def get_movies_for_calendar():
     return movies_data
 
 #@cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
-def get_recently_aired_and_airing_soon():
+def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None):
     from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
     from database import get_db_connection
     conn = get_db_connection()
@@ -203,13 +210,18 @@ def get_recently_aired_and_airing_soon():
         
         # Get timezone using our robust function
         local_tz = _get_local_timezone()
-        now = datetime.now(local_tz)
-        two_days_ago = now - timedelta(days=2)
-        tomorrow = now + timedelta(days=1)
+        now = datetime.now(local_tz) # This 'now' is for classification, not for query range if overridden
         
-        # Get date range for query
-        start_date = two_days_ago.date().isoformat()
-        end_date = tomorrow.date().isoformat()
+        if start_date_override_iso and end_date_override_iso:
+            query_start_date_for_sql = start_date_override_iso
+            query_end_date_for_sql = end_date_override_iso
+        else:
+            # Default behavior if overrides are not provided
+            two_days_ago = now - timedelta(days=days_past)
+            tomorrow = now + timedelta(days=days_future)
+            # Get date range for query
+            query_start_date_for_sql = two_days_ago.date().isoformat()
+            query_end_date_for_sql = tomorrow.date().isoformat()
         
         # New optimized approach:
         # 1. First, get all unique episode combinations in one query
@@ -235,18 +247,18 @@ def get_recently_aired_and_airing_soon():
           AND state != 'Blacklisted'  -- Exclude blacklisted items
         GROUP BY title, season_number, episode_number
         ORDER BY release_date, airtime, title
-        LIMIT 100  -- Limit to reasonable number of results
+        LIMIT 1000  -- Limit to reasonable number of results
         """
         
         # Log the query plan to help optimize in the future
         try:
-            cursor.execute("EXPLAIN QUERY PLAN " + optimized_query, (start_date, end_date))
+            cursor.execute("EXPLAIN QUERY PLAN " + optimized_query, (query_start_date_for_sql, query_end_date_for_sql))
             query_plan = cursor.fetchall()
         except Exception as e:
             logging.warning(f"Could not get query plan: {e}")
         
         query_start = time.perf_counter()
-        cursor.execute(optimized_query, (start_date, end_date))
+        cursor.execute(optimized_query, (query_start_date_for_sql, query_end_date_for_sql))
         results = cursor.fetchall()
         query_time = time.perf_counter() - query_start
         
@@ -382,8 +394,8 @@ def get_recently_aired_and_airing_soon():
         airing_soon.sort(key=lambda x: x['air_datetime'])  # Soonest first
         
         # Limit to reasonable numbers
-        recently_aired = recently_aired[:50]
-        airing_soon = airing_soon[:50]
+        recently_aired = recently_aired[:500]
+        airing_soon = airing_soon[:500]
         
         return recently_aired, airing_soon
     except Exception as e:
@@ -1273,9 +1285,23 @@ def calendar_view():
     local_tz = _get_local_timezone()
     now_aware = datetime.now(local_tz) # Timezone-aware current time
     today_date = now_aware.date()
+    yesterday_date = today_date - timedelta(days=1) 
+    tomorrow_date = today_date + timedelta(days=1) # Calculate tomorrow_date
 
-    # 1. Get TV Show Data
-    recently_aired, airing_soon = get_recently_aired_and_airing_soon()
+    # Define the 3-week view window for data pulling and grid display
+    # Monday of the previous week
+    view_start_date = today_date - timedelta(days=today_date.weekday() + 7)
+    # Sunday of the following week (exactly 21 days, so 20 days after start)
+    view_end_date = view_start_date + timedelta(days=20)
+
+    calendar_pull_start_date_iso = view_start_date.isoformat()
+    calendar_pull_end_date_iso = view_end_date.isoformat()
+
+    # 1. Get TV Show Data using the 3-week range
+    recently_aired, airing_soon = get_recently_aired_and_airing_soon(
+        start_date_override_iso=calendar_pull_start_date_iso,
+        end_date_override_iso=calendar_pull_end_date_iso
+    )
 
     for item in recently_aired + airing_soon:
         event_date = item['air_datetime'].date()
@@ -1294,8 +1320,11 @@ def calendar_view():
             'sort_datetime': item['air_datetime']
         })
 
-    # 2. Get Movies (Recently Premiered and Upcoming)
-    calendar_movies = get_movies_for_calendar()
+    # 2. Get Movies using the 3-week range
+    calendar_movies = get_movies_for_calendar(
+        start_date_override_iso=calendar_pull_start_date_iso,
+        end_date_override_iso=calendar_pull_end_date_iso
+    )
 
     for movie in calendar_movies:
         try:
@@ -1345,58 +1374,23 @@ def calendar_view():
     # 3. Sort all events
     events.sort(key=lambda x: x['sort_datetime'])
 
-    # --- NEW: Determine Date Range for Calendar Grid ---
-    if not events:
-        # Default to current month if no events
-        min_event_date_for_grid = today_date
-        max_event_date_for_grid = today_date
-    else:
-        all_event_dates = [e['date'] for e in events]
-        min_event_date_for_grid = min(all_event_dates)
-        max_event_date_for_grid = max(all_event_dates)
-
-    # --- NEW: Data for Calendar Grid (potentially multiple months) ---
-    cal = calendar.Calendar()
-    displayed_calendar_months = []
-    # Start from the first day of the month of the min_event_date
-    current_iter_date = min_event_date_for_grid.replace(day=1)
-
-    # Ensure we don't create an excessive number of month grids if data spans very far
-    # Also handle the case where min_event_date_for_grid might be after max_event_date_for_grid if events list was empty and defaults were used.
-    # The loop condition `current_iter_date <= max_event_date_for_grid` naturally handles the default case (shows current month).
+    # --- Generate `three_week_grid_days` data structure ---
+    three_week_grid_days = []
+    current_day_for_grid = view_start_date
+    for _ in range(3):  # Iterate for 3 weeks
+        week_days = []
+        for _ in range(7):  # Iterate for 7 days in a week
+            week_days.append(current_day_for_grid)
+            current_day_for_grid += timedelta(days=1)
+        three_week_grid_days.append(week_days)
     
-    month_count = 0
-    max_months_to_display = 12 # Safety limit for the number of months
+    # Create a header string for the 3-week grid view
+    grid_header_start_str = view_start_date.strftime("%b %d, %Y")
+    grid_header_end_str = view_end_date.strftime("%b %d, %Y")
+    three_week_grid_header = f"Schedule: {grid_header_start_str} - {grid_header_end_str}"
 
-    while current_iter_date.year < max_event_date_for_grid.year or \
-          (current_iter_date.year == max_event_date_for_grid.year and current_iter_date.month <= max_event_date_for_grid.month):
-        if month_count >= max_months_to_display:
-            logging.warning(f"Calendar view: Exceeded maximum of {max_months_to_display} months to display. Stopping.")
-            break
-
-        year = current_iter_date.year
-        month = current_iter_date.month
-
-        month_days_data = cal.monthdatescalendar(year, month)
-        month_name_str = datetime(year, month, 1).strftime("%B %Y")
-
-        displayed_calendar_months.append({
-            'name': month_name_str,
-            'month_days_in_weeks': month_days_data,
-            'month_number': month,
-            'year_number': year
-        })
-
-        month_count += 1
-        # Advance to the next month
-        if month == 12:
-            current_iter_date = current_iter_date.replace(year=year + 1, month=1)
-        else:
-            current_iter_date = current_iter_date.replace(month=month + 1)
-    # --- END NEW Grid Data Preparation ---
-
-    # 4. Group events by date (this `grouped_events` will be used by both grid and timeline)
-    grouped_events: Dict[str, List[Dict[str, Any]]] = {}
+    # 4. Group events by date (for both grid and timeline)
+    grouped_events: Dict[str, Dict[str, Any]] = {} # Corrected type hint
     for event in events:
         date_str = event['date'].isoformat()
         if date_str not in grouped_events:
@@ -1411,7 +1405,7 @@ def calendar_view():
             elif event['date'] == (today_date + timedelta(days=1)):
                 display_date_str_for_timeline = f"Tomorrow, {month_day_str}"
             elif event['date'] == (today_date - timedelta(days=1)):
-                display_date_str_for_timeline = f"Yesterday, {month_day_str}"
+                display_date_str_for_timeline = "Yesterday"
             else:
                 display_date_str_for_timeline = f"{day_name}, {month_day_str}, {year_str}"
 
@@ -1424,17 +1418,22 @@ def calendar_view():
     sorted_dates_for_timeline = sorted(grouped_events.keys())
 
     return render_template('calendar_view.html',
-                           # NEW Data for Grid Calendar
-                           displayed_calendar_months=displayed_calendar_months,
+                           # Data for the new 3-Week Grid
+                           three_week_grid_days=three_week_grid_days,
+                           three_week_grid_header=three_week_grid_header,
+                           # view_start_date and view_end_date are no longer needed for timeline filter in template
+                           # but might be useful if other parts of the template expect them.
+                           # For this specific request, the timeline filter will use today_date and yesterday_date.
                            
-                           today_date=today_date, # Still needed
+                           today_date=today_date, 
+                           yesterday_date=yesterday_date, 
+                           tomorrow_date=tomorrow_date, # Pass tomorrow_date to template
                            
                            # Data for Timeline (and for populating grid cells)
                            grouped_events=grouped_events,
                            sorted_dates_for_timeline=sorted_dates_for_timeline,
                            
-                           # Make timedelta available to the template
-                           timedelta=timedelta,
+                           timedelta=timedelta, 
                            
                            use_24hour_format=use_24hour_format,
                            compact_view=compact_view)

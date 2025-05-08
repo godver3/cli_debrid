@@ -384,6 +384,9 @@
 
     <!-- Combined Save Buttons -->
     <div class="action-buttons-container">
+        <button id="resetAllSettingsBtn" class="save-toggles-btn" style="background-color: #dc3545;"> <!-- Red for reset -->
+            <i class="fas fa-undo"></i> Reset All to Default
+        </button>
          <button id="saveIntervalsBtn" class="save-toggles-btn" style="background-color: #28a745;"> <!-- Green for intervals -->
             <i class="fas fa-clock"></i> Save Intervals
         </button>
@@ -481,6 +484,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('saveTogglesBtn').addEventListener('click', saveToggleStates);
     // Add event listener for Save Intervals button
     document.getElementById('saveIntervalsBtn').addEventListener('click', saveIntervalStates);
+    // Add event listener for Reset All Settings button
+    document.getElementById('resetAllSettingsBtn').addEventListener('click', handleResetAllSettings);
     
     // Initial fetch and setup
     fetchAndUpdateTasks();
@@ -733,7 +738,7 @@ function createTaskTile(taskName, taskData) {
     if (enabled) {
         tile.onclick = (e) => {
             // Prevent trigger on input field click
-            if (e.target.classList.contains('task-toggle') ||
+            if (e.target.classList.contains('task-toggle') || 
                 e.target.classList.contains('toggle-slider') ||
                 e.target.classList.contains('toggle-switch') ||
                 e.target.tagName === 'INPUT' || // General input check
@@ -1091,5 +1096,70 @@ setInterval(updateTimers, 1000);
 
 // Refresh data every minute
 setInterval(fetchAndUpdateTasks, 60000);
+
+// Add JavaScript functions for Reset All Settings
+function handleResetAllSettings() {
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Confirm Reset',
+        message: 'Are you sure you want to reset all task toggles and intervals to their default values? This will also restart the program. This action cannot be undone.',
+        onConfirm: () => {
+            performResetAllSettings();
+        }
+    });
+}
+
+function performResetAllSettings() {
+    const resetButton = document.getElementById('resetAllSettingsBtn');
+    const originalButtonText = resetButton.innerHTML;
+    resetButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resetting...';
+    resetButton.disabled = true;
+
+    fetch('/program_operation/api/reset_all_task_settings', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        resetButton.innerHTML = originalButtonText;
+        resetButton.disabled = false;
+
+        if (data.status === "success") {
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Settings Reset',
+                message: data.message || 'Task configuration files have been deleted. Please restart the program for the changes to take effect.'
+            });
+            // Clear local input fields and reload tasks to reflect default state
+            // This will show the current running state, but inputs will be clear,
+            // indicating that on next start, defaults would be used.
+            document.querySelectorAll('.task-tile .interval-input').forEach(input => {
+                input.value = ''; // Clear custom values
+                input.dispatchEvent(new Event('input')); // Trigger style update if any
+            });
+             // Fetching tasks will show the *current* state of the running program.
+             // After restart, it would show the actual defaults.
+            setTimeout(fetchAndUpdateTasks, 1500);
+        } else { // error
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Reset Failed',
+                message: data.message || data.error || 'Failed to delete settings files. Please check logs.'
+            });
+        }
+    })
+    .catch(error => {
+        resetButton.innerHTML = originalButtonText;
+        resetButton.disabled = false;
+        console.error('Error resetting all settings:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Error',
+            message: 'An unexpected error occurred while trying to reset settings. Check console for details.'
+        });
+    });
+}
 </script>
 {% endblock %}

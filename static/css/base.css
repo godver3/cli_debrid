@@ -1915,7 +1915,7 @@ body.modal-open {
     align-items: center;
     padding: 12px 10px;
     margin-bottom: 8px;
-    background-color: #333; /* Slightly lighter than day group */
+    background-color: #333;
     border-radius: 4px;
     border-left: 5px solid #555; /* Default border color */
     transition: background-color 0.2s ease;
@@ -2128,7 +2128,7 @@ body.modal-open {
 .calendar-grid td.is-today .day-number {
     background-color: #FFA500;
     color: #1a1a1a;
-    padding: 1px 4px;
+    padding: 0px 7px;
     border-radius: 50%;
     font-weight: bold;
     font-size: 0.8em;
@@ -2329,11 +2329,43 @@ body.modal-open {
     /* Timeline responsive */
     .timeline-header { font-size: 1.4em; }
     .calendar-day-group h3 { font-size: 1.1em; }
-    .calendar-event { flex-direction: column; align-items: flex-start; padding: 8px; }
-    .event-time { text-align: left; margin-bottom: 4px; font-size: 0.8em; }
-    .event-title { font-size: 0.9em; }
-    .event-category { font-size: 0.75em; }
-    .event-status-badge { font-size: 0.7em; }
+    .calendar-event {
+        flex-direction: column;
+        align-items: flex-start; /* Children will be start-aligned and take content width */
+        padding-top: 4px;
+        padding-bottom: 4px;
+        padding-left: 8px;
+        padding-right: 8px;
+        margin-bottom: 6px;
+    }
+    .event-time {
+        flex-basis: auto;   /* Override desktop flex-basis */
+        width: auto;        /* Allow width to be determined by content */
+        text-align: left;
+        margin-right: 0;    /* Remove desktop margin-right */
+        margin-bottom: 2px;
+        font-size: 0.8em;
+    }
+    .event-details {
+        flex-basis: auto;   /* Good practice for sibling items */
+        width: 100%;        /* Ensure details section takes full available width */
+        /* display: flex and flex-direction: column are inherited from desktop and are fine */
+    }
+    .event-title {
+        font-size: 0.9em;
+        margin-bottom: 1px;
+        line-height: 1.2;
+    }
+    .event-category {
+        font-size: 0.7em;
+        margin-bottom: 1px;
+        line-height: 1.2;
+    }
+    .event-status-badge {
+        font-size: 0.65em;
+        margin-top: 1px;
+        padding: 1px 4px;
+    }
 }
 
 @media (max-width: 480px) {
@@ -2341,4 +2373,208 @@ body.modal-open {
     .calendar-grid td { width: 100%; display: block; height: auto; min-height: 60px; margin-bottom: 5px;}
     .calendar-grid td .day-number { position: static; float: left; margin-right: 5px;}
     .grid-event-list { margin-top: 5px; margin-left: 30px; /* After day number */ }
+}
+
+/* Hide calendar grid on small screens */
+@media (max-width: 768px) {
+    .calendar-grid-section {
+        display: none;
+    }
+}
+
+/* Calendar Day Cell Clickability */
+.calendar-day-cell {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+    position: relative; /* For potential future absolute positioned elements inside */
+    min-height: 100px; /* Ensure cells have a minimum height for clickability */
+}
+
+.calendar-day-cell:hover {
+    background-color: #3a3a3a; /* Darker hover, adjust as needed */
+}
+
+.no-events-in-cell {
+    /* This can be an empty div that helps maintain cell height if you don't rely on content */
+    /* Or you can remove this and ensure min-height on td is sufficient */
+}
+
+
+/* Day Events Modal Styles */
+.day-events-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 1055; /* Higher than header, lower than modal */
+    backdrop-filter: blur(3px);
+}
+
+.day-events-modal {
+    display: none; /* Hidden by default */
+    flex-direction: column;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 90%;
+    max-width: 600px; /* Adjust as needed */
+    max-height: 80vh;
+    background-color: #1e1e1e;
+    color: #f1f1f1;
+    border: 1px solid #555;
+    border-radius: 8px;
+    box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+    z-index: 1060; /* Above overlay */
+}
+
+.day-events-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid #444;
+    flex-shrink: 0;
+}
+
+.day-events-modal-header h3 {
+    margin: 0;
+    font-size: 1.3em;
+    color: #fff;
+}
+
+.day-events-modal-close {
+    background: none;
+    border: none;
+    font-size: 28px;
+    font-weight: bold;
+    color: #aaa;
+    cursor: pointer;
+    padding: 0 5px;
+    line-height: 1;
+}
+
+.day-events-modal-close:hover {
+    color: #fff;
+}
+
+.day-events-modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex-grow: 1;
+}
+
+.modal-event-list {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+}
+
+.modal-event-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 0; /* More vertical padding */
+    border-bottom: 1px solid #333;
+    gap: 15px; /* Gap between time and details */
+}
+
+.modal-event-item:last-child {
+    border-bottom: none;
+}
+
+.modal-event-time {
+    flex-basis: 100px; /* Fixed width for time */
+    font-size: 0.9em;
+    color: #ccc; /* Brighter time */
+    text-align: right;
+    font-weight: 500;
+}
+
+.modal-event-time .all-day-indicator {
+    font-style: italic;
+    color: #999;
+}
+
+.modal-event-details {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-event-title {
+    font-size: 1.1em;
+    font-weight: 600; /* Bolder */
+    color: #f0f0f0;
+    margin-bottom: 4px;
+}
+
+.modal-event-category {
+    font-size: 0.85em;
+    color: #bbb;
+    margin-bottom: 5px;
+}
+
+.modal-event-status-badge {
+    font-size: 0.8em;
+    padding: 3px 7px;
+    border-radius: 4px;
+    color: white;
+    align-self: flex-start;
+    margin-top: 3px;
+    font-weight: 500;
+}
+
+/* Consistent status colors for modal (should match calendar-event and grid-event-item status colors) */
+.modal-event-item.status-collected .modal-event-title,
+.modal-event-item.status-checking-upgrade .modal-event-title {
+    text-decoration: line-through; color: #888;
+}
+.modal-event-item.status-collected .modal-event-category,
+.modal-event-item.status-checking-upgrade .modal-event-category { color: #777; }
+
+.modal-event-status-badge.status-collected { background-color: #2ecc71; }
+.modal-event-status-badge.status-checking-upgrade { background-color: #f39c12; }
+.modal-event-status-badge.status-premiered-uncollected { background-color: #e74c3c; }
+.modal-event-status-badge.status-upcoming-uncollected { background-color: #5dade2; } /* Example */
+.modal-event-status-badge.status-upcoming-collected { background-color: #2ecc71; }
+.modal-event-status-badge.status-upcoming { background-color: #3498db; } /* Default for general upcoming if no other state */
+.modal-event-status-badge.status-uncollected { background-color: #bdc3c7; color: #333; } /* Default uncollected */
+.modal-event-status-badge.status-upgrading { background-color: #f1c40f; color: #333;}
+
+
+/* Event type specific colors in modal (optional, but good for consistency) */
+.modal-event-item.event-type-movie .modal-event-category { color: #3498db; }
+.modal-event-item.event-type-tv_show .modal-event-category { color: #9b59b6; }
+
+
+.no-modal-events {
+    text-align: center;
+    color: #888;
+    padding: 20px 0;
+    font-style: italic;
+}
+
+/* Ensure body scroll is prevented when modal is open */
+body.modal-open {
+    overflow: hidden;
+}
+
+/* Custom scrollbar for modal body */
+.day-events-modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+.day-events-modal-body::-webkit-scrollbar-track {
+    background: #1e1e1e;
+    border-radius: 4px;
+}
+.day-events-modal-body::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+    border: 2px solid #1e1e1e;
+}
+.day-events-modal-body::-webkit-scrollbar-thumb:hover {
+    background: #555;
 }
