@@ -790,7 +790,7 @@
                         <div class="poster-container">
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
-                                <span class="title">${show.title}</span>
+                                <span class="title">{{ show.title }}</span>
                                 <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>

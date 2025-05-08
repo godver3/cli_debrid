@@ -919,7 +919,7 @@ class MetadataManager:
 
 
                 # Extract other fields safely
-                title = episode_data.get('title', '')
+                title = episode_data.get('title') or ''
                 overview = episode_data.get('overview', '')
                 runtime = episode_data.get('runtime', 0)
                 ids = episode_data.get('ids', {})

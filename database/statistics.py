@@ -373,6 +373,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         WHERE type = 'movie'
           AND collected_at IS NOT NULL 
           AND state IN ('Collected', 'Upgrading')
+          AND upgraded = 0  -- Exclude upgraded items
         ORDER BY collected_at DESC
         LIMIT ?
         """
@@ -398,6 +399,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         WHERE type = 'episode'
           AND collected_at IS NOT NULL 
           AND state IN ('Collected', 'Upgrading')
+          AND upgraded = 0  -- Exclude upgraded items
         ORDER BY collected_at DESC
         LIMIT ?
         """
