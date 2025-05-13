@@ -643,26 +643,33 @@ def get_task_timings():
         normalized_name = runner._normalize_task_name(task_name) # Use runner's normalization
         job = job_infos.get(normalized_name)
         
+        # Determine the configured interval (custom if set, else default)
+        task_default_interval = original_intervals.get(normalized_name, 0)
+        task_custom_saved_interval = saved_intervals_seconds.get(normalized_name) # Raw value from JSON (number or None)
+
+        configured_interval = task_default_interval # Start with default
+        if task_custom_saved_interval is not None: # If a custom value (a number, not None) is saved
+            configured_interval = task_custom_saved_interval
+        
         task_info = {
             'enabled': job is not None and job.next_run_time is not None,
             'interval': 0, # Current interval from job or default
             'next_run_in': {'hours': 0, 'minutes': 0, 'seconds': 0, 'total_seconds': 0},
             'display_name': _format_task_display_name(normalized_name, queue_map, content_sources_map),
-            'current_interval_seconds': 0,
-            'default_interval_seconds': original_intervals.get(normalized_name, 0),
-            'custom_interval_seconds': saved_intervals_seconds.get(normalized_name) # Load saved value in seconds
+            'current_interval_seconds': 0, # Actual live interval or configured if disabled
+            'default_interval_seconds': task_default_interval,
+            'custom_interval_seconds': task_custom_saved_interval, # Raw saved value (number or null)
+            'configured_interval_seconds': configured_interval # For the input box
         }
 
         if job:
             # Get current interval from the job's trigger
-            current_interval_seconds = 0
+            current_job_interval_seconds = 0
             if hasattr(job.trigger, 'interval') and isinstance(job.trigger.interval, timedelta):
-                 current_interval_seconds = job.trigger.interval.total_seconds()
-            # --- START EDIT: Update interval fields for running job ---
-            task_info['interval'] = current_interval_seconds # Legacy field for compatibility? Keep it as current.
-            task_info['current_interval_seconds'] = current_interval_seconds
-             # --- END EDIT ---
-
+                 current_job_interval_seconds = job.trigger.interval.total_seconds()
+            task_info['interval'] = current_job_interval_seconds 
+            task_info['current_interval_seconds'] = current_job_interval_seconds
+            
             if job.next_run_time:
                  # Ensure next_run_time is timezone-aware using scheduler's timezone
                 next_run_local = job.next_run_time.astimezone(runner.scheduler.timezone) if job.next_run_time.tzinfo else runner.scheduler.timezone.localize(job.next_run_time)
@@ -683,16 +690,10 @@ def get_task_timings():
         else:
             # Task is defined but not scheduled (disabled)
             task_info['enabled'] = False
-            # --- START EDIT: Set intervals for non-running job ---
-            default_interval = original_intervals.get(normalized_name, 0)
-            # If a custom interval is saved, assume that *would* be the current one if enabled
-            current_interval_if_enabled = (saved_intervals_seconds.get(normalized_name) * 60) if saved_intervals_seconds.get(normalized_name) is not None else default_interval
-
-            task_info['interval'] = current_interval_if_enabled # Legacy field
-            task_info['current_interval_seconds'] = current_interval_if_enabled # What it would be if running
-            # default_interval_seconds is already set from original_intervals
-            # custom_interval_seconds is already set from saved_intervals_seconds
-             # --- END EDIT ---
+            # For a disabled task, current_interval_seconds reflects what it would be if it started, which is its configured_interval
+            task_info['interval'] = configured_interval 
+            task_info['current_interval_seconds'] = configured_interval
+            # default_interval_seconds, custom_interval_seconds, and configured_interval_seconds are already set above
 
 
         # Categorize task

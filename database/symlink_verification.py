@@ -295,6 +295,51 @@ def mark_file_as_permanently_failed(verification_id: int, reason: str) -> bool:
         conn.close()
 
 @retry_on_db_lock()
+def mark_verification_as_max_attempts_failed(verification_id: int, reason: str) -> bool:
+    """
+    Mark a verification record as permanently failed due to exceeding max attempts,
+    without changing the associated media item's state.
+    
+    Args:
+        verification_id: The ID of the verification record
+        reason: The reason for the failure (e.g., max attempts exceeded)
+        
+    Returns:
+        bool: True if successfully marked, False otherwise
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        
+        # Update the verification record only
+        cursor.execute(
+            """
+            UPDATE symlinked_files_verification 
+            SET permanently_failed = TRUE,
+                failure_reason = ?,
+                last_attempt = ?
+            WHERE id = ?
+            """,
+            (reason, datetime.now(), verification_id)
+        )
+        
+        if cursor.rowcount == 0:
+            logger.warning(f"No verification record found with ID {verification_id} to mark as max attempts failed, or it was already processed.")
+            # conn.close() # Already in finally
+            return False
+
+        conn.commit()
+        logger.info(f"Marked verification record {verification_id} as permanently failed (max attempts exceeded). Reason: {reason}. Associated media item state NOT changed.")
+        return True
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error marking verification record {verification_id} as max attempts failed: {str(e)}")
+        return False
+    finally:
+        if conn: # Ensure conn is defined before trying to close
+            conn.close()
+
+@retry_on_db_lock()
 def get_verification_stats() -> Dict[str, int]:
     """
     Get statistics about the verification process.

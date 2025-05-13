@@ -569,9 +569,20 @@ class AddingQueue:
             # --- Non-upgrade failure handling ---
 
             # Check for specific matching failure errors (adjust strings if needed)
-            if "No matching files found in torrent" in error or "No matching files found in parsed files" in error or "No valid video files found in torrent" in error:
+            if "No matching files found in torrent" in error or \
+               "No matching files found in parsed files" in error or \
+               "No valid video files found in torrent" in error:
                 logging.info(f"Media matching failed for {item_identifier}, moving back to Wanted queue. Error: {error}")
                 # Remove torrent if ID is present
+                if item.get('torrent_id'):
+                    self.remove_unwanted_torrent(item['torrent_id'])
+                queue_manager.move_to_wanted(item, "Adding")
+                # move_to_wanted handles removing from self.items
+                return
+
+            # --- NEW: Handle filename/title filter match ---
+            elif "matched filter-out list" in error:
+                logging.info(f"Item {item_identifier} matched filename/title filter, moving back to Wanted queue. Error: {error}")
                 if item.get('torrent_id'):
                     self.remove_unwanted_torrent(item['torrent_id'])
                 queue_manager.move_to_wanted(item, "Adding")

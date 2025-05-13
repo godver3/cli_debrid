@@ -20,6 +20,7 @@ import random
 from typing import Optional, Dict, Any, List, Tuple
 from .xem_utils import fetch_xem_mapping
 from sqlalchemy.orm import Session as SqlAlchemySession # Use alias
+from fuzzywuzzy import fuzz # <-- ADD THIS IMPORT AT THE TOP OF THE FILE
 
 class MetadataManager:
 
@@ -2154,3 +2155,81 @@ class MetadataManager:
              logger.error(f"Error during force_refresh_item_metadata for {imdb_id}: {e}", exc_info=True)
              if session: raise # Let managed_session handle rollback
              return None, None # Return default on error with local session
+
+    @staticmethod
+    def find_best_match_from_results(
+        original_query_title: str,
+        query_year: Optional[int],
+        search_results: List[Dict[str, Any]],
+        year_match_boost: int = 30, # How much to boost score for perfect year match
+        min_score_threshold: int = 70 # Minimum combined score to be considered a good match
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Finds the best match from a list of search results based on title and year similarity.
+
+        Args:
+            original_query_title: The title used for the search (can contain dots).
+            query_year: The year used for the search.
+            search_results: A list of dictionaries, where each dict is a search result.
+            year_match_boost: Bonus points added to the score if the year matches perfectly.
+            min_score_threshold: The minimum score a result must achieve to be considered a confident match.
+
+        Returns:
+            The best matching search result dictionary, or None if no confident match is found.
+        """
+        if not search_results:
+            logger.debug("find_best_match_from_results: No search results provided.")
+            return None
+
+        # Clean the original query title for fuzzy matching (dots to spaces, lower)
+        cleaned_query_title_for_fuzz = original_query_title.replace('.', ' ').lower().strip() if original_query_title else ''
+        
+        best_match_candidate = None
+        highest_score = -1
+
+        logger.debug(f"find_best_match_from_results: Processing {len(search_results)} results for query '{original_query_title}' ({query_year})")
+
+        for result_idx, result_item in enumerate(search_results):
+            result_title_original = result_item.get('title', '')
+            result_year = result_item.get('year') # Assumed to be int or None
+
+            if not result_title_original: # Skip results with no title
+                logger.debug(f"  Result {result_idx}: Skipping, no title. Data: {result_item}")
+                continue
+            
+            result_title_lower = result_title_original.lower()
+
+            # 1. Title Similarity Score (0-100)
+            # WRatio is good for matching titles that might have extra words or different orderings.
+            title_similarity_score = fuzz.WRatio(cleaned_query_title_for_fuzz, result_title_lower)
+
+            # 2. Year Matching Score/Bonus
+            year_bonus = 0
+            if query_year is not None and result_year is not None:
+                if query_year == result_year:
+                    year_bonus = year_match_boost # Significant bonus for exact year match
+            
+            # Current combined score primarily based on title, boosted by year match
+            current_combined_score = title_similarity_score + year_bonus
+            
+            logger.debug(f"  Result {result_idx}: '{result_title_original}' ({result_year}) | Cleaned Query: '{cleaned_query_title_for_fuzz}' ({query_year})")
+            logger.debug(f"    TitleSim: {title_similarity_score}, YearBonus: {year_bonus}, CombinedScore: {current_combined_score}")
+
+            if current_combined_score > highest_score:
+                highest_score = current_combined_score
+                best_match_candidate = result_item
+        
+        if best_match_candidate:
+            logger.info(f"Best candidate for '{original_query_title}' ({query_year}) is '{best_match_candidate.get('title')}' ({best_match_candidate.get('year')}) with pre-threshold score {highest_score}.")
+            if highest_score >= min_score_threshold:
+                logger.info(f"  Score {highest_score} >= threshold {min_score_threshold}. Selecting as best match.")
+                return best_match_candidate
+            else:
+                logger.warning(f"  Best candidate's score {highest_score} is below threshold {min_score_threshold}. No confident match.")
+                # Log what would have been picked by the old logic for comparison
+                if search_results:
+                    logger.debug(f"    (Old logic would have picked: '{search_results[0].get('title')}')")
+                return None # Strict: if no match meets threshold, return None.
+        else:
+            logger.warning(f"No suitable match candidate identified after scoring for '{original_query_title}' ({query_year}).")
+            return None

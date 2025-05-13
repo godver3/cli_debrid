@@ -27,7 +27,8 @@ directories = [
     'static',
     'utilities',
     'utilities/config',  # Ensure config directory is included
-    'phalanx_db_hyperswarm'  # Add phalanx_db_hyperswarm directory
+    'phalanx_db_hyperswarm',  # Add phalanx_db_hyperswarm directory
+    'help_content'  # <--- ADD THIS LINE
 ]
 
 for directory in directories:

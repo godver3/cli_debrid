@@ -433,6 +433,13 @@ window.POPUP_TYPES = POPUP_TYPES;
 
 const RESET_NOTIFICATION_KEY = 'taskToggleResetDismissed_0.6.34'; // Version specific key
 
+// --- START NEW VARS ---
+let programStatusPollIntervalId = null;
+let isProgramConsideredRunning = false; // Tracks the page's belief of the program state
+const FAST_POLL_INTERVAL = 5000; // 5 seconds for checking program status when believed to be down
+const REGULAR_UPDATE_INTERVAL = 60000; // 60 seconds for regular task updates
+// --- END NEW VARS ---
+
 // Function to dismiss the reset notification
 window.dismissResetNotification = function() {
     const banner = document.getElementById('resetNotification');
@@ -488,16 +495,17 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('resetAllSettingsBtn').addEventListener('click', handleResetAllSettings);
     
     // Initial fetch and setup
-    fetchAndUpdateTasks();
+    fetchAndUpdateTasks(); // This will also set up initial polling logic
     
     // If no tasks are loaded (program not running), try to load saved toggle states and intervals
+    // This existing setTimeout can remain as a fallback for initial static page load
     setTimeout(() => {
         const taskTiles = document.querySelectorAll('.task-tile');
-        if (taskTiles.length === 0) {
+        if (taskTiles.length === 0 && !isProgramConsideredRunning) { // Only if still not considered running
             loadSavedToggleStates();
             loadSavedIntervalStates();
         }
-    }, 1000);
+    }, 1500); // Slightly increased delay
 });
 
 // Function to save toggle states
@@ -693,19 +701,15 @@ function formatInterval(seconds) {
 
 function createTaskTile(taskName, taskData) {
     const enabled = taskData.enabled;
-    const currentIntervalSec = taskData.current_interval_seconds || 0;
-    const defaultIntervalSec = taskData.default_interval_seconds || 0;
-    const customIntervalSec = taskData.custom_interval_seconds; // Can be null or number
+    const currentIntervalSec = taskData.current_interval_seconds || 0; 
+    const defaultIntervalSec = taskData.default_interval_seconds || 0; 
+    const customIntervalSec = taskData.custom_interval_seconds; 
+    const configuredIntervalSec = taskData.configured_interval_seconds || 0;
 
-    // Determine input value (prefer custom seconds, fallback to current seconds)
-    const intervalInputValue = (customIntervalSec !== null && customIntervalSec !== undefined) ? customIntervalSec : (currentIntervalSec > 0 ? Math.round(currentIntervalSec) : '');
+    const intervalInputValue = (configuredIntervalSec > 0) ? Math.round(configuredIntervalSec) : '';
 
-    // Determine if input represents default
-    const isDefault = (customIntervalSec === null || customIntervalSec === undefined) || (customIntervalSec === defaultIntervalSec);
-    const inputClass = isDefault ? 'default' : 'custom';
-
-    const currentIntervalFormatted = formatInterval(currentIntervalSec);
-    const defaultIntervalFormatted = formatInterval(defaultIntervalSec);
+    const currentIntervalFormatted = formatInterval(currentIntervalSec); // For the "Current: X" badge
+    const defaultIntervalFormatted = formatInterval(defaultIntervalSec); // For display text
 
     // Use display_name from the server if available, otherwise fall back to client-side formatting
     let displayName;
@@ -745,7 +749,7 @@ function createTaskTile(taskName, taskData) {
                 e.target.classList.contains('toggle-label') ||
                 e.target.closest('.task-toggle') ||
                 e.target.classList.contains('interval-input') || // Check interval input specifically
-                e.target.closest('.interval-input-container') ) { // Check container
+                e.target.closest('.interval-input-container') ) {
                 return;
             }
             triggerTask(taskName);
@@ -767,7 +771,7 @@ function createTaskTile(taskName, taskData) {
             ${customIntervalSec !== null && customIntervalSec !== undefined ? `| Saved: ${customIntervalSec}s` : ''}
         </div>
         <div class="interval-input-container">
-            <input type="number" class="interval-input ${inputClass}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="10" step="1" ${enabled ? '' : 'disabled'}>
+            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="10" step="1" ${enabled ? '' : 'disabled'}>
             <span class="interval-input-label">seconds</span>
         </div>
         <div class="countdown" data-task="${taskName}">
@@ -805,6 +809,8 @@ function createTaskTile(taskName, taskData) {
     if (intervalInput) {
         intervalInput.addEventListener('input', function() {
             const currentValue = this.value.trim();
+            // Compare with defaultIntervalSec to determine 'default' or 'custom' class
+            // An empty input means reset to default.
             const matchesDefault = (currentValue === '' || parseInt(currentValue) === defaultIntervalSec);
 
             if (matchesDefault) {
@@ -850,8 +856,15 @@ function fetchAndUpdateTasks() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
+                isProgramConsideredRunning = true;
+                if (programStatusPollIntervalId) {
+                    clearInterval(programStatusPollIntervalId);
+                    programStatusPollIntervalId = null;
+                    console.log("Program is running, stopped fast polling for status.");
+                }
+
                 const tasks = data.tasks;
-                console.log("Fetched task data:", tasks); // More detailed log
+                console.log("Fetched task data:", tasks); 
 
                 // Preserve input values during update
                 const currentIntervalValues = {};
@@ -921,7 +934,12 @@ function fetchAndUpdateTasks() {
                 });
 
             } else {
+                 isProgramConsideredRunning = false;
                  console.warn("API call failed or program not running:", data.error);
+                 if (!programStatusPollIntervalId) {
+                     programStatusPollIntervalId = setInterval(pollProgramStatus, FAST_POLL_INTERVAL);
+                     console.log("Program not running, started fast polling for status.");
+                 }
                  // Clear content if program stopped
                  document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
                  updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}}); // Reset badges
@@ -931,7 +949,12 @@ function fetchAndUpdateTasks() {
             }
         })
         .catch(error => {
+            isProgramConsideredRunning = false;
             console.error('Error fetching task timings:', error);
+            if (!programStatusPollIntervalId) {
+                programStatusPollIntervalId = setInterval(pollProgramStatus, FAST_POLL_INTERVAL);
+                console.log("Error fetching tasks, started fast polling for status.");
+            }
             // Clear all sections if there's an error
             document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
              updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}}); // Reset badges
@@ -1094,8 +1117,8 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
 // Update countdown every second
 setInterval(updateTimers, 1000);
 
-// Refresh data every minute
-setInterval(fetchAndUpdateTasks, 60000);
+// Refresh data every REGULAR_UPDATE_INTERVAL (e.g., 60 seconds)
+setInterval(fetchAndUpdateTasks, REGULAR_UPDATE_INTERVAL);
 
 // Add JavaScript functions for Reset All Settings
 function handleResetAllSettings() {
@@ -1161,5 +1184,31 @@ function performResetAllSettings() {
         });
     });
 }
+
+// --- START NEW FUNCTION ---
+function pollProgramStatus() {
+    fetch('/program_operation/api/program_status')
+        .then(response => response.json())
+        .then(status => {
+            if (status.running) {
+                console.log("Fast poll detected program is running. Triggering task update.");
+                isProgramConsideredRunning = true;
+                if (programStatusPollIntervalId) {
+                    clearInterval(programStatusPollIntervalId);
+                    programStatusPollIntervalId = null;
+                }
+                fetchAndUpdateTasks(); // Fetch full task data immediately
+            } else {
+                console.log("Fast poll: Program still not running.");
+                isProgramConsideredRunning = false; // Ensure this is set
+            }
+        })
+        .catch(error => {
+            console.error('Error polling program status:', error);
+            isProgramConsideredRunning = false; // Assume not running on error
+            // Keep polling
+        });
+}
+// --- END NEW FUNCTION ---
 </script>
 {% endblock %}

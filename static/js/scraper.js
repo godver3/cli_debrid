@@ -1252,7 +1252,7 @@ function createShowElement(data) {
                 year: data.year,
                 media_type: 'tv',
                 genre_ids: data.genre_ids,
-                vote_average: data.vote_average,
+                vote_average: data.rating, // Use data.rating from trending shows
                 backdrop_path: data.backdrop_path,
                 show_overview: data.show_overview,
                 poster_path: data.poster_path,
@@ -1263,7 +1263,7 @@ function createShowElement(data) {
             showMobileActionModal(item);
         } else {
             // Desktop behavior - direct scrape
-            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.rating, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
         }
     };
     
@@ -2132,7 +2132,7 @@ function displaySeasonInfo(title, season_num, air_date, season_overview, poster_
         <div class="season-info-container">
             <img src="/scraper/tmdb_image/w300${poster_path}" alt="${title} ${seasonLabel}" class="season-poster">
             <div class="season-details">
-                <span class="show-rating">${(vote_average).toFixed(1)}</span>
+                <span class="show-rating">${(vote_average || 0).toFixed(1)}</span>
                 <h2>${title} - ${seasonLabel}</h2>
                 <p>${genreString}</p>
                 <div class="season-overview">
@@ -2309,7 +2309,7 @@ function showMobileActionModal(item) {
         if (item.media_type === 'movie') {
             selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, item.version);
         } else {
-            selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, item.tmdb_api_key_set);
+            selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.voteAverage, item.backdrop_path, item.show_overview, item.tmdb_api_key_set);
         }
     };
     

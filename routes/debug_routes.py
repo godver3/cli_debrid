@@ -3025,17 +3025,9 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         rclone_mount_path = Path(rclone_mount_path_str)
         symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path')
 
-        # Retry logic for checking rclone_mount_path
-        max_retries = 6
-        retry_delay = 5  # seconds
-        for attempt in range(max_retries):
-            if rclone_mount_path.is_dir():
-                break
-            logging.warning(f"[RcloneScan {task_id}] Rclone Mount Path '{rclone_mount_path_str}' not found (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay} seconds...")
-            time.sleep(retry_delay)
-        else:
-            # If loop finishes without break, path was not found after all retries
-            raise ValueError(f"Rclone Mount Path is not a valid directory after {max_retries} attempts: {rclone_mount_path_str}")
+        # Check if rclone_mount_path is a directory
+        if not rclone_mount_path.is_dir():
+            raise ValueError(f"Rclone Mount Path is not a valid directory: {rclone_mount_path_str}")
 
         if not symlink_base_path_str:
              raise ValueError("Symlink Base Path cannot be empty.")
@@ -3195,17 +3187,45 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             update_progress(message=f'Processing: {item_path.name} ({current_parsed_type})')
             items_processed += 1
 
-            # 2. Fetch Metadata (No changes to this section from previous logic)
+            # 2. Fetch Metadata
             metadata = None
             final_imdb_id, final_tmdb_id = None, None
             try:
                 item_id_to_use = None
                 search_type_for_api = 'show' if current_parsed_type == 'episode' else 'movie'
-                search_results, _ = direct_api.search_media(query=parsed_title, year=parsed_year, media_type=search_type_for_api)
-                if search_results:
-                    first_match = search_results[0]
-                    item_id_to_use = first_match.get('imdb_id') or first_match.get('tmdb_id')
                 
+                # Clean up the parsed_title by replacing periods with spaces
+                cleaned_parsed_title = parsed_title.replace('.', ' ') if parsed_title else None
+
+                logging.info(f"[RcloneScan {task_id}] Attempting search with: Title='{cleaned_parsed_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}' (Original parsed title: '{parsed_title}')")
+                
+                search_results, _ = direct_api.search_media(query=cleaned_parsed_title, year=parsed_year, media_type=search_type_for_api)
+                
+                best_match_from_search = None
+                if search_results:
+                    # Ensure MetadataManager is imported or accessible here
+                    # If not, you might need: from cli_battery.app.metadata_manager import MetadataManager
+                    # (Assuming it's not already imported at the top of debug_routes.py)
+                    from cli_battery.app.metadata_manager import MetadataManager 
+
+                    best_match_from_search = MetadataManager.find_best_match_from_results(
+                        original_query_title=parsed_title, # Pass the PTT title (can have dots)
+                        query_year=parsed_year,
+                        search_results=search_results
+                        # You can add year_match_boost and min_score_threshold if needed
+                    )
+                
+                if best_match_from_search:
+                    logging.info(f"[RcloneScan {task_id}] Best match selected by find_best_match_from_results: {best_match_from_search.get('title')} ({best_match_from_search.get('year')})")
+                    item_id_to_use = best_match_from_search.get('imdb_id') or best_match_from_search.get('tmdb_id')
+                elif search_results: # Fallback to old logic if find_best_match_from_results returns None but there were results
+                    logging.warning(f"[RcloneScan {task_id}] No confident match from find_best_match_from_results. Falling back to first search result for '{cleaned_parsed_title}'.")
+                    first_match_fallback = search_results[0]
+                    item_id_to_use = first_match_fallback.get('imdb_id') or first_match_fallback.get('tmdb_id')
+                else: # No search results at all
+                    logging.warning(f"[RcloneScan {task_id}] No search results found for '{cleaned_parsed_title}'.")
+                    item_id_to_use = None
+
                 if item_id_to_use:
                     is_imdb = str(item_id_to_use).startswith('tt')
                     if current_parsed_type == 'movie':
@@ -3276,9 +3296,10 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                                 if show_meta_full and isinstance(show_meta_full, dict):
                                     # Set show's final IDs
                                     final_imdb_id = str(show_meta_full.get('imdb_id')).strip() if show_meta_full.get('imdb_id') and str(show_meta_full.get('imdb_id')).strip() else show_imdb_to_fetch_with
-                                    # Corrected TMDB ID extraction for shows
+                                    # Correctly get the show's TMDB ID from 'ids.tmdb'
                                     final_tmdb_id = str(show_meta_full.get('ids', {}).get('tmdb')).strip() if show_meta_full.get('ids', {}).get('tmdb') else show_tmdb_known_from_search
-                                    final_tmdb_id = str(show_meta_full.get('id')).strip() if show_meta_full.get('id') and str(show_meta_full.get('id')).strip() else show_tmdb_known_from_search
+                                    # REMOVED: The following line was overwriting final_tmdb_id, likely with a Trakt ID or an incorrect fallback.
+                                    # final_tmdb_id = str(show_meta_full.get('id')).strip() if show_meta_full.get('id') and str(show_meta_full.get('id')).strip() else show_tmdb_known_from_search
                                     
                                     season_data_dict = show_meta_full.get('seasons', {})
                                     season_data = season_data_dict.get(str(s_num_int)) # API uses string keys for seasons
@@ -3293,12 +3314,27 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                                             episode_data = episode_data_dict.get(e_num_int)
                                             
                                     if episode_data:
+                                        episode_specific_tmdb_val = episode_data.get('id') 
+                                        if not episode_specific_tmdb_val and isinstance(episode_data.get('ids'), dict):
+                                            episode_specific_tmdb_val = episode_data.get('ids', {}).get('tmdb')
+                                        episode_specific_tmdb_id_str = str(episode_specific_tmdb_val).strip() if episode_specific_tmdb_val and str(episode_specific_tmdb_val).strip() else None
+
+                                        raw_first_aired = episode_data.get('first_aired')
+                                        formatted_first_aired = None
+                                        if raw_first_aired and isinstance(raw_first_aired, str):
+                                            formatted_first_aired = raw_first_aired.split('T')[0]
+                                        elif raw_first_aired:
+                                            formatted_first_aired = str(raw_first_aired)
+
                                         metadata = {
                                             'title': show_meta_full.get('title'), 'year': show_meta_full.get('year'), 
-                                            'imdb_id': final_imdb_id, 'tmdb_id': final_tmdb_id,
+                                            'imdb_id': final_imdb_id, 
+                                            'tmdb_id': final_tmdb_id, # This will now correctly use the show's TMDB ID
                                             'season_number': s_num_int, 'episode_number': e_num_int,
-                                            'episode_title': episode_data.get('title'), 'air_date': episode_data.get('first_aired'),
-                                            'release_date': episode_data.get('first_aired'), 'genres': show_meta_full.get('genres', [])
+                                            'episode_title': episode_data.get('title'), 
+                                            'air_date': formatted_first_aired, # Use formatted date
+                                            'release_date': formatted_first_aired, # Use formatted date
+                                            'genres': show_meta_full.get('genres', [])
                                         }
                                     else: 
                                         logging.warning(f"[RcloneScan {task_id}] Episode S{s_num_int}E{e_num_int} not in show data for {final_imdb_id if final_imdb_id else show_imdb_to_fetch_with}")
@@ -3329,32 +3365,48 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             # 3. Prepare DB Item (original_file_path_str for original_path_for_symlink)
             now_iso = datetime.now().isoformat()
             
-            # Use parsed values as defaults if metadata object is None or lacks keys
             db_title = metadata.get('title') if metadata else parsed_title
             db_year = metadata.get('year') if metadata else parsed_year
-            # For episodes, metadata.get('title') would be show title. parsed_title might be more specific from filename if metadata is None.
-            # Let's stick to metadata if available, otherwise parsed_title which is our best guess.
             if current_parsed_type == 'episode' and metadata and metadata.get('title'):
-                db_title = metadata.get('title') # Show title from metadata
-            elif not db_title: # Fallback if metadata was None or metadata had no title
+                db_title = metadata.get('title') 
+            elif not db_title: 
                  db_title = parsed_title
 
             if current_parsed_type == 'episode' and metadata and metadata.get('year'):
-                db_year = metadata.get('year') # Show year from metadata
-            elif not db_year: # Fallback if metadata was None or metadata had no year
+                db_year = metadata.get('year') 
+            elif not db_year: 
                 db_year = parsed_year
+
+            # Determine release_date based on type and available keys
+            final_release_date = None
+            if metadata:
+                if current_parsed_type == 'movie':
+                    # For movies, prioritize 'release_date', then 'released'
+                    raw_movie_release_date = metadata.get('release_date') or metadata.get('released')
+                    if isinstance(raw_movie_release_date, str):
+                        final_release_date = raw_movie_release_date.split('T')[0]
+                    elif raw_movie_release_date: # If it exists but not string, log and set to None
+                        logging.warning(f"[RcloneScan {task_id}] Movie release date key ('release_date' or 'released') was not a string: {raw_movie_release_date} for {item_path.name}")
+                elif current_parsed_type == 'episode':
+                    # For episodes, 'release_date' should already be formatted (from 'first_aired')
+                    # 'air_date' can be a fallback if 'release_date' wasn't populated during episode metadata construction
+                    raw_episode_release_date = metadata.get('release_date') or metadata.get('air_date')
+                    if isinstance(raw_episode_release_date, str): # Should already be YYYY-MM-DD
+                        final_release_date = raw_episode_release_date
+                    elif raw_episode_release_date:
+                         logging.warning(f"[RcloneScan {task_id}] Episode release date key ('release_date' or 'air_date') was not a string: {raw_episode_release_date} for {item_path.name}")
 
             item_for_db = {
                 'imdb_id': final_imdb_id, 
                 'tmdb_id': final_tmdb_id,
                 'title': db_title,
                 'year': db_year,
-                'release_date': metadata.get('release_date') if metadata else (metadata.get('air_date') if metadata else None), # Prefers movie release_date, then episode air_date
+                'release_date': final_release_date,
                 'state': 'Collected', 
                 'type': current_parsed_type,
                 'season_number': metadata.get('season_number') if metadata else (s_num_int if current_parsed_type == 'episode' else None),
                 'episode_number': metadata.get('episode_number') if metadata else (e_num_int if current_parsed_type == 'episode' else None),
-                'episode_title': metadata.get('episode_title') if metadata else None, # Episode title specific, None if no metadata
+                'episode_title': metadata.get('episode_title') if metadata else None, 
                 'collected_at': now_iso,
                 'original_collected_at': now_iso, 
                 'original_path_for_symlink': original_file_path_str,
@@ -3396,8 +3448,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     skipped_duplicates += 1; update_progress(skipped_duplicates=skipped_duplicates)
                     # If it's a duplicate, we should still mark original_file_path_str as processed if we intend to skip it next time
                     # However, if symlink creation was the goal, and DB entry exists, maybe try to symlink?
-                    # For now, if DB entry is duplicate, we skip symlink and don't add to processed_original_files,
-                    # as it implies another file (perhaps the original duplicate) is the canonical one.
+                    # For now, if DB entry is duplicate, then this file is not "successfully processed" into a *new* DB entry.
                     # This needs careful thought if we want to "adopt" existing DB entries.
                     # Current logic: if DB duplicate, then this file is not "successfully processed" into a *new* DB entry.
                     continue 

@@ -645,6 +645,34 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
     processed_email = False # Flag to check if we even attempted Email
     # Add flags for other types if needed
 
+    # --- START: MODIFICATION TO PREVENT DUPLICATE 'Collected'/'Upgraded' IN 'state_change' BATCH ---
+    if notification_category == 'state_change' and isinstance(notifications, list):
+        original_count = len(notifications)
+        temp_notifications = []
+        for item_in_batch in notifications:
+            if not isinstance(item_in_batch, dict):
+                temp_notifications.append(item_in_batch) # Keep non-dict items
+                continue
+
+            item_state = item_in_batch.get('new_state')
+            
+            # If an item's state is 'Collected' or 'Upgraded',
+            # it's assumed to be handled by the dedicated 'collected'/'upgrading' notification flow.
+            # We exclude it from this generic 'state_change' batch to prevent duplication.
+            if item_state == 'Collected' or item_state == 'Upgraded':
+                logging.debug(f"Item '{item_in_batch.get('title', 'N/A')}' with state '{item_state}' will be excluded from 'state_change' batch (category: {notification_category}) to prevent duplication with dedicated notifications.")
+                continue
+            temp_notifications.append(item_in_batch)
+        
+        notifications = temp_notifications # Use the filtered list
+        if original_count > 0 and not notifications:
+            logging.debug(f"All items filtered from 'state_change' (category: {notification_category}) batch as they were 'Collected'/'Upgraded'. No 'state_change' notification to send for this specific batch content.")
+            # No need to return early, subsequent logic will handle an empty 'notifications' list
+            # by eventually producing no content to send.
+        elif original_count != len(notifications):
+            logging.debug(f"Filtered out {original_count - len(notifications)} 'Collected'/'Upgraded' items from 'state_change' (category: {notification_category}) batch.")
+    # --- END: MODIFICATION ---
+
     for notification_id, notification_config in enabled_notifications.items():
         logging.debug(f"Processing notification target ID: {notification_id}")
 

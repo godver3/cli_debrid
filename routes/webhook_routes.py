@@ -20,7 +20,7 @@ from database.core import get_db_connection
 from utilities.reverse_parser import parse_filename_for_version
 from datetime import datetime, timezone
 from database.database_writing import update_media_item_state, add_media_item, update_release_date_and_state
-from database.database_reading import get_media_item_by_id, get_media_item_presence, get_media_item_by_filename, check_item_exists_by_directory_name, check_item_exists_by_symlink_path
+from database.database_reading import get_media_item_by_id, get_media_item_presence, get_media_item_by_filename, check_item_exists_by_directory_name, check_item_exists_by_symlink_path, check_item_exists_with_symlink_path_containing
 import json
 import time
 import requests # Added for TMDB API calls
@@ -81,10 +81,11 @@ def rclone_webhook():
     """
     Receives a relative path from rclone, extracts the final directory component,
     checks if any item for this directory name already exists in the DB based on title fields, 
+    OR if the original_path_for_symlink contains this component,
     and if not, triggers a background task to process it.
     Returns 202 Accepted immediately if processing is initiated.
     Ignores requests if file management mode is set to Plex.
-    Ignores requests if an item matching the directory name already exists in the database.
+    Ignores requests if an item matching the criteria already exists in the database.
     """
     try:
         # Check file management mode first
@@ -106,42 +107,36 @@ def rclone_webhook():
         logging.info(f"Received rclone webhook for relative path: {full_relative_path_str}")
 
         # This component is assumed to be the item's directory name (e.g., "Movie Title (Year)")
-        # relative to the original_files_base_path categories (like "movies", "tv").
-        # Or, if original_files_base_path directly contains item folders, then this is the item folder name.
+        # or filename, relative to the original_files_base_path categories.
         final_dir_component = os.path.basename(full_relative_path_str)
         if not final_dir_component:
              logging.error(f"Could not extract final directory component from path: {full_relative_path_str}")
              return jsonify({"status": "error", "message": "Could not determine final directory name from provided path."}), 400
-        logging.info(f"Extracted final directory component (assumed item folder name): {final_dir_component}")
+        logging.info(f"Extracted final directory component (assumed item folder name or filename): {final_dir_component}")
 
         original_files_base_path = get_setting('File Management', 'original_files_path')
         if not original_files_base_path:
              logging.error("The 'original_files_path' setting under [File Management] is not configured. Cannot determine the full path.")
              return jsonify({"status": "error", "message": "Original files base path setting is missing."}), 500
         
-        # This is the absolute path to the directory that rclone is reporting and needs scanning.
-        # Example: /mnt/zurg/__all__ + Movie Title (Year) = /mnt/zurg/__all__/Movie Title (Year)
-        # OR if full_relative_path_str was "movies/Movie Title (Year)", then final_dir_component is "Movie Title (Year)",
-        # and this path assumes original_files_base_path is /mnt/zurg/__all__ (not /mnt/zurg/__all__/movies).
-        # This path is used for the DB check and passed to the symlink task.
-        absolute_item_dir_path = os.path.join(original_files_base_path, final_dir_component)
-        logging.info(f"Constructed absolute item directory path to check/scan: {absolute_item_dir_path}")
+        # This is the absolute path to the directory/file that rclone is reporting and needs scanning.
+        absolute_item_dir_or_file_path = os.path.join(original_files_base_path, final_dir_component)
+        logging.info(f"Constructed absolute item path to check/scan: {absolute_item_dir_or_file_path}")
 
-        # --- Check database for existing item based on directory name OR symlink path ---
+        # --- Check database for existing item ---
         # Check 1: Match directory name against title fields
         exists_by_dir_name = check_item_exists_by_directory_name(final_dir_component)
-        # Check 2: Match absolute path against the original path stored for symlinking
-        # Note: This assumes `original_path_for_symlink` stores the *directory* path. 
-        # If it stores the *file* path inside the directory, this check might need adjustment 
-        # depending on what `absolute_item_dir_path` represents exactly.
-        exists_by_symlink_path = check_item_exists_by_symlink_path(absolute_item_dir_path)
+        
+        # Check 2: Match final_dir_component against original_path_for_symlink (contains check)
+        # This replaces the previous check_item_exists_by_symlink_path(absolute_item_dir_or_file_path)
+        exists_by_symlink_path_contains_component = check_item_exists_with_symlink_path_containing(final_dir_component)
 
-        if exists_by_dir_name or exists_by_symlink_path:
+        if exists_by_dir_name or exists_by_symlink_path_contains_component:
             ignore_reason = []
             if exists_by_dir_name:
                 ignore_reason.append(f"matching directory/title name '{final_dir_component}' found")
-            if exists_by_symlink_path:
-                 ignore_reason.append(f"matching original_path_for_symlink '{absolute_item_dir_path}' found")
+            if exists_by_symlink_path_contains_component:
+                 ignore_reason.append(f"original_path_for_symlink containing component '{final_dir_component}' found")
             
             logging.info(f"Ignoring rclone webhook. Reason(s): {'; '.join(ignore_reason)}.")
             return jsonify({
@@ -149,7 +144,7 @@ def rclone_webhook():
                 "message": f"Item already exists based on: {'; '.join(ignore_reason)}."
             }), 200
         else:
-            logging.info(f"No existing database entries found matching directory/title name '{final_dir_component}' or symlink path '{absolute_item_dir_path}'. Proceeding with webhook processing.")
+            logging.info(f"No existing database entries found matching directory/title name '{final_dir_component}' OR where original_path_for_symlink contains component '{final_dir_component}'. Proceeding with webhook processing.")
         # --- End database checks ---
 
         symlink_base_path_str = get_setting('File Management', 'symlinked_files_path')
@@ -160,18 +155,20 @@ def rclone_webhook():
         task_id = str(uuid.uuid4())
         dry_run = False
 
-        logging.info(f"Initiating rclone to symlinks task. Task ID: {task_id}, Scan Dir: {absolute_item_dir_path}, Symlink Base: {symlink_base_path_str}")
+        # The path passed to the task should still be the full path for scanning.
+        scan_path = absolute_item_dir_or_file_path 
+        logging.info(f"Initiating rclone to symlinks task. Task ID: {task_id}, Scan Path: {scan_path}, Symlink Base: {symlink_base_path_str}")
 
         thread = threading.Thread(
             target=_run_rclone_to_symlink_task,
-            args=(absolute_item_dir_path, symlink_base_path_str, dry_run, task_id, True)
+            args=(scan_path, symlink_base_path_str, dry_run, task_id, True)
         )
         thread.daemon = True
         thread.start()
 
         return jsonify({
             "status": "accepted",
-            "message": f"Relative path received. Background task (ID: {task_id}) initiated to process directory: {absolute_item_dir_path}.",
+            "message": f"Path received. Background task (ID: {task_id}) initiated to process: {scan_path}.",
             "task_id": task_id
         }), 202
 
