@@ -3025,8 +3025,18 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         rclone_mount_path = Path(rclone_mount_path_str)
         symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path')
 
-        if not rclone_mount_path.is_dir():
-            raise ValueError(f"Rclone Mount Path is not a valid directory: {rclone_mount_path_str}")
+        # Retry logic for checking rclone_mount_path
+        max_retries = 3
+        retry_delay = 5  # seconds
+        for attempt in range(max_retries):
+            if rclone_mount_path.is_dir():
+                break
+            logging.warning(f"[RcloneScan {task_id}] Rclone Mount Path '{rclone_mount_path_str}' not found (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+        else:
+            # If loop finishes without break, path was not found after all retries
+            raise ValueError(f"Rclone Mount Path is not a valid directory after {max_retries} attempts: {rclone_mount_path_str}")
+
         if not symlink_base_path_str:
              raise ValueError("Symlink Base Path cannot be empty.")
         
