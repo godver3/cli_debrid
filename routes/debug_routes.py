@@ -3026,7 +3026,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         symlink_base_path_setting_backup = get_setting('File Management', 'symlinked_files_path')
 
         # Retry logic for checking rclone_mount_path
-        max_retries = 3
+        max_retries = 6
         retry_delay = 5  # seconds
         for attempt in range(max_retries):
             if rclone_mount_path.is_dir():
