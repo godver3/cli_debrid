@@ -222,7 +222,17 @@ class WantedQueue:
                          remove_from_media_items(item_id) # Remove directly
                          continue # Skip processing this item
 
-                    # Check 2: Release Date & Time Logic
+                    # Handle early release first - bypass other checks
+                    if item.get('early_release', False):
+                        if moved_to_scraping_count < allowed_to_add_count:
+                            logging.info(f"Early release item {item_identifier} - moving to Scraping.")
+                            queue_manager.move_to_scraping(item, "Wanted")
+                            moved_to_scraping_count += 1
+                        else:
+                             logging.debug(f"Skipping early release item {item_identifier} due to scraping queue throttle.")
+                        continue # Process next item
+
+                    # Check 2: Release Date & Time Logic (Now happens *after* early release check)
                     release_date_str = item.get('release_date')
                     airtime_str = item.get('airtime')
                     version = item.get('version')
@@ -235,6 +245,7 @@ class WantedQueue:
                     physical_release_date = item.get('physical_release_date')
 
                     # Move to Unreleased if physical required but missing (and not magnet assigned)
+                    # This check is now safe because early_release items already continued
                     if not is_magnet_assigned and require_physical and not physical_release_date:
                         logging.info(f"Item {item_identifier} requires physical release date but none available. Moving to Unreleased.")
                         queue_manager.move_to_unreleased(item, "Wanted")
@@ -242,6 +253,7 @@ class WantedQueue:
                         continue
 
                     # Move to Unreleased if release date unknown/invalid (and not magnet assigned)
+                    # This check is now safe because early_release items already continued
                     release_date = None
                     if not is_magnet_assigned and (not release_date_str or str(release_date_str).lower() in ['unknown', 'none']):
                          logging.debug(f"Item {item_identifier} has no valid release date. Moving to Unreleased.")
@@ -267,16 +279,6 @@ class WantedQueue:
 
                     # If Magnet Assigned and date was bad/missing, release_date is now set to today
                     # If not Magnet Assigned and date was bad/missing, we continued above
-
-                    # Handle early release - bypass date checks
-                    if item.get('early_release', False):
-                        if moved_to_scraping_count < allowed_to_add_count:
-                            logging.info(f"Early release item {item_identifier} - moving to Scraping.")
-                            queue_manager.move_to_scraping(item, "Wanted")
-                            moved_to_scraping_count += 1
-                        else:
-                             logging.debug(f"Skipping early release item {item_identifier} due to scraping queue throttle.")
-                        continue # Process next item
 
                     # Calculate effective scrape time (only if release_date is valid)
                     effective_scrape_time = None

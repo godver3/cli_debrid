@@ -674,6 +674,48 @@ def get_item_count_by_state(state: str) -> int:
         if conn:
             conn.close()
 
+def check_item_exists_by_directory_name(item_directory_name: str) -> bool:
+    """
+    Check if any media item exists in the database where the item_directory_name
+    matches either the 'filled_by_title' or 'real_debrid_original_title' fields.
+
+    Args:
+        item_directory_name: The directory name component to check against specific title fields.
+                             Example: 'Movie Name (Year)'
+
+    Returns:
+        True if an item matching the name is found in either specified field, False otherwise.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        
+        query = f'''
+            SELECT 1 
+            FROM media_items 
+            WHERE filled_by_title = ? OR real_debrid_original_title = ?
+            LIMIT 1
+        '''
+        # Check against both fields using the same name
+        params = [item_directory_name, item_directory_name] 
+        
+        cursor = conn.execute(query, params)
+        result = cursor.fetchone()
+        
+        # Log if an item is found for debugging purposes
+        if result is not None:
+            logging.debug(f"Found existing item(s) in DB with matching directory/title name: {item_directory_name}")
+        else:
+            logging.debug(f"No existing items found in DB with matching directory/title name: {item_directory_name}")
+            
+        return result is not None
+    except Exception as e:
+        logging.error(f"Error checking items by directory/title name ('{item_directory_name}'): {str(e)}")
+        return False # Assume not found on error to avoid blocking unnecessarily
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -697,5 +739,6 @@ __all__ = [
     'get_wake_count',
     'get_show_episode_identifiers_from_db',
     'get_media_item_ids',
-    'get_item_count_by_state'
+    'get_item_count_by_state',
+    'check_item_exists_by_directory_name'
 ]

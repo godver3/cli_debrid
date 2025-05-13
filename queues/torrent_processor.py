@@ -289,32 +289,40 @@ class TorrentProcessor:
                         # It's a direct download or successful response
                         # ... (original code to save and parse torrent file) ...
                         # ... then extract hash/magnet and check cache with debrid provider ...
-                        pass # Placeholder for original logic
+                        # This path implies the URL directly gave a .torrent file content
+                        # We need to write it and then check it.
+                        # For now, assuming this part leads to temp_file_path being used correctly later
+                        # by the caller or that this path is not taken in the reported issue.
+                        # The original issue is about HTTP -> magnet redirect.
+                        tmp.write(response.content)
+                        tmp.flush()
+                        # Now that we have the file, we should check its cache status.
+                        # The current structure of check_cache_for_url returning Optional[bool]
+                        # and check_cache using check_cache_status suggests we should leverage check_cache_status.
+                        # However, check_cache_status expects a magnet or a temp_file.
+                        # We have temp_file_path here.
+                        is_cached_bool, _ = self.check_cache_status(magnet_or_url=None, temp_file=temp_file_path, remove_cached=remove_cached)
+                        return is_cached_bool
 
                     elif response.status_code >= 300 and response.status_code < 400 and 'Location' in response.headers:
                         redirect_url = response.headers['Location']
                         if redirect_url.startswith('magnet:'):
                             logging.info(f"Redirected to magnet link: {redirect_url}")
-                            # Process this magnet_link (e.g., extract hash and check cache with debrid provider)
-                            # This magnet_link should NOT be passed back to requests.get()
-                            info_hash = extract_hash_from_magnet(redirect_url) # Assuming this utility exists
-                            if info_hash:
-                                # Call the debrid provider's cache checking mechanism with the info_hash or redirect_url (magnet link)
-                                # Example: cached_status = debrid_provider.is_cached(info_hash) or debrid_provider.is_cached(redirect_url)
-                                # Return based on cached_status
-                                pass # Placeholder for cache checking logic for the magnet link
-                            else:
-                                logging.error(f"Could not extract hash from redirected magnet link: {redirect_url}")
-                                return False, None, "Error" # Or appropriate error status
+                            # Process this magnet_link by calling check_cache_status
+                            # temp_file should be None as we are now dealing with a magnet link.
+                            # The original temp_file_path (for the downloaded .torrent from the initial URL)
+                            # will be cleaned up by the `finally` block.
+                            is_cached_status, _ = self.check_cache_status(redirect_url, temp_file=None, remove_cached=remove_cached)
+                            return is_cached_status
                             
                         elif redirect_url.startswith('http://') or redirect_url.startswith('https://'):
                             logging.info(f"Redirected to another HTTP/S URL: {redirect_url}. Consider handling chained redirects or re-calling with new URL.")
-                            # Optionally, you could make another request to redirect_url
-                            # For simplicity here, we'll just say it's an unhandled redirect type for now
-                            return False, None, "Error - HTTP Redirect to another HTTP URL not handled in this step"
+                            # For now, treat as unhandled and likely not cached for this step's purpose.
+                            # A more robust solution might re-call check_cache_for_url or similar.
+                            return False # Or None, depending on desired behavior for unhandled http-to-http redirect
                         else:
                             logging.error(f"Unhandled redirect location: {redirect_url}")
-                            return False, None, "Error" # Or appropriate error status
+                            return None # Error or unhandled case
                     else:
                         response.raise_for_status() # Raise an exception for other error codes
 

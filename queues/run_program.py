@@ -607,6 +607,10 @@ class ProgramRunner:
         }
 
         # Log the final set of enabled tasks right before starting the scheduling process
+        # --- START EDIT: Add debug logging ---
+        logging.info(f"DEBUG: Final enabled tasks before scheduling: {sorted(list(self.enabled_tasks))}")
+        logging.info(f"DEBUG: Final task intervals before scheduling: {self.task_intervals}")
+        # --- END EDIT ---
         logging.info(f"Final enabled tasks before initial scheduling: {sorted(list(self.enabled_tasks))}")
 
         # Schedule initial tasks
@@ -1502,7 +1506,7 @@ class ProgramRunner:
                  # wait=False allows the stop command to return faster,
                  # but background jobs might still be finishing.
                  # Set wait=True for a cleaner shutdown if blocking is acceptable.
-                 self.scheduler.shutdown(wait=False)
+                 self.scheduler.shutdown(wait=True) # Changed wait to True
                  logging.info("APScheduler shut down.")
         except Exception as e:
             logging.error(f"Error shutting down APScheduler: {e}", exc_info=True)

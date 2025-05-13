@@ -30,7 +30,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'already_watched': 0,
             'media_type_mismatch': 0,
             'existing_blacklisted': 0,  # Added for tracking skips due to existing blacklisted items
-            'trakt_error': 0 # Added for tracking Trakt API errors
+            'trakt_error': 0, # Added for tracking Trakt API errors
+            'anime_filter': 0 # Added for tracking skips due to anime filter mode
         }
         airtime_cache = {}
 
@@ -436,12 +437,31 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
             genres = json.dumps(item.get('genres', []))
+            item_genres_list = [str(g).lower() for g in item.get('genres', [])] # Get genres as lower-case strings
+            is_anime = 'anime' in item_genres_list
 
             # Use the item-specific versions if they exist, otherwise use the original versions
             versions_to_use = item.get('versions_to_add', versions)
             for version, enabled in versions_to_use.items():
                 if not enabled:
                     continue
+
+                # --- Anime Filter Logic ---
+                version_config = config.get('Scraping', {}).get('versions', {}).get(version, {})
+                anime_mode = version_config.get('anime_filter_mode', 'None')
+                
+                skip_due_to_anime_filter = False
+                if anime_mode == 'Anime Only' and not is_anime:
+                    skip_due_to_anime_filter = True
+                elif anime_mode == 'Non-Anime Only' and is_anime:
+                    skip_due_to_anime_filter = True
+                
+                if skip_due_to_anime_filter:
+                    skip_stats['anime_filter'] += 1
+                    # Optionally log the skip:
+                    # logging.debug(f"Skipping {normalized_title} ({item_type}) for version '{version}' due to anime filter mode '{anime_mode}' (is_anime: {is_anime})")
+                    continue # Skip this version and continue to the next
+                # --- End Anime Filter Logic ---
 
                 if item_type == 'movie':
                     early_release_flag = False # Initialize flag
@@ -591,6 +611,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             skip_report.append(f"- {skip_stats['already_watched']} items skipped due to watch history")
         if skip_stats['media_type_mismatch'] > 0:
             skip_report.append(f"- {skip_stats['media_type_mismatch']} items skipped due to media type mismatch")
+        if skip_stats['anime_filter'] > 0:
+            skip_report.append(f"- {skip_stats['anime_filter']} version additions skipped due to anime filter mode")
         if skip_stats['trakt_error'] > 0:
             skip_report.append(f"- {skip_stats['trakt_error']} items skipped Trakt check due to API errors") # Report Trakt errors
         

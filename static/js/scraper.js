@@ -1372,31 +1372,56 @@ function searchMedia(event) {
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
     
-    let searchTerm = document.querySelector('input[name="search_term"]').value;
+    let searchTerm = document.querySelector('input[name="search_term"]').value.trim(); // Trim whitespace
     let version = document.getElementById('version-select').value;
     
     console.log('Search parameters:', { searchTerm, version });
     
     if (!searchTerm) {
-        displayError('Please enter a search term');
+        displayError('Please enter a search term or ID (e.g., tt1234567 or tmdb12345)');
         return;
     }
     
     showLoadingState();
     
-    console.log('Submitting search to /scraper/');
-    
-    fetch('/scraper/', {
+    let fetchUrl;
+    let fetchBody;
+    const imdbIdPattern = /^tt\d+$/i; // Case insensitive for tt
+    const tmdbIdPrefixedPattern = /^tmdb\d+$/i; // Case insensitive for tmdb prefix
+
+    if (imdbIdPattern.test(searchTerm)) {
+        console.log('Detected IMDb ID:', searchTerm);
+        fetchUrl = '/scraper/lookup_by_id';
+        fetchBody = `id_type=imdb&media_id=${encodeURIComponent(searchTerm)}`;
+    } else if (tmdbIdPrefixedPattern.test(searchTerm)) {
+        const tmdbId = searchTerm.substring(4); // Remove "tmdb" prefix
+        console.log('Detected TMDb ID (after stripping prefix):', tmdbId);
+        fetchUrl = '/scraper/lookup_by_id';
+        fetchBody = `id_type=tmdb&media_id=${encodeURIComponent(tmdbId)}`;
+    } else {
+        console.log('Performing standard search for:', searchTerm);
+        fetchUrl = '/scraper/';
+        fetchBody = `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`;
+    }
+
+    console.log(`Submitting search to ${fetchUrl}`);
+
+    fetch(fetchUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`
+        body: fetchBody
     })
     .then(response => {
         console.log('Search response status:', response.status);
         if (!response.ok) {
+            // Try to parse error JSON, otherwise use status text
+            return response.json().then(err => {
+                throw new Error(err.error || `HTTP error! Status: ${response.status}`);
+            }).catch(() => {
             throw new Error(`HTTP error! Status: ${response.status}`);
+            });
         }
         return response.json();
     })
@@ -1406,19 +1431,21 @@ function searchMedia(event) {
         
         if (data.error) {
             displayError(data.error);
-        } else if (data.results) {
+        } else if (data.results && data.results.length > 0) {
             // Display search results for all users
-            displaySearchResults(data.results, version);
+            displaySearchResults(data.results, version); // Pass version for consistency
             
             // For requesters, also show a reminder that they can only browse
             if (isRequester) {
-
-                // Insert at the top of search results
-                const searchResultDiv = document.getElementById('searchResult');
-
+                // Insert reminder if needed (optional)
             }
         } else {
+             // Handle case where ID lookup returns no results specifically
+             if (fetchUrl === '/scraper/lookup_by_id') {
+                 displayError('No media found for the provided ID.');
+        } else {
             displayError('No results found or invalid response format');
+             }
         }
     })
     .catch(error => {
@@ -1429,7 +1456,7 @@ function searchMedia(event) {
 }
 
 function displaySearchResults(results, version) {
-    console.log('Displaying results:', results);
+    console.log('Displaying results. First item:', results.length > 0 ? JSON.stringify(results[0]) : 'No results'); // Log the first item as JSON
     
     // First hide trending container and show search results
     toggleResultsVisibility('displaySearchResults');
@@ -1490,7 +1517,7 @@ function displaySearchResults(results, version) {
         </div>
     `;
 
-    // --- NEW: Assign Magnet icon HTML ---
+    // Assign Magnet icon HTML
     const assignMagnetIconHTML = `
         <div class="assign-magnet-icon" title="Assign Magnet Link">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1503,98 +1530,110 @@ function displaySearchResults(results, version) {
             </svg>
         </div>
     `;
-    // --- END NEW ---
 
     results.forEach(item => {
-        console.log('Creating element for item:', item);  // Debug log
+        console.log('Processing item for display:', JSON.stringify(item, null, 2));
         const searchResDiv = document.createElement('div');
         searchResDiv.className = 'sresult';
-        let posterUrl;
-        // Remove leading slash if present for checking
-        const normalizedPath = item.poster_path.replace(/^\//, '');
-        console.log('Raw poster_path:', item.poster_path);
-        console.log('Normalized path:', normalizedPath);
-        console.log('Starts with static?', normalizedPath.startsWith('static/'));
-        console.log('Starts with http?', normalizedPath.startsWith('http'));
-        if (normalizedPath.startsWith('static/')) {
-            posterUrl = `/${normalizedPath}`;  // Local static image
-        } else if (normalizedPath.startsWith('http')) {
-            posterUrl = item.poster_path;  // Full URL
+        let posterUrl = '/static/images/placeholder.png'; // Default placeholder
+        let isPlaceholder = true;
+
+        // --- Use item.poster_path (lowercase with underscore) ---
+        if (item.poster_path && typeof item.poster_path === 'string' && item.poster_path.trim() !== '') {
+             const pathToCheck = item.poster_path.trim(); // Use correct key here
+             console.log('Checking poster_path:', pathToCheck); // Log correct key
+
+             // --- Logic remains the same, just uses pathToCheck from correct key ---
+             if (pathToCheck.startsWith('static/')) {
+                 posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
+                 isPlaceholder = pathToCheck.includes('placeholder.png');
+                 console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
+             } else if (pathToCheck.startsWith('http')) {
+                 posterUrl = pathToCheck;
+                 isPlaceholder = false;
+                  console.log('Poster type: http');
+             } else if (pathToCheck.startsWith('/scraper/tmdb_image')) {
+                  posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
+                  isPlaceholder = false;
+                  console.log('Poster type: proxy');
+             } else if (pathToCheck.startsWith('/')) { // Assume TMDB path
+                 posterUrl = `/scraper/tmdb_image/w300${pathToCheck}`; // Use proxy route
+                 isPlaceholder = false;
+                  console.log('Poster type: assumed TMDB, using proxy');
+             } else {
+                 console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
+             }
         } else {
-            posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`; // Use our proxy route
+             console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
         }
         console.log('Final poster URL:', posterUrl);
-        
-        // --- Create DB Status Pip HTML for search results ---
+        // --- End Poster Path Logic ---
+
+        // --- Create DB Status Pip HTML ---
         let dbStatusPipHTML = '';
         if (item.db_status && item.db_status !== 'missing') {
             dbStatusPipHTML = `<div class="db-status-pip db-status-${item.db_status}" title="Status: ${item.db_status.charAt(0).toUpperCase() + item.db_status.slice(1)}"></div>`;
         }
         // --- End DB Status Pip HTML ---
-        
-        // Create the container with a relative position for the request icon
+
+        // --- Prioritize item.year for display ---
+        const displayYear = item.year || (item.release_date ? String(item.release_date).substring(0, 4) : 'N/A');
+        // --- End Year Display Fix ---
+
         searchResDiv.innerHTML = `
             <div class="media-poster">
                 <button>
                     ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
                     <div class="poster-container">
-                        <img src="${posterUrl}" 
-                            alt="${item.title}" 
-                            class="${normalizedPath.startsWith('static/') ? 'placeholder-poster' : ''}">
+                        <img src="${posterUrl}"
+                            alt="${item.title}"
+                            class="${isPlaceholder ? 'placeholder-poster' : ''}">
                         <div class="poster-overlay">
                             <h3>${item.title}</h3>
-                            <p>${item.release_date ? new Date(item.release_date).getFullYear() : item.year || 'N/A'}</p>
+                            <p>${displayYear}</p>
                         </div>
                         ${requestIconHTML}
                         ${testerIconHTML}
-                        ${assignMagnetIconHTML} {/* <-- Added new icon */}
-                        ${dbStatusPipHTML} // <!-- Add DB Status Pip Here -->
+                        ${assignMagnetIconHTML}
+                        ${dbStatusPipHTML}
                     </div>
-                    <div class="searchresult-info" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                    <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
                         <h2 class="searchresult-item">${item.title}</h2>
-                        <p class="searchresult-year">${item.year || 'N/A'}</p>
+                        <p class="searchresult-year">${displayYear}</p>
                     </div>
                 </button>
             </div>
         `;
-        
-        console.log('Created HTML:', searchResDiv.innerHTML);  // Debug log
-        
-        // Add click handler for the main content area
+
+        // ... (rest of the button handlers remain the same) ...
+         // Add click handler for the main content area
         const button = searchResDiv.querySelector('button');
         if (button) {
             button.onclick = function() {
-                // Display a message for requesters instead of attempting to scrape
-                if (isRequester) {
-                    return;
-                }
-                
-                // Check if we're on mobile (screen width <= 768px)
+                if (isRequester) { return; }
+
                 if (window.innerWidth <= 768) {
-                    // Save tmdb_api_key_set in the item for later use in the modal
                     item.tmdb_api_key_set = tmdb_api_key_set;
                     item.version = version;
-                    
-                    // Show mobile action modal
                     showMobileActionModal(item);
                 } else {
-                    // Desktop behavior - direct scrape
                     if (item.media_type === 'movie') {
                         selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
                     } else {
-                        selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average, item.backdrop_path, item.show_overview, tmdb_api_key_set);
+                         // Make sure to pass the correct poster path key if needed by selectSeason
+                        selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set);
                     }
                 }
             };
         }
-        
+
         // Add click handler for the request icon
         const requestIcon = searchResDiv.querySelector('.request-icon');
         if (requestIcon) {
             requestIcon.onclick = function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 // Show version modal with content info
                 showVersionModal({
                     id: item.id,
@@ -1602,38 +1641,38 @@ function displaySearchResults(results, version) {
                     mediaType: item.media_type === 'show' ? 'tv' : item.media_type,
                     year: item.year
                 });
-                
+
                 return false;
             };
         }
-        
+
         // Add click handler for the tester icon
         const testerIcon = searchResDiv.querySelector('.tester-icon');
         if (testerIcon) {
             testerIcon.onclick = function(e) {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 // Redirect to the scraper_tester.html page with the content data as URL parameters
                 const params = new URLSearchParams({
                     title: item.title,
                     id: item.id,
-                    year: item.year || (item.release_date ? new Date(item.release_date).getFullYear() : ''),
+                    year: item.year, // Use item.year which should be correct
                     media_type: item.media_type === 'show' ? 'tv' : item.media_type
                 });
                 window.location.href = `/scraper/scraper_tester?${params.toString()}`;
-                
+
                 return false;
             };
         }
-        
-        // --- NEW: Add click handler for the assign magnet icon ---
+
+        // --- Add click handler for the assign magnet icon ---
         const assignMagnetIcon = searchResDiv.querySelector('.assign-magnet-icon');
         if (assignMagnetIcon) {
             // Store data on the icon element itself for easy access
             assignMagnetIcon.dataset.id = item.id;
             assignMagnetIcon.dataset.title = item.title;
-            assignMagnetIcon.dataset.year = item.year || (item.release_date ? new Date(item.release_date).getFullYear() : '');
+            assignMagnetIcon.dataset.year = item.year; // Use item.year
             assignMagnetIcon.dataset.mediaType = item.media_type === 'show' ? 'tv' : item.media_type; // Normalize to 'tv'
 
             assignMagnetIcon.onclick = function(e) {
@@ -1644,15 +1683,15 @@ function displaySearchResults(results, version) {
                 const title = encodeURIComponent(this.dataset.title);
                 const year = this.dataset.year;
                 const mediaType = this.dataset.mediaType;
-                const currentVersion = document.getElementById('version-select').value; // <-- Get current version
+                const currentVersion = document.getElementById('version-select').value; // Get current version
 
                 // Construct the URL for the magnet assigner page
-                const assignUrlParams = new URLSearchParams({ // <-- Create params object
+                const assignUrlParams = new URLSearchParams({
                     prefill_id: id,
                     prefill_type: mediaType,
                     prefill_title: title,
                     prefill_year: year,
-                    prefill_version: currentVersion // <-- Add version
+                    prefill_version: currentVersion
                 });
                 const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
@@ -1662,7 +1701,8 @@ function displaySearchResults(results, version) {
                 return false;
             };
         }
-        // --- END NEW ---
+        // --- END Assign Magnet Icon Handler ---
+
 
         resultsList.appendChild(searchResDiv);
     });

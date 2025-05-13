@@ -144,6 +144,16 @@ SETTINGS_SCHEMA = {
             "description": "Organize symlinked files by resolution (e.g., 1080p, 2160p) before media type folders",
             "default": False
         },
+        "symlink_organize_by_version": {
+            "type": "boolean",
+            "description": "Organize symlinked files by version (e.g., Remux, WEB-DL) before media type folders",
+            "default": False
+        },
+        "symlink_folder_order": {
+            "type": "string",
+            "description": "Defines the customizable order of organizational folders for symlinks. Use a comma-separated list containing 'type', 'version', and 'resolution' in your desired order (e.g., 'version,type,resolution'). The individual 'Organize by X' toggles still control if a specific folder component is included in the path.",
+            "default": "type,version,resolution"
+        },
         "process_non_checking_items": {
             "type": "boolean",
             "description": "Process files in rclone webhook even if they don't match any items in the checking state",
@@ -308,6 +318,12 @@ SETTINGS_SCHEMA = {
             "description": "Filter out releases marked as trash by the parser. These are typically low-quality or badly formatted releases.",
             "default": True
         },
+        "minimum_scrape_score": {
+            "type": "float",
+            "description": "Minimum calculated score for a scraped result to be considered. Scores are calculated based on version weights. Set to 0.0 to disable this filter (accept any score).",
+            "default": 0.0
+            # Consider adding min/max if score range is known, otherwise leave open.
+        },
         "upgrade_similarity_threshold": {
             "type": "float",
             "description": "Threshold for title similarity when upgrading (0.0 to 1.0). Higher values mean titles must be more different to be considered an upgrade. Default 0.95 means 95% similar.",
@@ -445,6 +461,12 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Version to fall back to if the current version fails and the item is blacklisted. Select 'None' to disable fallback.",
                     "default": "None"
+                },
+                "anime_filter_mode": {
+                    "type": "string",
+                    "description": "Filter for anime content: 'None' (no filter), 'Anime Only', 'Non-Anime Only'.",
+                    "default": "None",
+                    "choices": ["None", "Anime Only", "Non-Anime Only"]
                 },
                 "filter_in": {
                     "type": "list",
@@ -602,7 +624,7 @@ SETTINGS_SCHEMA = {
         },
         "filename_filter_out_list": {
             "type": "string",
-            "description": "List of filenames to filter out from the queue, comma separated",
+            "description": "List of filenames or folder names to filter out, comma separated",
             "default": ""
         },
         "anime_renaming_using_anidb": {

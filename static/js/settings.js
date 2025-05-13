@@ -192,7 +192,7 @@ export function updateSettings() {
     });
 
     console.log('Final Custom Post-Processing settings:', settingsData['Custom Post-Processing']);
-
+    
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
         settingsData['UI Settings'] = {};
@@ -417,7 +417,7 @@ export function updateSettings() {
             }
         });
     }
-
+    
     // Update the list of top-level fields to include UI Settings
     const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing'];
     Object.keys(settingsData).forEach(key => {
@@ -687,11 +687,11 @@ export function updateSettings() {
     const versionContainer = document.querySelector('#version-terms-container');
     
     // Get all version inputs in their current order
-    const versionInputs = Array.from(versionContainer.children);
+        const versionInputs = Array.from(versionContainer.children);
     
     versionInputs.forEach((inputElement, index) => {
-        const version = inputElement.getAttribute('data-version');
-        const termsValue = inputElement.querySelector('.version-terms').value;
+            const version = inputElement.getAttribute('data-version');
+            const termsValue = inputElement.querySelector('.version-terms').value;
         const terms = splitRespectingParentheses(termsValue);
         reverseParserSettings.version_terms[version] = terms;
         reverseParserSettings.version_order.push(version); // Add version to order array
@@ -723,7 +723,7 @@ export function updateSettings() {
         console.warn("Disable Content Source Caching checkbox element not found!");
     }
 
-    const enableUpgrading = document.getElementById('scraping-enable_upgrading'); 
+    const enableUpgrading = document.getElementById('scraping-enable_upgrading');
     console.log("Enable Upgrading element:", enableUpgrading);
     
     if (enableUpgrading) {

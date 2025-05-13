@@ -234,6 +234,12 @@ def migrate_schema():
             conn.execute('CREATE INDEX idx_media_items_content_source ON media_items(content_source);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_content_source.")
 
+        # Add index for original_path_for_symlink if it doesn't exist
+        if 'idx_media_items_original_path_for_symlink' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_original_path_for_symlink...")
+            conn.execute('CREATE INDEX idx_media_items_original_path_for_symlink ON media_items(original_path_for_symlink);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_original_path_for_symlink.")
+
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
         if not cursor.fetchone():

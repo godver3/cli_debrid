@@ -316,6 +316,14 @@
             </form>
         </div>
         <div class="debug_item">
+            <h3>Resync Symlinks with New Settings</h3>
+            <p class="description">Resyncs symlinks for collected items. If old/new original paths are provided, it first updates the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.</p>
+            <form id="resync-symlinks-form" action="{{ url_for('debug.resync_symlinks_route') }}" method="POST">
+                <button type="submit">Resync Symlinks</button>
+                <div id="resync-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+        <div class="debug_item">
             <h3>Delete Battery Database Files</h3>
             <p class="description">Deletes the cli_battery.db, cli_battery.db-shm, and cli_battery.db-wal files from the db_content directory.</p>
             <form id="delete-battery-db-form" action="{{ url_for('debug.delete_battery_db_files') }}" method="POST">
@@ -381,7 +389,8 @@
             'refresh-release-dates-form',
             'move-to-upgrading-form',
             'version-propagator-form',
-            'direct-emby-scan-form'
+            'direct-emby-scan-form',
+            'resync-symlinks-form'
             // Add other form IDs here if they follow the simple submitForm pattern
         ];
 
@@ -1950,6 +1959,27 @@
             });
         }
         // --- End Handler for Delete Battery DB Form ---
+
+        // --- Resync Symlinks with New Settings Logic ---
+        const resyncSymlinksForm = document.getElementById('resync-symlinks-form');
+        if (resyncSymlinksForm) {
+            resyncSymlinksForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const oldOriginalPath = this.elements['old_original_path'].value;
+                const newOriginalPath = this.elements['new_original_path'].value;
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: `Are you sure you want to resync symlinks with new settings? This will update the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.`,
+                    title: 'Confirm Resync',
+                    onConfirm: () => {
+                        Loading.show();
+                        submitForm(this.action, 'POST', new FormData(this));
+                    }
+                });
+            });
+        }
+        // --- End Resync Symlinks with New Settings Logic ---
     });
 </script>
 

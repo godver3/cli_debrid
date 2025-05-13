@@ -747,6 +747,25 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         else:
             deduplicated_results = sorted(deduplicated_results, key=stable_rank_key)
 
+                # --- Apply Minimum Scrape Score Filter ---
+        minimum_scrape_score_setting = get_setting('Scraping', 'minimum_scrape_score', 0.0)
+        if minimum_scrape_score_setting != 0.0: # Check if the filter is enabled (not the default disabled value)
+            initial_count = len(deduplicated_results)
+            results_passing_score = []
+            for result in deduplicated_results:
+                total_score = result.get('score_breakdown', {}).get('total_score')
+                if total_score is not None and total_score >= minimum_scrape_score_setting:
+                    results_passing_score.append(result)
+                else:
+                    # Log rejection due to score
+                    logging.info(f"Rejected due to score: Score {total_score} < Minimum {minimum_scrape_score_setting} for '{result.get('original_title')}'")
+
+            deduplicated_results = results_passing_score
+            final_count = len(deduplicated_results)
+            if initial_count != final_count:
+                 logging.info(f"Applied minimum scrape score filter ({minimum_scrape_score_setting}): {initial_count} -> {final_count} results.")
+        # --- End Minimum Scrape Score Filter ---
+
         # Log final results
         logging.info(f"Final sorted results for '{title}' ({year}): {len(deduplicated_results)}")
         for result in deduplicated_results:

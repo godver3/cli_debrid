@@ -1044,29 +1044,44 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                                         for media in episode.media:
                                             for part in media.parts:
                                                 if os.path.basename(part.file) == os.path.basename(item_path):
-                                                    logger.info(f"Found matching file in episode: {episode.title}")
+                                                    logger.info(f"Found matching file in episode: {episode.title}. Deleting media item.")
                                                     media.delete()
                                                     file_deleted = True
                                                     return True
+
+                        elif section.type == 'movie':
+                            movies = section.search(title=item_title)
+                            for movie in movies:
+                                if hasattr(movie, 'media'):
+                                    for media in movie.media:
+                                        for part in media.parts:
+                                            if os.path.basename(part.file) == os.path.basename(item_path):
+                                                logger.info(f"Found matching file in movie: {movie.title}. Deleting media item.")
+                                                media.delete()
+                                                file_deleted = True
+                                                return True
+
                     except Exception as e:
-                        logger.error(f"Error getting episodes for show {show.title}: {str(e)}")
+                        item_name = getattr(show if section.type == 'show' else (movie if section.type == 'movie' else None), 'title', item_title)
+                        logger.error(f"Error processing item {item_name} in section {section.title}: {str(e)}")
                         continue
                 
-                if not file_deleted:
-                    logger.warning(f"No matching files found in section {section.title} for title: {item_title}, episode title: {episode_title}")
-                    if attempt < max_retries - 1:
-                        continue
-                    
+                if file_deleted:
+                     return True
+
+                if attempt == max_retries - 1 and not file_deleted:
+                    logger.warning(f"No matching file found after checking all relevant sections for title: {item_title}, file: {os.path.basename(item_path)}")
+
             except Exception as e:
-                logger.error(f"Error during attempt {attempt + 1}: {str(e)}")
+                logger.error(f"Error during attempt {attempt + 1} for item {item_title}: {str(e)}")
                 if attempt == max_retries - 1:
-                    raise
-                continue
-                
+                     logger.error(f"Failed to remove file {os.path.basename(item_path)} for {item_title} after {max_retries} attempts.")
+                     return False
+
         return file_deleted
             
     except Exception as e:
-        logger.error(f"Error removing file from Plex: {str(e)}")
+        logger.error(f"General error removing file from Plex for '{item_title}': {str(e)}")
         return False
 
 

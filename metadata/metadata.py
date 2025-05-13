@@ -1002,7 +1002,7 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
                     release_type = release.get('type', 'unknown').lower()
                     if release_type in ['digital', 'physical', 'tv']:  
                         digital_physical_releases.append(release_date)
-                    elif release_type == 'theatrical':
+                    elif release_type in ['theatrical', 'theatrical (limited)', 'limited']: # Added 'limited' here
                         theatrical_releases.append(release_date)
                     elif release_type == 'premiere':
                         premiere_releases.append(release_date)

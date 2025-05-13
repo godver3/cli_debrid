@@ -57,6 +57,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    max-width: 55%;
 }
 
 .connection-status {
@@ -239,30 +240,6 @@
     margin-bottom: 0;
 }
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-    .connections-container {
-        grid-template-columns: 1fr;
-    }
-    
-    .connection-card {
-        margin: 10px 0;
-    }
-
-    .connection-title {
-        max-width: 75%;
-    }
-    
-    .failing-connections {
-        margin-top: 20px;
-        padding: 15px;
-    }
-    
-    .failure-details {
-        padding: 12px;
-    }
-}
-
 /* Sample Data Styling */
 .toggle-sample {
     cursor: pointer;
@@ -276,6 +253,16 @@
 .toggle-sample:hover {
     text-decoration: underline;
     color: #74c0fc;
+}
+
+/* Default (Desktop) Styles for the icon and text elements within .toggle-sample */
+.toggle-sample-icon {
+    display: none; /* Icon hidden by default (desktop) */
+    line-height: 1; /* Adjust if vertical alignment is off */
+}
+
+.toggle-sample-text {
+    display: inline; /* Text visible by default (desktop) */
 }
 
 .sample-data-container {
@@ -322,4 +309,39 @@
 .connection-header > .toggle-sample {
     margin-left: 10px;
     flex-shrink: 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .connections-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .connection-card {
+        margin: 10px 0;
+        max-width: 75vw;
+    }
+
+    .connection-title {
+        max-width: 60%;
+    }
+    
+    .failing-connections {
+        margin-top: 20px;
+        padding: 15px;
+    }
+    
+    .failure-details {
+        padding: 12px;
+    }
+
+    /* Mobile styles for toggle-sample */
+    .toggle-sample-text {
+        display: none; /* Hide text on mobile */
+    }
+
+    .toggle-sample-icon {
+        display: inline; /* Show icon on mobile */
+        font-size: 1.2em; /* Make icon a bit larger, adjust as needed */
+    }
 } 

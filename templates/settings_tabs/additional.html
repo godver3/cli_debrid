@@ -536,6 +536,30 @@
                    {% if settings.get('File Management', {}).get('symlink_organize_by_resolution') %}checked{% endif %}>
             <p class="settings-description">Organize symlinked files by resolution (e.g., 1080p, 2160p) before media type folders</p>
         </div>
+        <div class="settings-form-group">
+            <label for="additional-symlink_organize_by_version" class="settings-title">Organize By Version:</label>
+            <input type="checkbox" id="additional-symlink_organize_by_version" name="File Management.symlink_organize_by_version"
+                   data-section="File Management" data-key="symlink_organize_by_version"
+                   {% if settings.get('File Management', {}).get('symlink_organize_by_version') %}checked{% endif %}>
+            <p class="settings-description">Organize symlinked files by version (e.g., Remux, WEB-DL) before media type folders. This is a new setting that will be used by symlink_folder_order.</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="symlink-folder-order-list" class="settings-title">Symlink Folder Order:</label>
+            <p class="settings-description" style="margin-bottom: 5px;">
+                Drag and drop to customize the order of organizational folders (e.g., Version, Resolution, Content Type).
+                The individual "Organize By X" toggles still control if a specific folder component is actually included in the path.
+            </p>
+            <ul id="symlink-folder-order-list" class="content-source-list">
+                <!-- Draggable items will be populated by JavaScript -->
+            </ul>
+            <input type="hidden" id="symlink_folder_order_input" name="File Management.symlink_folder_order"
+                   value="{{ settings.get('File Management', {}).get('symlink_folder_order', 'type,version,resolution') }}"
+                   data-section="File Management" data-key="symlink_folder_order">
+            <p class="settings-description" style="margin-top: 5px;">
+                Current order (saved): {{ settings.get('File Management', {}).get('symlink_folder_order', 'type,version,resolution') }}
+            </p>
+        </div>
 
         <div class="settings-form-group">
             <label for="additional-enable_separate_anime_folders" class="settings-title">Enable Separate Anime Folders:</label>
@@ -543,14 +567,6 @@
                    data-section="Debug" data-key="enable_separate_anime_folders"
                    {% if settings.get('Debug', {}).get('enable_separate_anime_folders') %}checked{% endif %}>
             <p class="settings-description">Enable separate folders for anime content</p>
-        </div>
-
-        <div class="settings-form-group">
-            <label for="additional-process_non_checking_items" class="settings-title">Process Non-Checking Items:</label>
-            <input type="checkbox" id="additional-process_non_checking_items" name="File Management.process_non_checking_items"
-                   data-section="File Management" data-key="process_non_checking_items"
-                   {% if settings.get('File Management', {}).get('process_non_checking_items') %}checked{% endif %}>
-            <p class="settings-description">Process files in rclone webhook even if they don't match any items in the checking state</p>
         </div>
 
         <div class="settings-form-group">
@@ -588,6 +604,31 @@
                    data-section="Debug" data-key="anime_tv_shows_folder_name">
             <p class="settings-description">Name of the anime TV shows folder</p>
         </div>
+
+        <div class="settings-form-group example-paths-container" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #444;">
+            <h5 class="settings-title" style="margin-bottom: 10px;">Example Symlink Paths (Based on Current Settings):</h5>
+            
+            <div class="example-path-item">
+                <strong class="example-label">Movie:</strong>
+                <code id="example-movie-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Anime Movie:</strong>
+                <code id="example-anime-movie-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">TV Episode:</strong>
+                <code id="example-tv-episode-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Anime TV Episode:</strong>
+                <code id="example-anime-tv-episode-path" class="example-path-display"></code>
+            </div>
+            <p class="settings-description" style="margin-top: 10px;">
+                Examples show the path relative to your 'Symlinked Files Path'. Refresh might be needed if base path changes. Path length truncation is not simulated in this preview.
+            </p>
+        </div>
+
     </div>
 </div>
 
@@ -910,6 +951,89 @@
 }
 
 /* Modal adjustments */
+
+/* Symlink Folder Order List Styles */
+#symlink-folder-order-list {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0;
+    max-width: 400px; /* Or whatever width suits your layout */
+    border: 1px solid #444; /* Optional: to delineate the draggable area */
+    border-radius: 4px;
+    background-color: #222; /* Slightly different background */
+}
+
+.symlink-order-item {
+    background: #2e2e2e; /* Darker than content-source-item */
+    padding: 10px 15px;
+    margin: 5px; /* Margin around items */
+    border-radius: 4px;
+    cursor: move; /* Indicate draggable */
+    display: flex;
+    align-items: center;
+    transition: background-color 0.2s, opacity 0.2s;
+    position: relative;
+    user-select: none; /* Prevent text selection while dragging */
+    color: #f1f1f1;
+    border: 1px solid #383838;
+}
+
+.symlink-order-item:hover {
+    background: #3a3a3a;
+}
+
+.symlink-order-item.dragging {
+    opacity: 0.5;
+    background: #404040;
+    border-style: dashed; /* Visual cue for dragging */
+}
+
+/* Optional: Add a drag handle icon if desired */
+/*
+.symlink-order-item::before {
+    content: "⋮⋮";
+    margin-right: 10px;
+    color: #777;
+    cursor: grab;
+}
+
+.symlink-order-item:active::before {
+    cursor: grabbing;
+}
+*/
+
+/* Example Path Display Styles */
+.example-paths-container {
+    background-color: #252525; /* Slightly different background for the block */
+    padding: 15px;
+    border-radius: 4px;
+}
+
+.example-paths-container .settings-title {
+    font-size: 1.1em;
+    color: #ddd;
+}
+
+.example-path-item {
+    margin-bottom: 8px;
+    font-size: 0.9em;
+}
+
+.example-label {
+    color: #ccc;
+    margin-right: 5px;
+    display: inline-block;
+    width: 130px; /* Adjust as needed for alignment */
+}
+
+.example-path-display {
+    color: #7fddff; /* A distinct color for the path */
+    background-color: #1e1e1e;
+    padding: 2px 5px;
+    border-radius: 3px;
+    word-break: break-all; /* Ensure long paths wrap */
+}
+
 </style>
 <script>
     function initializeTraktAuthorization() {
@@ -1005,8 +1129,330 @@ function checkTraktAuthStatus() {
         });
 }
 
+function initializeSymlinkFolderOrder() {
+    const orderListElement = document.getElementById('symlink-folder-order-list');
+    const orderInput = document.getElementById('symlink_folder_order_input');
+    // Assuming the display paragraph is the next sibling of the input field
+    const savedOrderDisplayP = orderInput.nextElementSibling;
+
+    if (!orderListElement || !orderInput) {
+        console.warn('Symlink folder order elements not found.');
+        return;
+    }
+
+    const availableComponents = [
+        { id: 'type', displayName: 'Content Type' },
+        { id: 'version', displayName: 'Version' },
+        { id: 'resolution', displayName: 'Resolution' }
+    ];
+
+    let draggingElement = null;
+
+    function renderOrderList() {
+        const currentOrderString = orderInput.value || 'type,version,resolution';
+        let currentOrderIds = currentOrderString.split(',').map(s => s.trim()).filter(s => s);
+
+        // Ensure all available components are present in the order, adding missing ones to the end.
+        const finalOrderedComponents = [];
+        const presentIds = new Set();
+
+        // Add components based on the currentOrderIds if they are valid
+        currentOrderIds.forEach(id => {
+            const component = availableComponents.find(c => c.id === id);
+            if (component) {
+                finalOrderedComponents.push(component);
+                presentIds.add(id);
+            }
+        });
+
+        // Add any missing available components to the end
+        availableComponents.forEach(component => {
+            if (!presentIds.has(component.id)) {
+                finalOrderedComponents.push(component);
+            }
+        });
+        
+        // Update the input field's value if it changed (e.g. due to adding missing components)
+        const newOrderStringForInput = finalOrderedComponents.map(c => c.id).join(',');
+        if (orderInput.value !== newOrderStringForInput) {
+            orderInput.value = newOrderStringForInput;
+            // No need to save here, as this is initial setup/correction of stored value
+        }
+        if (savedOrderDisplayP) {
+             savedOrderDisplayP.textContent = `Current order (saved): ${newOrderStringForInput}`;
+        }
+
+
+        orderListElement.innerHTML = ''; // Clear existing items
+        finalOrderedComponents.forEach(component => {
+            const li = document.createElement('li');
+            // Using 'content-source-item' for styling, can be changed to a specific class like 'symlink-order-item'
+            li.className = 'symlink-order-item'; 
+            li.setAttribute('data-id', component.id);
+            li.textContent = component.displayName;
+            li.draggable = true;
+            orderListElement.appendChild(li);
+        });
+
+        addDragAndDropListeners();
+    }
+
+    function addDragAndDropListeners() {
+        const items = orderListElement.querySelectorAll('.symlink-order-item');
+        items.forEach(item => {
+            item.addEventListener('dragstart', function(e) {
+                draggingElement = this;
+                this.classList.add('dragging');
+            });
+            
+            item.addEventListener('dragend', function() {
+                if (draggingElement) {
+                    draggingElement.classList.remove('dragging');
+                }
+                draggingElement = null;
+                updateOrderAndSave();
+            });
+
+            item.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                if (!draggingElement || draggingElement === this) return;
+                
+                const rect = this.getBoundingClientRect();
+                const midpoint = rect.top + rect.height / 2;
+                
+                if (e.clientY < midpoint) {
+                    orderListElement.insertBefore(draggingElement, this);
+                } else {
+                    orderListElement.insertBefore(draggingElement, this.nextSibling);
+                }
+            });
+
+            item.addEventListener('drop', function(e) {
+                e.preventDefault(); // Prevent default to allow drop
+                // Reordering is handled by dragover and finalization by dragend
+            });
+        });
+    }
+
+    function updateOrderAndSave() {
+        const newOrderIds = Array.from(orderListElement.children)
+                              .map(item => item.getAttribute('data-id'));
+        const newOrderString = newOrderIds.join(',');
+        
+        orderInput.value = newOrderString;
+
+        if (savedOrderDisplayP) {
+            savedOrderDisplayP.textContent = `Current order (saved): ${newOrderString}`;
+        }
+
+        // Call the global saveSetting function
+        if (typeof saveSetting === 'function') {
+            saveSetting(orderInput.dataset.section, orderInput.dataset.key, newOrderString);
+        } else {
+            console.warn('Global saveSetting function not found. Order will be saved on main form submission.');
+        }
+    }
+
+    // Initial population of the list
+    renderOrderList();
+}
+
+function initializeSymlinkPathExamples() {
+    const exampleElements = {
+        movie: document.getElementById('example-movie-path'),
+        animeMovie: document.getElementById('example-anime-movie-path'),
+        tvEpisode: document.getElementById('example-tv-episode-path'),
+        animeTvEpisode: document.getElementById('example-anime-tv-episode-path')
+    };
+
+    // Helper to get checkbox value
+    const getCheckboxValue = (name) => {
+        const el = document.querySelector(`input[name="${name}"]`);
+        return el ? el.checked : false;
+    };
+
+    // Helper to get input value
+    const getInputValue = (name, defaultValue = '') => {
+        const el = document.querySelector(`input[name="${name}"], select[name="${name}"]`);
+        if (el) {
+            const value = el.value;
+            if (value !== undefined && value !== null && value.trim() !== '') {
+                return value;
+            } else {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    };
+
+    function getCurrentSymlinkSettings() {
+        return {
+            // File Management
+            folderOrder: getInputValue('File Management.symlink_folder_order', 'type,version,resolution'),
+            organizeByType: getCheckboxValue('File Management.symlink_organize_by_type'),
+            organizeByType: true,
+            organizeByResolution: getCheckboxValue('File Management.symlink_organize_by_resolution'),
+            organizeByVersion: getCheckboxValue('File Management.symlink_organize_by_version'),
+            baseSymlinkedPath: getInputValue('File Management.symlinked_files_path', '/mnt/symlinked'), // For completeness, though we'll show relative
+
+            // Debug (Templates and Folder Names)
+            movieTemplate: getInputValue('Debug.symlink_movie_template', '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})'),
+            episodeTemplate: getInputValue('Debug.symlink_episode_template', '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})'),
+            enableSeparateAnimeFolders: getCheckboxValue('Debug.enable_separate_anime_folders'),
+            moviesFolderName: getInputValue('Debug.movies_folder_name', 'Movies'),
+            tvShowsFolderName: getInputValue('Debug.tv_shows_folder_name', 'TV Shows'),
+            animeMoviesFolderName: getInputValue('Debug.anime_movies_folder_name', 'Anime Movies'),
+            animeTvShowsFolderName: getInputValue('Debug.anime_tv_shows_folder_name', 'Anime TV Shows')
+        };
+    }
+
+    const mockItems = {
+        movie: {
+            title: 'Awesome Movie', year: '2023', type: 'movie', imdb_id: 'tt1234567', version: 'Remux', resolution: '2160p', 
+            genres: 'Action,Adventure', original_filename: 'Awesome.Movie.2023.Remux.mkv', filled_by_file: 'dummy.mkv'
+        },
+        animeMovie: {
+            title: 'Epic Anime Film', year: '2024', type: 'movie', imdb_id: 'tt7654321', version: 'BluRay', resolution: '1080p',
+            genres: 'Animation,Anime,Fantasy', original_filename: 'Epic.Anime.Film.2024.BluRay.mkv', filled_by_file: 'dummy.mkv'
+        },
+        tvEpisode: {
+            title: 'Great TV Show', year: '2022', type: 'episode', imdb_id: 'tt9876543', version: 'WEB-DL', resolution: '1080p',
+            season_number: 1, episode_number: 2, episode_title: 'The Second Chapter',
+            genres: 'Drama,Sci-Fi', original_filename: 'Great.TV.Show.S01E02.WEB-DL.mkv', filled_by_file: 'dummy.mkv'
+        },
+        animeTvEpisode: {
+            title: 'Cool Anime Series', year: '2021', type: 'episode', imdb_id: 'tt1231231', version: 'HDTV', resolution: '720p',
+            season_number: 2, episode_number: 10, episode_title: 'A New Foe Appears',
+            genres: 'Animation,Anime,Action', original_filename: 'Cool.Anime.Series.S02E10.HDTV.mkv', filled_by_file: 'dummy.mkv'
+        }
+    };
+
+    function jsSanitizeFilename(filename) {
+        if (!filename) return '';
+        // Basic sanitization similar to Python's re.sub(r'[<>|?*:"\'\&/\\]', '_', filename)
+        // and NFKD normalization. JS lacks direct NFKD, so this is a simplification.
+        // For display purposes, a more basic replacement should suffice.
+        filename = filename.normalize('NFD').replace(/[\u0300-\u036f]/g, ""); // Remove diacritics
+        return filename.replace(/[<>|?*:"'&/\\]/g, '_').trim();
+    }
+
+    function formatNumber(num, digits) {
+        return String(num).padStart(digits, '0');
+    }
+    
+    function generateExamplePath(item, settings) {
+        const extension = item.original_filename.includes('.') ? '.' + item.original_filename.split('.').pop() : '.mkv';
+        let orderedPrefixParts = [];
+        const mediaType = item.type; // 'movie' or 'episode'
+        
+        const isAnime = item.genres && item.genres.toLowerCase().includes('anime');
+
+        const folderOrderList = settings.folderOrder.split(',').map(s => s.trim().toLowerCase()).filter(s => s);
+
+        for (const component of folderOrderList) {
+            if (component === "version" && settings.organizeByVersion) {
+                const versionStr = (item.version || '').replace(/\*/g, ''); // Strip asterisks
+                if (versionStr) {
+                    const sanitizedVersionFolder = jsSanitizeFilename(versionStr);
+                    if (sanitizedVersionFolder) orderedPrefixParts.push(sanitizedVersionFolder);
+                }
+            } else if (component === "resolution" && settings.organizeByResolution) {
+                // Simplified: Use item.resolution directly if available.
+                // Python logic uses version_settings['max_resolution'].
+                if (item.resolution) {
+                     // Assuming item.resolution is already like "1080p", "2160p"
+                    const sanitizedResFolder = jsSanitizeFilename(item.resolution);
+                    if (sanitizedResFolder) orderedPrefixParts.push(sanitizedResFolder);
+                }
+            } else if (component === "type" && settings.organizeByType) {
+                let folderNameForType = "";
+                if (isAnime && settings.enableSeparateAnimeFolders) {
+                    folderNameForType = mediaType === 'movie' ? settings.animeMoviesFolderName : settings.animeTvShowsFolderName;
+                } else {
+                    folderNameForType = mediaType === 'movie' ? settings.moviesFolderName : settings.tvShowsFolderName;
+                }
+                folderNameForType = (folderNameForType || '').trim();
+                if (folderNameForType) orderedPrefixParts.push(folderNameForType); // Assume settings values are already clean
+            }
+        }
+
+        let pathParts = [...orderedPrefixParts];
+        let template = mediaType === 'movie' ? settings.movieTemplate : settings.episodeTemplate;
+
+        // Template variable preparation
+        const templateVars = {
+            title: item.title || 'Unknown Title',
+            year: item.year || '',
+            imdb_id: item.imdb_id || '',
+            tmdb_id: item.tmdb_id || '', // Add if needed in template
+            version: (item.version || '').replace(/\*/g, ''),
+            quality: item.quality || '', // Add if needed
+            original_filename: item.original_filename.substring(0, item.original_filename.lastIndexOf('.')) || item.original_filename,
+            resolution: item.resolution || '',
+            season_number: item.season_number !== undefined ? formatNumber(item.season_number, 2) : '',
+            episode_number: item.episode_number !== undefined ? formatNumber(item.episode_number, 2) : '',
+            episode_title: item.episode_title || ''
+        };
+        
+        // Process template string: first format season/episode numbers if present in placeholders
+        template = template.replace(/\{season_number:(\d+)d\}/g, (match, p1) => formatNumber(item.season_number || 0, parseInt(p1)));
+        template = template.replace(/\{episode_number:(\d+)d\}/g, (match, p1) => formatNumber(item.episode_number || 0, parseInt(p1)));
+
+        // Generic placeholder replacement
+        let finalPathSegment = template.replace(/\{([^}]+)\}/g, (match, key) => templateVars[key.trim()] !== undefined ? templateVars[key.trim()] : match);
+        
+        const templatePathSegments = finalPathSegment.split('/');
+        let finalFilename = "";
+
+        templatePathSegments.forEach((segment, index) => {
+            const sanitizedSegment = jsSanitizeFilename(segment);
+            if (index === templatePathSegments.length - 1) { // Filename part
+                finalFilename = sanitizedSegment.endsWith(extension) ? sanitizedSegment : sanitizedSegment + extension;
+            } else { // Directory part
+                if (sanitizedSegment) pathParts.push(sanitizedSegment);
+            }
+        });
+        
+        // We show path relative to the main symlinked_files_path
+        return pathParts.join('/') + (pathParts.length > 0 ? '/' : '') + finalFilename;
+    }
+
+    window.displaySymlinkPathExamples = function() { // Make it global for easy calling
+        const settings = getCurrentSymlinkSettings();
+        console.log(settings)
+        if (exampleElements.movie) exampleElements.movie.textContent = generateExamplePath(mockItems.movie, settings);
+        if (exampleElements.animeMovie) exampleElements.animeMovie.textContent = generateExamplePath(mockItems.animeMovie, settings);
+        if (exampleElements.tvEpisode) exampleElements.tvEpisode.textContent = generateExamplePath(mockItems.tvEpisode, settings);
+        if (exampleElements.animeTvEpisode) exampleElements.animeTvEpisode.textContent = generateExamplePath(mockItems.animeTvEpisode, settings);
+    }
+
+    // --- Event Listeners ---
+    const settingInputsToWatch = [
+        'File Management.symlink_folder_order', 'File Management.symlink_organize_by_type',
+        'File Management.symlink_organize_by_resolution', 'File Management.symlink_organize_by_version',
+        'Debug.symlink_movie_template', 'Debug.symlink_episode_template',
+        'Debug.enable_separate_anime_folders', 'Debug.movies_folder_name',
+        'Debug.tv_shows_folder_name', 'Debug.anime_movies_folder_name', 'Debug.anime_tv_shows_folder_name'
+    ];
+
+    settingInputsToWatch.forEach(name => {
+        const inputElement = document.querySelector(`input[name="${name}"], select[name="${name}"]`);
+        if (inputElement) {
+            inputElement.addEventListener('input', displaySymlinkPathExamples); // 'input' for text fields, 'change' for checkboxes/selects
+            if (inputElement.type === 'checkbox' || inputElement.tagName === 'SELECT') {
+                 inputElement.addEventListener('change', displaySymlinkPathExamples);
+            }
+        }
+    });
+    
+    // Initial display
+    displaySymlinkPathExamples();
+}
+
 document.addEventListener('DOMContentLoaded', function() {  
     initializeTraktAuthorization();
+    initializeSymlinkFolderOrder();
+    initializeSymlinkPathExamples();
     
     // Initialize logo selection
     const logoRadioButtons = document.querySelectorAll('.logo-option input[type="radio"]');

@@ -9,6 +9,7 @@ import re
 import time  # Add time import for sleep
 import urllib.parse
 from difflib import SequenceMatcher # For comparing titles
+from cli_battery.app.direct_api import DirectAPI # Added import
 
 def _similar(a, b):
     """Helper function for string similarity"""
@@ -209,6 +210,7 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
                 # Loop through each result, try matching, verify, and unmatch if wrong
                 # This loop naturally processes from the top (index 0) of the 'matches' list
                 for idx, match_result in enumerate(matches, 1):
+                    if idx > 5: break # Limit to 5 matches
                     result_name = getattr(match_result, 'name', 'N/A')
                     result_year = getattr(match_result, 'year', 'N/A')
                     result_guid = getattr(match_result, 'guid', 'N/A') # This is likely plex://
@@ -415,15 +417,18 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
     try:
         # Process movies
         logging.info("--- Checking and Fixing Movie Matches ---")
+        direct_api = DirectAPI() # Instantiate API client once for efficiency
         for movie_data in collected_content.get('movies', []):
             if not is_item_matched(movie_data):
                 plex_filename = os.path.basename(movie_data.get('location', ''))
                 plex_title = movie_data.get('title', '')
+                plex_year = movie_data.get('year') # Get year from Plex data
                 plex_rating_key = movie_data.get('ratingKey')
                 logging.warning(f"Found potentially unmatched movie: '{plex_title}' (File: {plex_filename}, RatingKey: {plex_rating_key})")
 
                 if not plex_rating_key or not plex_filename:
                      logging.error("Movie data missing ratingKey or location, cannot fix match.")
+                     matched_movies.append(movie_data) # Keep movie data even if we can't fix
                      continue # Skip if essential info missing
 
                 # Find the corresponding DB item to get correct details
@@ -446,16 +451,63 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
                     if force_match_with_tmdb(db_title, db_year, db_tmdb_id, plex_rating_key):
                         logging.info(f"Successfully fixed match for movie '{db_title}'.")
                         # Assume fixed, add to matched (or re-query Plex state if needed)
-                        matched_movies.append(movie_data)
                     else:
                         logging.error(f"Failed to fix match for movie '{db_title}'.")
-                        # Decide whether to add to matched list anyway or exclude
-                        # Let's keep it in the list for now, maybe next run fixes it
-                        matched_movies.append(movie_data)
+                    # Keep movie_data regardless of fix outcome for this path
+                    matched_movies.append(movie_data)
                 else:
-                    logging.warning(f"No suitable DB entry found for movie file '{plex_filename}' to attempt fix.")
-                    matched_movies.append(movie_data) # Keep in list, cannot fix
-            else:
+                    # --- Fallback Trakt/Metadata Search Logic ---
+                    logging.warning(f"No suitable DB entry found for movie file '{plex_filename}'. Attempting metadata provider lookup based on Plex info: Title='{plex_title}', Year={plex_year}.")
+                    provider_tmdb_id = None
+                    provider_title = plex_title # Default to plex title
+                    provider_year = str(plex_year) if plex_year else None # Default to plex year
+
+                    try:
+                        # Search metadata provider (e.g., Trakt via DirectAPI)
+                        search_results, _ = direct_api.search_media(query=plex_title, year=plex_year, media_type='movie')
+
+                        if search_results:
+                            top_result = search_results[0]
+                            logging.info(f"Metadata lookup found potential match: {top_result.get('title')} ({top_result.get('year')}) ID: {top_result.get('tmdb_id') or top_result.get('imdb_id')}")
+
+                            # Prioritize TMDB ID from search result
+                            provider_tmdb_id = top_result.get('tmdb_id')
+                            provider_imdb_id = top_result.get('imdb_id')
+                            provider_title = top_result.get('title', plex_title) # Prefer provider title
+                            provider_year = str(top_result.get('year')) if top_result.get('year') else provider_year # Prefer provider year
+
+                            # If no TMDB ID but IMDb ID exists, try to get TMDB ID via metadata fetch
+                            if not provider_tmdb_id and provider_imdb_id:
+                                logging.info(f"Provider result has IMDb ID ({provider_imdb_id}) but no TMDB ID. Attempting metadata fetch to find TMDB ID.")
+                                meta_check, _ = direct_api.get_movie_metadata(imdb_id=provider_imdb_id)
+                                if meta_check and isinstance(meta_check, dict) and meta_check.get('ids', {}).get('tmdb'):
+                                     provider_tmdb_id = str(meta_check['ids']['tmdb'])
+                                     logging.info(f"Obtained TMDB ID {provider_tmdb_id} from metadata fetch using IMDb {provider_imdb_id}")
+                                else:
+                                     logging.warning(f"Could not obtain TMDB ID from metadata fetch using IMDb {provider_imdb_id}.")
+
+                        else:
+                             logging.warning(f"Metadata provider lookup failed to find any results for '{plex_title}' ({plex_year}).")
+
+                    except Exception as provider_lookup_error:
+                         logging.error(f"Error during metadata provider fallback lookup for '{plex_title}': {provider_lookup_error}", exc_info=True)
+
+                    # Attempt fix if we found a TMDB ID through the provider lookup
+                    if provider_tmdb_id:
+                        match_tmdb_id = str(provider_tmdb_id)
+                        logging.info(f"Attempting to fix match for '{plex_filename}' using provider info: Title='{provider_title}', Year={provider_year}, TMDB ID={match_tmdb_id}")
+                        if force_match_with_tmdb(provider_title, provider_year, match_tmdb_id, plex_rating_key):
+                            logging.info(f"Successfully fixed match for movie '{provider_title}' using provider fallback.")
+                        else:
+                            logging.error(f"Failed to fix match for movie '{provider_title}' using provider fallback.")
+                    else:
+                        logging.warning(f"Provider fallback lookup for '{plex_title}' did not yield a usable TMDB ID. Cannot attempt fix.")
+
+                    # Keep the original movie data in the list as the DB lookup failed initially
+                    matched_movies.append(movie_data)
+                    # --- End Fallback Logic ---
+
+            else: # Item was matched correctly initially
                 matched_movies.append(movie_data)
 
         # Process episodes (group by show's grandparentRatingKey)
