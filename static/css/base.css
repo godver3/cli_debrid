@@ -1830,7 +1830,6 @@ body.modal-open {
     transform: translateY(0); /* Start in visible position */
     opacity: 1;
     font-size: 0.9em;
-    height: 30px; /* Fixed height */
     display: flex;
     align-items: center;
     justify-content: center;

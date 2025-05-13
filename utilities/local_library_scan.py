@@ -12,6 +12,7 @@ from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
 from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
+from database.database_reading import get_all_media_items, get_media_item_by_id
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -42,85 +43,87 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         symlinked_path = get_setting('File Management', 'symlinked_files_path')
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
         organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False)
-        logging.debug(f"Settings: symlinked_path={symlinked_path}, enable_separate_anime_folders={get_setting('Debug', 'enable_separate_anime_folders', False)}, organize_by_resolution={organize_by_resolution}")
+        organize_by_version = get_setting('File Management', 'symlink_organize_by_version', False)
+        folder_order_str = get_setting('File Management', 'symlink_folder_order', "type,version,resolution")
+
+        # Settings for type folder name determination
+        enable_separate_anime_folders = get_setting('Debug', 'enable_separate_anime_folders', False)
+        anime_movies_folder_name_setting = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies')
+        anime_tv_shows_folder_name_setting = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows')
+        movies_folder_name_setting = get_setting('Debug', 'movies_folder_name', 'Movies')
+        tv_shows_folder_name_setting = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
+
+        logging.debug(f"[SymlinkPath] Settings: symlinked_path='{symlinked_path}', "
+                      f"organize_by_type={organize_by_type}, "
+                      f"organize_by_version={organize_by_version}, "
+                      f"organize_by_resolution={organize_by_resolution}, "
+                      f"folder_order='{folder_order_str}', "
+                      f"enable_separate_anime_folders={enable_separate_anime_folders}")
         
         # Get the original extension
         _, extension = os.path.splitext(original_file)
         
-        # Build the path
-        parts = []
-        media_type = item.get('type', 'movie')
-        
-        # If organizing by resolution is enabled, get the resolution from the version
-        if organize_by_resolution:
-            version = item.get('version', '')
-            # If we have a version, check if there are corresponding version settings
-            if version:
-                try:
-                    # Import here to avoid circular imports
-                    from queues.config_manager import get_version_settings
-                    version_settings = get_version_settings(version)
-                    if version_settings and 'max_resolution' in version_settings:
-                        resolution_folder = version_settings['max_resolution']
-                        parts.append(resolution_folder)
-                        logging.debug(f"Added resolution folder: {resolution_folder}")
-                except Exception as e:
-                    logging.error(f"Error getting version settings: {str(e)}")
-        
-        # Check if this is an anime
-        genres = item.get('genres', '') or ''
-        # Handle both string and list formats of genres
-        if isinstance(genres, str):
-            try:
-                # Try to parse as JSON first (for database-stored genres)
-                import json
-                genres = json.loads(genres)
-            except json.JSONDecodeError:
-                # If not JSON, split by comma (for comma-separated strings)
-                genres = [g.strip() for g in genres.split(',') if g.strip()]
-        # Ensure genres is a list
-        if not isinstance(genres, list):
-            genres = [str(genres)]
-        # Check for anime in any genre
-        is_anime = any('anime' in genre.lower() for genre in genres)
-        logging.debug(f"Content type: {'Anime' if is_anime else 'Regular'} {media_type}")
-        
-        # Determine the appropriate root folder
-        # If it's anime and we have separate folders enabled, use anime folders
-        if is_anime and get_setting('Debug', 'enable_separate_anime_folders', False):
-            if media_type == 'movie':
-                folder_name = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies')
-                logging.debug(f"Using anime movies folder name: {folder_name}")
-            else:
-                folder_name = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows')
-                logging.debug(f"Using anime TV shows folder name: {folder_name}")
-        # Otherwise use regular folders
-        else:
-            if media_type == 'movie':
-                folder_name = get_setting('Debug', 'movies_folder_name', 'Movies')
-                logging.debug(f"Using movies folder name: {folder_name}")
-            else:
-                folder_name = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
-                logging.debug(f"Using TV shows folder name: {folder_name}")
+        # This list will store the ordered prefix (version, resolution, type folders)
+        ordered_prefix_parts = []
+        media_type = item.get('type', 'movie') # 'movie' or 'episode'
 
-        # Validate folder name
-        if not folder_name or folder_name.strip() == '':
-            logging.error("Invalid folder name: folder name is empty")
-            return None
+        folder_order_list = [comp.strip().lower() for comp in folder_order_str.split(',') if comp.strip()]
+        logging.debug(f"[SymlinkPath] Parsed folder order: {folder_order_list}")
+
+        for component in folder_order_list:
+            if component == "version" and organize_by_version:
+                version_str = item.get('version', '').strip('*') # Strip asterisks for folder name
+                if version_str:
+                    sanitized_version_folder = sanitize_filename(version_str)
+                    if sanitized_version_folder: # Ensure not empty after sanitization
+                        ordered_prefix_parts.append(sanitized_version_folder)
+                        logging.debug(f"[SymlinkPath] Added version component to path: '{sanitized_version_folder}'")
             
-        folder_name = folder_name.strip()
-        parts.append(folder_name)
-        logging.debug(f"parts after adding folder name: {parts}")
+            elif component == "resolution" and organize_by_resolution:
+                item_version_for_resolution = item.get('version', '') # Resolution folder is derived from version's settings
+                if item_version_for_resolution:
+                    try:
+                        from queues.config_manager import get_version_settings
+                        # Strip asterisks before using the version to get settings
+                        clean_version_for_resolution = item_version_for_resolution.strip('*') 
+                        version_settings = get_version_settings(clean_version_for_resolution) 
+                        if version_settings and 'max_resolution' in version_settings:
+                            resolution_folder_name = version_settings['max_resolution']
+                            if resolution_folder_name: # Ensure not empty
+                                ordered_prefix_parts.append(resolution_folder_name) # Assume already clean from version settings
+                                logging.debug(f"[SymlinkPath] Added resolution component to path: '{resolution_folder_name}'")
+                    except Exception as e:
+                        logging.error(f"[SymlinkPath] Error getting version settings for resolution folder: {str(e)}")
+            
+            elif component == "type" and organize_by_type:
+                genres = item.get('genres', '') or ''
+                if isinstance(genres, str):
+                    try:
+                        import json
+                        genres = json.loads(genres)
+                    except json.JSONDecodeError:
+                        genres = [g.strip() for g in genres.split(',') if g.strip()]
+                if not isinstance(genres, list):
+                    genres = [str(genres)]
+                is_anime = any('anime' in genre.lower() for genre in genres)
+                
+                folder_name_for_type = ""
+                if is_anime and enable_separate_anime_folders:
+                    folder_name_for_type = anime_movies_folder_name_setting if media_type == 'movie' else anime_tv_shows_folder_name_setting
+                else:
+                    folder_name_for_type = movies_folder_name_setting if media_type == 'movie' else tv_shows_folder_name_setting
+                
+                folder_name_for_type = folder_name_for_type.strip()
+                if not folder_name_for_type:
+                    logging.error("[SymlinkPath] Invalid type folder name: folder name is empty. Skipping type component.")
+                else:
+                    ordered_prefix_parts.append(folder_name_for_type)
+                    logging.debug(f"[SymlinkPath] Added type component to path: '{folder_name_for_type}'")
+
+        logging.debug(f"[SymlinkPath] Constructed ordered prefix parts: {ordered_prefix_parts}")
         
-        # Create root folder if it doesn't exist
-        root_folder_path = os.path.join(symlinked_path, *parts)
-        if not os.path.exists(root_folder_path):
-            try:
-                os.makedirs(root_folder_path, exist_ok=True)
-                logging.info(f"Created root folder: {root_folder_path}")
-            except Exception as e:
-                logging.error(f"Failed to create root folder {root_folder_path}: {str(e)}")
-                return None
+        # 'parts' will now start with the ordered_prefix_parts, and then template parts will be added to it.
+        parts = list(ordered_prefix_parts) 
         
         # Prepare common template variables
         template_vars = {
@@ -128,11 +131,10 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
             'year': item.get('year', ''),
             'imdb_id': item.get('imdb_id', ''),
             'tmdb_id': item.get('tmdb_id', ''),
-            'version': item.get('version', '').strip('*'),  # Remove all asterisks from start/end
-            'quality': item.get('quality', ''),
-            'original_filename': os.path.splitext(item.get('filled_by_file', ''))[0],  # Remove extension from original filename
-            'content_source': item.get('content_source', ''),  # Add content source for template use
-            'resolution': item.get('resolution', '')  # Add resolution for template use
+            'version': item.get('version', '').strip('*'),  # Remove all asterisks for template placeholder use
+            'original_filename': os.path.splitext(item.get('filled_by_file', ''))[0],
+            'content_source': item.get('content_source', ''),
+            'resolution': item.get('resolution', '')
         }
 
         if item.get('filename_real_path'):
@@ -140,107 +142,87 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
             template_vars['original_filename'] = os.path.splitext(item.get('filename_real_path'))[0]
         
         if media_type == 'movie':
-            # Get the template for movies
             template = get_setting('Debug', 'symlink_movie_template',
                                 '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})')
-        else:
-            # Add episode-specific variables
+        else: # episode
             episode_vars = {
                 'season_number': int(item.get('season_number', 0)),
                 'episode_number': int(item.get('episode_number', 0)),
                 'episode_title': item.get('episode_title', '')
             }
             
-            logging.debug(f'anime_renaming_using_anidb: {get_setting("Debug", "anime_renaming_using_anidb", False)}')
-            logging.debug(f'item.get("genres", ""): {item.get("genres", "")}')
-
-            # Try to get anime metadata if enabled and item is anime
-            genres = item.get('genres', '') or ''
-            # Handle both string and list formats of genres
-            if isinstance(genres, str):
+            genres_for_anime_check = item.get('genres', '') or ''
+            if isinstance(genres_for_anime_check, str):
                 try:
-                    # Try to parse as JSON first (for database-stored genres)
                     import json
-                    genres = json.loads(genres)
+                    genres_for_anime_check = json.loads(genres_for_anime_check)
                 except json.JSONDecodeError:
-                    # If not JSON, split by comma (for comma-separated strings)
-                    genres = [g.strip() for g in genres.split(',') if g.strip()]
-            # Ensure genres is a list
-            if not isinstance(genres, list):
-                genres = [str(genres)]
-            # Check for anime in any genre
-            is_anime = any('anime' in genre.lower() for genre in genres)
-            
-            # --- BEGIN Logging for AniDB Call --- 
+                    genres_for_anime_check = [g.strip() for g in genres_for_anime_check.split(',') if g.strip()]
+            if not isinstance(genres_for_anime_check, list):
+                genres_for_anime_check = [str(genres_for_anime_check)]
+            is_anime_for_rename = any('anime' in genre.lower() for genre in genres_for_anime_check)
+
             anidb_metadata_used = False
-            if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime and not skip_jikan_lookup:
-                logging.info(f"[SymlinkPath] Anime detected and Jikan renaming enabled. Attempting to get Jikan metadata for '{item.get('title')} S{episode_vars.get('season_number')}E{episode_vars.get('episode_number')}")
-                from utilities.anidb_functions import get_anidb_metadata_for_item
+            if get_setting('Debug', 'anime_renaming_using_anidb', False) and is_anime_for_rename and not skip_jikan_lookup:
+                logging.info(f"[SymlinkPath] Anime detected and AniDB renaming enabled. Attempting to get AniDB metadata for '{item.get('title')} S{episode_vars.get('season_number')}E{episode_vars.get('episode_number')}")
+                from utilities.anidb_functions import get_anidb_metadata_for_item # Ensure this import is correct
                 anime_metadata = get_anidb_metadata_for_item(item)
                 if anime_metadata:
-                    logging.info(f"[SymlinkPath] Successfully got Jikan metadata: {anime_metadata}")
+                    logging.info(f"[SymlinkPath] Successfully got AniDB metadata: {anime_metadata}")
                     anidb_metadata_used = True
-                    # Update only the episode-specific variables with anime metadata
                     episode_vars.update({
                         'season_number': int(anime_metadata.get('season_number', episode_vars['season_number'])),
                         'episode_number': int(anime_metadata.get('episode_number', episode_vars['episode_number'])),
                         'episode_title': anime_metadata.get('episode_title', episode_vars['episode_title'])
                     })
-                    # Update main variables only if we have better data
-                    if anime_metadata.get('title'):
-                        template_vars['title'] = anime_metadata['title']
-                    if anime_metadata.get('year'):
-                        template_vars['year'] = anime_metadata['year']
+                    if anime_metadata.get('title'): template_vars['title'] = anime_metadata['title']
+                    if anime_metadata.get('year'): template_vars['year'] = anime_metadata['year']
                 else:
-                    logging.warning(f"[SymlinkPath] Failed to get Jikan metadata for '{item.get('title')}'. Using original item data.")
+                    logging.warning(f"[SymlinkPath] Failed to get AniDB metadata for '{item.get('title')}'. Using original item data.")
             else:
-                logging.debug(f"[SymlinkPath] Jikan renaming not used. Is Anime: {is_anime}, Setting Enabled: {get_setting('Debug', 'anime_renaming_using_anidb', False)}")
-            # --- END Logging for AniDB Call ---
+                logging.debug(f"[SymlinkPath] AniDB renaming not used. Is Anime: {is_anime_for_rename}, Setting Enabled: {get_setting('Debug', 'anime_renaming_using_anidb', False)}")
             
             template_vars.update(episode_vars)
-            
-            # Get the template for episodes
             template = get_setting('Debug', 'symlink_episode_template',
                                 '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})')
         
-        # Split template into folder structure parts
-        path_parts = template.split('/')
-        
-        # Format and sanitize each part of the path
+        path_parts_from_template = template.split('/')
         logging.debug(f"[SymlinkPath] Using template: '{template}'")
-        logging.debug(f"[SymlinkPath] Using template variables: {template_vars}")
-        for i, part in enumerate(path_parts):
-            formatted_part = part.format(**template_vars)
-            sanitized_part = sanitize_filename(formatted_part)
-            
-            # Add extension to the final part if it's not present
-            if i == len(path_parts) - 1:
-                if not sanitized_part.endswith(extension):
-                    sanitized_part += extension
-                
-                # Check if full path would exceed max length (260 chars for Windows)
-                max_path_length = 255
-                dir_path = os.path.join(symlinked_path, *parts)
-                full_path = os.path.join(dir_path, sanitized_part)
-                
-                if len(full_path) > max_path_length:
-                    # Calculate how much we need to truncate
-                    excess = len(full_path) - max_path_length
-                    filename_without_ext = os.path.splitext(sanitized_part)[0]
-                    # Add 3 more chars for the "..." we'll add
-                    truncated = filename_without_ext[:-excess-3] + "..."
-                    sanitized_part = truncated + extension
-                    logging.debug(f"Truncated full path from {len(full_path)} to {len(os.path.join(dir_path, sanitized_part))} chars")
-                
-                # For the final part (filename), we'll add it later
-                final_filename = sanitized_part
-            else:
-                parts.append(sanitized_part)
+        logging.debug(f"[SymlinkPath] Template variables: {template_vars}")
         
-        # Create the directory path first
+        final_filename = "" 
+
+        for i, part_template_segment in enumerate(path_parts_from_template):
+            formatted_part = part_template_segment.format(**template_vars)
+            sanitized_template_part = sanitize_filename(formatted_part)
+            
+            if i == len(path_parts_from_template) - 1: # This is the filename part
+                if not sanitized_template_part.endswith(extension):
+                    sanitized_template_part += extension
+                
+                # Path length check
+                # 'parts' at this point contains: ordered_prefix_parts + any preceding template directory parts
+                current_dir_parts_for_check = os.path.join(symlinked_path, *parts)
+                potential_full_path = os.path.join(current_dir_parts_for_check, sanitized_template_part)
+                
+                max_path_length = 255 
+                if len(potential_full_path) > max_path_length:
+                    excess = len(potential_full_path) - max_path_length
+                    filename_without_ext = os.path.splitext(sanitized_template_part)[0]
+                    if len(filename_without_ext) > excess + 3: # +3 for "..."
+                        truncated_filename = filename_without_ext[:-(excess + 3)] + "..."
+                        sanitized_template_part = truncated_filename + extension
+                        logging.debug(f"[SymlinkPath] Truncated filename from {len(potential_full_path)} to {len(os.path.join(current_dir_parts_for_check, sanitized_template_part))} due to path length limit.")
+                    else:
+                        logging.warning(f"[SymlinkPath] Filename '{sanitized_template_part}' too short to truncate meaningfully for path length limit. Full path: {potential_full_path}")
+                final_filename = sanitized_template_part
+            else: # This is a directory part from the template
+                if sanitized_template_part: # Ensure not empty
+                    parts.append(sanitized_template_part)
+        
+        # 'parts' now contains: ordered_prefix_parts + directory_parts_from_template
         dir_path = os.path.join(symlinked_path, *parts)
         
-        # Ensure the full directory path exists
         try:
             os.makedirs(dir_path, exist_ok=True)
             logging.debug(f"Ensured directory path exists: {dir_path}")
@@ -248,13 +230,10 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
             logging.error(f"Failed to create directory path {dir_path}: {str(e)}")
             return None
         
-        # Then join with the final filename
-        base_path = os.path.join(dir_path, os.path.splitext(final_filename)[0])
-        full_path = f"{base_path}{extension}"
+        full_path = os.path.join(dir_path, final_filename)
         
-        logging.info(f"[SymlinkPath] Generated path: {full_path}") # Log the final generated path
+        logging.info(f"[SymlinkPath] Generated path: {full_path}")
         
-        # If the path exists, log it and return the path anyway
         if os.path.exists(full_path):
             logging.info(f"Symlink path already exists: {full_path}")
             
@@ -662,7 +641,6 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 update_media_item(item['id'], **update_values)
 
                 # Add post-processing call after state update
-                from database import get_media_item_by_id
                 updated_item = get_media_item_by_id(item['id'])
                 if updated_item:
                     if new_state == 'Collected':
@@ -671,22 +649,35 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                         handle_state_change(dict(updated_item))
 
                 # Add notification for all collections (including previously collected)
-                if not item.get('upgrading_from'):
-                    from database.database_writing import add_to_collected_notifications
-                    notification_item = item.copy()
-                    notification_item.update(update_values)
-                    notification_item['is_upgrade'] = False
-                    notification_item['new_state'] = "Collected"
-                    add_to_collected_notifications(notification_item)
-                    logging.info(f"Added collection notification for item: {item_identifier}")
+                # Check the item's state *before* this function's update.
+                previous_state = item.get('state')
+
+                if not item.get('upgrading_from'): # This indicates a regular collection, where new_state is 'Collected'
+                    if previous_state != 'Collected':
+                        from database.database_writing import add_to_collected_notifications
+                        notification_item = item.copy()
+                        notification_item.update(update_values)
+                        notification_item['is_upgrade'] = False
+                        notification_item['new_state'] = "Collected"
+                        add_to_collected_notifications(notification_item)
+                        logging.info(f"Added collection notification for item: {item_identifier}")
+                    else:
+                        logging.info(f"Item {item_identifier} was already 'Collected'. Skipping redundant collection notification.")
                 # Add notification for upgrades
-                elif item.get('upgrading_from'):
-                    from database.database_writing import add_to_collected_notifications
-                    notification_item = item.copy()
-                    notification_item.update(update_values)
-                    notification_item['is_upgrade'] = True
-                    notification_item['new_state'] = 'Upgraded'
-                    add_to_collected_notifications(notification_item)
+                elif item.get('upgrading_from'): # This indicates an upgrade, notification_item['new_state'] will be 'Upgraded'
+                    # An item is 'Upgraded' from a previous version. Its state before this specific upgrade
+                    # operation might have been 'Collected' (old version) or 'Upgrading'.
+                    # We send the 'Upgraded' notification if it wasn't already 'Upgraded' to this new version.
+                    if previous_state != 'Upgraded': # Check if it was already in the 'Upgraded' state.
+                        from database.database_writing import add_to_collected_notifications
+                        notification_item = item.copy()
+                        notification_item.update(update_values)
+                        notification_item['is_upgrade'] = True
+                        notification_item['new_state'] = 'Upgraded'
+                        add_to_collected_notifications(notification_item)
+                        logging.info(f"Added upgrade notification for item: {item_identifier}")
+                    else:
+                        logging.info(f"Item {item_identifier} was already 'Upgraded'. Skipping redundant upgrade notification.")
 
                 # --- EDIT: Call the callback on success ---
                 # Construct the relative path format expected by the rclone queue
@@ -962,3 +953,265 @@ def repair_broken_symlink(symlink_path: str, new_target_path: str = None) -> Dic
             'old_target': old_target if 'old_target' in locals() else None,
             'new_target': new_target_path if 'new_target_path' in locals() else None
         }
+
+# --- Add Helper Function for Source File Searching ---
+def _find_source_file_in_base(item: Dict[str, Any], base_search_path: str, filename_only: str) -> Optional[str]:
+    """Helper to search for filename_only under base_search_path using common folder structures."""
+    if not base_search_path or not filename_only:
+        return None
+
+    logging.debug(f"[_find_source_file_in_base] Searching for '{filename_only}' under '{base_search_path}' for item ID {item.get('id')}")
+
+    possible_folder_names = [
+        item.get('original_scraped_torrent_title', ''),
+        item.get('real_debrid_original_title', ''),
+        item.get('filled_by_title', ''),
+        None # For checking directly under the base path
+    ]
+
+    for folder_name_candidate in possible_folder_names:
+        current_search_base = base_search_path
+        if folder_name_candidate:
+            # Try raw folder name
+            potential_path = os.path.join(current_search_base, folder_name_candidate, filename_only)
+            if os.path.exists(potential_path):
+                found_path = os.path.normpath(potential_path)
+                logging.debug(f"[_find_source_file_in_base] Found at raw folder: '{found_path}'")
+                return found_path
+
+            # Try trimmed folder name (if different)
+            trimmed_folder_name = os.path.splitext(folder_name_candidate)[0]
+            if trimmed_folder_name != folder_name_candidate:
+                potential_path_trimmed = os.path.join(current_search_base, trimmed_folder_name, filename_only)
+                if os.path.exists(potential_path_trimmed):
+                    found_path = os.path.normpath(potential_path_trimmed)
+                    logging.debug(f"[_find_source_file_in_base] Found at trimmed folder: '{found_path}'")
+                    return found_path
+        else: # Check directly under base_search_path
+            potential_path = os.path.join(current_search_base, filename_only)
+            if os.path.exists(potential_path):
+                found_path = os.path.normpath(potential_path)
+                logging.debug(f"[_find_source_file_in_base] Found directly under base: '{found_path}'")
+                return found_path
+
+    logging.debug(f"[_find_source_file_in_base] File '{filename_only}' not found under '{base_search_path}'")
+    return None
+# --- End Helper Function ---
+
+def resync_symlinks_with_new_settings(
+    old_original_files_path_setting: Optional[str] = None,
+    new_original_files_path_setting: Optional[str] = None
+):
+    """
+    Resynchronizes all existing symlinks based on the current application settings.
+    Attempts to locate source files and align DB with current settings if possible.
+    """
+    logging.info("Starting symlink resynchronization process.")
+
+    if get_setting('File Management', 'file_collection_management') != "Symlinked/Local":
+        logging.info("Symlink resynchronization skipped: File management is not set to Symlinked/Local.")
+        return {"status": "skipped", "message": "Not using Symlinked/Local file management."}
+
+    try:
+        collected_items = get_all_media_items(state='Collected')
+        # Also consider items in 'Upgrading' state if they have symlinks that need checking
+        upgrading_items = get_all_media_items(state='Upgrading')
+        collected_items.extend(upgrading_items) # Combine lists
+        # Remove duplicates if any item somehow ended up in both lists (by ID)
+        seen_ids = set()
+        unique_items = []
+        for item in collected_items:
+            if item['id'] not in seen_ids:
+                unique_items.append(item)
+                seen_ids.add(item['id'])
+        collected_items = unique_items
+
+    except Exception as e:
+        logging.error(f"Failed to retrieve media items for symlink resync: {e}", exc_info=True)
+        return {"status": "error", "message": "Failed to retrieve media items."}
+
+    updated_count = 0
+    error_count = 0
+    skipped_count = 0
+    created_count = 0
+    source_path_updated_count = 0
+    total_items = len(collected_items)
+    current_original_setting = get_setting('File Management', 'original_files_path') # Get current setting once
+
+    logging.info(f"Found {total_items} collected/upgrading items to check for symlink resynchronization.")
+    if old_original_files_path_setting and new_original_files_path_setting and \
+       old_original_files_path_setting != new_original_files_path_setting:
+        logging.info(f"Explicit migration requested. Old: '{old_original_files_path_setting}', New: '{new_original_files_path_setting}'.")
+    else:
+        logging.info(f"Performing standard resync. Current original_files_path setting: '{current_original_setting}'.")
+        if old_original_files_path_setting == new_original_files_path_setting:
+             old_original_files_path_setting = None
+             new_original_files_path_setting = None
+
+    for i, item in enumerate(collected_items):
+        item_id = item.get('id')
+        item_title_log = item.get('title', 'Unknown Title')
+        db_symlink_location = item.get('location_on_disk')
+        db_source_path = item.get('original_path_for_symlink')
+        filename_only = item.get('filled_by_file')
+
+        if (i + 1) % 25 == 0 or (i + 1) == total_items:
+            logging.info(f"Symlink resync progress: {i + 1}/{total_items} items. Updated Symlinks: {updated_count}, Created Symlinks: {created_count}, Source Paths Updated: {source_path_updated_count}, Errors: {error_count}, Skipped: {skipped_count}.")
+
+        if not item_id or not filename_only:
+            logging.warning(f"Skipping item (ID: {item_id if item_id else 'Unknown'}) due to missing ID or filename ('{filename_only}').")
+            skipped_count += 1
+            continue
+
+        actual_source_file_to_use = None
+        source_path_was_updated = False
+
+        # --- Determine the correct source file path ---
+        if old_original_files_path_setting and new_original_files_path_setting:
+            # --- Explicit Migration Logic (using old/new params) ---
+            logging.debug(f"Item ID {item_id} ('{item_title_log}'): Running explicit migration logic.")
+            source_path_migrated_or_found = False
+            if db_source_path and db_source_path.startswith(old_original_files_path_setting):
+                try:
+                    relative_part = os.path.relpath(db_source_path, old_original_files_path_setting)
+                    potential_new_abs_path = os.path.join(new_original_files_path_setting, relative_part)
+                    potential_new_abs_path = os.path.normpath(potential_new_abs_path)
+                    if os.path.exists(potential_new_abs_path):
+                        actual_source_file_to_use = potential_new_abs_path
+                        source_path_migrated_or_found = True
+                except ValueError: pass # Handle different drives case
+            
+            if not source_path_migrated_or_found:
+                found_path = _find_source_file_in_base(item, new_original_files_path_setting, filename_only)
+                if found_path:
+                    actual_source_file_to_use = found_path
+                    source_path_migrated_or_found = True
+            
+            if source_path_migrated_or_found and actual_source_file_to_use != db_source_path:
+                try:
+                    update_media_item(item_id, original_path_for_symlink=actual_source_file_to_use)
+                    source_path_updated_count += 1
+                    source_path_was_updated = True
+                except Exception as db_update_e: error_count += 1; continue
+            elif not source_path_migrated_or_found:
+                 if db_source_path and os.path.exists(db_source_path): actual_source_file_to_use = db_source_path
+                 else: skipped_count += 1; continue
+            # If migration was successful, actual_source_file_to_use is set. If not, and DB path is also bad, we skip.
+            if not actual_source_file_to_use and source_path_migrated_or_found: # Should not happen if logic is correct
+                 actual_source_file_to_use = db_source_path # Fallback, though migration implies it was found
+
+        else:
+            # --- Automatic Source Path Logic ---
+            logging.debug(f"Item ID {item_id} ('{item_title_log}'): Running automatic source path logic. DB Path: '{db_source_path}', Current Setting: '{current_original_setting}'.")
+            
+            db_path_valid_and_exists = db_source_path and os.path.exists(db_source_path)
+            
+            if db_path_valid_and_exists:
+                # DB path is valid. Now check if it aligns with current setting.
+                # Normalize both for comparison to avoid issues with trailing slashes etc.
+                norm_db_source_path = os.path.normpath(db_source_path)
+                norm_current_original_setting = os.path.normpath(current_original_setting)
+
+                if norm_db_source_path.startswith(norm_current_original_setting):
+                    # DB path is valid AND aligns with current setting. Use it.
+                    logging.debug(f"Item ID {item_id}: DB source path '{db_source_path}' is valid and aligns with current setting. Using it.")
+                    actual_source_file_to_use = db_source_path
+                else:
+                    # DB path is valid BUT does NOT align with current setting.
+                    # Check if file ALSO exists under the current setting.
+                    logging.info(f"Item ID {item_id}: DB source path '{db_source_path}' is valid but does not align with current setting '{current_original_setting}'. Checking current setting path.")
+                    found_at_current_setting = _find_source_file_in_base(item, current_original_setting, filename_only)
+                    
+                    if found_at_current_setting:
+                        # File found at current setting's path. Prefer this and update DB.
+                        logging.info(f"Item ID {item_id}: File also found at '{found_at_current_setting}' (under current setting). Preferring this and updating DB.")
+                        actual_source_file_to_use = found_at_current_setting
+                        try:
+                            update_media_item(item_id, original_path_for_symlink=actual_source_file_to_use)
+                            source_path_updated_count += 1
+                            source_path_was_updated = True
+                        except Exception as db_update_e:
+                            logging.error(f"Item ID {item_id}: Failed to update DB to '{actual_source_file_to_use}': {db_update_e}")
+                            error_count += 1
+                            actual_source_file_to_use = db_source_path # Fallback to original valid path if DB update fails
+                    else:
+                        # File NOT found under current setting path. Stick with the valid (but misaligned) DB path.
+                        logging.warning(f"Item ID {item_id}: File not found under current setting path. Using existing valid DB path '{db_source_path}' despite misalignment with setting.")
+                        actual_source_file_to_use = db_source_path
+            else:
+                # DB path is invalid or non-existent. Search under current setting.
+                logging.warning(f"Item ID {item_id}: DB source path '{db_source_path}' is invalid or file missing. Searching under current setting '{current_original_setting}'.")
+                found_at_current_setting = _find_source_file_in_base(item, current_original_setting, filename_only)
+                if found_at_current_setting:
+                    actual_source_file_to_use = found_at_current_setting
+                    logging.info(f"Item ID {item_id}: Source file found via automatic search: '{actual_source_file_to_use}'")
+                    try:
+                        update_media_item(item_id, original_path_for_symlink=actual_source_file_to_use)
+                        source_path_updated_count += 1
+                        source_path_was_updated = True
+                    except Exception as db_update_e:
+                        logging.error(f"Item ID {item_id}: Failed to update DB to '{actual_source_file_to_use}': {db_update_e}")
+                        error_count += 1; continue # Skip if DB update fails here
+                else:
+                    logging.error(f"Item ID {item_id} ('{item_title_log}'): Source file '{filename_only}' NOT found after checking DB path and searching under current setting '{current_original_setting}'. Skipping.")
+                    skipped_count += 1
+                    continue
+        # --- End of Source File Path Determination ---
+
+        if not actual_source_file_to_use:
+             logging.error(f"Item ID {item_id}: Logic error - actual_source_file_to_use not determined. Skipping.")
+             skipped_count += 1
+             continue
+
+        try:
+            new_symlink_destination = get_symlink_path(item, actual_source_file_to_use, skip_jikan_lookup=True)
+        except Exception as e:
+            logging.error(f"Error generating new symlink destination for item ID {item_id} ('{item_title_log}'): {e}", exc_info=True)
+            error_count += 1; continue
+
+        if not new_symlink_destination:
+            logging.error(f"Failed to generate new symlink destination for item ID {item_id} ('{item_title_log}'). Skipping.")
+            error_count += 1; continue
+        
+        # --- Symlink creation/update logic (remains mostly the same as previous version)
+        try:
+            norm_db_symlink = os.path.normpath(db_symlink_location) if db_symlink_location else None
+            norm_new_symlink = os.path.normpath(new_symlink_destination)
+
+            if norm_db_symlink != norm_new_symlink:
+                if db_symlink_location and os.path.lexists(db_symlink_location):
+                    if os.path.islink(db_symlink_location): os.unlink(db_symlink_location)
+                
+                symlink_created = create_symlink(actual_source_file_to_use, new_symlink_destination, item_id, skip_verification=True)
+                if symlink_created:
+                    try:
+                        update_media_item(item_id, location_on_disk=new_symlink_destination)
+                        if db_symlink_location: updated_count +=1
+                        else: created_count +=1 
+                    except Exception as db_update_e: error_count +=1
+                else: error_count += 1
+            elif norm_db_symlink == norm_new_symlink: # Path is same, verify integrity
+                needs_recreate = False
+                if not os.path.lexists(db_symlink_location): needs_recreate = True
+                elif not os.path.islink(db_symlink_location): needs_recreate = True
+                elif os.path.realpath(db_symlink_location) != os.path.realpath(actual_source_file_to_use): needs_recreate = True
+                
+                if needs_recreate:
+                    symlink_recreated = create_symlink(actual_source_file_to_use, new_symlink_destination, item_id, skip_verification=True)
+                    if symlink_recreated: updated_count += 1
+                    else: error_count += 1
+        except Exception as e:
+            logging.error(f"Unhandled error processing symlink for item ID {item_id} (New Dest: '{new_symlink_destination}'): {e}", exc_info=True)
+            error_count += 1
+    # --- End Item Loop ---
+
+    logging.info(f"Symlink resynchronization finished. Total: {total_items}, Symlinks Updated: {updated_count}, Symlinks Created: {created_count}, Source Paths Updated in DB: {source_path_updated_count}, Errors: {error_count}, Skipped: {skipped_count}.")
+    return {
+        "status": "completed",
+        "total_items": total_items,
+        "symlinks_updated_count": updated_count,
+        "symlinks_created_count": created_count,
+        "source_paths_db_updated_count": source_path_updated_count,
+        "error_count": error_count,
+        "skipped_count": skipped_count
+    }

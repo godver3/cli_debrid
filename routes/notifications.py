@@ -643,6 +643,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
     send_successful = True
     processed_discord = False # Flag to check if we even attempted Discord
     processed_email = False # Flag to check if we even attempted Email
+    # Add flags for other types if needed
 
     for notification_id, notification_config in enabled_notifications.items():
         logging.debug(f"Processing notification target ID: {notification_id}")
@@ -653,18 +654,66 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
         logging.debug(f"Target {notification_id} IS enabled.")
 
         notify_on = notification_config.get('notify_on', {})
+        # --- Primary Batch Category Check ---
+        # Check if the target is enabled for the overall category of this notification batch
         category_enabled = notify_on.get(notification_category, True) # Default to True if key missing
         if not category_enabled:
-            logging.debug(f"Target {notification_id} has category '{notification_category}' DISABLED.")
+            logging.debug(f"Target {notification_id} has batch category '{notification_category}' DISABLED.")
             continue
-        logging.debug(f"Target {notification_id} has category '{notification_category}' ENABLED.")
+        logging.debug(f"Target {notification_id} has batch category '{notification_category}' ENABLED.")
+
+        # --- Item-Level Filtering (New Logic) ---
+        content_input = notifications # Default to using the original batch
+        if isinstance(notifications, list):
+            # If the batch is a list of items (e.g., content notifications), filter it further
+            filtered_items = []
+            for item in notifications:
+                if not isinstance(item, dict): # Skip non-dict items just in case
+                    logging.warning(f"Skipping non-dictionary item during item-level filtering: {item}")
+                    continue
+
+                # Determine the specific category for *this* item
+                item_category = 'collected' # Default
+                state = item.get('new_state')
+                is_upgrade = item.get('is_upgrade', False)
+
+                if state in ['Upgrading', 'Upgraded'] or (state == 'Collected' and is_upgrade):
+                    item_category = 'upgrading'
+                elif state == 'Collected' and not is_upgrade:
+                    item_category = 'collected'
+                elif state == 'Downloading':
+                    item_category = 'downloading'
+                elif state == 'Checking':
+                    item_category = 'checking'
+                # Add elif for other states if they map to specific notify_on keys
+
+                # Check if the target is enabled for this specific item's category
+                item_category_enabled = notify_on.get(item_category, True) # Default to True if key missing
+
+                if item_category_enabled:
+                    filtered_items.append(item)
+                else:
+                    logging.debug(f"Filtering out item for target {notification_id} because category '{item_category}' is disabled. Item: {item.get('title', 'N/A')}")
+
+            if not filtered_items:
+                logging.debug(f"No items left for target {notification_id} after item-level filtering for batch category '{notification_category}'. Skipping.")
+                continue # Skip this target if no relevant items remain
+
+            content_input = filtered_items # Use the filtered list for formatting
+
+        # --- End Item-Level Filtering ---
+
 
         notification_type = notification_config.get('type')
         logging.debug(f"Target {notification_id} type is '{notification_type}'.")
 
         content = "" # Initialize content
         try:
-            content = format_notification_content(notifications, notification_type, notification_category)
+            # Pass the potentially filtered list (content_input) to the formatter
+            content = format_notification_content(content_input, notification_type, notification_category)
+            if not content: # Handle case where formatting results in empty string (e.g., after deduplication)
+                 logging.debug(f"Formatted content for {notification_id} is empty after format_notification_content. Skipping sending.")
+                 continue
             logging.debug(f"Formatted content for {notification_id} ({notification_type}): {content[:100]}...")
         except Exception as e:
             logging.error(f"Failed to format notification content for {notification_type} ({notification_id}): {str(e)}")

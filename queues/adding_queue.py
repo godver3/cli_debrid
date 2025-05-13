@@ -260,34 +260,65 @@ class AddingQueue:
                 # Use torrent_info and magnet for the check, chosen_result_info is handled later
                 if (not torrent_info or not magnet): # Check again after potential uncached attempt
                     logging.error(f"No valid torrent info or magnet found for {item_identifier} after checking cache/uncached modes.")
-                    # Try to get torrent_id for potential removal in handle_failed_item
                     if torrent_info and torrent_info.get('id'):
                        item['torrent_id'] = torrent_info.get('id')
-                    elif chosen_result_info: # If torrent_info is None but we got a result (e.g. Pending Uncached), try getting ID from there
-                        # This might not be reliable if the result wasn't added yet
-                        pass # Cannot reliably get torrent_id here if not added
+                    elif chosen_result_info:
+                        pass
                     self._handle_failed_item(item, "No valid results found after cache/uncached processing", queue_manager)
                     continue
+
+                # --- Apply filename filters ---
+                filename_filter_out_list = get_setting('Debug', 'filename_filter_out_list', '')
+                filters = []
+                if filename_filter_out_list:
+                    filters = [f.strip().lower() for f in filename_filter_out_list.split(',') if f.strip()]
+
+                # 1. Filter torrent's original_filename
+                original_torrent_filename = torrent_info.get('original_filename')
+                if original_torrent_filename and filters:
+                    original_torrent_filename_lower = original_torrent_filename.lower()
+                    if any(filter_term in original_torrent_filename_lower for filter_term in filters):
+                        logging.warning(f"Torrent's original_filename '{original_torrent_filename}' matches filter list: {filters}. Rejecting entire torrent.")
+                        item['torrent_id'] = torrent_info.get('id')
+                        self._handle_failed_item(item, f"Torrent's original name '{original_torrent_filename}' matched filter-out list", queue_manager)
+                        processed_this_item = True
+                        continue
+
+                # 2. Determine and filter the potential torrent title (source for filled_by_title)
+                potential_torrent_title_from_info = torrent_info.get('title')
+                if not potential_torrent_title_from_info and chosen_result_info:
+                    potential_torrent_title_from_info = chosen_result_info.get('title')
+                
+                if potential_torrent_title_from_info and filters:
+                    potential_torrent_title_lower = potential_torrent_title_from_info.lower()
+                    if any(filter_term in potential_torrent_title_lower for filter_term in filters):
+                        logging.warning(f"Torrent's determined title '{potential_torrent_title_from_info}' matches filter list: {filters}. Rejecting torrent.")
+                        item['torrent_id'] = torrent_info.get('id')
+                        self._handle_failed_item(item, f"Torrent's title '{potential_torrent_title_from_info}' matched filter-out list", queue_manager)
+                        processed_this_item = True
+                        continue
+
+                # If we reach here, original_filename and potential_torrent_title are acceptable.
+                # The original_torrent_filename variable already holds the vetted name for 'real_debrid_original_title'.
+                # The logic later that determines 'torrent_title' for move_to_checking will use the vetted title parts.
 
                 # --- Process Files (Parse Once) ---
                 raw_files = torrent_info.get('files', [])
                 logging.debug(f"Got {len(raw_files)} raw files from torrent info.")
 
-                # Apply filename filters BEFORE parsing
-                filename_filter_out_list = get_setting('Debug', 'filename_filter_out_list', '')
+                # Apply filename filters to individual files (filters list is already prepared from above)
                 filtered_raw_files = []
-                if filename_filter_out_list:
-                    filters = [f.strip().lower() for f in filename_filter_out_list.split(',') if f.strip()]
-                    logging.info(f"Applying filename filters: {filters}")
+                if filters: # Only filter if filters were defined
+                    logging.info(f"Applying filename filters to individual files: {filters}")
                     for file in raw_files:
                         file_path_lower = file['path'].lower()
                         if not any(filter_term in file_path_lower for filter_term in filters):
                             filtered_raw_files.append(file)
                         else:
-                             logging.debug(f"Filtering out file before parsing: {file['path']}")
-                    logging.info(f"Filtered {len(raw_files) - len(filtered_raw_files)} files out of {len(raw_files)} total raw files")
+                             logging.debug(f"Filtering out individual file: {file['path']} due to match with: {filters}")
+                    logging.info(f"Filtered {len(raw_files) - len(filtered_raw_files)} files out of {len(raw_files)} total raw files (individual file filtering)")
                 else:
-                    filtered_raw_files = raw_files # No filter applied
+                    filtered_raw_files = raw_files # No filter applied, or filters list was empty
 
                 # Parse the filtered files ONCE
                 parsed_torrent_files = []
@@ -342,17 +373,18 @@ class AddingQueue:
                     'current_score': current_score,
                     'original_scraped_torrent_title': original_scraped_torrent_title,
                     'resolution': resolution,
-                    'real_debrid_original_title': torrent_info.get('original_filename')
+                    'real_debrid_original_title': original_torrent_filename # Use the original_torrent_filename that passed the filter
                 }
                 logging.info(f"Updating item {item_id} with score and details: {update_data}")
                 update_media_item(item['id'], **update_data)
                 # --- END Score Update ---
 
                 # --- Determine Torrent Title ---
-                torrent_title = torrent_info.get('title') # Use title from info dict if available
-                if not torrent_title and chosen_result_info: # Fallback to result title
+                # This will now use the parts (torrent_info.get('title'), chosen_result_info.get('title')) that have implicitly passed the filter
+                torrent_title = torrent_info.get('title') 
+                if not torrent_title and chosen_result_info: 
                     torrent_title = chosen_result_info.get('title')
-                if not torrent_title: # Final fallback
+                if not torrent_title: 
                     torrent_title = "Unknown Torrent Title"
 
 
@@ -380,14 +412,13 @@ class AddingQueue:
 
 
                 # --- Move Primary Item to Checking ---
-                # torrent_title calculation moved up
                 logging.info(f"Moving {item_identifier} to checking queue")
                 queue_manager.move_to_checking(
                     item=item,
                     from_queue="Adding",
-                    title=torrent_title, # Use calculated title
+                    title=torrent_title, # This title has now been effectively filtered
                     link=magnet,
-                    filled_by_file=matched_file_basename, # Pass the basename
+                    filled_by_file=matched_file_basename, 
                     torrent_id=torrent_info.get('id')
                 )
                 processed_this_item = True # Mark primary item as processed for delay logic

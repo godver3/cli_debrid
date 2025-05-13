@@ -74,6 +74,7 @@ import babelfish
 # Global variables
 metadata_process = None
 metadata_lock = threading.Lock()
+global_program_runner_instance = None
 
 def get_babelfish_data_dir():
     return os.path.join(os.path.dirname(babelfish.__file__), 'data')
@@ -917,8 +918,8 @@ def migrate_task_toggles():
 
 def main():
     # Remove global program_runner from here as well
-    global metadata_process 
-    metadata_process = None
+    global metadata_process # Keep this if metadata_process is modified within main()
+    metadata_process = None # Example assignment if needed
 
     logging.info("Starting the program...")
 
@@ -1010,6 +1011,7 @@ def main():
     set_setting('Debrid Provider', 'provider', 'RealDebrid')
     set_setting('Debug', 'rescrape_missing_files', True)
     set_setting('Debug', 'anime_renaming_using_anidb', True)
+    set_setting('Debug', 'symlink_organize_by_type', True)
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
@@ -1357,6 +1359,20 @@ def main():
             logging.info("Successfully migrated version settings to include year_match_weight")
     # --- End year_match_weight migration ---
 
+    # --- Add migration for anime_filter_mode in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'anime_filter_mode' not in version_config:
+                version_config['anime_filter_mode'] = 'None'
+                versions_updated = True
+                logging.info(f"Adding default anime_filter_mode 'None' to version {version_name}")
+
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include anime_filter_mode")
+    # --- End anime_filter_mode migration ---
+
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
     if not str(threshold_value).strip():
@@ -1461,10 +1477,93 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    # --- START EDIT: Supervisor attributes ---
+    # Using function attributes for state to keep them local to main() context
+    if not hasattr(main, 'last_supervisor_check_time'):
+        main.last_supervisor_check_time = 0
+    if not hasattr(main, 'supervisor_resume_attempts'):
+        main.supervisor_resume_attempts = 0
+    SUPERVISOR_CHECK_INTERVAL = 300 # 5 minutes
+    SUPERVISOR_MAX_RESUME_ATTEMPTS = 3 
+    # --- END EDIT ---
+
     # Main loop
     try:
         while True:
-            time.sleep(5)
+            time.sleep(5) # Main loop poll interval
+
+            # --- START EDIT: Supervisor Logic ---
+            # No 'global' keyword needed here to access the module-level variable
+            if global_program_runner_instance and global_program_runner_instance.is_running() and False:
+                if global_program_runner_instance.queue_paused and global_program_runner_instance.pause_info.get("error_type"):
+                    current_time = time.time()
+                    if current_time - main.last_supervisor_check_time > SUPERVISOR_CHECK_INTERVAL:
+                        main.last_supervisor_check_time = current_time
+                        logging.info("[Supervisor] ProgramRunner is paused. Verifying pause conditions.")
+                        
+                        pause_error_type = global_program_runner_instance.pause_info.get("error_type")
+                        pause_reason_str = global_program_runner_instance.pause_info.get("reason_string", "Unknown reason")
+                        should_attempt_resume = False
+
+                        if pause_error_type == "CONNECTION_ERROR":
+                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking service connectivity...")
+                            from routes.program_operation_routes import check_service_connectivity # Import locally
+                            connectivity_ok, failed_services = check_service_connectivity()
+                            if connectivity_ok:
+                                logging.info("[Supervisor] Connectivity restored.")
+                                should_attempt_resume = True
+                            else:
+                                logging.info(f"[Supervisor] Connectivity issues persist: {failed_services}")
+                        
+                        elif pause_error_type == "DB_HEALTH":
+                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking database health...")
+                            if verify_database_health(): # verify_database_health is in main.py
+                                logging.info("[Supervisor] Database health is OK.")
+                                should_attempt_resume = True
+                            else:
+                                logging.info("[Supervisor] Database health issues persist.")
+
+                        elif pause_error_type == "SYSTEM_SCHEDULED":
+                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking system pause schedule...")
+                            if not global_program_runner_instance._is_within_pause_schedule():
+                                logging.info("[Supervisor] System pause schedule has ended.")
+                                should_attempt_resume = True
+                            else:
+                                logging.info("[Supervisor] Still within system pause schedule.")
+                        
+                        # Add other specific checks if ProgramRunner introduces new pause_info error_types
+
+                        if should_attempt_resume:
+                            main.supervisor_resume_attempts += 1
+                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) no longer met. Attempting to resume ProgramRunner (Attempt {main.supervisor_resume_attempts}/{SUPERVISOR_MAX_RESUME_ATTEMPTS}).")
+                            try:
+                                global_program_runner_instance.resume_queue()
+                                # resume_queue() clears pause_info if successful
+                                if not global_program_runner_instance.queue_paused:
+                                    logging.info("[Supervisor] ProgramRunner resumed successfully by supervisor.")
+                                    main.supervisor_resume_attempts = 0 # Reset attempts on success
+                                else:
+                                    logging.warning(f"[Supervisor] Called resume_queue(), but ProgramRunner is still paused. Current pause reason: {global_program_runner_instance.pause_info.get('reason_string')}")
+                                    if main.supervisor_resume_attempts >= SUPERVISOR_MAX_RESUME_ATTEMPTS:
+                                        logging.error(f"[Supervisor] Max resume attempts ({SUPERVISOR_MAX_RESUME_ATTEMPTS}) reached. ProgramRunner remains paused. Manual intervention may be required. Last pause reason: {pause_reason_str}")
+                                        # Optionally, send a critical notification here
+                            except Exception as e_resume:
+                                logging.error(f"[Supervisor] Error attempting to resume ProgramRunner: {e_resume}", exc_info=True)
+                        else:
+                            # Conditions for pause still met, reset resume attempts for this specific pause reason if it changes.
+                            # This might be too complex; for now, attempts are general.
+                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) still appear to be met.")
+                            # If pause reason changes, supervisor_resume_attempts should ideally reset.
+                            # For simplicity, we're not tracking changes in pause_info string here.
+                elif not global_program_runner_instance.queue_paused:
+                    # If queue is not paused, reset supervisor attempts.
+                    if main.supervisor_resume_attempts > 0:
+                        logging.info("[Supervisor] ProgramRunner is no longer paused. Resetting resume attempts.")
+                        main.supervisor_resume_attempts = 0
+                    main.last_supervisor_check_time = time.time() # Update check time even if not paused to delay next check
+
+            # --- END EDIT: Supervisor Logic ---
+
     except KeyboardInterrupt:
         from routes.program_operation_routes import cleanup_port
         cleanup_port()
@@ -1498,14 +1597,24 @@ if __name__ == "__main__":
             setup_api_logging()
             from routes.web_server import start_server
             from routes.extensions import app # Import the Flask app instance
-            from queues.run_program import ProgramRunner # Import ProgramRunner
-            
+            from queues.run_program import ProgramRunner, _setup_scheduler_listeners # Ensure _setup_scheduler_listeners is imported
+
             print_version()
             print("\ncli_debrid is initialized.")
 
-            # Instantiate ProgramRunner and attach to Flask app context
+            # --- START EDIT: Assign to the module-level global variable ---
+            # No 'global' keyword declaration needed here because it's defined at the module level.
+            
             program_runner_instance = ProgramRunner()
-            app.program_runner = program_runner_instance
+            app.program_runner = program_runner_instance # For Flask app access
+            global_program_runner_instance = program_runner_instance # Assign to the module-level variable for main() supervisor
+            
+            # Setup scheduler listeners for the instance
+            try:
+                _setup_scheduler_listeners(global_program_runner_instance) # Pass the instance
+            except Exception as e_listeners:
+                logging.error(f"Failed to set up scheduler listeners on initial startup: {e_listeners}", exc_info=True)
+            # --- END EDIT ---
             
             def run_flask():
                 if not start_server(): 

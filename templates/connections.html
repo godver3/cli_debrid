@@ -117,7 +117,10 @@
                 <span class="connection-title">{{ source.name }}</span>
                 <div class="status-indicator {{ 'connected' if source.connected else 'disconnected' }}"></div>
                 {% if source.connected and (source.details.sample_data or source.details.sample_error) %}
-                    <a href="#" class="toggle-sample" data-target="#{{ sample_id }}">Show Sample</a>
+                    <a href="#" class="toggle-sample" data-target="#{{ sample_id }}">
+                        <i class="fas fa-info-circle toggle-sample-icon"></i>
+                        <span class="toggle-sample-text">Show Sample</span>
+                    </a>
                 {% endif %}
             </div>
             {# Conditionally render the sample data container #}
@@ -170,7 +173,10 @@
                 if (targetElement) {
                     const isVisible = targetElement.style.display === 'block';
                     targetElement.style.display = isVisible ? 'none' : 'block';
-                    this.textContent = isVisible ? 'Show Sample' : 'Hide Sample';
+                    const textElement = this.querySelector('.toggle-sample-text');
+                    if (textElement) {
+                        textElement.textContent = isVisible ? 'Show Sample' : 'Hide Sample';
+                    }
                 }
             });
         });

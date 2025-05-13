@@ -34,7 +34,7 @@ from debrid import get_debrid_provider
 import threading
 import queue
 import asyncio
-from utilities.plex_functions import get_collected_from_plex
+from utilities.plex_functions import get_collected_from_plex, plex_update_item
 from content_checkers.content_cache_management import (
     load_source_cache, save_source_cache, 
     should_process_item, update_cache_for_item
@@ -57,7 +57,7 @@ from flask import Response, stream_with_context
 # Import Plex debug functions
 # Import sqlite3 for error handling and add_media_item
 import sqlite3
-from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink
+from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink, resync_symlinks_with_new_settings
 from scraper.functions.ptt_parser import parse_with_ptt
 from database.database_writing import add_media_item
 
@@ -366,6 +366,8 @@ def get_queue_contents():
 @debug_bp.route('/manual_blacklist', methods=['GET', 'POST'])
 @admin_required
 def manual_blacklist():
+    from metadata.metadata import get_tmdb_id_and_media_type # Import the function to determine media type
+
     if request.method == 'POST':
         action = request.form.get('action')
         imdb_id = request.form.get('imdb_id')
@@ -375,80 +377,95 @@ def manual_blacklist():
             return redirect(url_for('debug.manual_blacklist'))
 
         blacklist = get_manual_blacklist()
+        direct_api = DirectAPI()
         
         if action == 'add':
             try:
-                # Try TV show metadata first
-                direct_api = DirectAPI()
-                show_data, _ = direct_api.get_show_metadata(imdb_id)
-                if show_data:
-                    if isinstance(show_data, str):
-                        show_data = json.loads(show_data)
-                        
-                    add_to_manual_blacklist(
-                        imdb_id=imdb_id,
-                        media_type='episode',
-                        title=show_data.get('title', 'Unknown Title'),
-                        year=str(show_data.get('year', '')),
-                        season=None  # Initially add with no seasons selected
-                    )
-                    flash('Successfully added to blacklist', 'success')
-                else:
-                    # If not a TV show, try movie metadata
-                    movie_data, _ = direct_api.get_movie_metadata(imdb_id)
-                    if movie_data:
-                        if isinstance(movie_data, str):
-                            movie_data = json.loads(movie_data)
-                        add_to_manual_blacklist(
-                            imdb_id=imdb_id,
-                            media_type='movie',
-                            title=movie_data.get('title', 'Unknown Title'),
-                            year=str(movie_data.get('year', '')),
-                        )
-                        flash('Successfully added to blacklist', 'success')
-                    else:
-                        flash('Unable to fetch metadata for IMDb ID', 'error')
+                logging.info(f"Attempting to add IMDb ID '{imdb_id}' to manual blacklist.")
+                # 1. Determine the actual media type
+                tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
+
+                if not actual_media_type:
+                    flash(f'Could not determine media type for IMDb ID {imdb_id}. Cannot add to blacklist.', 'error')
+                    return redirect(url_for('debug.manual_blacklist'))
+
+                # 2. Fetch metadata based on the determined type
+                metadata = None
+                if actual_media_type == 'tv':
+                    metadata_tuple = direct_api.get_show_metadata(imdb_id)
+                    if metadata_tuple: metadata = metadata_tuple[0]
+                elif actual_media_type == 'movie':
+                    metadata_tuple = direct_api.get_movie_metadata(imdb_id)
+                    if metadata_tuple: metadata = metadata_tuple[0]
+
+                # Ensure metadata is a dictionary if found
+                if metadata and isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except json.JSONDecodeError:
+                        flash(f'Failed to parse metadata for {imdb_id}. Cannot add to blacklist.', 'error')
+                        metadata = None
+
+                if not metadata or not isinstance(metadata, dict):
+                    flash(f'Unable to fetch metadata for IMDb ID {imdb_id} (Type: {actual_media_type}). Cannot add to blacklist.', 'error')
+                    return redirect(url_for('debug.manual_blacklist'))
+
+                # 3. Determine the media type to store in the blacklist file
+                media_type_to_store = 'episode' if actual_media_type == 'tv' else 'movie'
+
+                # 4. Add to blacklist with the intended (potentially 'episode') media type
+                logging.info(f"Calling add_to_manual_blacklist with: imdb_id='{imdb_id}', media_type='{media_type_to_store}', title='{metadata.get('title', 'Unknown Title')}', year='{str(metadata.get('year', ''))}'")
+                add_to_manual_blacklist(
+                    imdb_id=imdb_id,
+                    media_type=media_type_to_store,
+                    title=metadata.get('title', 'Unknown Title'),
+                    year=str(metadata.get('year', '')),
+                )
+                flash(f'Successfully added {metadata.get("title", "Item")} ({actual_media_type}) to blacklist as type "{media_type_to_store}"', 'success')
+
             except Exception as e:
                 flash(f'Error adding to blacklist: {str(e)}', 'error')
                 logging.error(f"Error adding to blacklist: {str(e)}", exc_info=True)
-                
+
         elif action == 'update_seasons':
             try:
                 if imdb_id in blacklist:
                     item = blacklist[imdb_id]
+                    # REVERT: Check against 'episode' type here
                     if item['media_type'] == 'episode':
-                        # Check if all seasons is selected
                         all_seasons = request.form.get('all_seasons') == 'on'
-                        
+
                         if all_seasons:
-                            item['seasons'] = []  # Empty list means all seasons
+                            item['seasons'] = []
                         else:
-                            # Get selected seasons from form
                             selected_seasons = request.form.getlist('seasons')
-                            # Convert to integers and sort
-                            item['seasons'] = sorted([int(s) for s in selected_seasons])
-                            
+                            item['seasons'] = sorted([int(s) for s in selected_seasons if s.isdigit()])
+
                         save_manual_blacklist(blacklist)
-                        flash('Successfully updated seasons', 'success')
+                        return jsonify({'success': True, 'message': 'Successfully updated seasons'})
                     else:
-                        flash('Only TV shows can have seasons updated', 'error')
+                        # This branch should technically not be hit for TV shows if 'add' stores them as 'episode'
+                        return jsonify({'success': False, 'error': 'Only items stored as type "episode" can have seasons updated'}), 400
                 else:
-                    flash('Show not found in blacklist', 'error')
+                    return jsonify({'success': False, 'error': 'Item not found in blacklist'}), 404
             except Exception as e:
-                flash(f'Error updating seasons: {str(e)}', 'error')
-                logging.error(f"Error updating seasons: {str(e)}", exc_info=True)
-                
+                logging.error(f"Error updating seasons via AJAX: {str(e)}", exc_info=True)
+                return jsonify({'success': False, 'error': str(e)}), 500
+
         elif action == 'remove':
             try:
                 remove_from_manual_blacklist(imdb_id)
                 flash('Successfully removed from blacklist', 'success')
             except Exception as e:
                 flash(f'Error removing from blacklist: {str(e)}', 'error')
-    
-    # Get blacklist and sort by title
+
+        if action != 'update_seasons':
+             return redirect(url_for('debug.manual_blacklist'))
+
+    # --- GET Request Logic ---
     blacklist = get_manual_blacklist()
     
-    # Add error handling for sorting
+    # ... (keep existing sorting logic) ...
     def get_sort_key(item):
         try:
             title = item[1].get('title', '')
@@ -459,28 +476,25 @@ def manual_blacklist():
         except Exception as e:
             logging.error(f"Error getting sort key for blacklist item {item[0]}: {str(e)}")
             return ''
-    
     sorted_blacklist = dict(sorted(blacklist.items(), key=get_sort_key))
     
-    # Fetch season information for TV shows
     direct_api = DirectAPI()
     for imdb_id, item in sorted_blacklist.items():
+        # REVERT: Check against 'episode' type for fetching seasons
         if item['media_type'] == 'episode':
             try:
+                # Fetching seasons based on IMDb ID remains the same
                 seasons_data, _ = direct_api.get_show_seasons(imdb_id)
                 if seasons_data:
                     logging.debug(f"Seasons data for {imdb_id}: {seasons_data}")
                     if isinstance(seasons_data, str):
                         seasons_data = json.loads(seasons_data)
-                        
-                    # Handle the new format where seasons are direct keys
+
                     if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
                         item['available_seasons'] = sorted([int(season) for season in seasons_data.keys()])
-                        # Also store episode counts
                         item['season_episodes'] = {int(season): data.get('episode_count', 0) for season, data in seasons_data.items()}
-                    # Keep backward compatibility for the old format
-                    else:
-                        item['available_seasons'] = sorted([int(s['season_number']) for s in seasons_data.get('seasons', [])])
+                    else: # Backward compatibility
+                        item['available_seasons'] = sorted([int(s['season_number']) for s in seasons_data.get('seasons', []) if str(s.get('season_number')).isdigit()])
                         item['season_episodes'] = {}
                 else:
                     item['available_seasons'] = []
@@ -489,7 +503,7 @@ def manual_blacklist():
                 logging.error(f"Error fetching seasons for {imdb_id}: {str(e)}")
                 item['available_seasons'] = []
                 item['season_episodes'] = {}
-                
+
     return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
 
 @debug_bp.route('/api/get_collected_from_plex', methods=['POST'])
@@ -2911,7 +2925,7 @@ def delete_battery_db_files():
 
 # --- Rclone Mount to Symlinks Logic ---
 
-def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id):
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False): # Add new parameter
     """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
     global rclone_scan_progress
 
@@ -3197,10 +3211,13 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         
                         if imdb_to_fetch_with:
                             metadata_result, _ = direct_api.get_movie_metadata(imdb_id=imdb_to_fetch_with)
+                            if isinstance(metadata_result, dict): # Log keys if it's a dict
+                                logging.info(f"[RcloneScan {task_id}] Movie metadata_result keys for IMDb {imdb_to_fetch_with}: {list(metadata_result.keys())}")
                             if metadata_result and isinstance(metadata_result, dict):
                                 metadata = metadata_result
                                 final_imdb_id = str(metadata.get('imdb_id')).strip() if metadata.get('imdb_id') and str(metadata.get('imdb_id')).strip() else imdb_to_fetch_with
-                                final_tmdb_id = str(metadata.get('id')).strip() if metadata.get('id') and str(metadata.get('id')).strip() else tmdb_known_from_search
+                                # Corrected TMDB ID extraction for movies
+                                final_tmdb_id = str(metadata.get('ids', {}).get('tmdb')).strip() if metadata.get('ids', {}).get('tmdb') else tmdb_known_from_search
                             else: 
                                 logging.warning(f"[RcloneScan {task_id}] get_movie_metadata for {imdb_to_fetch_with} returned invalid. Using known IDs.")
                                 final_imdb_id = imdb_to_fetch_with
@@ -3244,9 +3261,13 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                                     
                             if show_imdb_to_fetch_with:
                                 show_meta_full, _ = direct_api.get_show_metadata(imdb_id=show_imdb_to_fetch_with)
+                                if isinstance(show_meta_full, dict): # Log keys if it's a dict
+                                    logging.info(f"[RcloneScan {task_id}] Show show_meta_full keys for IMDb {show_imdb_to_fetch_with}: {list(show_meta_full.keys())}")
                                 if show_meta_full and isinstance(show_meta_full, dict):
                                     # Set show's final IDs
                                     final_imdb_id = str(show_meta_full.get('imdb_id')).strip() if show_meta_full.get('imdb_id') and str(show_meta_full.get('imdb_id')).strip() else show_imdb_to_fetch_with
+                                    # Corrected TMDB ID extraction for shows
+                                    final_tmdb_id = str(show_meta_full.get('ids', {}).get('tmdb')).strip() if show_meta_full.get('ids', {}).get('tmdb') else show_tmdb_known_from_search
                                     final_tmdb_id = str(show_meta_full.get('id')).strip() if show_meta_full.get('id') and str(show_meta_full.get('id')).strip() else show_tmdb_known_from_search
                                     
                                     season_data_dict = show_meta_full.get('seasons', {})
@@ -3384,6 +3405,25 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         # Successfully processed, add to persistent progress and save
                         processed_original_files.add(original_file_path_str)
                         save_rclone_progress()
+                        
+                        # --- Conditionally Add Plex Update Call ---
+                        if trigger_plex_update_on_success: # Check the new parameter
+                            plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
+                            plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
+                            
+                            if plex_url and plex_token:
+                                logging.info(f"[RcloneScan {task_id}] Plex configured and update triggered. Attempting library update for: {symlink_dest_path}")
+                                try:
+                                    # Make sure item_for_db_filtered has the necessary info (title, year, type etc.)
+                                    plex_update_item(item=item_for_db_filtered)
+                                    logging.info(f"[RcloneScan {task_id}] Plex library update triggered for: {symlink_dest_path}")
+                                except Exception as plex_err:
+                                    logging.error(f"[RcloneScan {task_id}] Failed to trigger Plex update for {symlink_dest_path}: {plex_err}", exc_info=True)
+                            else:
+                                 logging.debug(f"[RcloneScan {task_id}] Plex URL/Token not configured in 'File Management' settings. Skipping Plex update despite trigger.")
+                        else:
+                            logging.debug(f"[RcloneScan {task_id}] Plex update not triggered for this task run.")
+                        # --- End Plex Update Call ---
                         
                     except Exception as e:
                         logging.error(f"[RcloneScan {task_id}] Symlink creation error for {symlink_dest_path} (DB ID {item_id_from_db}): {e}", exc_info=True)
@@ -3746,7 +3786,8 @@ def _run_riven_analysis_thread(symlink_root_path_str, original_root_path_str, ta
                                     # Populate base parsed_data from show-level metadata
                                     parsed_data['title'] = metadata.get('title', parsed_data.get('title')) # Prefer metadata title
                                     parsed_data['year'] = metadata.get('year', parsed_data.get('year'))
-                                    parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
+                                    # Corrected TMDB ID extraction
+                                    parsed_data['tmdb_id'] = str(metadata.get('ids', {}).get('tmdb')).strip() if metadata.get('ids', {}).get('tmdb') else parsed_data.get('tmdb_id')
                                     # Use show's release_date as a fallback if episode-specific one isn't found
                                     parsed_data['release_date'] = metadata.get('release_date') 
                                     genres = metadata.get('genres', []) # Use genres from show metadata
@@ -4060,7 +4101,7 @@ def perform_riven_recovery(): # New function
                         logging.error(error_msg)
                 except sqlite3.IntegrityError:
                      failed_recoveries += 1
-                     item_desc = f"item on line {line_num + 1} (Path: {item_data.get('scanned_path', 'Unknown')})"
+                     item_desc = f"item on line {line_num + 1} (Path: {item_data.get('symlink_path', 'Unknown')})"
                      error_msg = f"RIVEN: Skipped recovery for {item_desc}: Item likely already exists in DB (UNIQUE constraint violation)."
                      errors.append(error_msg)
                      logging.warning(error_msg)
@@ -4117,3 +4158,22 @@ def perform_riven_recovery(): # New function
 
 # --- End Riven Symlink Recovery Routes ---
 # --- Symlink Path Modification ---
+
+@debug_bp.route('/api/resync_symlinks_trigger', methods=['POST'])
+@admin_required
+def resync_symlinks_route():
+    logging.info("Attempting to resync symlinks with current settings.")
+
+    try:
+        # This function logs its own progress and errors.
+        # It's a potentially long-running synchronous operation.
+        # Call the underlying function without the optional path arguments
+        resync_symlinks_with_new_settings(
+            old_original_files_path_setting=None,
+            new_original_files_path_setting=None
+        )
+        # The function itself handles logging. The UI will show this generic success message.
+        return jsonify({'success': True, 'message': 'Symlink resynchronization process initiated. Check server logs for details and progress.'})
+    except Exception as e:
+        logging.error(f"Error during symlink resynchronization trigger: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500

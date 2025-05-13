@@ -182,7 +182,32 @@ def filter_results(
                         logging.info(f"Rejected: Movie year {parsed_year} doesn't match {year} for '{original_title}'")
                         continue
                 #logging.debug("✓ Passed year check")
-            
+
+                # --- Log season_episode_info before the check ---
+                season_episode_info = parsed_info.get('season_episode_info', {})
+                #logging.debug(f"Movie Check - season_episode_info for '{original_title}': {season_episode_info}")
+                # --- End Log ---
+
+                # --- New check for movies: Reject if season/episode info is detected ---
+                if season_episode_info:
+                    has_seasons_list = bool(season_episode_info.get('seasons'))
+                    has_episodes_list = bool(season_episode_info.get('episodes'))
+                    season_pack_type = season_episode_info.get('season_pack')
+                    
+                    # Consider it TV content if seasons/episodes lists are populated,
+                    # or if season_pack indicates a pack (not 'N/A' or 'Unknown')
+                    is_tv_content_indicator = (
+                        has_seasons_list or
+                        has_episodes_list or
+                        (season_pack_type and season_pack_type not in ['N/A', 'Unknown'])
+                    )
+
+                    if is_tv_content_indicator:
+                        result['filter_reason'] = "Detected season/episode/pack info for a movie request"
+                        logging.info(f"Rejected: Detected TV content indicator for movie request: '{original_title}' (Info: {season_episode_info})")
+                        continue
+                # --- End new check ---
+
             elif is_episode:
                 # Add year check for TV shows
                 parsed_year = parsed_info.get('year')
@@ -223,7 +248,7 @@ def filter_results(
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}'")
                         continue
 
-                    if episodes and episode not in episodes:
+                    if episodes and episode is not None and episode not in episodes:
                         result['filter_reason'] = f"Multi-episode pack does not contain requested episode {episode}"
                         logging.info(f"Rejected: Multi-pack missing episode {episode} for '{original_title}'")
                         continue
@@ -478,7 +503,27 @@ def filter_results(
                     continue
             #logging.debug("✓ Passed bitrate checks")
             
-            # Pattern matching
+            # --- NEW: Pre-Normalization Filter Out Check ---
+            # Check filter_out patterns against original fields BEFORE normalization
+            if filter_out_patterns:
+                original_fields_to_check = [original_title, filename, binge_group]
+                matched_pre_norm_pattern = None
+                for pattern in filter_out_patterns:
+                    for field_value in original_fields_to_check:
+                        # Check only if field_value exists (is not None or empty string)
+                        if field_value and smart_search(pattern, field_value):
+                            matched_pre_norm_pattern = pattern
+                            break # Found a match for this pattern, stop checking fields
+                    if matched_pre_norm_pattern:
+                        break # Found a matching pattern, stop checking patterns
+
+                if matched_pre_norm_pattern:
+                    result['filter_reason'] = f"Matching filter_out pattern(s) before normalization: {matched_pre_norm_pattern}"
+                    logging.info(f"Rejected (pre-norm): Matched filter_out pattern '{matched_pre_norm_pattern}' for '{original_title}'")
+                    continue
+            # --- End NEW Pre-Normalization Check ---
+
+            # --- Existing Pattern Matching (using normalized fields) ---
             normalized_filter_title = normalize_title(original_title).lower()
             normalized_filename = normalize_title(filename).lower() if filename else None
             normalized_binge_group = normalize_title(binge_group).lower() if binge_group else None
@@ -495,25 +540,28 @@ def filter_results(
 
             fields_to_check_patterns = [normalized_filter_title, normalized_filename, normalized_binge_group]
             
-            # Filter Out Check
+            # Filter Out Check (on normalized fields - keep this as well)
             if filter_out_patterns:
+                # Note: This check now runs *after* the pre-normalization check
                 matched_out_patterns = check_patterns(filter_out_patterns, fields_to_check_patterns)
                 if matched_out_patterns:
-                    result['filter_reason'] = f"Matching filter_out pattern(s): {', '.join(matched_out_patterns)}"
-                    logging.info(f"Rejected: Matched filter_out patterns '{matched_out_patterns}' for '{original_title}'")
+                    # Only reject if it wasn't already rejected by the pre-norm check
+                    # (This check is now slightly redundant for patterns caught pre-norm, but harmless)
+                    result['filter_reason'] = f"Matching filter_out pattern(s) after normalization: {', '.join(matched_out_patterns)}"
+                    logging.info(f"Rejected (post-norm): Matched filter_out patterns '{matched_out_patterns}' for '{original_title}'")
                     continue
-            
-            # Filter In Check
+
+            # Filter In Check (on normalized fields - keep this)
             if filter_in_patterns:
                 matched_in_patterns = check_patterns(filter_in_patterns, fields_to_check_patterns)
                 if not matched_in_patterns: # Reject if NO patterns matched ANY field
-                    result['filter_reason'] = "Not matching any filter_in patterns"
-                    logging.info(f"Rejected: No matching filter_in patterns for '{original_title}'")
+                    result['filter_reason'] = "Not matching any filter_in patterns (post-normalization)"
+                    logging.info(f"Rejected (post-norm): No matching filter_in patterns for '{original_title}'")
                     continue
             # logging.debug("✓ Passed pattern checks")
-            # --- End Pattern Matching Update ---
+            # --- End Existing Pattern Matching ---
 
-            # --- Adult Content Check (Updated to check additional fields) ---
+            # --- Adult Content Check (Uses original title and filename - No change needed) ---
             fields_to_check_adult = [original_title] # Start with original title
             if filename: fields_to_check_adult.append(filename)
             # Don't check bingeGroup for adult terms, too prone to false positives
@@ -523,7 +571,7 @@ def filter_results(
                 logging.info(f"Rejected: Adult content detected for '{original_title}'")
                 continue
             # logging.debug("✓ Passed adult content check")
-            # --- End Adult Content Check Update ---
+            # --- End Adult Content Check ---
             
             filtered_results.append(result)
             logging.info(f"Accepted: '{original_title}'")

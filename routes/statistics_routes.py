@@ -239,7 +239,12 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
             airtime,
             imdb_id,
             tmdb_id,
-            MAX(state) as state,  -- Get the state
+            -- Determine effective state: if any version is 'Collected', report 'Collected'.
+            -- Otherwise, take the MAX state from non-blacklisted items in the group.
+            CASE
+                WHEN SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) > 0 THEN 'Collected'
+                ELSE MAX(state)
+            END as state,
             MAX(upgrading_from) as upgrading_from -- Get upgrading_from if present
         FROM media_items
         WHERE type = 'episode' 
@@ -304,10 +309,15 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                 
                 # Determine display status
                 display_status = 'uncollected' # Default
-                if state in ['Collected', 'Upgrading']:
+                if state == 'Collected':
                     display_status = 'collected'
-                elif state == 'Checking' and upgrading_from:
-                    display_status = 'checking_upgrade'
+                elif state == 'Upgrading': # Item is in UpgradingQueue, waiting for hourly scrape
+                    display_status = 'collected' # Shows as normal/collected
+                elif (state == 'Adding' or state == 'Checking') and upgrading_from:
+                    # Item is being added to debrid for an upgrade (Adding)
+                    # OR item is downloaded and being verified (Checking)
+                    display_status = 'checking_upgrade' # Should be blue
+                # If state is 'Wanted', 'Searching', etc., it will remain 'uncollected'
                 
                 # Create a key for grouping
                 show_key = f"{title}_{season}_{release_date.date()}"

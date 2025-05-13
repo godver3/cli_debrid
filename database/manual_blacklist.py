@@ -27,6 +27,7 @@ def save_manual_blacklist(blacklist):
 
 def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str, season: int = None):
     blacklist = get_manual_blacklist()
+    logging.info(f"Inside add_to_manual_blacklist: IMDB_ID='{imdb_id}', MediaType='{media_type}', Title='{title}', Year='{year}', Season={season}")
     
     if season is not None and media_type == 'tv':
         # If this is the first season for this show

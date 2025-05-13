@@ -18,8 +18,103 @@ import requests
 from content_checkers.trakt import get_trakt_headers, TRAKT_API_URL, REQUEST_TIMEOUT
 import json
 from fuzzywuzzy import fuzz
+import asyncio
+from utilities.web_scraper import get_media_meta
+from utilities.settings import get_setting
+from typing import List, Dict, Optional, Any
 
 magnet_bp = Blueprint('magnet', __name__)
+
+async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content_type_hint: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Helper to fetch media details based on IMDb or TMDb ID for magnet assigner.
+    Returns a list containing a single result dict if found, else empty list.
+    """
+    from metadata.metadata import get_metadata
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    has_tmdb = bool(tmdb_api_key)
+    results = []
+    metadata_result = None
+    determined_media_type = None # Will be 'movie' or 'tv'
+
+    try:
+        if id_kind == 'imdb':
+            # Try movie first, then tv for IMDb ID
+            metadata_result = get_metadata(imdb_id=id_value, item_media_type='movie')
+            if metadata_result and metadata_result.get('tmdb_id'): # Check if tmdb_id exists
+                determined_media_type = 'movie'
+            else:
+                metadata_result = get_metadata(imdb_id=id_value, item_media_type='tv')
+                if metadata_result and metadata_result.get('tmdb_id'):
+                    determined_media_type = 'tv'
+        elif id_kind == 'tmdb':
+            try:
+                tmdb_id_int = int(id_value)
+                if content_type_hint == 'movie':
+                    metadata_result = get_metadata(tmdb_id=tmdb_id_int, item_media_type='movie')
+                    if metadata_result and metadata_result.get('tmdb_id'):
+                        determined_media_type = 'movie'
+                elif content_type_hint == 'show' or content_type_hint == 'tv':
+                    metadata_result = get_metadata(tmdb_id=tmdb_id_int, item_media_type='tv')
+                    if metadata_result and metadata_result.get('tmdb_id'):
+                        determined_media_type = 'tv'
+                else: # No hint, try movie then tv
+                    metadata_result = get_metadata(tmdb_id=tmdb_id_int, item_media_type='movie')
+                    if metadata_result and metadata_result.get('tmdb_id'):
+                        determined_media_type = 'movie'
+                    else:
+                        metadata_result = get_metadata(tmdb_id=tmdb_id_int, item_media_type='tv')
+                        if metadata_result and metadata_result.get('tmdb_id'):
+                            determined_media_type = 'tv'
+            except ValueError:
+                logging.error(f"Invalid TMDb ID format: {id_value}")
+                return []
+
+        if metadata_result and determined_media_type and metadata_result.get('tmdb_id'):
+            tmdb_id_from_meta = str(metadata_result.get('tmdb_id'))
+            title = metadata_result.get('title', 'N/A')
+            year = metadata_result.get('year', 'N/A')
+            
+            poster_path_final = None
+            
+            # Use get_media_meta for consistent poster/details if possible
+            # get_media_meta expects determined_media_type as 'movie' or 'tv'
+            media_meta_tuple = await asyncio.to_thread(
+                get_media_meta, tmdb_id_from_meta, determined_media_type
+            )
+
+            if media_meta_tuple:
+                poster_path_from_meta, _, _, _, _ = media_meta_tuple
+                poster_path_final = poster_path_from_meta # This is a relative TMDB path
+
+            # Construct full poster path using proxy or use placeholder
+            if poster_path_final and poster_path_final != "static/images/placeholder.png":
+                if has_tmdb:
+                    # Use the scraper's TMDB image proxy if TMDB key is set
+                    poster_path_final = f"/scraper/tmdb_image/w300{poster_path_final}"
+                else:
+                    # Fallback if TMDB key is not set but we got a path (should ideally be placeholder already)
+                    poster_path_final = "static/images/placeholder.png"
+            elif metadata_result.get('poster') and has_tmdb : # Fallback to poster from get_metadata
+                 poster_path_final = f"/scraper/tmdb_image/w300{metadata_result.get('poster')}"
+            else: # Ultimate fallback to placeholder
+                poster_path_final = "static/images/placeholder.png"
+
+
+            formatted_result = {
+                'id': tmdb_id_from_meta,
+                'title': title,
+                'year': year,
+                'posterPath': poster_path_final, # Camel case for the template
+                'mediaType': 'show' if determined_media_type == 'tv' else 'movie' # 'movie' or 'show'
+            }
+            results.append(formatted_result)
+        else:
+            logging.warning(f"Could not find metadata for {id_kind} ID: {id_value} with hint {content_type_hint}")
+
+    except Exception as e:
+        logging.error(f"Error during _fetch_media_details_for_assigner ({id_kind}={id_value}): {e}", exc_info=True)
+    return results
 
 def _fetch_trakt_season_data_directly(imdb_id: str) -> dict | None:
     """Fetch season episode counts directly from Trakt API, including Season 0."""
@@ -108,42 +203,72 @@ def assign_magnet():
         action = request.form.get('action')
         
         if action == 'search':
-            search_term = request.form.get('search_term')
-            content_type = request.form.get('content_type', 'all')
-            # Remove season/episode from direct search form - handled in results view
-            # season = request.form.get('season') 
-            # episode = request.form.get('episode') 
+            search_term = request.form.get('search_term', '').strip()
+            content_type = request.form.get('content_type', 'all') # 'movie', 'show', or 'all'
             
             if not search_term:
-                flash('Please enter a search term', 'error')
+                flash('Please enter a search term or ID', 'error')
                 return redirect(url_for('magnet.assign_magnet'))
 
-            # Search Trakt for media
-            from utilities.web_scraper import search_trakt
-            search_results = search_trakt(search_term)
+            search_results = []
+            is_id_search = False
+
+            # IMDb ID check (e.g., tt1234567)
+            imdb_match = re.fullmatch(r'(tt\d+)', search_term, re.IGNORECASE)
+            if imdb_match:
+                imdb_id = imdb_match.group(1)
+                logging.info(f"IMDb ID detected: {imdb_id}. Fetching details...")
+                search_results = asyncio.run(_fetch_media_details_for_assigner(imdb_id, 'imdb', content_type if content_type != 'all' else None))
+                is_id_search = True
+            else:
+                # TMDb ID prefixed check (e.g., tmdb12345)
+                tmdb_prefixed_match = re.fullmatch(r'tmdb(\d+)', search_term, re.IGNORECASE)
+                if tmdb_prefixed_match:
+                    tmdb_id = tmdb_prefixed_match.group(1)
+                    logging.info(f"Prefixed TMDb ID detected: {tmdb_id}. Fetching details...")
+                    # Determine hint: if content_type is 'all', we can't be sure.
+                    # _fetch_media_details_for_assigner will try movie then TV.
+                    type_hint = content_type if content_type != 'all' else None
+                    search_results = asyncio.run(_fetch_media_details_for_assigner(tmdb_id, 'tmdb', type_hint))
+                    is_id_search = True
+
+            if not is_id_search:
+                logging.info(f"No specific ID pattern detected. Performing Trakt search for: {search_term}")
+                # Search Trakt for media if no ID was detected
+                from utilities.web_scraper import search_trakt
+                search_results = search_trakt(search_term)
+                
+                # Filter results based on content type if not 'all'
+                if content_type != 'all':
+                    # Handle 'tv' as well as 'show' from Trakt's mediaType
+                    normalized_content_type = 'show' if content_type == 'tv' else content_type
+                    search_results = [result for result in search_results if result['mediaType'] == normalized_content_type]
             
-            # Filter results based on content type
-            if content_type != 'all':
-                # Handle 'tv' as well as 'show'
-                normalized_content_type = 'show' if content_type == 'tv' else content_type
-                search_results = [result for result in search_results if result['mediaType'] == normalized_content_type]
-            
-            # Removed season/episode addition here
+            if not search_results:
+                flash(f'No results found for "{search_term}".', 'info')
+                # Optionally, redirect or render with no results:
+                # return redirect(url_for('magnet.assign_magnet')) 
+                # Or, to show the search term and content type again:
+                return render_template('magnet_assign.html', 
+                                    search_results=[],
+                                    search_term=search_term,
+                                    content_type=content_type,
+                                    step='results')
+
 
             return render_template('magnet_assign.html', 
                                 search_results=search_results,
                                 search_term=search_term,
-                                content_type=content_type,
+                                content_type=content_type, # Pass content_type to template
                                 step='results')
         else:
-            # Handle POST requests with actions other than 'search' (e.g., invalid/unexpected)
-            flash('Invalid action performed.', 'warning') # Optional: inform user
-            return redirect(url_for('magnet.assign_magnet')) # Redirect back to the GET route
+            flash('Invalid action performed.', 'warning')
+            return redirect(url_for('magnet.assign_magnet'))
         
     elif request.method == 'GET':
-        from metadata.metadata import get_metadata # Added import here
+        # from metadata.metadata import get_metadata # Already imported at top level of this thought block
         prefill_id = request.args.get('prefill_id')
-        prefill_type = request.args.get('prefill_type')
+        prefill_type = request.args.get('prefill_type') # 'movie' or 'tv' (or 'show')
         prefill_title = request.args.get('prefill_title')
         prefill_year = request.args.get('prefill_year')
         prefill_magnet = request.args.get('prefill_magnet')
@@ -155,39 +280,30 @@ def assign_magnet():
                  logging.info(f"Prefill magnet link provided: {prefill_magnet[:60]}...")
             if prefill_version:
                  logging.info(f"Prefill version provided: {prefill_version}")
-            try:
-                # Fetch metadata directly using the provided ID and type
-                # Ensure prefill_type is compatible with get_metadata ('movie' or 'show')
-                lookup_type = 'show' if prefill_type == 'tv' else prefill_type
-                if lookup_type not in ['movie', 'show']:
-                    raise ValueError(f"Invalid prefill_type received: {prefill_type}")
-
-                metadata = get_metadata(tmdb_id=prefill_id, item_media_type=lookup_type)
-                
-                if metadata:
-                    # Format the single result to match search_results structure expected by template
-                    single_result = {
-                        'id': metadata.get('tmdb_id', prefill_id),
-                        'title': metadata.get('title', prefill_title),
-                        'year': metadata.get('year', prefill_year),
-                        'posterPath': metadata.get('poster'), # Use poster from metadata
-                        'mediaType': lookup_type # Use the normalized type
-                    }
-                    logging.info(f"Prefilled data: {single_result}, Version: {prefill_version}")
-                    return render_template('magnet_assign.html', 
-                                        search_results=[single_result], # Pass as a list
-                                        search_term=prefill_title, # Use the title as the "search term" display
-                                        content_type=lookup_type,
-                                        step='results',
-                                        is_prefilled=True,
-                                        prefill_magnet=prefill_magnet,
-                                        prefill_version=prefill_version) # <-- PASS VERSION
-                else:
-                    logging.warning(f"Could not fetch metadata for prefill ID: {prefill_id}, Type: {lookup_type}")
-                    flash(f'Could not find details for {prefill_title} ({prefill_year}). Please search manually.', 'warning')
-            except Exception as e:
-                logging.error(f"Error during prefill metadata fetch: {e}", exc_info=True)
-                flash('An error occurred while trying to prefill the item. Please search manually.', 'error')
+            
+            # Use the new helper for consistency in fetching and formatting
+            # prefill_type could be 'movie' or 'tv' (from scraper) or 'show'
+            type_hint_for_helper = 'tv' if prefill_type == 'show' else prefill_type
+            
+            prefill_results = asyncio.run(_fetch_media_details_for_assigner(prefill_id, 'tmdb', type_hint_for_helper))
+            
+            if prefill_results:
+                # _fetch_media_details_for_assigner returns a list, take the first (and only) item
+                single_result = prefill_results[0]
+                # The helper already formats title, year, posterPath, mediaType, and id (TMDB)
+                # We can directly use this single_result.
+                logging.info(f"Prefilled data via helper: {single_result}, Version: {prefill_version}")
+                return render_template('magnet_assign.html', 
+                                    search_results=[single_result], # Pass as a list
+                                    search_term=prefill_title, 
+                                    content_type=single_result['mediaType'], # Use mediaType from helper
+                                    step='results',
+                                    is_prefilled=True,
+                                    prefill_magnet=prefill_magnet,
+                                    prefill_version=prefill_version)
+            else:
+                logging.warning(f"Could not fetch details via helper for prefill ID: {prefill_id}, Type: {prefill_type}")
+                flash(f'Could not find details for {prefill_title} ({prefill_year}). Please search manually.', 'warning')
                 
             # Fallback to standard search page if prefill fails
             return render_template('magnet_assign.html', step='search')

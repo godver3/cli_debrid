@@ -606,7 +606,8 @@
             'bitrate_weight',
             'wake_count',
             'require_physical_release',
-            'language_code'
+            'language_code',
+            'anime_filter_mode'
         ] %}
         
         {# Sort config items based on settings_order #}
@@ -655,6 +656,18 @@
                                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
                             {% endfor %}
                         </select>
+                    {% elif key == 'anime_filter_mode' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Anime Filter Mode:</label>
+                        <select id="scraping-{{ version }}-{{ key }}"
+                                name="Scraping.versions.{{ version }}.{{ key }}"
+                                class="settings-input"
+                                data-section="Scraping"
+                                data-key="versions.{{ version }}.{{ key }}">
+                            {% for option in ['None', 'Anime Only', 'Non-Anime Only'] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="settings-description">Filter for anime content: 'None' (no filter), 'Anime Only', or 'Non-Anime Only'.</p>
                     {% elif key == 'wake_count' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         <input type="number" id="scraping-{{ version }}-{{ key }}" 
@@ -854,10 +867,16 @@
                                    min="{{ value.min }}" step="1">
                             <p class="settings-description">{{ value.description }}</p>
                         {% else %}
-                            <input type="{{ value.type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{{ settings.get('Scraping', {}).get(key, '') }}" class="settings-input"
+                            {% set input_field_type = value.type %}
+                            {% if value.type == 'float' or value.type == 'integer' %}
+                                {% set input_field_type = 'number' %}
+                            {% endif %}
+                            <input type="{{ input_field_type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
                                    data-section="Scraping" data-key="{{ key }}"
-                                   {% if value.sensitive %}type="password"{% endif %}>
+                                   {% if value.sensitive %}type="password"{% endif %}
+                                   {% if value.type == 'float' %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="{{ value.step | default('any') }}"{% endif %} {# Use 'any' for float steps #}
+                                   {% if value.type == 'integer' and key not in ['scraper_timeout'] %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="1"{% endif %}>
                         {% endif %}
                         {% if value.description %}
                             {% if value.description is string %}

@@ -27,6 +27,8 @@ from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
 import time
 import json
+from utilities.web_scraper import get_media_meta
+from typing import List, Dict, Any, Optional
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -1526,3 +1528,151 @@ def check_cache_status():
     except Exception as e:
         logging.error(f"Error in check_cache_status: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while checking cache status'}), 500
+
+async def _fetch_details_for_id_lookup(id_type: str, media_id: str) -> List[Dict[str, Any]]:
+    """
+    Helper to fetch media details based on IMDb or TMDb ID.
+    Returns a list containing a single result dict if found, else empty list.
+    """
+    from metadata.metadata import get_metadata
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    has_tmdb = bool(tmdb_api_key)
+    results = []
+    metadata_result = None
+    media_type = None
+
+    try:
+        # This part uses synchronous get_metadata, which is fine before heavy I/O
+        if id_type == 'imdb':
+            metadata_result = get_metadata(imdb_id=media_id, item_media_type='movie')
+            if metadata_result:
+                 media_type = 'movie'
+            else:
+                metadata_result = get_metadata(imdb_id=media_id, item_media_type='tv')
+                if metadata_result:
+                    media_type = 'tv'
+        elif id_type == 'tmdb':
+            try:
+                media_id_int = int(media_id)
+                metadata_result = get_metadata(tmdb_id=media_id_int, item_media_type='movie')
+                if metadata_result:
+                    media_type = 'movie'
+                else:
+                    metadata_result = get_metadata(tmdb_id=media_id_int, item_media_type='tv')
+                    if metadata_result:
+                        media_type = 'tv'
+            except ValueError:
+                logging.error(f"Invalid TMDb ID format (after stripping prefix): {media_id}")
+                return []
+
+        if metadata_result and media_type:
+            tmdb_id = metadata_result.get('tmdb_id')
+            title = metadata_result.get('title', 'N/A')
+            year = metadata_result.get('year', 'N/A')
+            overview = metadata_result.get('overview', '')
+            release_date = metadata_result.get('release_date') if media_type == 'movie' else metadata_result.get('first_aired')
+
+            poster_path_final = None # Use a distinct variable name
+            genres = []
+            vote_average = 0.0
+            backdrop_path_full = None
+
+            media_meta_tuple = await asyncio.to_thread(
+                get_media_meta, str(tmdb_id), media_type
+            )
+
+            if media_meta_tuple:
+                 # Use distinct variable for poster path from tuple
+                 poster_path_from_meta, _, genres, vote_average, backdrop_path_rel = media_meta_tuple
+
+                 # Assign to final poster path, preferring the one from get_media_meta
+                 poster_path_final = poster_path_from_meta
+
+                 if not has_tmdb and (not poster_path_final or 'placeholder' not in poster_path_final):
+                     poster_path_final = "static/images/placeholder.png"
+                 elif has_tmdb and not poster_path_final:
+                      logging.warning(f"Could not retrieve poster for {media_type} {title} (TMDb: {tmdb_id})")
+                      poster_path_final = "static/images/placeholder.png"
+
+                 if backdrop_path_rel:
+                     backdrop_path_full = f"https://image.tmdb.org/t/p/original{backdrop_path_rel}"
+            else:
+                 if not has_tmdb:
+                      poster_path_final = "static/images/placeholder.png"
+                 else:
+                      logging.warning(f"get_media_meta failed for {media_type} {title} (TMDb: {tmdb_id}). Using placeholder.")
+                      poster_path_final = "static/images/placeholder.png"
+
+            formatted_result = {
+                'media_type': 'show' if media_type == 'tv' else media_type, # Normalize tv to show for JS
+                'id': str(tmdb_id),
+                'title': title,
+                'year': year,
+                'poster_path': poster_path_final, # Use final path with snake_case
+                'overview': overview, # Use corrected overview
+                'genres': genres,
+                'voteAverage': vote_average,
+                'backdrop_path': backdrop_path_full, # Use full URL
+                'release_date': release_date, # Use corrected release_date
+                'imdb_id': metadata_result.get('imdb_id')
+            }
+            results.append(formatted_result)
+        else:
+            logging.warning(f"Could not find metadata for {id_type} ID: {media_id}")
+
+    except Exception as e:
+        logging.error(f"Error during ID lookup's async helper ({id_type}={media_id}): {e}", exc_info=True)
+    return results
+
+@scraper_bp.route('/lookup_by_id', methods=['POST'])
+@user_required
+@scraper_view_access_required
+@onboarding_required
+def lookup_by_id(): # This remains synchronous
+    id_type = request.form.get('id_type')
+    media_id = request.form.get('media_id')
+
+    if not id_type or not media_id or id_type not in ['imdb', 'tmdb']:
+        return jsonify({'error': 'Invalid ID type or ID provided'}), 400
+
+    logging.info(f"Performing ID lookup: type={id_type}, id={media_id}")
+
+    results = asyncio.run(_fetch_details_for_id_lookup(id_type, media_id))
+
+    if not results:
+        return jsonify({'error': 'Media not found for the provided ID'}), 404
+
+    # --- Simplify result processing - main processing done in helper ---
+    processed_results = []
+    for item in results: # item already has snake_case keys
+        tmdb_id_val = item.get('id')
+        db_state = 'Missing'
+        if tmdb_id_val:
+            try:
+                tmdb_id_int = int(tmdb_id_val)
+                db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+            except (ValueError, TypeError):
+                logging.warning(f"Could not parse tmdb_id_val for db_state check: {tmdb_id_val}")
+                db_state = 'Missing'
+
+        item['db_status'] = {
+            'Collected': 'collected',
+            'Blacklisted': 'blacklisted'
+        }.get(db_state, 'processing' if db_state not in ['Missing', 'Ignored', None] else 'missing')
+
+        # Ensure necessary fields are present (redundant check, but safe)
+        if 'poster_path' not in item or not item['poster_path']:
+             item['poster_path'] = "static/images/placeholder.png"
+        if 'year' not in item and item.get('release_date'):
+             item['year'] = str(item['release_date'])[:4]
+        # Remove inconsistent keys if they somehow slipped through (unlikely now)
+        item.pop('mediaType', None)
+        item.pop('posterPath', None)
+        item.pop('show_overview', None)
+        item.pop('backdropPath', None)
+
+        processed_results.append(item)
+    # --- End Simplified Processing ---
+
+    logging.info(f"ID lookup successful, returning {len(processed_results)} result(s).")
+    return jsonify({'results': processed_results})

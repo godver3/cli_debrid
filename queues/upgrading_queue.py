@@ -510,9 +510,19 @@ class UpgradingQueue:
 
                 # Get SCORE percentage threshold
                 threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
-                upgrading_score_percentage_threshold = float(threshold_value) if threshold_value.strip() else 0.1
-            except (ValueError, AttributeError):
-                logging.warning("Invalid upgrading_percentage_threshold setting, using default value of 0.1 for score increase.")
+                if isinstance(threshold_value, str):
+                    upgrading_score_percentage_threshold = float(threshold_value.strip()) if threshold_value.strip() else 0.1
+                elif isinstance(threshold_value, (int, float)):
+                    upgrading_score_percentage_threshold = float(threshold_value)
+                else:
+                    # If it's neither string, int, nor float, use default and log a warning for unexpected type
+                    logging.warning(f"Unexpected type for upgrading_percentage_threshold: {type(threshold_value)}. Using default 0.1.")
+                    upgrading_score_percentage_threshold = 0.1
+            except ValueError: # Catches errors from float() conversion if string is invalid
+                logging.warning("Invalid upgrading_percentage_threshold setting (ValueError after type check), using default value of 0.1 for score increase.")
+                upgrading_score_percentage_threshold = 0.1
+            except AttributeError: # This should ideally not be hit with the new checks, but kept for safety
+                logging.warning("Invalid upgrading_percentage_threshold setting (AttributeError), using default value of 0.1 for score increase.")
                 upgrading_score_percentage_threshold = 0.1
 
             # Apply filtering: not wanted, failed upgrades

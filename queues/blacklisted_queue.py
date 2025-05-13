@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, date
 
 from utilities.settings import get_setting
 from queues.config_manager import get_version_settings, load_config
-from database.database_reading import check_existing_media_item, get_media_item_by_id
+from database.database_reading import check_existing_media_item, get_media_item_by_id, get_media_item_presence
 from database.database_writing import update_release_date_and_state, update_media_item_state, update_blacklisted_date
 from database.core import get_db_connection
 
@@ -151,8 +151,13 @@ class BlacklistedQueue:
             all_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
 
             if fallback_version and fallback_version != 'None' and fallback_version in all_versions:
-                if check_existing_media_item(item, fallback_version, ['Collected', 'Upgrading']):
-                    logging.info(f"Item {item_identifier} failed for version '{current_version}'. Fallback version '{fallback_version}' already exists in state {['Collected', 'Upgrading']}. Proceeding with blacklisting original.")
+                # Check if item exists in any state with the fallback version
+                item['version'] = fallback_version  # Temporarily set version for the check
+                presence = get_media_item_presence(item.get('imdb_id'), item.get('tmdb_id'))
+                item['version'] = current_version  # Reset version back
+                
+                if presence != "Missing":
+                    logging.info(f"Item {item_identifier} failed for version '{current_version}'. Fallback version '{fallback_version}' already exists in state '{presence}'. Proceeding with blacklisting original.")
                     pass
                 else:
                     logging.info(f"Item {item_identifier} failed for version '{current_version}'. Attempting fallback to version '{fallback_version}'.")

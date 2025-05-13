@@ -100,6 +100,26 @@ def request_content():
             else:
                 logging.info(f"No IMDB ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
             
+        # If media_type is 'tv' and no specific seasons are selected (i.e., "whole show"),
+        # fetch all available seasons.
+        if media_type == 'tv' and not selected_seasons and imdb_id:
+            logging.info(f"No specific seasons selected for TMDB ID {tmdb_id} (IMDB ID: {imdb_id}). Fetching all available seasons.")
+            try:
+                seasons_data, _ = DirectAPI.get_show_seasons(imdb_id)
+                if seasons_data:
+                    # Extract season numbers, filtering out season 0 (specials)
+                    all_season_numbers = [int(season_num) for season_num in seasons_data.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                    if all_season_numbers:
+                        selected_seasons = all_season_numbers
+                        logging.info(f"Fetched all available seasons for IMDB ID {imdb_id}: {selected_seasons}")
+                    else:
+                        logging.warning(f"No valid seasons found for IMDB ID {imdb_id} after fetching all seasons.")
+                else:
+                    logging.warning(f"Could not retrieve seasons data for IMDB ID {imdb_id} when fetching all seasons.")
+            except Exception as e:
+                logging.error(f"Error fetching all seasons for IMDB ID {imdb_id}: {str(e)}")
+                # Proceed without pre-populating seasons, behavior will be as before for this case.
+
         # Create wanted item in the format expected by process_metadata
         wanted_item = {
             'imdb_id': imdb_id,

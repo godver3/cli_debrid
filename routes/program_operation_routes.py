@@ -460,12 +460,20 @@ def start_program():
         logging.error(error_summary)
         return jsonify({"status": "error", "message": error_summary, "failed_services_details": failed_services_info})
 
+    # --- START EDIT: Check if already running ---
+    if program_runner is not None and program_runner.is_running():
+        logging.info("Start program request received, but program is already running.")
+        return jsonify({"status": "success", "message": "Program is already running"})
+    # --- END EDIT ---
+
     if program_runner is not None:
-        # Always clean up existing instance if stop/start is called
-        logging.warning("Existing program runner found during start request. Stopping it first.")
+        # Runner exists but is not running (e.g., stopped previously or failed start)
+        logging.warning("Existing non-running program runner found during start request. Stopping and clearing it before creating a new one.")
         program_runner.stop()
         program_runner.invalidate_content_sources_cache()
         program_runner = None
+        ProgramRunner._instance = None # Reset the class-level instance tracker
+        logging.info("Old ProgramRunner instance cleared and singleton reset before creating new one.")
         time.sleep(1) # Add a small delay to ensure resources are released
 
     # Add delay if auto-start is enabled (Keep this behavior if desired)
@@ -507,7 +515,8 @@ def stop_program():
             # Invalidate content sources cache before nulling the instance
             program_runner.invalidate_content_sources_cache()
             program_runner = None
-            logging.info("ProgramRunner stopped and instance cleared.") # Added log
+            ProgramRunner._instance = None # Reset the class-level instance tracker
+            logging.info("ProgramRunner stopped, instance cleared, and singleton reset.") # Updated log
 
         current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "success", "message": "Program stopped"}
@@ -515,6 +524,7 @@ def stop_program():
         logging.error(f"Error stopping program: {str(e)}", exc_info=True) # Added exc_info
         # Ensure runner is cleared even on error during stop
         program_runner = None
+        ProgramRunner._instance = None # Also reset on error
         current_app.config['PROGRAM_RUNNING'] = False
         return {"status": "error", "message": f"Error stopping program: {str(e)}"}
 
