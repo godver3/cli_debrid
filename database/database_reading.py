@@ -716,6 +716,55 @@ def check_item_exists_by_directory_name(item_directory_name: str) -> bool:
         if conn:
             conn.close()
 
+def check_item_exists_by_symlink_path(original_dir_path: str) -> bool:
+    """
+    Check if any media item exists in the database where the 'original_path_for_symlink' 
+    starts with the provided directory path. This is used to check if any file *within* 
+    the specified directory is already tracked.
+
+    Args:
+        original_dir_path: The full directory path to check against the beginning of 
+                           the 'original_path_for_symlink' field.
+                           Example: '/mnt/zurg/shows/Show.Name.S01E01'
+
+    Returns:
+        True if an item whose path starts with the directory path is found, False otherwise.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        
+        # We need to check if original_path_for_symlink starts with the directory path + separator
+        # Ensure the directory path ends with a separator for the LIKE query
+        path_prefix = original_dir_path.rstrip(os.path.sep) + os.path.sep
+        
+        # Use LIKE with a wildcard to match any file within the directory
+        query = '''
+            SELECT 1 
+            FROM media_items 
+            WHERE original_path_for_symlink LIKE ? 
+            LIMIT 1
+        '''
+        # The pattern should be 'path_prefix%'
+        params = [path_prefix + '%'] 
+        
+        cursor = conn.execute(query, params)
+        result = cursor.fetchone()
+        
+        if result is not None:
+            logging.debug(f"Found existing item(s) in DB whose original_path_for_symlink starts with: {path_prefix}")
+        else:
+            # Keep log level debug to avoid spamming logs for non-matches
+            logging.debug(f"No existing item found in DB whose original_path_for_symlink starts with: {path_prefix}")
+            
+        return result is not None
+    except Exception as e:
+        logging.error(f"Error checking items by original_path_for_symlink prefix ('{original_dir_path}'): {str(e)}")
+        return False # Assume not found on error to avoid blocking unnecessarily
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -740,5 +789,6 @@ __all__ = [
     'get_show_episode_identifiers_from_db',
     'get_media_item_ids',
     'get_item_count_by_state',
-    'check_item_exists_by_directory_name'
+    'check_item_exists_by_directory_name',
+    'check_item_exists_by_symlink_path'
 ]
