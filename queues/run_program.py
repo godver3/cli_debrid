@@ -1661,18 +1661,20 @@ class ProgramRunner:
         if hasattr(self, 'queue_manager') and self.queue_manager:
             scraping_queue = self.queue_manager.queues.get('Scraping')
             adding_queue = self.queue_manager.queues.get('Adding')
-            if scraping_queue and adding_queue:
+            checking_queue = self.queue_manager.queues.get('Checking') # Get the Checking queue
+            if scraping_queue and adding_queue and checking_queue: # Ensure all queues are found
                 try:
                     # Use get_contents with limit 1 for efficiency
                     scraping_empty = len(scraping_queue.get_contents()) == 0
                     adding_empty = len(adding_queue.get_contents()) == 0
-                    system_is_idle = scraping_empty and adding_empty
+                    checking_empty = len(checking_queue.get_contents()) == 0 # Check if Checking queue is empty
+                    system_is_idle = scraping_empty and adding_empty and checking_empty # Update idle condition
                 except Exception as e:
-                    logging.error(f"Error checking Scraping/Adding queue state for idle check: {e}")
+                    logging.error(f"Error checking Scraping/Adding/Checking queue state for idle check: {e}")
                     # Default to not idle on error
                     system_is_idle = False
             else:
-                logging.warning("Scraping or Adding queue not found for idle check.")
+                logging.warning("Scraping, Adding, or Checking queue not found for idle check.")
                 system_is_idle = False # Assume not idle if queues are missing
         else:
              logging.warning("Queue manager not available for idle check.")
@@ -1684,7 +1686,7 @@ class ProgramRunner:
             if system_is_idle:
                 if not hasattr(self, '_last_idle_adjustment_log') or current_time - self._last_idle_adjustment_log >= 600:
                      # Updated log message
-                     logging.info(f"System idle (Scraping/Adding queues empty) - increasing non-critical task intervals by {idle_increase_seconds}s.")
+                     logging.info(f"System idle (Scraping, Adding, and Checking queues empty) - increasing non-critical task intervals by {idle_increase_seconds}s.")
                      self._last_idle_adjustment_log = current_time
 
                 for task_id in slowdown_candidates:
@@ -1703,7 +1705,13 @@ class ProgramRunner:
             else: # System is active
                  active_reason = []
                  # Update active reason based on new check
-                 if not system_is_idle: active_reason.append("Scraping or Adding queue has items")
+                 if not system_is_idle: 
+                     reasons = []
+                     if not scraping_empty: reasons.append("Scraping queue has items")
+                     if not adding_empty: reasons.append("Adding queue has items")
+                     if not checking_empty: reasons.append("Checking queue has items")
+                     active_reason.append("; ".join(reasons) if reasons else "One or more core queues have items")
+
                  # Remove delayed task check from reason
                  # if delayed_tasks_count >= DELAY_THRESHOLD: active_reason.append(f"{delayed_tasks_count} potentially delayed tasks >= threshold {DELAY_THRESHOLD}")
 

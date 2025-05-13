@@ -765,6 +765,47 @@ def check_item_exists_by_symlink_path(original_dir_path: str) -> bool:
         if conn:
             conn.close()
 
+def check_item_exists_with_symlink_path_containing(path_segment: str) -> bool:
+    """
+    Check if any media item exists in the database where the 'original_path_for_symlink'
+    contains the provided path_segment.
+
+    Args:
+        path_segment: The string segment to search for within the 'original_path_for_symlink' field.
+                      Example: 'Movie.Name.Year' or a specific filename.
+
+    Returns:
+        True if an item whose original_path_for_symlink contains the segment is found, False otherwise.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        
+        query = '''
+            SELECT 1 
+            FROM media_items 
+            WHERE original_path_for_symlink LIKE ? 
+            LIMIT 1
+        '''
+        # The pattern is '%path_segment%'
+        params = ['%' + path_segment + '%'] 
+        
+        cursor = conn.execute(query, params)
+        result = cursor.fetchone()
+        
+        if result is not None:
+            logging.debug(f"Found existing item(s) in DB where original_path_for_symlink CONTAINS segment: {path_segment}")
+        else:
+            logging.debug(f"No existing items found in DB where original_path_for_symlink CONTAINS segment: {path_segment}")
+            
+        return result is not None
+    except Exception as e:
+        logging.error(f"Error checking items by original_path_for_symlink containing segment ('{path_segment}'): {str(e)}")
+        return False # Assume not found on error
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -790,5 +831,6 @@ __all__ = [
     'get_media_item_ids',
     'get_item_count_by_state',
     'check_item_exists_by_directory_name',
-    'check_item_exists_by_symlink_path'
+    'check_item_exists_by_symlink_path',
+    'check_item_exists_with_symlink_path_containing'
 ]

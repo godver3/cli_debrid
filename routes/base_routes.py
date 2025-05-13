@@ -492,10 +492,22 @@ def path_to_filename(page_path):
     
     return filename if filename else 'root_index' # Fallback if sanitization resulted in empty string
 
+def get_resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError: # Changed from generic Exception to AttributeError for _MEIPASS
+        # Not running in a PyInstaller bundle.
+        # Assumes this file (base_routes.py) is in a 'routes' subdirectory of the project root.
+        # So, going up one level gives the project root.
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    return os.path.join(base_path, relative_path)
+
 @base_bp.route('/api/help-content')
 def get_help_content():
     page_path = request.args.get('page_path', '/')
-    help_dir = os.path.join(current_app.root_path, '..', 'help_content') # Adjust path if needed
+    help_dir = get_resource_path('help_content') # <-- NEW WAY
     
     filename_base = path_to_filename(page_path)
     specific_filepath = os.path.join(help_dir, f"{filename_base}.md")

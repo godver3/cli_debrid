@@ -14,7 +14,8 @@ from database.symlink_verification import (
     mark_file_as_verified,
     update_verification_attempt,
     get_verification_stats,
-    mark_file_as_permanently_failed
+    mark_file_as_permanently_failed,
+    mark_verification_as_max_attempts_failed
 )
 # Import the new functions
 from utilities.plex_functions import (
@@ -251,10 +252,10 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
 
         # --- Max attempts check ---
         if file_data.get('verification_attempts', 0) >= max_attempts:
-            # Changed from error to warning and removed the permanent failure logic
-            logger.warning(f"File {file_data['full_path']} (Media ID: {media_item_id}, Verification ID: {verification_id}) has failed verification {file_data.get('verification_attempts', 0)} times (max_attempts={max_attempts}), but will continue retrying.")
-            # Skip further processing for this file IN THIS RUN, attempt count will be updated if verification fails below
-            # The original logic to mark permanently failed has been removed.
+            failure_reason = f"Exceeded maximum verification attempts ({file_data.get('verification_attempts', 0)} >= {max_attempts})"
+            logger.warning(f"File {file_data['full_path']} (Media ID: {media_item_id}, Verification ID: {verification_id}) has reached max verification attempts. Marking as failed in verification queue only. Reason: {failure_reason}")
+            # Call the new function that doesn't change media_item state
+            mark_verification_as_max_attempts_failed(verification_id, failure_reason)
             continue # Skip verification check below for this run
 
         # Check if the file exists before calling verify_plex_file
