@@ -1330,7 +1330,7 @@ def get_episode_count_for_seasons(imdb_id: str, seasons: List[int]) -> int:
 def get_all_season_episode_counts(imdb_id: str) -> Dict[int, int]:
     show_metadata, _ = DirectAPI.get_show_metadata(imdb_id)
     all_seasons = show_metadata.get('seasons', {})
-    logging.debug(f"Raw seasons data received from DirectAPI for {imdb_id}: {all_seasons}")
+    #logging.debug(f"Raw seasons data received from DirectAPI for {imdb_id}: {all_seasons}")
     return {int(season): data['episode_count'] for season, data in all_seasons.items()}
 
 def get_show_airtime_by_imdb_id(imdb_id: str) -> str:

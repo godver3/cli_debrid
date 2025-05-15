@@ -94,6 +94,19 @@ class BlacklistedQueue:
         item_id = item['id']
         item_identifier = queue_manager.generate_identifier(item)
         current_version = item.get('version')
+        current_state = item.get('state') # Get current state from the item dict if available
+
+        # If state is not in the item dict, fetch it from DB
+        if current_state is None:
+            db_item_details = get_media_item_by_id(item_id)
+            if db_item_details:
+                current_state = db_item_details.get('state')
+            else:
+                logging.warning(f"Could not retrieve current state for item {item_identifier} (ID: {item_id}) from DB. Proceeding with blacklist logic.")
+
+        if current_state == 'Collected':
+            logging.info(f"Item {item_identifier} (ID: {item_id}) is already in 'Collected' state. Skipping blacklist.")
+            return
 
         if item.get('early_release'):
             release_date_str = item.get('release_date')

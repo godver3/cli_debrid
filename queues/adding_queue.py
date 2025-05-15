@@ -562,6 +562,13 @@ class AddingQueue:
                 else:
                     logging.error(f"Failed to restore previous state for {item_identifier} after adding queue failure")
 
+                # --- START EDIT: Check if failure was due to filter and remove torrent ---
+                if "matched filter-out list" in error:
+                    logging.info(f"Upgrade for {item_identifier} failed due to filename filter. Attempting to remove torrent.")
+                    if item.get('torrent_id'):
+                        self.remove_unwanted_torrent(item['torrent_id'])
+                # --- END EDIT ---
+
                 # Remove from Adding queue memory regardless of restore success for upgrades
                 self.remove_item(item)
                 return # Exit after handling upgrade failure

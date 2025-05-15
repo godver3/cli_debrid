@@ -167,22 +167,31 @@ def get_movie_runtime(tmdb_id):
 
 def get_episode_runtime(tmdb_id):
     conn = get_db_connection()
+    query_start_time = None # Initialize
     try:
         query = '''
             SELECT AVG(runtime) as runtime FROM media_items 
             WHERE tmdb_id = ? AND type = "episode"
         '''
+        query_start_time = time.time()
         cursor = conn.execute(query, (tmdb_id,))
         result = cursor.fetchone()
+        query_duration = time.time() - query_start_time
+        #logging.debug(f"get_episode_runtime query for TMDB ID {tmdb_id} took {query_duration:.4f}s")
         return result['runtime'] if result and result['runtime'] is not None else None
     except Exception as e:
+        if query_start_time: # Log duration even if fetchone fails
+            query_duration = time.time() - query_start_time
+            #logging.debug(f"get_episode_runtime query (failed) for TMDB ID {tmdb_id} took {query_duration:.4f}s before error")
         logging.error(f"Error retrieving episode runtime (TMDB ID: {tmdb_id}): {str(e)}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def get_episode_count(tmdb_id):
     conn = get_db_connection()
+    query_start_time = None # Initialize
     try:
         query = '''
             SELECT COUNT(*) as episode_count 
@@ -192,25 +201,29 @@ def get_episode_count(tmdb_id):
                 WHERE tmdb_id = ? AND type = "episode"
             )
         '''
+        query_start_time = time.time()
         cursor = conn.execute(query, (tmdb_id,))
         result = cursor.fetchone()
+        query_duration = time.time() - query_start_time
+        #logging.debug(f"get_episode_count query for TMDB ID {tmdb_id} took {query_duration:.4f}s")
         return result['episode_count'] if result else 0
     except Exception as e:
+        if query_start_time: # Log duration even if fetchone fails
+            query_duration = time.time() - query_start_time
+            #logging.debug(f"get_episode_count query (failed) for TMDB ID {tmdb_id} took {query_duration:.4f}s before error")
         logging.error(f"Error retrieving episode count (TMDB ID: {tmdb_id}): {str(e)}")
         return 0
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def get_all_season_episode_counts(tmdb_id):
     conn = get_db_connection()
     try:
         query = '''
-            SELECT season_number, COUNT(*) as episode_count
-            FROM (
-                SELECT DISTINCT season_number, episode_number, version
-                FROM media_items
-                WHERE tmdb_id = ? AND type = "episode"
-            )
+            SELECT season_number, COUNT(DISTINCT episode_number) as episode_count
+            FROM media_items
+            WHERE tmdb_id = ? AND type = "episode"
             GROUP BY season_number
             ORDER BY season_number
         '''

@@ -178,7 +178,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
 
         if seeders_only and seeders == 0:
             filtered_no_seeders += 1
-            logging.debug(f"Filtered out '{title}' due to no seeders (global seeders_only={seeders_only})")
+            #logging.debug(f"Filtered out '{title}' due to no seeders (global seeders_only={seeders_only})")
             continue
             
         # Extract basic info

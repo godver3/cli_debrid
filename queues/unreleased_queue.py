@@ -87,12 +87,12 @@ class UnreleasedQueue:
                     require_physical = version_settings.get('require_physical_release', False)
                     physical_release_date_str = item.get('physical_release_date')
                     
-                    if require_physical:
+                    if item.get('type') == 'movie' and require_physical:
                         is_physical_date_invalid = not physical_release_date_str or \
                                                    (isinstance(physical_release_date_str, str) and physical_release_date_str.lower() == 'none')
 
                         if is_physical_date_invalid:
-                            logging.info(f"Item {item_identifier} requires physical release date but it is missing or invalid ('{physical_release_date_str}'). Keeping in Unreleased state (DB).")
+                            logging.info(f"Movie {item_identifier} requires physical release date but it is missing or invalid ('{physical_release_date_str}'). Keeping in Unreleased state (DB).")
                             continue
                         else:
                             base_date_str = physical_release_date_str

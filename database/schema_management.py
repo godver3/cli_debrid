@@ -240,6 +240,17 @@ def migrate_schema():
             conn.execute('CREATE INDEX idx_media_items_original_path_for_symlink ON media_items(original_path_for_symlink);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_original_path_for_symlink.")
 
+        # Add indexes for optimizing get_episode_runtime and get_episode_count
+        if 'idx_media_items_tmdb_type_runtime' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_tmdb_type_runtime...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_runtime ON media_items(tmdb_id, type, runtime);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_runtime.")
+
+        if 'idx_media_items_tmdb_type_ep_info' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_tmdb_type_ep_info...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_ep_info ON media_items(tmdb_id, type, season_number, episode_number, version);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_ep_info.")
+
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
         if not cursor.fetchone():
@@ -254,10 +265,18 @@ def migrate_schema():
                     verified_at TIMESTAMP,
                     verification_attempts INTEGER DEFAULT 0,
                     last_attempt TIMESTAMP,
+                    permanently_failed BOOLEAN DEFAULT FALSE,
                     FOREIGN KEY (media_item_id) REFERENCES media_items (id)
                 )
             ''')
             logging.info("Successfully created symlinked_files_verification table.")
+        else:
+            # If table exists, check for 'permanently_failed' column
+            cursor.execute("PRAGMA table_info(symlinked_files_verification)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'permanently_failed' not in columns:
+                conn.execute('ALTER TABLE symlinked_files_verification ADD COLUMN permanently_failed BOOLEAN DEFAULT FALSE')
+                logging.info("Successfully added permanently_failed column to symlinked_files_verification table.")
 
         # Remove the existing index if it exists
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
@@ -454,6 +473,7 @@ def create_tables():
                 verified_at TIMESTAMP,
                 verification_attempts INTEGER DEFAULT 0,
                 last_attempt TIMESTAMP,
+                permanently_failed BOOLEAN DEFAULT FALSE,
                 FOREIGN KEY (media_item_id) REFERENCES media_items (id)
             )
         ''')

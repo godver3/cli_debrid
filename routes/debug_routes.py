@@ -60,6 +60,7 @@ import sqlite3
 from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink, resync_symlinks_with_new_settings
 from scraper.functions.ptt_parser import parse_with_ptt
 from database.database_writing import add_media_item
+from routes.program_operation_routes import get_program_runner # <-- ADD THIS IMPORT
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -1318,57 +1319,32 @@ def move_to_upgrading():
 @debug_bp.route('/run_task', methods=['POST'])
 @admin_required
 def run_task():
-    task_name = request.json.get('task_name')
-    if not task_name:
-        return jsonify({'success': False, 'error': 'Task name is required'}), 400
-
-    program_runner = ProgramRunner() # Get the singleton instance
-
-    # --- START: Use trigger_task instead of direct execution ---
+    """Manually trigger a task by adding it to the APScheduler queue."""
     try:
-        # Use the trigger_task method which handles state management
-        # The method already normalizes the name internally
-        program_runner.trigger_task(task_name)
+        data = request.get_json()
+        task_name = data.get('task_name')
+        if not task_name:
+            return jsonify({'success': False, 'error': 'Task name not provided'}), 400
 
-        # Format display name (can reuse logic if needed, but trigger_task handles execution)
-        display_name = task_name # Keep it simple for now or reuse formatting logic
-        try:
-            # Attempt nice formatting for the message
-             normalized_name = program_runner._normalize_task_name(task_name)
-             if normalized_name.startswith('task_'):
-                 display_name = ' '.join(word.capitalize() for word in normalized_name.replace('task_', '').split('_'))
-             elif normalized_name in program_runner.queue_processing_map:
-                 display_name = normalized_name.capitalize()
-             # Add content source display name logic if desired
-        except Exception:
-            display_name = task_name # Fallback
+        runner = get_program_runner() # This should now work
+        if not runner:
+            return jsonify({'success': False, 'error': 'ProgramRunner not initialized'}), 500
 
-        return jsonify({'success': True, 'message': f'Task "{display_name}" triggered successfully'}), 200
-    except ValueError as ve: # Catch specific errors from trigger_task
-         logging.warning(f"Failed to trigger task '{task_name}': {ve}")
-         return jsonify({'success': False, 'error': str(ve)}), 400 # Return specific error
-    except RuntimeError as re: # Catch the wrapped execution error from trigger_task
-        logging.error(f"Error executing triggered task {task_name}: {re}", exc_info=True)
-        # Extract original error if possible, otherwise use RuntimeError message
-        error_msg = str(re.__cause__) if re.__cause__ else str(re)
-        return jsonify({'success': False, 'error': f'Error executing task "{task_name}": {error_msg}'}), 500
+        # trigger_task now returns a dict or raises an exception
+        result = runner.trigger_task(task_name) 
+        
+        # result will be like {"success": True, "message": "Task 'X' queued...", "job_id": "manual_X_uuid"}
+        return jsonify(result), 200
+
+    except ValueError as ve: # Catch specific errors from trigger_task (e.g., task not defined)
+        logging.error(f"ValueError in run_task: {ve}")
+        return jsonify({'success': False, 'error': str(ve)}), 400
+    except RuntimeError as re: # Catch specific errors from trigger_task (e.g., queueing failed)
+        logging.error(f"RuntimeError in run_task: {re}")
+        return jsonify({'success': False, 'error': str(re)}), 500
     except Exception as e:
-        logging.error(f"Unexpected error triggering task {task_name}: {e}", exc_info=True)
-        return jsonify({'success': False, 'error': f'Unexpected error triggering task "{task_name}": {str(e)}'}), 500
-    # --- END: Use trigger_task ---
-
-    # --- REMOVE OLD DIRECT EXECUTION LOGIC ---
-    # queue_manager = QueueManager()
-    # tasks = { ... } # Dictionary no longer needed here
-    # if task_name not in tasks:
-    #     return jsonify({'success': False, 'error': 'Invalid task name'}), 400
-    # try:
-    #     result = tasks[task_name]()
-    #     return jsonify({'success': True, 'message': f'Task "{display_name}" executed successfully', 'result': result}), 200
-    # except Exception as e:
-    #     logging.error(f"Error executing task {task_name}: {str(e)}")
-    #     return jsonify({'success': False, 'error': f'Error executing task "{display_name}": {str(e)}'}), 500
-    # --- END REMOVED LOGIC ---
+        logging.error(f"Error in run_task: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}), 500
 
 @debug_bp.route('/get_available_tasks', methods=['GET'])
 @admin_required
@@ -2347,24 +2323,65 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
             raise ValueError('Original Root Path must be valid if provided.')
 
         # Read relevant settings
-        symlink_organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False) # Read the setting
-        separate_anime = get_setting('Debug', 'enable_separate_anime_folders')
-        movies_folder = get_setting('Debug', 'movies_folder_name', 'Movies')
-        tv_shows_folder = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
-        anime_movies_folder = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies') if separate_anime else None
-        anime_tv_shows_folder = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows') if separate_anime else None
+        symlink_folder_order_str = get_setting('File Management', 'symlink_folder_order', 'type,version,resolution')
+        organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
+        organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False)
+        organize_by_version = get_setting('File Management', 'symlink_organize_by_version', False)
+        
+        separate_anime = get_setting('Debug', 'enable_separate_anime_folders', False)
+        movies_folder_name = get_setting('Debug', 'movies_folder_name', 'Movies')
+        tv_shows_folder_name = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
+        anime_movies_folder_name = get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies')
+        anime_tv_shows_folder_name = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows')
 
         ignored_extensions = {'.srt', '.sub', '.idx', '.nfo', '.txt', '.jpg', '.png', '.db', '.partial', '.!qB'}
         
-        # Define base type folders
-        type_folders = [movies_folder, tv_shows_folder]
-        if separate_anime:
-            if anime_movies_folder: type_folders.append(anime_movies_folder)
-            if anime_tv_shows_folder: type_folders.append(anime_tv_shows_folder)
+        folder_order_components = [comp.strip() for comp in symlink_folder_order_str.split(',')]
+        component_map = {'type': [], 'resolution': [], 'version': []}
 
-        # Define potential resolution folders
-        resolution_folders = ["2160p", "1080p"] if symlink_organize_by_resolution else [None] # Add None for the non-resolution case
+        if organize_by_type:
+            if movies_folder_name: component_map['type'].append(movies_folder_name)
+            if tv_shows_folder_name: component_map['type'].append(tv_shows_folder_name)
+            if separate_anime:
+                if anime_movies_folder_name: component_map['type'].append(anime_movies_folder_name)
+                if anime_tv_shows_folder_name: component_map['type'].append(anime_tv_shows_folder_name)
+        
+        if organize_by_resolution:
+            # Consistent with original code's typical resolution folder names
+            component_map['resolution'] = ["2160p", "1080p", "720p", "SD"] 
 
+        if organize_by_version:
+            all_settings = get_all_settings() # Use get_all_settings to fetch nested dict
+            scraping_settings = all_settings.get('Scraping', {})
+            version_configs = scraping_settings.get('versions', {})
+            configured_versions = [str(v).strip('*') for v in version_configs.keys() if str(v).strip('*')]
+            if configured_versions:
+                component_map['version'] = configured_versions
+            else:
+                component_map['version'].append("Default")
+
+
+        paths_to_scan_tuples = [(symlink_root_path, symlink_root_path.name)] # (Path, description_for_logging)
+
+        for component_key in folder_order_components:
+            folders_for_this_component_type = component_map.get(component_key, [])
+            
+            is_component_active_for_path_building = False
+            if component_key == 'type' and organize_by_type: is_component_active_for_path_building = True
+            elif component_key == 'resolution' and organize_by_resolution: is_component_active_for_path_building = True
+            elif component_key == 'version' and organize_by_version: is_component_active_for_path_building = True
+
+            if is_component_active_for_path_building and folders_for_this_component_type:
+                current_level_new_paths = []
+                for base_path_obj, base_desc_str in paths_to_scan_tuples:
+                    for folder_segment_name in folders_for_this_component_type:
+                        if folder_segment_name: # Ensure folder_segment_name is not None or empty
+                            current_level_new_paths.append(
+                                (base_path_obj / folder_segment_name, f"{base_desc_str}/{folder_segment_name}")
+                            )
+                if current_level_new_paths: 
+                    paths_to_scan_tuples = current_level_new_paths
+        
         total_items_scanned = 0
         total_symlinks_processed = 0
         total_files_processed = 0
@@ -2375,140 +2392,130 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
 
         update_progress(status='scanning', message='Starting directory scan...')
 
-        # Iterate through potential resolution folders (will be just [None] if setting is off)
-        for res_folder in resolution_folders:
-            # Iterate through type folders
-            for type_folder in type_folders:
-                
-                # Construct the path to scan based on whether resolution folders are used
-                if res_folder:
-                    current_search_path = symlink_root_path / res_folder / type_folder
-                    scan_target_name = f'{res_folder}/{type_folder}'
-                else:
-                    current_search_path = symlink_root_path / type_folder
-                    scan_target_name = type_folder
+        for current_search_path, scan_target_name in paths_to_scan_tuples:
+            if current_search_path.is_dir():
+                update_progress(message=f'Scanning {scan_target_name}...')
+                try:
+                    # Use rglob to scan recursively within the target directory
+                    for item_path in current_search_path.rglob('*'):
+                        total_items_scanned += 1
+                        if total_items_scanned % 100 == 0: # Update progress periodically
+                            update_progress(
+                                total_items_scanned=total_items_scanned,
+                                total_symlinks_processed=total_symlinks_processed,
+                                total_files_processed=total_files_processed,
+                                items_found=items_found,
+                                parser_errors=parser_errors,
+                                metadata_errors=metadata_errors,
+                                message=f'Scanned {total_items_scanned} items...'
+                                )
 
-                if current_search_path.is_dir():
-                    update_progress(message=f'Scanning {scan_target_name}...')
-                    try:
-                        # Use rglob to scan recursively within the target directory
-                        for item_path in current_search_path.rglob('*'):
-                            total_items_scanned += 1
-                            if total_items_scanned % 100 == 0: # Update progress periodically
-                                update_progress(
-                                    total_items_scanned=total_items_scanned,
-                                    total_symlinks_processed=total_symlinks_processed,
-                                    total_files_processed=total_files_processed,
-                                    items_found=items_found,
-                                    parser_errors=parser_errors,
-                                    metadata_errors=metadata_errors,
-                                    message=f'Scanned {total_items_scanned} items...'
-                                 )
+                        if item_path.suffix.lower() in ignored_extensions:
+                            continue
 
-                            if item_path.suffix.lower() in ignored_extensions:
-                                continue
+                        if item_path.is_file() or item_path.is_symlink():
+                            if item_path.is_symlink():
+                                total_symlinks_processed += 1
+                            else:
+                                total_files_processed += 1
 
-                            if item_path.is_file() or item_path.is_symlink():
-                                if item_path.is_symlink():
-                                    total_symlinks_processed += 1
-                                else:
-                                    total_files_processed += 1
+                            parsed_data = parse_symlink(item_path)
+                            if not parsed_data:
+                                parser_errors += 1
+                                continue # Skip if initial parse fails
 
-                                parsed_data = parse_symlink(item_path)
-                                if not parsed_data:
-                                    parser_errors += 1
-                                    continue # Skip if initial parse fails
-
-                                # --- Determine original path and filename ---
-                                original_path_obj = None
-                                if item_path.is_symlink():
-                                    try:
-                                        target_path_str = os.readlink(str(item_path))
-                                        if not os.path.isabs(target_path_str):
-                                            target_path_str = os.path.abspath(os.path.join(item_path.parent, target_path_str))
-                                        original_path_obj = Path(target_path_str)
-                                    except Exception as e:
-                                        parsed_data['original_path_for_symlink'] = f"Error: Cannot read link target ({e})"
-                                        parsed_data['original_filename'] = item_path.name
-                                elif item_path.is_file():
-                                    original_path_obj = item_path
-
-                                if original_path_obj and original_path_obj.is_file():
-                                    parsed_data['original_path_for_symlink'] = str(original_path_obj)
-                                    parsed_data['original_filename'] = original_path_obj.name
-                                elif 'original_path_for_symlink' not in parsed_data:
-                                    if original_path_obj:
-                                         parsed_data['original_path_for_symlink'] = f"Error: Target not a file ({original_path_obj})"
-                                    else:
-                                        parsed_data['original_path_for_symlink'] = "Error: Original path unknown"
+                            # --- Determine original path and filename ---
+                            original_path_obj = None
+                            if item_path.is_symlink():
+                                try:
+                                    target_path_str = os.readlink(str(item_path))
+                                    if not os.path.isabs(target_path_str):
+                                        target_path_str = os.path.abspath(os.path.join(item_path.parent, target_path_str))
+                                    original_path_obj = Path(target_path_str)
+                                except Exception as e:
+                                    parsed_data['original_path_for_symlink'] = f"Error: Cannot read link target ({e})"
                                     parsed_data['original_filename'] = item_path.name
-                                # --- End original path determination ---
+                            elif item_path.is_file():
+                                original_path_obj = item_path
 
-                                # --- Get version ---    
-                                filename_for_version = parsed_data.get('original_filename')
-                                if filename_for_version:
-                                    try:
-                                        version_raw = parse_filename_for_version(filename_for_version)
-                                        parsed_data['version'] = version_raw.strip('*') if version_raw else 'Default'
-                                    except Exception as e:
-                                        parsed_data['version'] = 'Default'
+                            if original_path_obj and original_path_obj.is_file():
+                                parsed_data['original_path_for_symlink'] = str(original_path_obj)
+                                parsed_data['original_filename'] = original_path_obj.name
+                            elif 'original_path_for_symlink' not in parsed_data:
+                                if original_path_obj:
+                                        parsed_data['original_path_for_symlink'] = f"Error: Target not a file ({original_path_obj})"
                                 else:
-                                    parsed_data['version'] = 'Default'
-                                # --- End version --- 
-                                    
-                                # --- Fetch metadata --- 
-                                if parsed_data['imdb_id']:
-                                    metadata_args = {
-                                        'imdb_id': parsed_data['imdb_id'],
-                                        'item_media_type': parsed_data.get('media_type') # Re-add based on function signature
-                                    }
-                                    # Removed conditional adding of season/episode number
-                                    # get_metadata likely handles this internally based on imdb_id
-                                    try:
-                                        # Pass the original parsed_data as original_item if needed by get_metadata internal logic
-                                        metadata_args['original_item'] = parsed_data 
-                                        from metadata.metadata import get_metadata
-                                        metadata = get_metadata(**metadata_args)
-                                        if metadata:
-                                            parsed_data['title'] = metadata.get('title')
-                                            parsed_data['year'] = metadata.get('year')
-                                            # Update tmdb_id if get_metadata found it
-                                            parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
-                                            parsed_data['release_date'] = metadata.get('release_date')
-                                            if parsed_data['media_type'] == 'episode':
-                                                parsed_data['episode_title'] = metadata.get('episode_title')
-                                            genres = metadata.get('genres', [])
-                                            if isinstance(genres, list):
-                                                parsed_data['is_anime'] = any(g.lower() in ['animation', 'anime'] for g in genres)
-                                            
-                                            items_found += 1
-                                            
-                                            # --- Write item to recovery file ---
-                                            try:
-                                                recovery_file.write(json.dumps(parsed_data) + '\n')
-                                            except Exception as write_err:
-                                                logging.error(f"Error writing item to recovery file {recovery_file_path}: {write_err}")
-                                                # Maybe mark the task as failed? For now, log and continue.
-                                                # update_progress(status='error', message=f'Error writing recovery file: {write_err}')
-                                            # --- End write item ---
+                                    parsed_data['original_path_for_symlink'] = "Error: Original path unknown"
+                                parsed_data['original_filename'] = item_path.name
+                            # --- End original path determination ---
 
-                                            # Update preview list for UI feedback during scan
-                                            if len(recoverable_items_preview) < 5:
-                                                 recoverable_items_preview.append(parsed_data)
-                                            
-                                            # Update progress (only preview list is stored in memory now)
-                                            update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
-                                        else:
-                                            metadata_errors += 1
-                                    except Exception as e:
-                                        logging.error(f"Metadata error for {metadata_args}: {e}", exc_info=False) # Less verbose logging
+                            # --- Get version ---    
+                            filename_for_version = parsed_data.get('original_filename')
+                            if filename_for_version:
+                                try:
+                                    version_raw = parse_filename_for_version(filename_for_version)
+                                    parsed_data['version'] = version_raw.strip('*') if version_raw else 'Default'
+                                except Exception as e:
+                                    parsed_data['version'] = 'Default'
+                            else:
+                                parsed_data['version'] = 'Default'
+                            # --- End version --- 
+                                
+                            # --- Fetch metadata --- 
+                            if parsed_data['imdb_id']:
+                                metadata_args = {
+                                    'imdb_id': parsed_data['imdb_id'],
+                                    'item_media_type': parsed_data.get('media_type') # Re-add based on function signature
+                                }
+                                # Removed conditional adding of season/episode number
+                                # get_metadata likely handles this internally based on imdb_id
+                                try:
+                                    # Pass the original parsed_data as original_item if needed by get_metadata internal logic
+                                    metadata_args['original_item'] = parsed_data 
+                                    from metadata.metadata import get_metadata
+                                    metadata = get_metadata(**metadata_args)
+                                    if metadata:
+                                        parsed_data['title'] = metadata.get('title')
+                                        parsed_data['year'] = metadata.get('year')
+                                        # Update tmdb_id if get_metadata found it
+                                        parsed_data['tmdb_id'] = metadata.get('tmdb_id') or parsed_data.get('tmdb_id')
+                                        parsed_data['release_date'] = metadata.get('release_date')
+                                        if parsed_data['media_type'] == 'episode':
+                                            parsed_data['episode_title'] = metadata.get('episode_title')
+                                        genres = metadata.get('genres', [])
+                                        if isinstance(genres, list):
+                                            parsed_data['is_anime'] = any(g.lower() in ['animation', 'anime'] for g in genres)
+                                        
+                                        items_found += 1
+                                        
+                                        # --- Write item to recovery file ---
+                                        try:
+                                            recovery_file.write(json.dumps(parsed_data) + '\n')
+                                        except Exception as write_err:
+                                            logging.error(f"Error writing item to recovery file {recovery_file_path}: {write_err}")
+                                            # Maybe mark the task as failed? For now, log and continue.
+                                            # update_progress(status='error', message=f'Error writing recovery file: {write_err}')
+                                        # --- End write item ---
+
+                                        # Update preview list for UI feedback during scan
+                                        if len(recoverable_items_preview) < 5:
+                                                recoverable_items_preview.append(parsed_data)
+                                        
+                                        # Update progress (only preview list is stored in memory now)
+                                        update_progress(items_found=items_found, recoverable_items_preview=recoverable_items_preview)
+                                    else:
                                         metadata_errors += 1
-                    except Exception as e:
-                        logging.error(f"Error scanning {current_search_path}: {e}", exc_info=True)
-                        update_progress(status='error', message=f'Error scanning {scan_target_name}: {e}')
-                        # Continue to next folder on error
-                else:
-                    logging.warning(f"Directory not found or not accessible: {current_search_path}")
+                                except Exception as e:
+                                    logging.error(f"Metadata error for {metadata_args}: {e}", exc_info=False) # Less verbose logging
+                                    metadata_errors += 1
+                        else: # No IMDb ID was parsed
+                            parser_errors += 1 # This case should be caught by parse_symlink returning None now
+                            logging.warning(f"Skipping {item_path.name} as no IMDb ID was parsed (should have been caught earlier).")
+
+                except Exception as e_rglob:
+                    logging.error(f"Error during rglob scan of {current_search_path}: {e_rglob}", exc_info=True)
+            else:
+                logging.warning(f"Directory not found or not accessible: {current_search_path} (derived from order: {symlink_folder_order_str})")
                     
         # Analysis complete, update final status and store recovery file path
         update_progress(
@@ -2529,17 +2536,11 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         logging.error(f"Analysis thread error for task {task_id}: {e}", exc_info=True)
         update_progress(status='error', message=f'Analysis failed: {e}', complete=True)
     finally:
-        # Ensure the recovery file is closed
         if recovery_file:
             try:
                 recovery_file.close()
             except Exception as close_err:
                  logging.error(f"Error closing recovery file {recovery_file_path}: {close_err}")
-        
-        # Clean up the progress entry from memory after 5 minutes (to allow recovery)
-        # But only remove if it wasn't an error or if recovery isn't needed?
-        # Let's keep it for now for potential debugging. Consider cleanup strategy later.
-        # threading.Timer(300, lambda: analysis_progress.pop(task_id, None)).start()
         pass
 
 @debug_bp.route('/analyze_symlinks', methods=['POST'])
@@ -2639,7 +2640,7 @@ def perform_recovery():
 
                 item_data = json.loads(line)
 
-                now_iso = datetime.now().isoformat()
+                now_iso = datetime.now()
 
                 # Prepare data ONLY with valid DB columns
                 db_item_for_insert = {
@@ -3363,7 +3364,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 metadata_errors += 1; update_progress(metadata_errors=metadata_errors); continue
             
             # 3. Prepare DB Item (original_file_path_str for original_path_for_symlink)
-            now_iso = datetime.now().isoformat()
+            current_time = datetime.now() # Changed from now_iso
             
             db_title = metadata.get('title') if metadata else parsed_title
             db_year = metadata.get('year') if metadata else parsed_year
@@ -3407,12 +3408,12 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 'season_number': metadata.get('season_number') if metadata else (s_num_int if current_parsed_type == 'episode' else None),
                 'episode_number': metadata.get('episode_number') if metadata else (e_num_int if current_parsed_type == 'episode' else None),
                 'episode_title': metadata.get('episode_title') if metadata else None, 
-                'collected_at': now_iso,
-                'original_collected_at': now_iso, 
+                'collected_at': current_time, # Use datetime object
+                'original_collected_at': current_time, # Use datetime object
                 'original_path_for_symlink': original_file_path_str,
                 'version': current_parsed_version, 
                 'filled_by_file': item_path.name,
-                'metadata_updated': now_iso, 
+                'metadata_updated': current_time, # Use datetime object
                 'genres': json.dumps(metadata.get('genres', [])) if metadata else json.dumps([]),
             }
             item_for_db_filtered = {k: v for k, v in item_for_db.items() if v is not None}
@@ -4087,7 +4088,7 @@ def perform_riven_recovery(): # New function
                 if not line: continue
 
                 item_data = json.loads(line)
-                now_iso = datetime.now().isoformat()
+                now_iso = datetime.now()
 
                 # Paths for DB entry and symlink creation
                 original_source_file = item_data.get('original_path_for_symlink')

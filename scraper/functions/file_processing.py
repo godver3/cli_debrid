@@ -8,6 +8,7 @@ from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
+import time
 
 # Pre-compile regex patterns
 _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
@@ -206,59 +207,79 @@ def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[
 def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
     processed_items = []
+    total_db_time = 0
+    total_metadata_time = 0
 
-    for item in media_items:
+    for item_idx, item in enumerate(media_items):
+        item_start_time = time.time()
         try:
             if item['media_type'] == 'movie':
+                db_start_time = time.time()
                 db_runtime = get_movie_runtime(item['tmdb_id'])
+                db_duration = time.time() - db_start_time
+                total_db_time += db_duration
+                #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_movie_runtime took {db_duration:.4f}s")
+
                 if db_runtime:
                     item['episode_count'] = 1
                     item['runtime'] = db_runtime
                 else:
-                    #logging.info(f"Fetching metadata for movie: {item['title']}")
+                    metadata_start_time = time.time()
                     metadata = get_metadata(tmdb_id=item['tmdb_id'], item_media_type='movie')
-                    item['runtime'] = metadata.get('runtime', 100)  # Default to 100 if not found
+                    metadata_duration = time.time() - metadata_start_time
+                    total_metadata_time += metadata_duration
+                    #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_metadata (movie) took {metadata_duration:.4f}s")
+                    item['runtime'] = metadata.get('runtime', 100)
                     item['episode_count'] = 1
-                    #logging.info(f"Runtime for movie: {item['runtime']}")
         
             elif item['media_type'] == 'episode':
+                db_runtime_start_time = time.time()
                 db_runtime = get_episode_runtime(item['tmdb_id'])
+                db_runtime_duration = time.time() - db_runtime_start_time
+                total_db_time += db_runtime_duration
+                #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_episode_runtime took {db_runtime_duration:.4f}s")
+
                 if db_runtime:
                     item['runtime'] = db_runtime
+                    db_episode_count_start_time = time.time()
                     item['episode_count'] = get_episode_count(item['tmdb_id'])
+                    db_episode_count_duration = time.time() - db_episode_count_start_time
+                    total_db_time += db_episode_count_duration
+                    #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_episode_count took {db_episode_count_duration:.4f}s")
                 else:
-                    #logging.info(f"Fetching metadata for TV show: {item['title']}")
-                    if 'imdb_id' in item:
-                        tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
-                    elif 'tmdb_id' in item:
-                        tmdb_id, media_type = item['tmdb_id'], 'tv'
-                    else:
-                        logging.warning(f"No IMDb ID or TMDB ID found for TV show: {item['title']}")
-                        tmdb_id, media_type = None, None
-
-                    if tmdb_id and media_type == 'tv':
-                        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type='tv')
-                        item['runtime'] = metadata.get('runtime', 30)  # Default to 30 if not found
+                    tmdb_id_for_meta = item.get('tmdb_id')
+                    media_type_for_meta = 'tv'
+                    
+                    # This part for fetching tmdb_id if only imdb_id is present seems less likely to be a bottleneck
+                    # but we can log it if necessary. For now, focusing on get_metadata.
+                    if 'imdb_id' in item and 'tmdb_id' not in item: # Check if tmdb_id is actually missing
+                        # Potentially add timing for get_tmdb_id_and_media_type if it becomes relevant
+                        tmdb_id_for_meta, media_type_for_meta = get_tmdb_id_and_media_type(item['imdb_id'])
+                    
+                    if tmdb_id_for_meta and media_type_for_meta == 'tv':
+                        metadata_start_time = time.time()
+                        metadata = get_metadata(tmdb_id=tmdb_id_for_meta, item_media_type='tv')
+                        metadata_duration = time.time() - metadata_start_time
+                        total_metadata_time += metadata_duration
+                        #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_metadata (tv) took {metadata_duration:.4f}s")
+                        item['runtime'] = metadata.get('runtime', 30)
                         seasons = metadata.get('seasons', {})
                         item['episode_count'] = sum(season.get('episode_count', 0) for season in seasons.values())
                     else:
-                        logging.warning(f"Could not fetch details for TV show: {item['title']}")
+                        logging.warning(f"Could not fetch details for TV show: {item.get('title', 'N/A')}")
                         item['episode_count'] = 1
-                        item['runtime'] = 30  # Default value
-                    
-                    #logging.info(f"Runtime for TV show: {item['runtime']}")
-                    #logging.info(f"Episode count for TV show: {item['episode_count']}")
+                        item['runtime'] = 30
             
-            #logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
             processed_items.append(item)
+            #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') processing took {time.time() - item_start_time:.4f}s")
 
         except Exception as e:
-            logging.error(f"Error processing item {item['title']}: {str(e)}")
-            # Add item with default values in case of error
+            logging.error(f"Error processing item {item.get('title', 'N/A')} in get_media_info_for_bitrate: {str(e)}", exc_info=True)
             item['episode_count'] = 1
-            item['runtime'] = 30 if item['media_type'] == 'episode' else 100
+            item['runtime'] = 30 if item.get('media_type') == 'episode' else 100
             processed_items.append(item)
 
+    #logging.debug(f"get_media_info_for_bitrate: Total DB time: {total_db_time:.4f}s, Total Metadata time: {total_metadata_time:.4f}s for {len(media_items)} items.")
     return processed_items
 
 def parse_size(size):

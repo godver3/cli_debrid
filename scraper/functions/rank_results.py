@@ -100,7 +100,7 @@ def rank_result_key(
         for i, part in enumerate(title_parts):
             if part.upper() in country_codes and (i > 0 and not part.lower() in title_parts[i-1].lower()):  # Avoid matching part of a word
                 result_country = country_codes[part.upper()]
-                logging.info(f"Found country code in title: {part.upper()} -> {result_country}")
+                #logging.info(f"Found country code in title: {part.upper()} -> {result_country}")
                 break
     
     country_score = 0
@@ -349,7 +349,7 @@ def rank_result_key(
     if content_type.lower() == 'movie' and not result.get('is_anime', False):
         if re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE):
             content_type_score = -500
-            logging.debug(f"Applied penalty for movie with season/episode in title")
+            #logging.debug(f"Applied penalty for movie with season/episode in title")
     elif content_type.lower() == 'episode':
         # Use is_anime flag directly from result
         is_anime = result.get('is_anime', False)

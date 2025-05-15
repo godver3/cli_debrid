@@ -424,6 +424,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
@@ -612,8 +613,27 @@ function saveIntervalStates() {
         const taskName = tile.dataset.taskName;
         const input = tile.querySelector('.interval-input');
         if (input) {
-            // Send empty string if input is empty (reset)
-            taskIntervalsSeconds[taskName] = input.value.trim() === '' ? null : input.value;
+            const defaultIntervalSeconds = parseInt(input.dataset.defaultIntervalSeconds, 10);
+            const currentValueStr = input.value.trim();
+
+            if (currentValueStr === '') {
+                // Explicit reset (empty input): send null
+                taskIntervalsSeconds[taskName] = null;
+            } else {
+                const currentValueInt = parseInt(currentValueStr, 10);
+                if (!isNaN(currentValueInt)) {
+                    if (currentValueInt !== defaultIntervalSeconds) {
+                        // Different from default: send the value
+                        taskIntervalsSeconds[taskName] = currentValueStr;
+                    } else {
+                        // Same as default: send null to signify reset to default
+                        taskIntervalsSeconds[taskName] = null;
+                    }
+                }
+                // If parsing fails (e.g., non-numeric input despite type="number"),
+                // we don't add it to taskIntervalsSeconds, effectively ignoring malformed input.
+                // Alternatively, could send null here too. Current behavior is to ignore.
+            }
         }
     });
 
@@ -771,7 +791,7 @@ function createTaskTile(taskName, taskData) {
             ${customIntervalSec !== null && customIntervalSec !== undefined ? `| Saved: ${customIntervalSec}s` : ''}
         </div>
         <div class="interval-input-container">
-            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="10" step="1" ${enabled ? '' : 'disabled'}>
+            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="10" step="1" ${enabled ? '' : 'disabled'} data-default-interval-seconds="${defaultIntervalSec}">
             <span class="interval-input-label">seconds</span>
         </div>
         <div class="countdown" data-task="${taskName}">

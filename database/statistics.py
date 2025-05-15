@@ -397,9 +397,12 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
             episode_number
         FROM media_items
         WHERE type = 'episode'
-          AND collected_at IS NOT NULL 
-          AND state IN ('Collected', 'Upgrading')
-          AND upgraded = 0  -- Exclude upgraded items
+          AND collected_at IS NOT NULL
+          AND upgraded = 0  -- Exclude items that are the result of an upgrade
+          AND (
+              state = 'Collected' OR
+              (state = 'Upgrading' AND upgrading_from IS NULL)
+          )
         ORDER BY collected_at DESC
         LIMIT ?
         """

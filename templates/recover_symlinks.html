@@ -159,7 +159,7 @@
 
 <div class="debug-container symlink-recovery">
     <h2>Symlink Library Recovery</h2>
-    <p class="description">This tool attempts to scan your symlink directory, parse filenames based on your settings, and recreate database entries for collected items. Use this if you have lost your database but still have your symlinked media structure.</p>
+    <p class="description">This tool attempts to scan your symlink directory, parse filenames based on your settings, and recreate database entries for collected items. Use this if you have lost your database but still have your symlinked media structure.<br><br><span style="font-style: italic; color: red;">You must ensure that your symlink settings under Additional Settings match the structure of your folders to be recovered.</span></p>
 
     <div class="debug_items">
         <div class="debug_item">
@@ -214,7 +214,7 @@
             progressUrlTemplate = '{{ url_for("debug.riven_analysis_progress_stream", task_id="TASK_ID_PLACEHOLDER") }}';
             recoverUrl = '{{ url_for("debug.perform_riven_recovery") }}';
             document.querySelector('.symlink-recovery h2').textContent = 'Riven Symlink Library Recovery'; // Update title
-            document.querySelector('.symlink-recovery .description').textContent = 'This tool attempts to scan your Riven symlink directory, parse filenames, and recreate database entries. This will use your current symlink settings.'; // Update description
+            document.querySelector('.symlink-recovery .description').textContent = 'This tool attempts to scan your Riven symlink directory, parse filenames, and recreate database entries. This will use your current symlink settings. You must ensure that your symlink settings under Additional Settings match the structure of your folders to be recovered.'; // Update description
         } else {
             analyzeUrl = '{{ url_for("debug.analyze_symlinks") }}';
             progressUrlTemplate = '{{ url_for("debug.analysis_progress_stream", task_id="TASK_ID_PLACEHOLDER") }}';

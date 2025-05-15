@@ -464,6 +464,45 @@ export function updateSettings() {
         });
     }
 
+    // Validate symlink templates
+    const movieTemplateInput = document.getElementById('additional-symlink_movie_template');
+    const episodeTemplateInput = document.getElementById('additional-symlink_episode_template');
+
+    if (movieTemplateInput && episodeTemplateInput) {
+        const movieTemplate = movieTemplateInput.value;
+        const episodeTemplate = episodeTemplateInput.value;
+
+        if (!movieTemplate.includes('{imdb_id}')) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Validation Error',
+                message: 'Symlink Movie Template must include {imdb_id}. Settings not saved.'
+            });
+            return; // Stop processing and do not save
+        }
+
+        if (!episodeTemplate.includes('{imdb_id}')) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Validation Error',
+                message: 'Symlink Episode Template must include {imdb_id}. Settings not saved.'
+            });
+            return; // Stop processing and do not save
+        }
+        
+        // Ensure Debug section exists if not already created by other inputs
+        if (!settingsData['Debug']) {
+            settingsData['Debug'] = {};
+        }
+        settingsData['Debug']['symlink_movie_template'] = movieTemplate;
+        settingsData['Debug']['symlink_episode_template'] = episodeTemplate;
+
+    } else {
+        console.warn('Symlink template input fields not found. Skipping validation.');
+        // Decide if you want to proceed or error out if fields are missing
+        // For now, we'll proceed but log a warning.
+    }
+
     const versions = {};
     document.querySelectorAll('.settings-section[data-version-id]').forEach(section => {
         const versionId = section.getAttribute('data-version-id');

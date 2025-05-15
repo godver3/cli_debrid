@@ -27,6 +27,12 @@ from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_url
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
 
+# Import the new types and function from the .torrent module
+from .torrent import (
+    TorrentInfoStatus,
+    get_torrent_info_status as rd_get_torrent_info_status
+)
+
 # Define the path for the size cache file
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 SIZE_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'library_size_cache.json')
@@ -60,13 +66,28 @@ class RealDebridProvider(DebridProvider):
         self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
         
+        # Store the loaded API key in a "private" attribute
+        # This avoids issues if 'api_key' is a property without a setter.
+        self._internal_api_key = self._load_api_key()
+        
     def _load_api_key(self) -> str:
         """Load API key from settings"""
         try:
             from .api import get_api_key
             return get_api_key()
         except Exception as e:
+            logging.error(f"Failed to load API key: {str(e)}", exc_info=True)
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
+
+    @property
+    def api_key(self) -> str:
+        """Provides access to the loaded API key."""
+        if not hasattr(self, '_internal_api_key') or not self._internal_api_key:
+            # This case should ideally be handled by _load_api_key raising an error
+            # or by __init__ failing if the key isn't loaded.
+            logging.error("API key accessed before it was loaded or is missing.")
+            raise ProviderUnavailableError("API key is not available.")
+        return self._internal_api_key
 
     async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
         """
@@ -590,6 +611,7 @@ class RealDebridProvider(DebridProvider):
     def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
         """Get information about a specific torrent"""
         try:
+            # Use the api_key property (or self._internal_api_key directly)
             info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
             
             # Update status based on response
@@ -631,6 +653,16 @@ class RealDebridProvider(DebridProvider):
                 logging.error(f"Error getting torrent info: {str(e)}")
                 self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
+
+    def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
+        """
+        Get detailed information about a torrent, including fetch status,
+        using the Real-Debrid provider.
+        """
+        # Import here if needed for type hint resolution at runtime and not just static analysis
+        from debrid.status import TorrentInfoStatus 
+        # Use the api_key property (or self._internal_api_key directly)
+        return rd_get_torrent_info_status(self.api_key, torrent_id)
 
     def verify_torrent_presence(self, hash_value: str = None) -> bool:
         """
@@ -681,13 +713,15 @@ class RealDebridProvider(DebridProvider):
             # Get torrent info before removal to get the hash
             hash_value = None
             try:
-                info = self.get_torrent_info(torrent_id)
+                # Use the api_key property
+                info = self.get_torrent_info(torrent_id) # This already uses self.api_key (property)
                 if info:
                     hash_value = info.get('hash', '').lower()
             except Exception as e:
                 logging.warning(f"Could not get torrent info before removal: {str(e)}")
 
             # Make the deletion request (retries handled by make_request)
+            # Use the api_key property
             removal_response = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
 
             # Update status and tracking

@@ -641,76 +641,70 @@ class TorrentProcessor:
                     info['downloading'] = not is_cached
                     logging.debug(f"[{item_identifier}] [Result {idx}/{len(results)}] Full torrent info response: {info}")
                     if len(info.get('files', [])) > 0:
-                        if item and 'magnet' in result:
-                            result_magnet = result['magnet']
+                        definitive_hash = info.get('hash')
+
+                        # original_link is from `result.get('magnet') or result.get('link')` from loop start
+                        if item and definitive_hash:
                             try:
-                                if result_magnet.startswith('http'):
-                                    hash_value = download_and_extract_hash(result_magnet)
-                                    add_to_not_wanted(hash_value)
-                                    add_to_not_wanted_urls(result_magnet)
-                                else:
-                                    hash_value = extract_hash_from_magnet(result_magnet)
-                                    add_to_not_wanted(hash_value)
+                                # Add to not_wanted list using the definitive_hash
+                                add_to_not_wanted(definitive_hash)
+                                if original_link and original_link.startswith('http'): # original_link was defined at the start of the loop iteration
+                                    add_to_not_wanted_urls(original_link)
 
-                                # Record torrent tracking after confirming valid result
-                                if hash_value and item:
-                                    from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
-                                    # Prepare item data
-                                    item_data = {
-                                        'title': item.get('title'),
-                                        'type': item.get('type'),
-                                        'version': item.get('version'),
-                                        'tmdb_id': item.get('tmdb_id'),
-                                        'state': item.get('state')
+                                # Record torrent tracking using the definitive_hash
+                                from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
+                                # Prepare item data
+                                item_data = {
+                                    'title': item.get('title'),
+                                    'type': item.get('type'),
+                                    'version': item.get('version'),
+                                    'tmdb_id': item.get('tmdb_id'),
+                                    'state': item.get('state')
+                                }
+                                
+                                # Check recent history for this hash
+                                history = get_torrent_history(definitive_hash)
+                                
+                                trigger_details={
+                                    'source': 'adding_queue',
+                                    'queue_initiated': True,
+                                    'accept_uncached': accept_uncached,
+                                    'torrent_info': {
+                                        'id': info.get('id'),
+                                        'filename': info.get('filename'),
+                                        'is_cached': is_cached # This is_cached is from the earlier check_cache_status
                                     }
-                                    
-                                    # Check recent history for this hash
-                                    history = get_torrent_history(hash_value)
-                                    
-                                    # If there's a recent entry, update it instead of creating new one
-                                    if history:
-                                        update_torrent_tracking(
-                                            torrent_hash=hash_value,
-                                            item_data=item_data,
-                                            trigger_details={
-                                                'source': 'adding_queue',
-                                                'queue_initiated': True,
-                                                'accept_uncached': accept_uncached,
-                                                'torrent_info': {
-                                                    'id': info.get('id'),
-                                                    'filename': info.get('filename'),
-                                                    'is_cached': is_cached
-                                                }
-                                            },
-                                            trigger_source='queue_add',
-                                            rationale='Added via adding queue processing'
-                                        )
-                                        logging.info(f"[{item_identifier}] Updated existing torrent tracking entry for hash {hash_value}")
-                                    else:
-                                        # Record new addition if no history exists
-                                        record_torrent_addition(
-                                            torrent_hash=hash_value,
-                                            trigger_source='queue_add',
-                                            rationale='Added via adding queue processing',
-                                            item_data=item_data,
-                                            trigger_details={
-                                                'source': 'adding_queue',
-                                                'queue_initiated': True,
-                                                'accept_uncached': accept_uncached,
-                                                'torrent_info': {
-                                                    'id': info.get('id'),
-                                                    'filename': info.get('filename'),
-                                                    'is_cached': is_cached
-                                                }
-                                            }
-                                        )
-                                        logging.info(f"[{item_identifier}] Recorded new torrent addition for hash {hash_value}")
-                            except Exception as e:
-                                logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Failed to process magnet for not wanted: {str(e)}")
+                                }
 
-                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
-                            chosen_result_for_return = result # Store the successful result
-                            return info, original_link, chosen_result_for_return # Return all three
+                                if history:
+                                    update_torrent_tracking(
+                                        torrent_hash=definitive_hash,
+                                        item_data=item_data,
+                                        trigger_details=trigger_details,
+                                        trigger_source='queue_add',
+                                        rationale='Added via adding queue processing'
+                                    )
+                                    logging.info(f"[{item_identifier}] Updated existing torrent tracking entry for hash {definitive_hash}")
+                                else:
+                                    # Record new addition if no history exists
+                                    record_torrent_addition(
+                                        torrent_hash=definitive_hash,
+                                        trigger_source='queue_add',
+                                        rationale='Added via adding queue processing',
+                                        item_data=item_data,
+                                        trigger_details=trigger_details
+                                    )
+                                    logging.info(f"[{item_identifier}] Recorded new torrent addition for hash {definitive_hash}")
+                            
+                            except Exception as e:
+                                logging.error(f"[{item_identifier}] [Result {idx}/{len(results)}] Error in post-addition processing (not_wanted/tracking) for hash {definitive_hash if definitive_hash else 'N/A'}: {str(e)}")
+                        
+                        elif item and not definitive_hash:
+                             logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] No definitive_hash in torrent info. Skipping not_wanted and tracking. Original link: {original_link if original_link else 'N/A'}")
+
+                        logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
+                        chosen_result_for_return = result # Store the successful result
+                        return info, original_link, chosen_result_for_return # Return all three
                     else:
                         try:
                             if info.get('id'):
