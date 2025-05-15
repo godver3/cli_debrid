@@ -219,21 +219,21 @@ class ScrapingQueue:
                             require_physical = version_settings.get('require_physical_release', False)
                             physical_release_date = item_to_process.get('physical_release_date')
 
-                            # If physical release is required, use that date instead
-                            if require_physical and physical_release_date:
+                            # If physical release is required for a MOVIE, use that date instead
+                            if item_to_process.get('type') == 'movie' and require_physical and physical_release_date:
                                 try:
                                     physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
                                     if physical_date > today:
-                                        logging.info(f"Item {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
+                                        logging.info(f"Movie {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
                                         queue_manager.move_to_wanted(item_to_process, "Scraping")
                                         processed_successfully_or_moved = True
                                         processed_count += 1
                                         # Removed return
                                 except ValueError:
-                                    logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date}")
-                            # If physical release is required but no date available, move back to Wanted
-                            elif require_physical and not physical_release_date:
-                                logging.info(f"Item {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
+                                    logging.warning(f"Invalid physical release date format for movie {item_identifier}: {physical_release_date}")
+                            # If physical release is required for a MOVIE but no date available, move back to Wanted
+                            elif item_to_process.get('type') == 'movie' and require_physical and not physical_release_date:
+                                logging.info(f"Movie {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
                                 processed_count += 1

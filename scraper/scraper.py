@@ -150,70 +150,37 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     xem_mapping_list = show_metadata.get('xem_mapping')
                     trakt_seasons_data = show_metadata.get('seasons') # Get Trakt season structure
 
-                    # --- START ADDED LOGGING ---
-                    logging.info(f"Inspecting Trakt seasons data type: {type(trakt_seasons_data)}")
-                    if isinstance(trakt_seasons_data, dict):
-                        logging.info(f"Trakt seasons data keys: {list(trakt_seasons_data.keys())}")
-                        # Optionally log the specific season data if needed, but be mindful of log size
-                        # if str(season) in trakt_seasons_data:
-                        #     logging.info(f"Data for season {season}: {json.dumps(trakt_seasons_data[str(season)], indent=2)}")
-                        # else:
-                        #     logging.info(f"Season key '{str(season)}' not found in trakt_seasons_data keys.")
-                    # --- END ADDED LOGGING ---
-
                     # --- Extract Target Air Date ---
                     try:
-                        # Use integer key 'season' for lookup, not str(season)
-                        if isinstance(trakt_seasons_data, dict) and season in trakt_seasons_data:
-                            # Access using the integer key 'season'
-                            season_data = trakt_seasons_data[season]
-                            # --- START ADDED LOGGING ---
-                            logging.info(f"Inspecting season {season} data type: {type(season_data)}")
-                            if isinstance(season_data, dict):
-                                logging.info(f"Keys in season {season} data: {list(season_data.keys())}")
-                                if 'episodes' in season_data:
-                                    episodes_data = season_data['episodes']
-                                    logging.info(f"Type of episodes data for season {season}: {type(episodes_data)}")
-                                    if isinstance(episodes_data, dict):
-                                         logging.info(f"Keys in episodes data for season {season}: {list(episodes_data.keys())}")
-                                         # Log the specific episode data if the key exists
-                                         # if str(original_episode) in episodes_data:
-                                         #     logging.info(f"Data for episode '{str(original_episode)}' in season {season}: {json.dumps(episodes_data[str(original_episode)], indent=2)}")
-                                         # else:
-                                         #     logging.info(f"Episode key '{str(original_episode)}' not found in episode keys.")
-                                    elif isinstance(episodes_data, list):
-                                         logging.info(f"First few items in episodes list for season {season} (if any): {episodes_data[:5]}")
-                                else:
-                                    logging.info(f"'episodes' key not found in season {season} data.")
-                            # --- END ADDED LOGGING ---
+                        target_air_date = None # Initialize to ensure it's defined in all paths
 
-                            # Check if episode keys are integers (based on log observation)
-                            # Ensure episodes_data is checked before indexing
-                            if isinstance(season_data, dict) and 'episodes' in season_data:
-                                episodes_data = season_data['episodes'] # Assign for clarity
-                                # Check for integer key original_episode
-                                if isinstance(episodes_data, dict) and original_episode in episodes_data:
-                                    # Access using integer key original_episode
-                                    episode_data = episodes_data[original_episode]
+                        if isinstance(trakt_seasons_data, dict) and season in trakt_seasons_data:
+                            current_season_trakt_data = trakt_seasons_data[season]
+
+                            if isinstance(current_season_trakt_data, dict) and \
+                               'episodes' in current_season_trakt_data and \
+                               isinstance(current_season_trakt_data['episodes'], dict):
+                                
+                                episodes_dict_for_season = current_season_trakt_data['episodes']
+                                
+                                if original_episode in episodes_dict_for_season:
+                                    episode_data = episodes_dict_for_season[original_episode]
+                                    
                                     if isinstance(episode_data, dict) and 'first_aired' in episode_data:
                                         air_date_full_utc_str = episode_data['first_aired']
                                         if isinstance(air_date_full_utc_str, str) and air_date_full_utc_str:
                                             # --- START Timezone-Aware Air Date Calculation ---
-                                            target_air_date = None # Initialize
                                             try:
                                                 # 1. Parse the UTC timestamp string
-                                                # Handle 'Z' for UTC explicitly if present
                                                 if air_date_full_utc_str.endswith('Z'):
                                                      air_date_full_utc_str = air_date_full_utc_str[:-1] + '+00:00'
 
                                                 utc_dt = datetime.fromisoformat(air_date_full_utc_str)
-                                                # Ensure it's timezone-aware and set to UTC
                                                 if utc_dt.tzinfo is None:
                                                     utc_dt = utc_dt.replace(tzinfo=timezone.utc)
                                                 elif utc_dt.tzinfo.utcoffset(utc_dt) != timedelta(0):
                                                     utc_dt = utc_dt.astimezone(timezone.utc)
 
-                                                # 2. Attempt conversion using show's timezone from airs_data
                                                 show_timezone_str = None
                                                 if ZoneInfo and isinstance(airs_data, dict) and isinstance(airs_data.get('timezone'), str):
                                                     show_timezone_str = airs_data['timezone']
@@ -231,40 +198,38 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                                                 else:
                                                     logging.info(f"Show timezone info not available or invalid in airs_data: {airs_data}. Falling back to UTC date.")
 
-                                                # 3. Fallback: If conversion failed or wasn't possible, use the UTC date part
                                                 if target_air_date is None:
                                                     target_air_date = utc_dt.strftime('%Y-%m-%d')
                                                     logging.info(f"Using UTC date as target air date: {target_air_date} for S{season}E{original_episode}")
 
                                             except ValueError as format_err:
                                                 logging.error(f"Could not parse 'first_aired' UTC string '{air_date_full_utc_str}': {format_err}")
-                                                target_air_date = None # Ensure it's None on parsing error
+                                                target_air_date = None 
                                             except Exception as conv_err:
                                                 logging.error(f"Unexpected error during air date calculation for S{season}E{original_episode}: {conv_err}", exc_info=True)
-                                                target_air_date = None # Ensure it's None on other errors
+                                                target_air_date = None
                                             # --- END Timezone-Aware Air Date Calculation ---
-
                                         elif air_date_full_utc_str is None:
                                              logging.warning(f"Target episode S{season}E{original_episode} has a null 'first_aired' date.")
-                                             target_air_date = None # Ensure it's None
+                                             # target_air_date remains None
                                         else:
                                              logging.warning(f"'first_aired' for S{season}E{original_episode} is not a string or is empty: {air_date_full_utc_str}")
-                                             target_air_date = None # Ensure it's None
+                                             # target_air_date remains None
                                     else:
-                                        logging.warning(f"Could not find 'first_aired' key or value in episode data for S{season}E{original_episode}.")
-                                        target_air_date = None # Ensure it's None
+                                        logging.warning(f"Could not find 'first_aired' key or valid value in episode data for S{season}E{original_episode}. Episode data: {episode_data}")
+                                        # target_air_date remains None
                                 else:
-                                    # Updated warning to reflect integer key check
-                                    logging.warning(f"Could not find episode key {original_episode} (integer) in season {season} episodes dictionary, or episodes data is not a dict. Type: {type(episodes_data)}")
+                                    logging.warning(f"Could not find episode key {original_episode} (integer) in 'episodes' for season {season}. Available episodes: {list(episodes_dict_for_season.keys())}")
+                                    # target_air_date remains None
                             else:
-                                # Updated warning
-                                logging.warning(f"Could not find 'episodes' key in season {season} data, or season data is not a dict.")
-
+                                logging.warning(f"Season {season} data in Trakt metadata does not contain a valid 'episodes' dictionary. Season data keys: {list(current_season_trakt_data.keys()) if isinstance(current_season_trakt_data, dict) else type(current_season_trakt_data)}")
+                                # target_air_date remains None
                         else:
-                             # Updated warning to reflect integer key check
-                             logging.warning(f"Could not find season {season} (integer key) data in Trakt metadata or it's not a dictionary.")
+                             logging.warning(f"Could not find season {season} (integer key) data in Trakt metadata or trakt_seasons_data is not a dictionary. trakt_seasons_data type: {type(trakt_seasons_data)}")
+                             # target_air_date remains None
                     except Exception as date_err:
                          logging.error(f"Error extracting target air date for S{season}E{original_episode}: {date_err}", exc_info=True)
+                         target_air_date = None # Ensure it's None on outer exception
                     # --- End Extract Target Air Date ---
 
                     if isinstance(xem_mapping_list, list):
@@ -469,12 +434,13 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             genres: List[str],
             episode_formats: Dict[str, str],
             is_anime: bool,
+            imdb_id_for_fallback: str,
+            direct_api_instance: DirectAPI,
             is_alias: bool = False,
             alias_country: str = None,
             preferred_language: str = None,
             translated_title: str = None,
             target_air_date: Optional[str] = None,
-            # Add parameters to receive scene mapping info
             scene_season_map: Optional[int] = None,
             scene_episode_map: Optional[int] = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
@@ -483,7 +449,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # Get country code for media item from metadata
             task_start = time.time()
-            media_country_code = get_media_country_code(imdb_id, 'movie' if content_type.lower() == 'movie' else 'tv')
+            media_country_code = get_media_country_code(imdb_id_for_fallback, 'movie' if content_type.lower() == 'movie' else 'tv')
             task_timings['country_code_lookup'] = time.time() - task_start
             logging.info(f"Media country code from metadata: {media_country_code}")
 
@@ -515,6 +481,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             season_episode_counts = {}
             if content_type.lower() == 'episode':
                 season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                logging.debug(f"Fetched season_episode_counts for tmdb_id '{tmdb_id}': {season_episode_counts}") # Keep this one for now
             task_timings['episode_counts'] = time.time() - task_start
 
             # Parse scraping settings based on version
@@ -528,7 +495,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Determine if the current search is using the translated title
             is_translated = bool(translated_title and search_title == translated_title)
             all_results = scraper_manager.scrape_all(
-                imdb_id=imdb_id,
+                imdb_id=imdb_id_for_fallback,
                 title=search_title,
                 year=year,
                 content_type=content_type,
@@ -583,10 +550,13 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # Filter results
             task_start = time.time()
+            # --- Pass imdb_id_for_fallback and direct_api_instance ---
             filtered_results, pre_size_filtered_results = filter_results(
                 normalized_results, tmdb_id, original_media_title, year, content_type,
                 season, episode, multi, version_settings, runtime, episode_count,
                 season_episode_counts, genres, matching_aliases,
+                imdb_id=imdb_id_for_fallback, # Pass imdb_id
+                direct_api=direct_api_instance, # Pass direct_api instance
                 preferred_language=preferred_language,
                 translated_title=translated_title,
                 target_air_date=target_air_date
@@ -601,6 +571,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     result['xem_scene_mapping'] = {'season': scene_season_map, 'episode': scene_episode_map}
             # --- End attaching scene mapping --- 
 
+            logging.info(f"_do_scrape task timings for '{search_title}': {task_timings}")
             return filtered_results, filtered_out_results, task_timings
 
         # Determine titles to scrape with
@@ -645,6 +616,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 genres=genres,
                 episode_formats=episode_formats,
                 is_anime=is_anime,
+                imdb_id_for_fallback=imdb_id,
+                direct_api_instance=direct_api,
                 is_alias=(source != 'original'),
                 alias_country=media_country_code if source != 'original' else None,
                 preferred_language=preferred_language,
@@ -685,6 +658,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         genres=genres,
                         episode_formats=episode_formats,
                         is_anime=is_anime,
+                        imdb_id_for_fallback=imdb_id,
+                        direct_api_instance=direct_api,
                         is_alias=True,
                         alias_country=media_country_code,
                         preferred_language=preferred_language,

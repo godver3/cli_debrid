@@ -5,9 +5,14 @@ import bencodepy
 import hashlib
 import tempfile
 import os
+# Remove Enum and dataclass if they were only for the moved types and not used elsewhere locally
+# from enum import Enum # REMOVE if not used by other local things
+# from dataclasses import dataclass # REMOVE if not used by other local things
+import requests
 from ..common.utils import extract_hash_from_magnet, is_valid_hash, process_hashes
 from .api import make_request
-from ..status import TorrentStatus, get_status_flags
+# Update this import to get the moved types from debrid.status
+from ..status import TorrentStatus, get_status_flags, TorrentFetchStatus, TorrentInfoStatus
 
 def process_hashes(hashes: Union[str, List[str]], batch_size: int = 100) -> List[str]:
     """Process and validate a list of hashes"""
@@ -20,6 +25,61 @@ def process_hashes(hashes: Union[str, List[str]], batch_size: int = 100) -> List
 def get_torrent_info(api_key: str, torrent_id: str) -> Dict:
     """Get detailed information about a torrent"""
     return make_request('GET', f'/torrents/info/{torrent_id}', api_key)
+
+def get_torrent_info_status(api_key: str, torrent_id: str) -> TorrentInfoStatus:
+    """
+    Gets detailed information about a torrent and returns a status object.
+    Tries to distinguish between success, various error types (404, 429),
+    and cases where the underlying make_request handles errors and returns None.
+    """
+    try:
+        # Assumption: make_request might return None if it handles an HTTP error internally (e.g., logs it and suppresses exception).
+        # Or, it might raise an exception (e.g., requests.exceptions.HTTPError) if it doesn't handle it.
+        response_data = make_request('GET', f'/torrents/info/{torrent_id}', api_key)
+
+        if response_data is not None:
+            # Successful retrieval of torrent info
+            return TorrentInfoStatus(status=TorrentFetchStatus.OK, data=response_data)
+        else:
+            # This case is likely hit if make_request encountered an HTTP error (e.g., 404, 429),
+            # logged it internally (as suggested by user logs), and then returned None.
+            # Without changes to make_request to propagate specific error types or codes,
+            # we cannot reliably distinguish the exact HTTP error here.
+            logging.warning(
+                f"make_request for torrent {torrent_id} returned None. This often means an HTTP error "
+                f"(like 404 or 429) occurred and was logged by the underlying API call. "
+                f"The specific error type cannot be determined here without changes to make_request."
+            )
+            return TorrentInfoStatus(
+                status=TorrentFetchStatus.PROVIDER_HANDLED_ERROR,
+                message="Provider API call returned no data. Specific error (e.g., 404, 429) was likely logged by the provider. Check provider logs."
+            )
+
+    # The following except blocks handle cases where make_request *does* raise exceptions
+    # that were not caught and converted to a None return by make_request itself.
+    # This acts as a secondary error-handling mechanism.
+    # These specific exceptions (requests.exceptions.*) assume 'requests' library is used by make_request.
+    except requests.exceptions.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else None
+        error_message = str(e)
+        logging.warning(f"HTTPError caught directly in get_torrent_info_status for torrent {torrent_id}: {status_code} - {error_message}")
+        if status_code == 404:
+            return TorrentInfoStatus(status=TorrentFetchStatus.NOT_FOUND, http_status_code=status_code, message=error_message)
+        elif status_code == 429:
+            return TorrentInfoStatus(status=TorrentFetchStatus.RATE_LIMITED, http_status_code=status_code, message=error_message)
+        elif status_code and 400 <= status_code < 500:
+            return TorrentInfoStatus(status=TorrentFetchStatus.CLIENT_ERROR, http_status_code=status_code, message=error_message)
+        elif status_code and 500 <= status_code < 600:
+            return TorrentInfoStatus(status=TorrentFetchStatus.SERVER_ERROR, http_status_code=status_code, message=error_message)
+        else: # Unknown HTTP error or no status_code
+            return TorrentInfoStatus(status=TorrentFetchStatus.UNKNOWN_ERROR, http_status_code=status_code, message=f"Unhandled HTTPError: {error_message}")
+    except requests.exceptions.RequestException as e: # Handles other request issues like network errors, DNS failure, connection refused
+        logging.warning(f"RequestException caught in get_torrent_info_status for torrent {torrent_id}: {str(e)}")
+        return TorrentInfoStatus(status=TorrentFetchStatus.REQUEST_ERROR, message=str(e))
+    except Exception as e:
+        # General catch-all for other unexpected errors from make_request or during its call
+        logging.error(f"Unexpected general error in get_torrent_info_status for torrent {torrent_id}: {str(e)}", exc_info=True)
+        return TorrentInfoStatus(status=TorrentFetchStatus.UNKNOWN_ERROR, message=f"An unexpected error occurred: {str(e)}")
 
 def add_torrent(api_key: str, magnet_link: str, temp_file_path: Optional[str] = None) -> Dict:
     """Add a torrent to Real-Debrid and return the full response"""

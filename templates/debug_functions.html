@@ -185,7 +185,7 @@
                     <select id="media_type" name="media_type" required>
                         <option value="all">All</option>
                         <option value="movie">Movies Only</option>
-                        <option value="show">Episodes Only</option>
+                        <option value="episode">Episodes Only</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -281,7 +281,7 @@
         </div>
         <div class="debug_item">
             <h3>Symlink Library Recovery</h3>
-            <p class="description">Recover database entries from your existing symlink structure if the database was lost.</p>
+            <p class="description">Recover database entries from your existing symlink structure if the database was lost. You must ensure that your symlink settings under Additional Settings match the structure of your folders to be recovered.</p>
             <a href="{{ url_for('debug.recover_symlinks_page') }}" class="btn">Recover Symlink Library</a>
         </div>
         <div class="debug_item">
@@ -358,6 +358,9 @@
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
     import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+    // The 'Loading' object will be accessed from the global scope,
+    // assuming loading.js makes it available there (e.g., window.Loading = Loading)
+    // and is loaded before this module script.
     
     // Define showToast function for notifications
     function showToast(message, type = 'info') {
@@ -1114,13 +1117,25 @@
                     .then(data => {
                         Loading.hide();
                         if (data.success) {
+                            // --- START EDIT: Update success message for "Run Task Manually" ---
+                            let successMessage = data.message; // Default to message from backend (e.g., "Task 'X' queued...")
+                            if (data.job_id) {
+                                successMessage += ` (Job ID: ${data.job_id})`;
+                            }
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
-                                message: data.message,
-                                title: 'Success'
+                                message: successMessage, // Display the "queued" message
+                                title: 'Task Action' // Changed title from 'Success' to 'Task Action'
                             });
+                            // We might not want to poll here by default for all manually run tasks,
+                            // as some are quick. Polling could be added selectively if needed.
+                            // If polling is desired, here's where you could initiate it:
+                            // if (data.job_id) {
+                            //     pollTaskStatus(data.job_id); // Assuming pollTaskStatus handles Loading.hide()
+                            // }
+                            // --- END EDIT ---
                         } else {
-                            throw new Error(data.error);
+                            throw new Error(data.error || 'Failed to run task');
                         }
                     })
                     .catch(error => {

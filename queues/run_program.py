@@ -21,6 +21,9 @@ except ImportError:
 # *** END EDIT ***
 # *** START EDIT ***
 from apscheduler.schedulers.background import BackgroundScheduler
+# --- START EDIT: Add ThreadPoolExecutor for explicit configuration ---
+from apscheduler.executors.pool import ThreadPoolExecutor
+# --- END EDIT ---
 from apscheduler.triggers.interval import IntervalTrigger
 # --- START EDIT: Add threading.Lock ---
 import threading # For scheduler lock, concurrent queue processing, AND heavy task lock
@@ -129,10 +132,30 @@ class ProgramRunner:
         try:
             tz = _get_local_timezone()
             logging.info(f"Initializing APScheduler with timezone: {tz.key}")
-            self.scheduler = BackgroundScheduler(timezone=tz)
+            # --- START EDIT: Configure scheduler for sequential execution ---
+            executors = {
+                'default': ThreadPoolExecutor(max_workers=1)
+            }
+            job_defaults = {
+                'coalesce': True, # If multiple runs are missed, only run once
+                'max_instances': 1 # Already part of individual job scheduling, but good to have as default
+            }
+            self.scheduler = BackgroundScheduler(executors=executors, job_defaults=job_defaults, timezone=tz)
+            logging.info("APScheduler configured with a single worker thread for sequential job execution.")
+            # --- END EDIT ---
         except Exception as e:
             logging.error(f"Failed to get local timezone for scheduler, using system default: {e}")
-            self.scheduler = BackgroundScheduler() # Fallback to default
+            # --- START EDIT: Configure scheduler for sequential execution (fallback) ---
+            executors = {
+                'default': ThreadPoolExecutor(max_workers=1)
+            }
+            job_defaults = {
+                'coalesce': True,
+                'max_instances': 1
+            }
+            self.scheduler = BackgroundScheduler(executors=executors, job_defaults=job_defaults) # Fallback to default timezone
+            logging.info("APScheduler configured with a single worker thread for sequential job execution (using system default timezone).")
+            # --- END EDIT ---
 
         self.scheduler_lock = threading.Lock() # Lock for modifying scheduler jobs
         self.heavy_task_lock = threading.Lock() # Lock to serialize heavy DB tasks
@@ -191,7 +214,7 @@ class ProgramRunner:
             'task_refresh_release_dates',
         }
         # --- Updated log message ---
-        logging.info(f"Defined {len(self.HEAVY_DB_TASKS)} base tasks requiring exclusive execution lock. Content source tasks will run concurrently.")
+        logging.info(f"Defined {len(self.HEAVY_DB_TASKS)} base tasks requiring exclusive execution lock. Global sequential execution is handled by scheduler config.")
         # --- END EDIT ---
 
         # Base Task Intervals
@@ -612,6 +635,18 @@ class ProgramRunner:
         logging.info(f"DEBUG: Final task intervals before scheduling: {self.task_intervals}")
         # --- END EDIT ---
         logging.info(f"Final enabled tasks before initial scheduling: {sorted(list(self.enabled_tasks))}")
+
+        # --- START EDIT: Serialize all scheduled tasks ---
+        # To address potential DB contention by making all scheduled tasks run sequentially.
+        # logging.info("Configuring all scheduled tasks to run sequentially to prevent DB contention.") # This logic is now handled by scheduler config
+        # if not hasattr(self, 'task_intervals') or not self.task_intervals:
+            # logging.error("Cannot configure HEAVY_DB_TASKS for serialization: self.task_intervals is not populated. Tasks will use original HEAVY_DB_TASKS definition if any.")
+            # If self.HEAVY_DB_TASKS was already defined with a base set, it would be used.
+            # Since we initialized it to set(), if this unlikely error occurs, no tasks will be considered "heavy" by default.
+        # else:
+            # self.HEAVY_DB_TASKS = set(self.task_intervals.keys()) # REVERTED: Scheduler now handles global sequential execution. HEAVY_DB_TASKS reverts to original intent.
+            # logging.info(f"All {len(self.HEAVY_DB_TASKS)} tasks defined in task_intervals will now use the exclusive execution lock, effectively running sequentially.")
+        # --- END EDIT ---
 
         # Schedule initial tasks
         self._schedule_initial_tasks()
@@ -2790,89 +2825,44 @@ class ProgramRunner:
             logging.error(f"Error in task_update_movie_titles: {str(e)}")
 
     def trigger_task(self, task_name):
-        """Manually trigger a task to run immediately by running its job now."""
+        """Manually trigger a task to run immediately by adding it to APScheduler's queue."""
         normalized_name = self._normalize_task_name(task_name) # Use existing normalization
-        job_id = normalized_name # Job ID should match normalized name
+        job_id_base = normalized_name # Base name for logging and naming
 
-        logging.info(f"Attempting to manually trigger task: {job_id}")
+        logging.info(f"Attempting to manually trigger task: {job_id_base} by adding it to APScheduler queue.")
 
-        # --- Resolve target function using helper ---
-        target_func, args, kwargs = self._get_task_target(job_id)
-        # ------------------------------------------
+        target_func, args, kwargs = self._get_task_target(job_id_base)
 
         if target_func:
-            logging.info(f"Executing task '{job_id}' manually...")
-            # --- START: Manual Running Task State Handling ---
-            previous_running_task = None # Store previous state if any
-            lock_acquired = False # Track if heavy lock is acquired
-            is_heavy_task = job_id in self.HEAVY_DB_TASKS
-            # --- START EDIT: Initialize start_time before try block ---
-            start_time = time.time() # Initialize start time here
-            # --- END EDIT ---
             try:
-                # Acquire heavy task lock if needed
-                if is_heavy_task:
-                    logging.debug(f"Manual trigger for heavy task '{job_id}': Attempting lock acquisition...")
-                    lock_acquired = self.heavy_task_lock.acquire(blocking=False)
-                    if not lock_acquired:
-                        logging.warning(f"Cannot manually trigger heavy task '{job_id}': Another heavy task is running.")
-                        raise RuntimeError(f"Cannot manually trigger task '{job_id}': Another heavy task is running.")
-                    else:
-                        logging.info(f"Manual trigger for heavy task '{job_id}': Lock acquired.")
+                wrapped_func = functools.partial(self._run_and_measure_task, job_id_base, target_func, args, kwargs)
+                run_now_date = datetime.now(self.scheduler.timezone)
+                
+                # Generate a unique ID for this manual job instance
+                manual_job_instance_id = f"manual_{job_id_base}_{uuid.uuid4()}"
 
-                # Set current running task before execution (existing lock)
-                with self._running_task_lock:
-                    previous_running_task = self.current_running_task # Remember what was running before
-                    self.current_running_task = job_id
-                    logging.info(f"[TaskMonitor Trigger] Set current running task to: {job_id}")
-
-                # Execute directly in the current thread
-                # start_time = time.time() # Removed assignment from here
-                target_func(*args, **kwargs)
-                duration = time.time() - start_time # Duration calculated on success
-                logging.info(f"Manual trigger for task '{job_id}' completed in {duration:.2f}s.")
-                return True # Indicate success
+                with self.scheduler_lock:
+                    self.scheduler.add_job(
+                        func=wrapped_func,
+                        trigger='date',
+                        run_date=run_now_date,
+                        id=manual_job_instance_id, # Use the unique instance ID
+                        name=f"Manual run of {job_id_base}",
+                        replace_existing=False,
+                        misfire_grace_time=None # Allow job to run no matter how late
+                    )
+                logging.info(f"Task '{job_id_base}' (Manual Job ID: {manual_job_instance_id}) successfully queued for immediate execution via APScheduler.")
+                return {"success": True, "message": f"Task '{job_id_base}' queued for execution.", "job_id": manual_job_instance_id}
 
             except Exception as e:
-                 duration = time.time() - start_time # Calculate duration even on error (start_time now exists)
-                 # Don't log error twice if it's the lock acquisition error
-                 if not isinstance(e, RuntimeError) or "Another heavy task is running" not in str(e):
-                     logging.error(f"Error during manual execution of task '{job_id}' after {duration:.2f}s: {e}", exc_info=True)
-                 # Re-raise the original exception after logging
-                 raise e
-            finally:
-                 # Clear current running task *only if* it's still the one we set (existing lock)
-                with self._running_task_lock:
-                    if self.current_running_task == job_id:
-                        self.current_running_task = previous_running_task # Restore previous state or None
-                        log_msg = f"[TaskMonitor Trigger] Cleared current running task: {job_id}"
-                        if previous_running_task:
-                            log_msg += f". Restored previous running task: {previous_running_task}"
-                        logging.info(log_msg)
-                    else:
-                        # Log if something else took over the running task state concurrently
-                        logging.warning(f"[TaskMonitor Trigger] Did not clear running task state for '{job_id}' because current running task is now '{self.current_running_task}'.")
-
-                # Release heavy task lock if acquired
-                if lock_acquired:
-                    try:
-                        self.heavy_task_lock.release()
-                        logging.info(f"Manual trigger for heavy task '{job_id}': Lock released.")
-                    except Exception as e_release:
-                        logging.error(f"Error releasing heavy task lock for '{job_id}' during manual trigger cleanup: {e_release}")
-            # --- END: Manual Running Task State Handling ---
-
+                 logging.error(f"Error submitting manual task '{job_id_base}' to APScheduler: {e}", exc_info=True)
+                 raise RuntimeError(f"Failed to queue manual task '{job_id_base}': {e}")
         else:
-            # ... (existing error handling for unresolved target function) ...
-            logging.error(f"Could not determine target function for manual trigger of '{job_id}'")
-            with self.scheduler_lock:
-                 job = self.scheduler.get_job(job_id)
-                 if job_id not in self.task_intervals:
-                      raise ValueError(f"Task '{job_id}' is not defined.")
-                 elif not job:
-                      raise ValueError(f"Task '{job_id}' exists but is not currently scheduled (likely disabled). Cannot trigger.")
-                 else:
-                      raise ValueError(f"Task function for '{job_id}' not found despite job existing.")
+            logging.error(f"Could not determine target function for manual trigger of '{job_id_base}'")
+            if job_id_base not in self.task_intervals:
+                  raise ValueError(f"Task '{job_id_base}' is not defined. Cannot queue.")
+            else:
+                  raise ValueError(f"Task function for '{job_id_base}' not found despite task being defined.")
 
     def enable_task(self, task_name):
         """Enable a task by adding/resuming its job in the scheduler."""
@@ -3783,18 +3773,18 @@ class ProgramRunner:
         mem_before = 0
         mem_after = 0
         run_tracemalloc_sample = False # Flag to indicate if we run tracemalloc this time
-        lock_acquired = False # Flag to track if heavy task lock was acquired
+        # lock_acquired = False # Flag to track if heavy task lock was acquired # REVERTED
 
         # --- Heavy Task Lock Handling ---
-        is_heavy_task = task_name_for_log in self.HEAVY_DB_TASKS
-        if is_heavy_task:
-            logging.debug(f"Task '{task_name_for_log}' requires heavy task lock. Attempting acquisition...")
-            lock_acquired = self.heavy_task_lock.acquire(blocking=False)
-            if not lock_acquired:
-                 logging.info(f"Skipping heavy task '{task_name_for_log}' execution: Another heavy task is currently running.")
-                 return # Skip execution if lock not acquired
-            else:
-                 logging.info(f"Heavy task lock acquired for '{task_name_for_log}'. Proceeding with execution.")
+        # is_heavy_task = task_name_for_log in self.HEAVY_DB_TASKS # REVERTED - Scheduler handles global queue
+        # if is_heavy_task: # REVERTED
+            # logging.debug(f"Task '{task_name_for_log}' requires heavy task lock. Attempting acquisition...") # REVERTED
+            # lock_acquired = self.heavy_task_lock.acquire(blocking=False) # REVERTED
+            # if not lock_acquired: # REVERTED
+                 # logging.info(f"Skipping heavy task '{task_name_for_log}' execution: Another heavy task is currently running.") # REVERTED
+                 # return # Skip execution if lock not acquired # REVERTED
+            # else: # REVERTED
+                 # logging.info(f"Heavy task lock acquired for '{task_name_for_log}'. Proceeding with execution.") # REVERTED
         # --- End Heavy Task Lock Handling ---
 
 
@@ -3888,16 +3878,16 @@ class ProgramRunner:
                  logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available at point of error memory check.")
 
             raise # Re-raise the exception
-        finally:
+        # finally:
             # --- Release heavy task lock if acquired ---
-            if lock_acquired:
-                try:
-                    self.heavy_task_lock.release()
-                    logging.info(f"Heavy task lock released for '{task_name_for_log}'.")
-                except Exception as e_release:
-                    # Should not happen if lock_acquired is True, but log defensively
-                    logging.error(f"Error releasing heavy task lock for '{task_name_for_log}': {e_release}")
-            # --- End Release heavy task lock ---
+            # if lock_acquired: # REVERTED
+                # try: # REVERTED
+                    # self.heavy_task_lock.release() # REVERTED
+                    # logging.info(f"Heavy task lock released for '{task_name_for_log}'.") # REVERTED
+                # except Exception as e_release: # REVERTED
+                    # Should not happen if lock_acquired is True, but log defensively # REVERTED
+                    # logging.error(f"Error releasing heavy task lock for '{task_name_for_log}': {e_release}") # REVERTED
+            # --- End Release heavy task lock --- # REVERTED
     # *** END EDIT ***
 
     # --- START EDIT: Add method for live interval updates ---

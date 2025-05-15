@@ -96,7 +96,8 @@
                     <label for="sort-column">Sort Column:</label>
                     <select id="sort-column" name="sort_column">
                         <option value="">None</option>
-                        {% for column in selected_columns %}
+                        {# Populate with all_columns from backend which now includes 'size' #}
+                        {% for column in all_columns %} 
                         <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
                         {% endfor %}
                     </select>
@@ -156,7 +157,8 @@
                     <th>Delete</th>
                     <th>Rescrape</th>
                     {% for column in selected_columns %}
-                        <th>{% if column == 'season_number' %}S#{% elif column == 'episode_number' %}E#{% else %}{{ column }}{% endif %}</th>
+                        {# Adjust display name for 'size' column #}
+                        <th>{% if column == 'season_number' %}S#{% elif column == 'episode_number' %}E#{% elif column == 'size' %}Size (GB){% else %}{{ column }}{% endif %}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -178,7 +180,12 @@
                             <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
                         </td>
                         {% for column in selected_columns %}
-                            <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                            {# Use 'size_gb' key for data if column is 'size', format appropriately #}
+                            {% if column == 'size' %}
+                                <td class="truncate" data-full-content="{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}">{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}</td>
+                            {% else %}
+                                <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                            {% endif %}
                         {% endfor %}
                     </tr>
                 {% endfor %}
@@ -193,7 +200,7 @@
 <script>
     window.templateData = {
         selectedColumns: {{ selected_columns|tojson|safe }},
-        all_columns: {{ all_columns|tojson|safe }},
+        all_columns: {{ all_columns|tojson|safe }}, // This will include 'size'
         columnValues: {{ column_values|tojson|safe }},
         operators: {{ operators|tojson|safe }},
         currentFilters: {{ filters|tojson|safe }},
@@ -271,12 +278,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const row = document.createElement('div');
         row.className = 'filter-row';
 
-        // Column select
+        // Column select - use templateData.all_columns but filter out 'size' for filtering
+        const filterableColumns = templateData.all_columns.filter(col => col !== 'size');
         const columnSelect = document.createElement('select');
         columnSelect.className = 'filter-column';
         columnSelect.innerHTML = `
             <option value="">Select Column</option>
-            ${templateData.selectedColumns.map(column => `
+            ${filterableColumns.map(column => `
                 <option value="${column}" ${filter && filter.column === column ? 'selected' : ''}>
                     ${column}
                 </option>
@@ -402,87 +410,83 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Function to restore settings from localStorage
     function restoreSettings() {
-        const savedFilters = localStorage.getItem(STORAGE_KEYS.FILTERS);
+        const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
         const sortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
         const sortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
         const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
-        const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+        // initializeColumnSelection now ensures SELECTED_COLUMNS in localStorage is set and valid.
+        const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
         const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND';
 
-        // Validate content type
+        let columnValuesForUpdate;
+        try {
+            // This should always be a valid array of strings due to initializeColumnSelection's logic
+            columnValuesForUpdate = JSON.parse(savedColumnsJSON);
+            if (!Array.isArray(columnValuesForUpdate) || columnValuesForUpdate.length === 0) {
+                // This is a fallback for an unexpected state, initializeColumnSelection should prevent this.
+                console.error("CRITICAL: Columns from localStorage were empty/invalid in restoreSettings even after initializeColumnSelection. Using hardcoded defaults.");
+                columnValuesForUpdate = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+            }
+        } catch (e) {
+            console.error("CRITICAL: Error parsing columns from localStorage in restoreSettings (should have been valid). Using hardcoded defaults.", e);
+            columnValuesForUpdate = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+        }
+
         const validContentType = (savedContentType === 'movie' || savedContentType === 'episode') 
             ? savedContentType 
             : 'movie';
 
-        // Restore filters
-        if (savedFilters) {
+        if (savedFiltersJSON) {
             try {
-                const filters = JSON.parse(savedFilters);
+                const filters = JSON.parse(savedFiltersJSON);
                 const filtersContainer = document.getElementById('filters-container');
-                filtersContainer.innerHTML = '';
+                filtersContainer.innerHTML = ''; // Clear existing
                 filters.forEach(filter => {
                     if (filter && typeof filter === 'object' && filter.hasOwnProperty('column') && filter.hasOwnProperty('operator') && filter.hasOwnProperty('value')) {
-                        filtersContainer.appendChild(createFilterRow(filter));
+                        // Ensure the column for the filter is actually among the currently selected displayable columns
+                        // or allow it if it's a valid column from all_columns (more flexible)
+                        if (columnValuesForUpdate.includes(filter.column) || templateData.all_columns.includes(filter.column)) {
+                           filtersContainer.appendChild(createFilterRow(filter));
+                        } else {
+                            console.warn(`Skipping saved filter for column "${filter.column}" as it's not currently selected or available.`);
+                        }
                     } else {
                          console.warn('Skipping invalid filter structure from localStorage:', filter);
                     }
                 });
             } catch (e) {
                  console.error("Error parsing saved filters from localStorage:", e);
-                 localStorage.removeItem(STORAGE_KEYS.FILTERS);
+                 localStorage.removeItem(STORAGE_KEYS.FILTERS); // Clean up invalid entry
             }
         }
 
-        // Restore sort settings
         if (sortColumn) document.getElementById('sort-column').value = sortColumn;
         if (sortOrder) document.getElementById('sort-order').value = sortOrder;
         
-        // Restore filter logic
         const logicRadio = document.querySelector(`input[name="filter_logic"][value="${savedFilterLogic}"]`);
-        if (logicRadio) {
-            logicRadio.checked = true;
-        } else {
-            document.getElementById('filter-logic-and').checked = true;
-            localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, 'AND');
-        }
+        if (logicRadio) logicRadio.checked = true;
+        else document.getElementById('filter-logic-and').checked = true;
         
-        // Restore content type
-        if (validContentType) {
-            currentContentType = validContentType;
-            document.querySelectorAll('.content-type-link').forEach(link => {
-                if (link.getAttribute('data-content-type') === validContentType) {
-                    link.classList.add('active');
-                } else {
-                    link.classList.remove('active');
-                }
-            });
-
-            // If we've corrected an invalid content type, update localStorage
-            if (validContentType !== savedContentType) {
-                localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
-            }
+        currentContentType = validContentType;
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            link.classList.toggle('active', link.getAttribute('data-content-type') === validContentType);
+        });
+        if (validContentType !== savedContentType) {
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
         }
 
-        // Apply restored settings
-        if (savedFilters || sortColumn || sortOrder || savedContentType || savedColumns || savedFilterLogic !== 'AND') {
-            const filters = savedFilters ? JSON.parse(savedFilters) : [];
-            const selectedColumnValues = savedColumns ? JSON.parse(savedColumns) : Array.from(document.getElementById('selected-columns').options).map(option => option.value);
-            
-            updateContent('{{ url_for('database.index') }}', {
-                filters: JSON.stringify(filters),
-                sort_column: sortColumn,
-                sort_order: sortOrder,
-                content_type: validContentType,
-                selected_columns: JSON.stringify(selectedColumnValues),
-                filter_logic: savedFilterLogic
-            });
-        } else {
-            updateContent('{{ url_for('database.index') }}', {
-                content_type: currentContentType || 'movie',
-                letter: currentLetter || 'A',
-                filter_logic: 'AND'
-            });
-        }
+        const filtersForUpdate = savedFiltersJSON ? JSON.parse(savedFiltersJSON) : [];
+
+        console.log("restoreSettings calling updateContent with selected_columns:", columnValuesForUpdate);
+        updateContent('{{ url_for('database.index') }}', {
+            filters: JSON.stringify(filtersForUpdate.filter(f => columnValuesForUpdate.includes(f.column) || templateData.all_columns.includes(f.column) )), // Also filter here for safety
+            sort_column: sortColumn || '',
+            sort_order: sortOrder || 'asc',
+            content_type: validContentType,
+            selected_columns: JSON.stringify(columnValuesForUpdate),
+            filter_logic: savedFilterLogic,
+            letter: currentLetter || 'A' // Ensure letter is passed for the initial load consistency
+        });
     }
 
     // Add filter button handler
@@ -758,19 +762,44 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         function initializeColumnSelection() {
-            // Try to get columns from localStorage first
-            const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+            const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+            const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
             let columnsToUse;
-            
-            if (savedColumns) {
+            let sourceOfColumns = "unknown";
+
+            if (savedColumnsJSON) {
                 try {
-                    columnsToUse = JSON.parse(savedColumns);
+                    const parsedColumns = JSON.parse(savedColumnsJSON);
+                    if (Array.isArray(parsedColumns) && parsedColumns.length > 0) {
+                        // Validate that these columns actually exist in all_columns
+                        const validSavedColumns = parsedColumns.filter(col => templateData.all_columns.includes(col));
+                        if (validSavedColumns.length === parsedColumns.length) {
+                            columnsToUse = validSavedColumns;
+                            sourceOfColumns = "localStorage (valid)";
+                        } else {
+                            console.warn("Some saved columns from localStorage were invalid, falling back to JS defaults.");
+                            columnsToUse = defaultColumns;
+                            sourceOfColumns = "js_defaults_after_invalid_localstorage_entries";
+                            localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
+                        }
+                    } else {
+                        console.warn("Invalid or empty columns array from localStorage, using JS defaults.");
+                        columnsToUse = defaultColumns;
+                        sourceOfColumns = "js_defaults_after_empty_or_invalid_array_localstorage";
+                        localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
+                    }
                 } catch (e) {
+                    console.warn("Error parsing columns from localStorage, using JS defaults.", e);
                     columnsToUse = defaultColumns;
+                    sourceOfColumns = "js_defaults_after_parse_error_localstorage";
+                    localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
                 }
             } else {
                 columnsToUse = defaultColumns;
+                sourceOfColumns = "js_defaults_due_to_empty_localstorage";
+                localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
             }
+            console.log(`Initializing columns from: ${sourceOfColumns}`, columnsToUse);
 
             // Clear both select elements
             availableColumns.innerHTML = '';
@@ -784,15 +813,26 @@ document.addEventListener('DOMContentLoaded', function() {
                 availableColumns.appendChild(option);
             });
 
-            // Move selected columns to selected
+            // Move selected columns (columnsToUse) to the 'selectedColumns' select element
             columnsToUse.forEach(column => {
                 const option = availableColumns.querySelector(`option[value="${column}"]`);
                 if (option) {
-                    selectedColumns.appendChild(option);
+                    selectedColumns.appendChild(option.cloneNode(true)); // Add to selected
+                    // Do not remove from available if you want to keep them there for re-selection
+                } else {
+                    console.warn(`Default column "${column}" not found in all_columns from templateData.`);
+                }
+            });
+            
+            // Now, remove the selected columns from the available list
+            Array.from(selectedColumns.options).forEach(selectedOption => {
+                const availableOption = availableColumns.querySelector(`option[value="${selectedOption.value}"]`);
+                if (availableOption) {
+                    availableColumns.removeChild(availableOption);
                 }
             });
 
-            // Sort both lists
+
             sortOptionsWithAbsoluteOrder(availableColumns);
             sortOptionsWithAbsoluteOrder(selectedColumns);
         }
@@ -879,6 +919,7 @@ document.addEventListener('DOMContentLoaded', function() {
             let displayName = column;
             if (column === 'season_number') displayName = 'S#';
             else if (column === 'episode_number') displayName = 'E#';
+            else if (column === 'size') displayName = 'Size (GB)'; // New
             tableHTML += `<th>${displayName}</th>`;
         });
         tableHTML += '</tr></thead><tbody>';
@@ -890,10 +931,24 @@ document.addEventListener('DOMContentLoaded', function() {
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
             tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
             selectedColumns.forEach(column => {
-                const cellContent = item[column] === null || item[column] === undefined || item[column] === '' 
-                    ? 'None' 
-                    : String(item[column]).replace(/"/g, '&quot;');
-                tableHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
+                let cellContentKey = column;
+                let displayContent;
+
+                if (column === 'size') {
+                    cellContentKey = 'size_gb'; // Data is in item['size_gb']
+                    const rawSize = item[cellContentKey];
+                    if (rawSize === null || rawSize === undefined || typeof rawSize !== 'number') {
+                        displayContent = 'N/A';
+                    } else {
+                        displayContent = rawSize.toFixed(2); // Format to 2 decimal places
+                    }
+                } else {
+                    const rawCellContent = item[cellContentKey];
+                     displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
+                        ? 'None'
+                        : String(rawCellContent).replace(/"/g, '&quot;');
+                }
+                tableHTML += `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
             });
             tableHTML += '</tr>';
         });
@@ -981,35 +1036,66 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Update sort column dropdown with new selected columns
                 const sortColumnSelect = document.getElementById('sort-column');
                 if (sortColumnSelect) {
-                    sortColumnSelect.innerHTML = `
-                        <option value="">None</option>
-                        ${data.selected_columns.map(column => `
-                            <option value="${column}" ${data.sort_column === column ? 'selected' : ''}>
-                                ${column}
-                            </option>
-                        `).join('')}
-                    `;
+                    const currentSortValueInDropdown = sortColumnSelect.value;
+                    sortColumnSelect.innerHTML = `<option value="">None</option>`; // Clear existing
+                    
+                    // data.all_columns from JSON response (includes 'size')
+                    data.all_columns.forEach(column => {
+                        const option = document.createElement('option');
+                        option.value = column;
+                        option.textContent = column;
+                        // data.sort_column is the actual sorted column from backend
+                        if (column === data.sort_column) {
+                            option.selected = true;
+                        }
+                        sortColumnSelect.appendChild(option);
+                    });
+
+                    // Ensure the dropdown reflects the actual sorted column, or a sensible default
+                    if (data.sort_column) {
+                        sortColumnSelect.value = data.sort_column;
+                    } else if (data.all_columns.includes(currentSortValueInDropdown)) {
+                        sortColumnSelect.value = currentSortValueInDropdown; // Preserve if valid
+                    } else {
+                        sortColumnSelect.value = ""; // Default to "None"
+                    }
                 }
 
-                // Update existing filter dropdowns with new columns
+                // Update existing filter dropdowns with new columns (excluding 'size' for filter column selection)
+                const filterableColumns = data.all_columns.filter(col => col !== 'size');
                 document.querySelectorAll('.filter-row').forEach(row => {
                     const columnSelect = row.querySelector('.filter-column');
                     const valueContainer = row.querySelector('.filter-value-container');
                     const currentValueInput = valueContainer.querySelector('.filter-value');
                     const currentFilterValue = currentValueInput ? currentValueInput.value : '';
 
-                    // Update column dropdown options
-                    const currentColumnValue = columnSelect.value;
+                    // Store the column that was selected in this filter row *before* we update its options
+                    const previouslySelectedColumnInThisFilter = columnSelect.value;
+
+                    // Update column dropdown options for this filter row
                     columnSelect.innerHTML = `
                         <option value="">Select Column</option>
-                        ${data.selected_columns.map(column => `
-                            <option value="${column}" ${currentColumnValue === column ? 'selected' : ''}>
+                        ${filterableColumns.map(column => `
+                            <option value="${column}" ${previouslySelectedColumnInThisFilter === column ? 'selected' : ''}>
                                 ${column}
                             </option>
                         `).join('')}
                     `;
-                    // Re-trigger value input update based on the (potentially unchanged) selected column
-                    updateValueInput(valueContainer, currentColumnValue, currentFilterValue, templateData.contentSourceDisplayMap);
+
+                    // Now, columnSelect.value reflects the actual selected column *after* the options were updated.
+                    // If previouslySelectedColumnInThisFilter is no longer in data.selected_columns,
+                    // columnSelect.value will be different (e.g., "" or the first available option).
+
+                    let valueToUseForFilterInput = currentFilterValue;
+                    if (columnSelect.value !== previouslySelectedColumnInThisFilter) {
+                        // The column for this filter row has effectively changed because the old one
+                        // is no longer available or selected. Reset the filter value.
+                        valueToUseForFilterInput = '';
+                    }
+                    
+                    // Re-trigger value input update based on the *actual current* selected column in the dropdown
+                    // and the potentially reset filter value.
+                    updateValueInput(valueContainer, columnSelect.value, valueToUseForFilterInput, templateData.contentSourceDisplayMap);
                 });
 
                 // Update UI to reflect current state

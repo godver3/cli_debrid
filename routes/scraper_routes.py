@@ -411,31 +411,45 @@ def add_torrent_to_debrid():
                 
                 # Get release date from metadata
                 if media_type in ['tv', 'show']:
+                    release_date = 'Unknown' # Initialize to 'Unknown'
                     # For TV shows, get episode-specific release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
                         season_data = metadata['seasons'].get(str(season_number), {})
                         episode_data = season_data.get('episodes', {}).get(str(episode_number), {})
-                        release_date = episode_data.get('first_aired')
-                        if release_date:
+                        first_aired_val = episode_data.get('first_aired') # Use a temporary variable
+                        if first_aired_val: # Check if first_aired_val is not None or empty
+                            parsed_successfully = False
                             try:
-                                # Parse the UTC datetime string
-                                first_aired_utc = datetime.strptime(release_date, "%Y-%m-%dT%H:%M:%S.%fZ")
+                                # Attempt 1: Parse with milliseconds and Z (often show-level)
+                                first_aired_utc = datetime.strptime(first_aired_val, "%Y-%m-%dT%H:%M:%S.%fZ")
                                 first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                parsed_successfully = True
+                            except ValueError:
+                                # Attempt 2: Parse without milliseconds and Z (often episode-level)
+                                try:
+                                    first_aired_utc = datetime.strptime(first_aired_val, "%Y-%m-%dT%H:%M:%S")
+                                    # Assume UTC if 'Z' is not present but it's a common ISO-like format
+                                    first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                    parsed_successfully = True
+                                except ValueError:
+                                    logging.warning(f"Could not parse first_aired_val: '{first_aired_val}' with known datetime formats. Setting release_date to 'Unknown'.")
+                                    # release_date remains 'Unknown' due to initialization and if both parsing attempts fail
 
+                            if parsed_successfully:
                                 # Convert UTC to local timezone
                                 local_tz = _get_local_timezone()
                                 local_dt = first_aired_utc.astimezone(local_tz)
-                                
                                 # Format the local date as string
                                 release_date = local_dt.strftime("%Y-%m-%d")
-                            except ValueError:
-                                release_date = 'Unknown'
+                        # If first_aired_val was None, empty, or unparseable by any tried format, release_date remains 'Unknown'
                 else:
                     # For movies, get movie release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata:
                         release_date = get_release_date(metadata, metadata.get('imdb_id'))
+                        if not release_date: # Ensure get_release_date didn't return None/empty
+                            release_date = 'Unknown'
                     else:
                         release_date = 'Unknown'
                 

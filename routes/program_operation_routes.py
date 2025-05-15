@@ -1,4 +1,4 @@
-from flask import jsonify, request, current_app, Blueprint, logging, render_template
+from flask import jsonify, request, current_app, Blueprint, logging, render_template, flash, redirect, url_for
 from routes import admin_required, user_required
 from .database_routes import perform_database_migration 
 from routes.extensions import initialize_app 
@@ -730,19 +730,39 @@ def task_timings():
 @program_operation_bp.route('/trigger_task', methods=['POST'])
 @admin_required
 def trigger_task():
+    """Manually trigger a task by adding it to the APScheduler queue."""
     task_name = request.form.get('task_name')
     if not task_name:
-        return jsonify({'success': False, 'error': 'Task name is required'})
-    
+        # flash('Task name not provided.', 'error')
+        # return redirect(url_for('program_operation.task_timings'))
+        return jsonify({'success': False, 'message': 'Task name not provided.'}), 400
+
+    runner = get_program_runner()
+    if not runner:
+        # flash('ProgramRunner not initialized. Cannot trigger task.', 'error')
+        # return redirect(url_for('program_operation.task_timings'))
+        return jsonify({'success': False, 'message': 'ProgramRunner not initialized. Cannot trigger task.'}), 500
+
     try:
-        program_runner = get_program_runner()
-        if not program_runner:
-            return jsonify({'success': False, 'error': 'Program is not running'})
+        # trigger_task now returns a dict or raises an exception
+        result = runner.trigger_task(task_name)
         
-        program_runner.trigger_task(task_name)
-        return jsonify({'success': True, 'message': f'Successfully triggered task: {task_name}'})
+        # result will be like {"success": True, "message": "Task 'X' queued...", "job_id": "manual_X_uuid"}
+        # We use flash messages for this route as it's typically form submissions from task_timings.html
+        # flash(f"{result.get('message', 'Task action initiated.')} (Job ID: {result.get('job_id', 'N/A')})", 'success')
+        return jsonify(result) # Return the result from runner.trigger_task directly
+    except ValueError as ve:
+        # flash(f"Error triggering task '{task_name}': {str(ve)}", 'error')
+        return jsonify({'success': False, 'message': f"Error triggering task '{task_name}': {str(ve)}"}), 400
+    except RuntimeError as re:
+        # flash(f"Failed to queue task '{task_name}': {str(re)}", 'error')
+        return jsonify({'success': False, 'message': f"Failed to queue task '{task_name}': {str(re)}"}), 500
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        logging.error(f"Unexpected error triggering task {task_name}: {e}", exc_info=True)
+        # flash(f"An unexpected error occurred while triggering task '{task_name}'.", 'error')
+        return jsonify({'success': False, 'message': f"An unexpected error occurred while triggering task '{task_name}'."}), 500
+        
+    # return redirect(url_for('program_operation.task_timings')) # Old redirect
 
 @program_operation_bp.route('/enable_task', methods=['POST'])
 @admin_required
@@ -879,23 +899,19 @@ def save_task_intervals():
     custom_intervals_seconds_input = data['task_intervals']
     valid_intervals_seconds = {}
     errors = []
-    # --- START EDIT: Define minimum interval in seconds ---
-    MIN_INTERVAL_SECONDS = 10 # Example: Minimum 10 seconds
-    # --- END EDIT ---
+    MIN_INTERVAL_SECONDS = 10
 
     for task_name, interval_seconds_str in custom_intervals_seconds_input.items():
         if interval_seconds_str is None or interval_seconds_str == '':
-             valid_intervals_seconds[task_name] = None # Reset to default
+             valid_intervals_seconds[task_name] = None # Reset to default / Use default
              continue
 
         try:
             interval_sec = int(interval_seconds_str)
-            # --- START EDIT: Validate against minimum seconds ---
             if interval_sec >= MIN_INTERVAL_SECONDS:
                  valid_intervals_seconds[task_name] = interval_sec
             else:
                  errors.append(f"Invalid interval for {task_name}: must be {MIN_INTERVAL_SECONDS} seconds or greater.")
-            # --- END EDIT ---
         except (ValueError, TypeError):
             errors.append(f"Invalid interval format for {task_name}: '{interval_seconds_str}' is not a whole number.")
 
@@ -904,7 +920,6 @@ def save_task_intervals():
 
     intervals_file_path = _get_task_intervals_file_path()
     try:
-        # ... (ensure directory exists) ...
         os.makedirs(os.path.dirname(intervals_file_path), exist_ok=True)
 
         existing_intervals = {}
@@ -913,42 +928,52 @@ def save_task_intervals():
                   with open(intervals_file_path, 'r') as f:
                        existing_intervals = json.load(f)
              except json.JSONDecodeError:
-                  logging.warning(f"Could not decode existing intervals file {intervals_file_path}. Overwriting.")
+                  logging.warning(f"Could not decode existing intervals file {intervals_file_path}. It will be treated as empty.")
                   existing_intervals = {}
 
         final_intervals_to_save = existing_intervals.copy()
-        for task_name, interval_sec in valid_intervals_seconds.items():
-             if interval_sec is None:
-                  if task_name in final_intervals_to_save:
-                       del final_intervals_to_save[task_name]
-             else:
-                  final_intervals_to_save[task_name] = interval_sec # Save seconds
+        
+        # Process the validated intervals from the current request
+        # valid_intervals_seconds contains {task_name: value} or {task_name: None}
+        for task_name, interval_val in valid_intervals_seconds.items():
+            if interval_val is None:
+                # Frontend indicated this task should use its default interval
+                # So, remove it from our map of custom intervals if it's there.
+                if task_name in final_intervals_to_save:
+                    del final_intervals_to_save[task_name]
+            else:
+                # Frontend sent a specific custom value (it's guaranteed not to be the default)
+                # So, save this custom value.
+                final_intervals_to_save[task_name] = interval_val
 
         with open(intervals_file_path, 'w') as f:
             json.dump(final_intervals_to_save, f, indent=4)
 
-        # Trigger live updates if runner is active
         runner = get_program_runner()
         updated_live = 0
         update_errors = []
         if runner and runner.is_running():
             logging.info("Program running, attempting to apply interval changes (seconds) live...")
-            for task_name, interval_sec in valid_intervals_seconds.items(): # Iterate validated seconds
+            # Iterate over valid_intervals_seconds because it reflects the user's latest batch of changes
+            for task_name, interval_sec_or_none in valid_intervals_seconds.items():
                  if hasattr(runner, 'update_task_interval'):
                      try:
-                         # --- START EDIT: Pass seconds to update_task_interval ---
-                         if runner.update_task_interval(task_name, interval_sec): # Pass seconds (or None)
-                         # --- END EDIT ---
+                         if runner.update_task_interval(task_name, interval_sec_or_none): # Pass processed value (int or None)
                               updated_live += 1
                      except Exception as live_e:
                          update_errors.append(f"Error applying live update for {task_name}: {live_e}")
                  else:
                       update_errors.append("ProgramRunner does not support live interval updates.")
-                      break
+                      break # Stop trying if method not found
             if update_errors:
                  logging.warning("Some live interval updates failed: " + "; ".join(update_errors))
-
-        return jsonify(success=True, message="Task intervals saved (seconds). Changes will apply on next program start." + (f" Attempted to apply {updated_live} changes live." if updated_live > 0 else ""))
+        
+        save_message = "Task intervals processed. "
+        if updated_live > 0:
+            save_message += f"{updated_live} changes applied live. "
+        save_message += "Remaining changes (if any) or resets will apply on program restart."
+        
+        return jsonify(success=True, message=save_message)
 
     except Exception as e:
         logging.error(f"Error saving task intervals (seconds) to {intervals_file_path}: {str(e)}", exc_info=True)

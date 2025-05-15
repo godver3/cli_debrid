@@ -9,16 +9,24 @@ from scraper.functions.file_processing import compare_resolutions, parse_size, c
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
+# --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
+# from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
 
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
     season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
     runtime: int, episode_count: int, season_episode_counts: Dict[int, int],
     genres: List[str], matching_aliases: List[str] = None,
+    imdb_id: Optional[str] = None, 
+    direct_api: Optional[Any] = None, # Use 'Any' or the specific DirectAPI type
     preferred_language: str = None,
     translated_title: str = None,
     target_air_date: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+
+    # --- START Logging for season_episode_counts ---
+    #logging.debug(f"filter_results called for '{title}' S{season}E{episode if episode else ''}. Received season_episode_counts: {season_episode_counts}")
+    # --- END Logging ---
 
     filtered_results = []
     pre_size_filtered_results = []  # Track results before size filtering
@@ -55,7 +63,13 @@ def filter_results(
     #logging.debug(f"Content type: {'movie' if is_movie else 'episode'}, Anime: {is_anime}, Title similarity threshold: {similarity_threshold}")
     
     # Cache season episode counts for multi-episode content
-    total_episodes = sum(season_episode_counts.values()) if is_episode else 0
+    total_episodes = sum(season_episode_counts.values()) if season_episode_counts and is_episode else 0
+    # --- START Logging for total_episodes ---
+    #logging.debug(f"Calculated total_episodes for '{title}': {total_episodes} (based on is_episode: {is_episode}, initial season_episode_counts: {season_episode_counts})")
+    # --- END Logging ---
+    
+    # --- Cache for API fallback results within this filter_results call ---
+    _fetched_detailed_seasons_data_cache = None
     
     for result in results:
         try:
@@ -63,6 +77,11 @@ def filter_results(
             original_title = result.get('original_title', result.get('title', ''))
             parsed_info = result.get('parsed_info', {})
             additional_metadata = result.get('additional_metadata', {}) # Get additional metadata
+            
+            # --- Get scraper_type from the result ---
+            result_scraper_type = result.get('scraper_type', 'Unknown') # Default to Unknown
+            result_scraper_instance = result.get('scraper_instance', 'Unknown')
+            # logging.debug(f"Processing result from Scraper Type: {result_scraper_type}, Instance: {result_scraper_instance}")
             
             # Extract potential fields from additional_metadata
             filename = additional_metadata.get('filename')
@@ -412,78 +431,155 @@ def filter_results(
                     #logging.debug("✓ Passed episode checks")
                     # --- End Episode Check ---
             
+            # --- START Logging before size calculation ---
+            #logging.debug(f"Processing for size calc: '{original_title}', is_episode: {is_episode}")
+            #logging.debug(f"Full parsed_info: {result.get('parsed_info')}")
+            current_season_episode_info = result.get('parsed_info', {}).get('season_episode_info', {})
+            #logging.debug(f"season_episode_info for '{original_title}': {current_season_episode_info}")
+            current_season_pack_type = current_season_episode_info.get('season_pack', 'Unknown')
+            #logging.debug(f"season_pack_type_from_parse for '{original_title}': {current_season_pack_type}")
+            current_parsed_ep_list = current_season_episode_info.get('episodes', [])
+            #logging.debug(f"parsed_episodes_list_from_parse for '{original_title}': {current_parsed_ep_list}")
+            # --- END Logging before size calculation ---
+            
             # Size calculation
-            total_size_gb = parse_size(result.get('size', 0)) # Use a distinct variable for total size
-            size_gb = total_size_gb # Default size_gb to total size
-            size_per_season = None # Initialize
-            bitrate = 0 # Initialize bitrate
+            total_size_gb = parse_size(result.get('size', 0)) # Raw total size of the torrent
+            size_gb_for_filter = total_size_gb # Default: use total size (for movies or single episodes)
+            
+            result['total_size_gb'] = total_size_gb
+            
+            num_episodes_in_pack = 0 
+            is_identified_as_pack = False 
+            
+            # --- Check if scraper already provides per-item size ---
+            provides_per_item_size = result_scraper_type in ['Torrentio', 'MediaFusion']
             
             if is_episode:
                 season_episode_info = result.get('parsed_info', {}).get('season_episode_info', {})
-                season_pack = season_episode_info.get('season_pack', 'Unknown')
-                is_pack = season_pack not in ['N/A', 'Unknown'] or len(season_episode_info.get('episodes', [])) > 1
+                season_pack_type_from_parse = season_episode_info.get('season_pack', 'Unknown') 
+                parsed_episodes_list_from_parse = season_episode_info.get('episodes', [])
                 
-                # Determine episode count and runtime for bitrate calc based on pack type
-                if is_pack:
-                    pack_episode_count = 0
-                    if season_pack == 'Complete':
-                        # Use the pre-calculated total episodes across all known seasons
-                        pack_episode_count = total_episodes 
-                    elif season_pack not in ['N/A', 'Unknown']:
-                        # Sum episodes for the specific seasons in the pack
-                        try:
-                            season_numbers = [int(s) for s in season_pack.split(',') if s.isdigit()]
-                            pack_episode_count = sum(season_episode_counts.get(s, 0) for s in season_numbers)
-                            
-                            # --- Calculate size_per_season ---
-                            num_seasons = len(season_numbers)
-                            if num_seasons > 0:
-                                size_per_season = total_size_gb / num_seasons
-                            # --- End Calculate size_per_season ---
-                                
-                        except ValueError:
-                            logging.warning(f"Could not parse season numbers from season_pack '{season_pack}' for '{original_title}'")
-                            pack_episode_count = len(season_episode_info.get('episodes', [])) # Fallback
-                    else: # Unknown pack type, likely multiple episodes detected
-                         pack_episode_count = len(season_episode_info.get('episodes', []))
+                is_identified_as_pack = (season_pack_type_from_parse not in ['N/A', 'Unknown']) or \
+                                        (len(parsed_episodes_list_from_parse) > 1)
 
-                    # Use average runtime * number of episodes for bitrate
-                    total_pack_runtime = runtime * pack_episode_count if pack_episode_count > 0 else runtime
-                    bitrate = calculate_bitrate(total_size_gb, total_pack_runtime)
+                if is_identified_as_pack:
+                    # If scraper provides per-item size, num_episodes_in_pack effectively becomes 1 for size calculation
+                    # But we still want to calculate the true num_episodes_in_pack for bitrate
                     
-                    # For filtering, still use total size
-                    size_gb = total_size_gb 
+                    # Calculate true number of episodes in the pack for bitrate calculation
+                    if season_pack_type_from_parse == 'Complete':
+                        num_episodes_in_pack = total_episodes
+                        if num_episodes_in_pack == 0 and imdb_id and direct_api:
+                            # API fallback logic for 'Complete' packs (as previously implemented)
+                            logging.warning(f"'Complete' pack '{original_title}' but initial total_episodes is 0. Attempting API fallback for imdb_id: {imdb_id}.")
+                            if _fetched_detailed_seasons_data_cache is None:
+                                try:
+                                    detailed_s_data, _ = direct_api.get_show_seasons(imdb_id=imdb_id)
+                                    _fetched_detailed_seasons_data_cache = detailed_s_data if detailed_s_data else {}
+                                except Exception as api_err:
+                                    logging.error(f"API fallback direct_api.get_show_seasons failed for {imdb_id} (Complete): {api_err}")
+                                    _fetched_detailed_seasons_data_cache = {}
+                            if _fetched_detailed_seasons_data_cache:
+                                api_total_eps = sum(s_data.get('episode_count', 0) for s_data in _fetched_detailed_seasons_data_cache.values())
+                                if api_total_eps > 0:
+                                    num_episodes_in_pack = api_total_eps
+                                    logging.info(f"API fallback for 'Complete' pack '{original_title}'. Set num_episodes_in_pack to {num_episodes_in_pack}")
+                    elif season_pack_type_from_parse not in ['N/A', 'Unknown']:
+                        # Logic for specific season packs (S01, S01,S02) to calculate num_episodes_in_pack
+                        # (as previously implemented, including API fallback)
+                        current_sum = 0
+                        try:
+                            season_numbers_in_pack = []
+                            raw_season_parts = season_pack_type_from_parse.split(',')
+                            for part in raw_season_parts:
+                                cleaned_part = part.strip().lstrip('S').lstrip('s')
+                                if cleaned_part.isdigit():
+                                    season_numbers_in_pack.append(int(cleaned_part))
+                            if season_numbers_in_pack:
+                                for s_num in season_numbers_in_pack:
+                                    ep_count_for_season = season_episode_counts.get(s_num, 0) if season_episode_counts else 0
+                                    if ep_count_for_season == 0 and imdb_id and direct_api:
+                                        # API fallback logic for specific season
+                                        logging.warning(f"Season S{s_num} count is 0 for '{original_title}'. Attempting API fallback for imdb_id: {imdb_id}.")
+                                        if _fetched_detailed_seasons_data_cache is None:
+                                            try:
+                                                detailed_s_data, _ = direct_api.get_show_seasons(imdb_id=imdb_id)
+                                                _fetched_detailed_seasons_data_cache = detailed_s_data if detailed_s_data else {}
+                                            except Exception as api_err:
+                                                logging.error(f"API fallback direct_api.get_show_seasons failed for {imdb_id} (S{s_num}): {api_err}")
+                                                _fetched_detailed_seasons_data_cache = {}
+                                        if s_num in _fetched_detailed_seasons_data_cache:
+                                            fetched_s_data = _fetched_detailed_seasons_data_cache[s_num]
+                                            ep_count_for_season = fetched_s_data.get('episode_count', 0)
+                                            logging.info(f"API fallback for S{s_num} of '{original_title}' got episode_count: {ep_count_for_season}")
+                                    current_sum += ep_count_for_season
+                                num_episodes_in_pack = current_sum
+                        except ValueError: # Fallback for parsing error
+                            if len(parsed_episodes_list_from_parse) > 1:
+                                num_episodes_in_pack = len(parsed_episodes_list_from_parse)
+                    else: # Pack identified by PTT parsed episodes list
+                        if len(parsed_episodes_list_from_parse) > 1:
+                            num_episodes_in_pack = len(parsed_episodes_list_from_parse)
 
-                else: # Single episode
-                    size_gb = total_size_gb
-                    bitrate = calculate_bitrate(size_gb, runtime)
+                    # If num_episodes_in_pack is still 0 after attempts, try PTT's list again
+                    if num_episodes_in_pack == 0 and len(parsed_episodes_list_from_parse) > 1:
+                         num_episodes_in_pack = len(parsed_episodes_list_from_parse)
+                         logging.warning(f"Pack '{original_title}': num_episodes_in_pack was 0, used PTT parsed_episodes_list_from_parse length: {num_episodes_in_pack}")
 
-                # Store the calculated values
-                result['size'] = size_gb # Store the size used for filtering (usually total size)
-                result['size_per_season'] = size_per_season # Store per-season size if applicable
-                result['total_size_gb'] = total_size_gb # Store original total size for reference
 
-            else: # Movie
-                size_gb = total_size_gb
-                bitrate = calculate_bitrate(size_gb, runtime)
-                result['size'] = size_gb # Store total size
-                result['total_size_gb'] = total_size_gb # Store original total size
+                    if provides_per_item_size:
+                        logging.debug(f"Scraper '{result_scraper_type}' provides per-item size. Using total_size_gb ({total_size_gb:.2f}GB) directly for filtering '{original_title}'.")
+                        size_gb_for_filter = total_size_gb # Already the per-item size
+                        # num_episodes_in_pack is still needed for accurate bitrate of the single item Torrentio/MediaFusion represents
+                        if num_episodes_in_pack == 0: # If it's a pack but we couldn't count episodes
+                           if len(parsed_episodes_list_from_parse) > 0 : # PTT might have parsed episode numbers even if it's a single file from Torrentio
+                               num_episodes_in_pack = len(parsed_episodes_list_from_parse)
+                           else: # Assume it's one episode if Torrentio/Mediafusion and no other info
+                               num_episodes_in_pack = 1 
+                               logging.debug(f"For {result_scraper_type} result '{original_title}', assuming 1 episode for bitrate as pack count is 0.")
+                    elif num_episodes_in_pack > 0:
+                        size_gb_for_filter = total_size_gb / num_episodes_in_pack
+                    else:
+                        # This is the final fallback if not Torrentio/Mediafusion and still no episode count
+                        logging.warning(f"Pack '{original_title}' (Scraper: {result_scraper_type}): Could not determine episode count. Using total pack size {total_size_gb:.2f}GB for filtering.")
+                        size_gb_for_filter = total_size_gb
+
+
+            result['size'] = size_gb_for_filter 
+            
+            bitrate = 0
+            effective_runtime_for_bitrate = runtime 
+            
+            if is_episode:
+                # For bitrate, we need total runtime of what the torrent contains
+                if is_identified_as_pack:
+                    if num_episodes_in_pack > 0: # Use calculated/fallback num_episodes_in_pack
+                        effective_runtime_for_bitrate = runtime * num_episodes_in_pack
+                    # If num_episodes_in_pack is still 0 here, bitrate will be high but based on single episode runtime
+                # else (single episode): effective_runtime_for_bitrate is already 'runtime'
+            
+            if effective_runtime_for_bitrate > 0: 
+                 bitrate = calculate_bitrate(total_size_gb, effective_runtime_for_bitrate) # Bitrate base is always total_size_gb
 
             result['bitrate'] = bitrate
-            #logging.debug(f"Size: {result['size']:.2f}GB (Total: {total_size_gb:.2f}GB, Per Season: {size_per_season}), Bitrate: {bitrate:.2f}Mbps")
+            result['num_episodes_in_pack_calculated'] = num_episodes_in_pack 
+
+            #logging.debug(f"Filtering '{original_title}': Effective Size for Filter: {result['size']:.2f}GB (Total: {result['total_size_gb']:.2f}GB, Calc'd Episodes in Pack: {num_episodes_in_pack}), Bitrate: {bitrate:.2f}Mbps")
             
             # Add to pre-size filtered results
-            pre_size_filtered_results.append(result)
+            pre_size_filtered_results.append(result.copy()) 
             
             # Size filters
             if result['size'] > 0:
                 if result['size'] < min_size_gb:
-                    result['filter_reason'] = f"Size too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
-                    logging.info(f"Rejected: Size {result['size']:.2f}GB below minimum {min_size_gb}GB for '{original_title}'")
+                    size_type_msg = "Average episode size" if is_episode and is_identified_as_pack and num_episodes_in_pack > 0 else "Size"
+                    result['filter_reason'] = f"{size_type_msg} too small: {result['size']:.2f} GB (min: {min_size_gb} GB)"
+                    logging.info(f"Rejected: {size_type_msg} {result['size']:.2f}GB below minimum {min_size_gb}GB for '{original_title}' (Total pack: {result['total_size_gb']:.2f}GB)")
                     continue
                 if result['size'] > max_size_gb:
+                    size_type_msg = "Average episode size" if is_episode and is_identified_as_pack and num_episodes_in_pack > 0 else "Size"
                     result['filter_reason'] = f"Size too large: {result['size']:.2f} GB (max: {max_size_gb} GB)"
-                    logging.info(f"Rejected: Size {result['size']:.2f}GB above maximum {max_size_gb}GB for '{original_title}'")
+                    logging.info(f"Rejected: {size_type_msg} {result['size']:.2f}GB above maximum {max_size_gb}GB for '{original_title}' (Total pack: {result['total_size_gb']:.2f}GB)")
                     continue
             #logging.debug("✓ Passed size checks")
             

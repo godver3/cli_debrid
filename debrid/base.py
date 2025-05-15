@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Union, Tuple
+from typing import List, Dict, Optional, Union, Tuple, Any
 from .common import RateLimiter, timed_lru_cache
 from .status import TorrentStatus
 import hashlib
@@ -9,6 +9,9 @@ import logging
 from cryptography.fernet import Fernet
 from .common.c7d9e45f import _v, _p1, _p2, _p3
 import functools
+
+# Import from the new location: debrid.status
+from debrid.status import TorrentInfoStatus, TorrentFetchStatus
 
 class EncryptedCapabilityDescriptor:
     """A descriptor that protects capability values from being overridden"""
@@ -141,11 +144,18 @@ class DebridProvider(ABC):
 
     @abstractmethod
     def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
-        """Get information about a specific torrent"""
+        """Get basic information about a torrent."""
         pass
-        
+
     @abstractmethod
-    def remove_torrent(self, torrent_id: str) -> None:
+    def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
+        """
+        Get detailed information about a torrent, including fetch status.
+        """
+        pass
+
+    @abstractmethod
+    def remove_torrent(self, torrent_id: str, removal_reason: Optional[str] = None) -> bool:
         """Remove a torrent from the service"""
         pass
         

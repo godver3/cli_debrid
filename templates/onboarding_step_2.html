@@ -550,6 +550,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const localDescription = document.getElementById('local-description');
     const overrideCheckbox = document.getElementById('windows_symlink_override');
     const symlinkWarningDiv = document.getElementById('windows-symlink-warning');
+    const originalFilesPathLabel = document.querySelector('label[for="original_files_path"]');
 
     // Plex-related variables
     const plexAuthBtn = document.getElementById('plex-auth-btn');
@@ -607,11 +608,17 @@ document.addEventListener('DOMContentLoaded', function() {
             localFields.classList.remove('active');
             plexDescription.style.display = 'block';
             localDescription.style.display = 'none';
+            if (originalFilesPathLabel) {
+                originalFilesPathLabel.textContent = 'Original Files Path (Optional):';
+            }
         } else {
             plexFields.classList.remove('active');
             localFields.classList.add('active');
             plexDescription.style.display = 'none';
             localDescription.style.display = 'block';
+            if (originalFilesPathLabel) {
+                originalFilesPathLabel.textContent = 'Original Files Path:';
+            }
         }
         // Always show Plex auth section
         document.querySelector('.plex-auth-section').style.display = 'block';

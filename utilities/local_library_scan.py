@@ -438,7 +438,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 item_identifier += f" S{item.get('season_number', '00'):02d}E{item.get('episode_number', '00'):02d}"
             
             # Check if this is a potential upgrade based on release date
-            if item.get('release_date', '').lower() in ['unknown', 'none', '']:
+            if str(item.get('release_date', '')).lower() in ['unknown', 'none', '']:
                 # Treat unknown release dates as very recent (0 days since release)
                 logging.debug(f"[UPGRADE] Unknown release date for {item_identifier} - treating as new content")
                 days_since_release = 0

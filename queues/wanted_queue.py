@@ -246,7 +246,7 @@ class WantedQueue:
 
                     # Move to Unreleased if physical required but missing (and not magnet assigned)
                     # This check is now safe because early_release items already continued
-                    if not is_magnet_assigned and require_physical and not physical_release_date:
+                    if not is_magnet_assigned and require_physical and not physical_release_date and item.get('type') != 'episode':
                         logging.info(f"Item {item_identifier} requires physical release date but none available. Moving to Unreleased.")
                         queue_manager.move_to_unreleased(item, "Wanted")
                         moved_to_unreleased_count += 1
@@ -262,7 +262,7 @@ class WantedQueue:
                          continue
                     elif release_date_str and str(release_date_str).lower() not in ['unknown', 'none']:
                          try:
-                             if require_physical and physical_release_date:
+                             if item.get('type') == 'movie' and require_physical and physical_release_date:
                                  release_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
                              else:
                                  release_date = datetime.strptime(str(release_date_str), '%Y-%m-%d').date()

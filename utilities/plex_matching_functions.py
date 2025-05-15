@@ -10,6 +10,50 @@ import time  # Add time import for sleep
 import urllib.parse
 from difflib import SequenceMatcher # For comparing titles
 from cli_battery.app.direct_api import DirectAPI # Added import
+import json # Added import
+from datetime import datetime, timezone # Added import
+
+REMATCH_LOG_FILE = "plex_rematch_attempts.json"
+
+def _get_rematch_log_path() -> str:
+    """Returns the absolute path to the rematch log file."""
+    db_content_dir = os.environ.get('USER_DB_CONTENT', os.path.join(os.getcwd(), 'db_content'))
+    # Ensure USER_DB_CONTENT directory exists, though it should by main.py
+    os.makedirs(db_content_dir, exist_ok=True)
+    return os.path.join(db_content_dir, REMATCH_LOG_FILE)
+
+def _load_rematch_log() -> Dict[str, str]:
+    """Loads the rematch log from the JSON file."""
+    log_path = _get_rematch_log_path()
+    if not os.path.exists(log_path):
+        return {}
+    try:
+        with open(log_path, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        logging.error(f"Error decoding rematch log file: {log_path}. Returning empty log.")
+        return {}
+    except Exception as e:
+        logging.error(f"Error loading rematch log file: {log_path}. {e}. Returning empty log.")
+        return {}
+
+def _save_rematch_log(log_data: Dict[str, str]) -> None:
+    """Saves the rematch log to the JSON file."""
+    log_path = _get_rematch_log_path()
+    try:
+        with open(log_path, 'w') as f:
+            json.dump(log_data, f, indent=4)
+    except Exception as e:
+        logging.error(f"Error saving rematch log file: {log_path}. {e}")
+
+def _add_to_rematch_log(plex_rating_key: str, log_data: Dict[str, str]) -> None:
+    """Adds or updates an entry in the rematch log."""
+    log_data[str(plex_rating_key)] = datetime.now(timezone.utc).isoformat()
+    _save_rematch_log(log_data)
+
+def _has_been_attempted(plex_rating_key: str, log_data: Dict[str, str]) -> bool:
+    """Checks if a rematch has been attempted for the given Plex rating key."""
+    return str(plex_rating_key) in log_data
 
 def _similar(a, b):
     """Helper function for string similarity"""
@@ -19,6 +63,7 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
     """
     Force matches a Plex item with a specific TMDB ID using the best available match result.
     If the item contains multiple movies (based on our database records), it will attempt to split them first.
+    Logs attempts to prevent re-processing.
 
     Args:
         db_title (str): The correct title from our database.
@@ -29,6 +74,17 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
     Returns:
         bool: True if successful, False otherwise
     """
+    if not plex_rating_key:
+        logging.error("No Plex rating key provided for item. Cannot attempt force match.")
+        return False
+
+    rematch_log = _load_rematch_log()
+    if _has_been_attempted(plex_rating_key, rematch_log):
+        logging.info(f"Rematch for item with rating key {plex_rating_key} has been attempted before. Skipping. Last attempt: {rematch_log.get(str(plex_rating_key))}")
+        return False # Indicate skipped due to previous attempt
+
+    # Flag to ensure we log the attempt even if an early exit/error occurs
+    attempt_logged = False
     try:
         # Get Plex connection details from settings
         baseurl = get_setting("Plex", "url", default="http://localhost:32400")
@@ -36,11 +92,6 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
         
         if not token:
             logging.error("No Plex token found in settings")
-            return False
-            
-        if not plex_rating_key:
-            # Need rating key to identify the item in Plex
-            logging.error("No Plex rating key provided for item")
             return False
             
         logging.info(f"Attempting to match item with rating key: {plex_rating_key} to DB Title: '{db_title}', Year: {db_year}, Target TMDB ID: {tmdb_id}")
@@ -59,6 +110,8 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
             item = plex.fetchItem(int(plex_rating_key))
         except Exception as e:
             logging.error(f"Failed to fetch item with rating key {plex_rating_key}: {str(e)}")
+            _add_to_rematch_log(plex_rating_key, rematch_log) # Log attempt
+            attempt_logged = True
             return False
 
         # Set up headers for potential future direct API calls if needed
@@ -127,6 +180,8 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
                             logging.warning("Item split. Re-run needed to match the correct new item.")
                             # We cannot reliably get the new item's rating key here easily.
                             # The safest approach is to let the next run pick up the split items individually.
+                            _add_to_rematch_log(plex_rating_key, rematch_log)
+                            attempt_logged = True
                             return False # Indicate failure for this run, let next cycle handle split items
                         else:
                             logging.warning(f"Failed to split item: HTTP {response.status_code}. Proceeding without split.")
@@ -153,6 +208,8 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
             if is_tv_show:
                 if not hasattr(item, 'grandparentRatingKey'):
                     logging.error("Episode missing grandparentRatingKey")
+                    _add_to_rematch_log(plex_rating_key, rematch_log)
+                    attempt_logged = True
                     return False
                 plex_rating_key = str(item.grandparentRatingKey)
                 item = plex.fetchItem(int(plex_rating_key)) # Get the show item
@@ -173,6 +230,8 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
             # If already matched correctly, return True
             if current_tmdb_id and current_tmdb_id == str(tmdb_id):
                  logging.info(f"Item '{item.title}' is already matched with the correct TMDB ID {tmdb_id}. Skipping fix.")
+                 _add_to_rematch_log(plex_rating_key, rematch_log)
+                 attempt_logged = True
                  return True
             # Add check for IMDb ID if TMDB ID is missing but we have an IMDb ID in DB? (Requires passing IMDb ID)
             # elif current_imdb_id and current_imdb_id == db_imdb_id: ...
@@ -205,12 +264,13 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
 
                 if not matches:
                     logging.error(f"No potential matches found for '{search_title}' ({search_year}). Cannot apply fix.")
+                    _add_to_rematch_log(plex_rating_key, rematch_log)
+                    attempt_logged = True
                     return False
 
                 # Loop through each result, try matching, verify, and unmatch if wrong
                 # This loop naturally processes from the top (index 0) of the 'matches' list
                 for idx, match_result in enumerate(matches, 1):
-                    if idx > 5: break # Limit to 5 matches
                     result_name = getattr(match_result, 'name', 'N/A')
                     result_year = getattr(match_result, 'year', 'N/A')
                     result_guid = getattr(match_result, 'guid', 'N/A') # This is likely plex://
@@ -254,6 +314,8 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
                                 # Continue to next attempt despite unmatch error? Risky, could leave item wrongly matched.
                                 # Let's break the loop here to be safe, as state is uncertain.
                                 logging.error("Stopping further attempts due to unmatch error.")
+                                _add_to_rematch_log(plex_rating_key, rematch_log)
+                                attempt_logged = True
                                 return False # Indicate failure due to unstable state
 
 
@@ -268,34 +330,52 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
                         except Exception as unmatch_e_after_error:
                              logging.error(f"Failed to unmatch after error during fixMatch attempt {idx}: {str(unmatch_e_after_error)}")
                              logging.error("Stopping further attempts due to unmatch error.")
+                             _add_to_rematch_log(plex_rating_key, rematch_log)
+                             attempt_logged = True
                              return False # Indicate failure due to unstable state
                         # Continue to the next potential match in the outer loop
 
                 # After the loop finishes
                 if not target_match_found:
                     logging.error(f"Iterated through all {len(matches)} match results, none resulted in the correct TMDB ID {tmdb_id}.")
+                    _add_to_rematch_log(plex_rating_key, rematch_log)
+                    attempt_logged = True
                     return False
                 else:
                     # This part should only be reached if break happened due to success
+                    _add_to_rematch_log(plex_rating_key, rematch_log)
+                    attempt_logged = True
                     return True
 
             except Exception as e:
                 logging.error(f"Error during Plex match search or trial-and-error loop: {str(e)}")
                 import traceback
                 logging.error(traceback.format_exc())
+                _add_to_rematch_log(plex_rating_key, rematch_log)
+                attempt_logged = True
                 return False
 
         except Exception as e:
             logging.error(f"Error in force_match_with_tmdb outer logic: {str(e)}")
             import traceback
             logging.error(traceback.format_exc())
+            _add_to_rematch_log(plex_rating_key, rematch_log)
+            attempt_logged = True
             return False
 
     except Exception as e:
         logging.error(f"Error setting up Plex connection or fetching item: {str(e)}")
         import traceback
         logging.error(traceback.format_exc())
+        # Log attempt if not already logged due to inner try/excepts
+        if not attempt_logged:
+            _add_to_rematch_log(plex_rating_key, rematch_log)
         return False
+    finally:
+        # Ensure the attempt is logged if an unexpected error occurred before explicit logging points
+        if not attempt_logged and plex_rating_key:
+             _add_to_rematch_log(plex_rating_key, rematch_log)
+             logging.info(f"Force match attempt for rating key {plex_rating_key} logged in finally block.")
 
 def is_item_matched(item: Dict[str, Any]) -> bool:
     """

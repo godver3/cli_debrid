@@ -5,6 +5,7 @@ import concurrent.futures
 import os
 import json
 from datetime import datetime
+import time
 from .nyaa import scrape_nyaa
 from .jackett import scrape_jackett_instance
 from .mediafusion import scrape_mediafusion_instance
@@ -89,11 +90,15 @@ class ScraperManager:
         
         # Helper function to run a scraper and handle exceptions
         def run_scraper(instance, scraper_type, settings, is_translated):
+            results = []
+            scraper_call_start_time = 0
+            scraper_call_duration = 0
             try:
                 if scraper_type not in self.scrapers:
-                     logging.error(f"Scraper function for type '{scraper_type}' not found.")
+                     logging.error(f"Scraper function for type \'{scraper_type}\' not found.")
                      return instance, scraper_type, []
 
+                scraper_call_start_time = time.time()
                 if scraper_type in ['Nyaa', 'OldNyaa']:
                      # Nyaa has a different function signature
                      if scraper_type == 'Nyaa':
@@ -135,11 +140,16 @@ class ScraperManager:
 
                     results = self.scrapers[scraper_type](**common_args)
 
-                # logging.info(f"Found {len(results)} results from {instance} ({scraper_type})") # Log count here if desired
-                return instance, scraper_type, results # Return type along with results
+                scraper_call_duration = time.time() - scraper_call_start_time
+                logging.info(f"Scraper {instance} ({scraper_type}) call took {scraper_call_duration:.2f}s, found {len(results)} results.")
+                return instance, scraper_type, results
             except Exception as e:
-                logging.error(f"Error scraping {scraper_type} instance '{instance}': {str(e)}", exc_info=True)
-                return instance, scraper_type, []
+                if scraper_call_start_time > 0: # Check if timing started
+                    scraper_call_duration = time.time() - scraper_call_start_time
+                    logging.error(f"Error during {scraper_type} instance \'{instance}\' call (took {scraper_call_duration:.2f}s): {str(e)}", exc_info=True)
+                else: # Error before scraper call (e.g., scraper not found)
+                    logging.error(f"Error preparing to scrape {scraper_type} instance \'{instance}\': {str(e)}", exc_info=True)
+                return instance, scraper_type, [] # Return empty list on error
 
         # If no IMDB ID is available, only use Nyaa (for anime) and Jackett scrapers
         if not imdb_id:
@@ -346,10 +356,15 @@ class ScraperManager:
         return enriched_results
 
     def _enrich_results(self, results: List[Dict[str, Any]], instance_summary: Dict[str, Dict]) -> List[Dict[str, Any]]:
-        """Adds additional metadata to results based on their source."""
+        """Adds additional metadata to results based on their source and normalizes titles."""
         instance_to_type = {name: summary.get('type') for name, summary in instance_summary.items()}
 
         for result in results:
+            # Normalize title: remove content after "┈➤"
+            current_title = result.get('title', '')
+            if '┈➤' in current_title:
+                result['title'] = current_title.split('┈➤')[0].strip()
+
             source_parts = result.get('source', '').split(' - ')
             instance_name = source_parts[0] if source_parts else None
 

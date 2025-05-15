@@ -131,3 +131,5 @@ const Loading = {
         }
     }
 };
+
+window.Loading = Loading; // Make it globally accessible

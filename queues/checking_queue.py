@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from queues.run_program import get_and_add_recent_collected_from_plex, run_recent_local_library_scan
 from utilities.local_library_scan import check_local_file_for_item
 from utilities.plex_functions import plex_update_item
@@ -16,6 +16,10 @@ import os
 from datetime import datetime
 from queues.upgrading_queue import UpgradingQueue
 from routes.notifications import send_upgrade_failed_notification
+from debrid.status import TorrentFetchStatus
+
+# Define a constant for clarity when get_torrent_progress signals a missing torrent
+PROGRESS_RESULT_MISSING = "MISSING_TORRENT"
 
 class CheckingQueue:
     _instance = None
@@ -240,57 +244,96 @@ class CheckingQueue:
                 logging.error(f"Failed to handle item {item.get('id', 'unknown')} for missing torrent {torrent_id}: {str(e)}")
 
     @timed_lru_cache(seconds=60)
-    def get_torrent_progress(self, torrent_id: str) -> Optional[int]:
-        """Get the current progress percentage for a torrent"""
+    def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
+        """
+        Get the current progress percentage for a torrent or a status string.
+        Returns:
+            - int: Torrent progress percentage if successful.
+            - PROGRESS_RESULT_MISSING (str): If the torrent is confirmed missing (404).
+            - None: If there's a temporary issue (e.g., rate limit, other recoverable error),
+                    or if progress cannot be determined for other reasons that warrant a retry.
+        """
         try:
-            torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
-            if torrent_info:
-                return torrent_info.get('progress', 0)
-            else:
-                logging.info(f"Torrent {torrent_id} not found on Real-Debrid (404)")
+            status_result = self.debrid_provider.get_torrent_info_with_status(torrent_id)
+
+            if status_result.status == TorrentFetchStatus.OK:
+                return status_result.data.get('progress', 0) if status_result.data else 0
+            elif status_result.status == TorrentFetchStatus.NOT_FOUND:
+                logging.info(f"Torrent {torrent_id} confirmed NOT FOUND (404) by provider.")
+                return PROGRESS_RESULT_MISSING
+            elif status_result.status in [
+                TorrentFetchStatus.RATE_LIMITED,
+                TorrentFetchStatus.PROVIDER_HANDLED_ERROR, # Error logged by provider, treat as temp
+                TorrentFetchStatus.SERVER_ERROR, # Often temporary
+                TorrentFetchStatus.REQUEST_ERROR # Network issues, often temporary
+            ]:
+                logging.warning(
+                    f"Temporary issue fetching torrent {torrent_id} info: {status_result.status.value} - {status_result.message}. Will retry."
+                )
+                return None # Signal to retry later
+            elif status_result.status in [
+                TorrentFetchStatus.CLIENT_ERROR, # Non-404/429 client errors
+                TorrentFetchStatus.UNKNOWN_ERROR
+            ]:
+                logging.error(
+                    f"Error fetching torrent {torrent_id} info: {status_result.status.value} - {status_result.message}. Treating as temporary for now to allow retries."
+                )
+                # For now, to be safe and avoid incorrect blacklisting for potentially recoverable client/unknown errors,
+                # treat as temporary (None). Specific permanent client errors would need explicit handling if they shouldn't be retried.
                 return None
+            else: # Should not happen if all enum values are covered
+                logging.error(f"Unhandled TorrentFetchStatus {status_result.status} for torrent {torrent_id}")
+                return None
+
         except Exception as e:
-            logging.error(f"Failed to get progress for torrent {torrent_id}: {str(e)}")
-            return None
+            logging.error(f"Exception in get_torrent_progress for {torrent_id}: {str(e)}", exc_info=True)
+            return None # General error, treat as temporary for retry
 
     def get_torrent_state(self, torrent_id: str) -> str:
-        """Get the current state of a torrent (downloaded or downloading)"""
+        """Get the current state of a torrent (downloaded, downloading, missing, or unknown)"""
         try:
-            current_progress = self.get_torrent_progress(torrent_id)
-            
-            # Handle case where progress couldn't be retrieved (404 error)
-            if current_progress is None:
-                logging.info(f"Could not get progress for torrent {torrent_id}, returning unknown state")
-                # This is likely a 404 error, so we should handle the missing torrent
+            progress_or_status = self.get_torrent_progress(torrent_id)
+
+            if progress_or_status == PROGRESS_RESULT_MISSING:
+                logging.info(f"Torrent {torrent_id} is missing. Handling via handle_missing_torrent.")
                 try:
                     # Import QueueManager here to avoid circular imports
                     from queues.queue_manager import QueueManager
                     queue_manager = QueueManager()
+                    # This method will move items to Wanted and add to not-wanted list
                     self.handle_missing_torrent(torrent_id, queue_manager)
-                    return 'missing'
+                    return 'missing' # State to indicate it was handled as missing
                 except Exception as e:
-                    logging.error(f"Failed to handle missing torrent: {str(e)}")
-                    return 'unknown'
-            
-            # If progress is 100%, it's downloaded
-            if current_progress == 100:
-                return 'downloaded'
-            
-            # If we have any progress > 0, it's downloading
-            if current_progress > 0:
-                return 'downloading'
-            
-            # Check progress history if available
-            if torrent_id in self.progress_checks:
-                last_progress = self.progress_checks[torrent_id]['last_progress']
-                if last_progress == 100:
+                    logging.error(f"Failed to execute handle_missing_torrent for {torrent_id} within get_torrent_state: {str(e)}")
+                    return 'unknown' # Fallback if handling fails
+
+            elif isinstance(progress_or_status, int):
+                current_progress = progress_or_status
+                if current_progress == 100:
                     return 'downloaded'
-                if last_progress is not None and current_progress > last_progress:
+                if current_progress > 0:
                     return 'downloading'
-            
-            return 'unknown'
+                
+                # Check progress history if available for 0% progress (existing logic)
+                if torrent_id in self.progress_checks:
+                    last_progress = self.progress_checks[torrent_id]['last_progress']
+                    if last_progress == 100: # Could have been checked just before completion
+                        return 'downloaded'
+                    if last_progress is not None and current_progress > last_progress: # Should not happen if current_progress is 0
+                         return 'downloading'
+                
+                return 'unknown' # Progress is 0 or not clearly downloading yet
+
+            elif progress_or_status is None: # Temporary error, progress unknown for this cycle
+                logging.warning(f"Could not determine progress for torrent {torrent_id} in get_torrent_state (temporary error). Returning 'unknown' state.")
+                return 'unknown'
+
+            else: # Should ideally not be reached if all return types from get_torrent_progress are handled
+                logging.error(f"Unexpected return value from get_torrent_progress for {torrent_id}: {progress_or_status} in get_torrent_state.")
+                return 'unknown'
+
         except Exception as e:
-            logging.error(f"Failed to get state for torrent {torrent_id}: {str(e)}")
+            logging.error(f"General exception in get_state for torrent {torrent_id}: {str(e)}", exc_info=True)
             return 'unknown'
 
     def add_item(self, item: Dict[str, Any]):
@@ -518,13 +561,8 @@ class CheckingQueue:
         Symlinked/Local mode.
         """
         current_time = time.time()
-        # Initialize items_to_remove here, before the specific file block was removed
         items_to_remove = []
 
-        # Remove the entire 'if specific_filename:' block that was added previously
-        # ... removed block handling specific_filename ...
-
-        # --- NORMAL PROCESSING LOGIC STARTS HERE ---
         # Ensure these are initialized here if they were inside the removed block
         adding_queue = AddingQueue()
         phalanx_db_manager = PhalanxDBClassManager()
@@ -536,7 +574,6 @@ class CheckingQueue:
 
         # Group items by torrent ID
         items_by_torrent = {}
-        # current_time = time.time() # Already defined above
 
         # Group all items by their torrent ID and log the grouping
         for item in self.items:
@@ -555,21 +592,29 @@ class CheckingQueue:
             try:
                 logging.debug(f"Processing torrent {torrent_id} with {len(items)} associated items")
                 
-                # Use the cached get_torrent_progress which includes error handling for 404s
-                current_progress = self.get_torrent_progress(torrent_id)
+                progress_or_status = self.get_torrent_progress(torrent_id)
                 
-                # If current_progress is None, the torrent was not found (404)
-                if current_progress is None:
-                    logging.info(f"Torrent {torrent_id} not found (404), moving items back to Wanted")
+                if progress_or_status == PROGRESS_RESULT_MISSING:
+                    logging.info(f"Torrent {torrent_id} is missing (confirmed during process loop). Handling missing torrent.")
                     try:
-                        # Call handle_missing_torrent directly to ensure items are moved back to Wanted
                         self.handle_missing_torrent(torrent_id, queue_manager)
-                        # Mark items for removal from checking queue
+                        # Items are moved by handle_missing_torrent. Mark them for removal from Python queue object.
                         items_to_remove.extend(items)
                     except Exception as e:
-                        logging.error(f"Failed to handle missing torrent {torrent_id}: {str(e)}")
-                    continue
+                        logging.error(f"Failed to handle missing torrent {torrent_id} in process loop: {str(e)}")
+                    continue # Move to the next torrent
+
+                elif progress_or_status is None: # Temporary error from get_torrent_progress
+                    logging.warning(f"Temporary issue determining progress for torrent {torrent_id} in process method. Skipping this cycle.")
+                    continue # Move to the next torrent
                 
+                # If we are here, progress_or_status is an int
+                current_progress = progress_or_status
+                # Ensure it's an int if logic downstream strictly expects it
+                if not isinstance(current_progress, int):
+                    logging.error(f"Unexpected type for current_progress after checks: {type(current_progress)}. Value: {current_progress}. Skipping torrent {torrent_id}.")
+                    continue
+
                 if torrent_id not in self.progress_checks:
                     logging.debug(f"Initializing progress check for torrent {torrent_id} with progress {current_progress}")
                     self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}
