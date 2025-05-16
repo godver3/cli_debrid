@@ -508,11 +508,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 is_translated_search=is_translated # Pass the flag here
             )
             task_timings['scraping'] = time.time() - task_start
-            # --- Log initial results --- 
-            logging.info(f"Initial results for '{search_title}': {len(all_results)}")
-            for res in all_results:
-                logging.info(f"  - {res.get('title')}")
-            # --- End log initial results ---
 
             # Deduplicate results before filtering
             task_start = time.time()
@@ -535,6 +530,34 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 if 'parsing_error' in parsed_info or 'invalid_parse' in parsed_info:
                     logging.error(f"Error parsing title '{result.get('title', '')}'")
                     continue
+                    
+                # --- Populate scraper_type and scraper_instance from source if missing ---
+                current_scraper_type = result.get('scraper_type')
+                current_scraper_instance = result.get('scraper_instance')
+                source_field = result.get('source')
+
+                if isinstance(source_field, str) and source_field: # Check if source_field is a non-empty string
+                    if not current_scraper_type or current_scraper_type == 'N/A':
+                        if '_' in source_field:
+                            parts = source_field.rsplit('_', 1)
+                            result['scraper_type'] = parts[0]
+                            if len(parts) > 1:
+                                result['scraper_instance'] = parts[1]
+                            else:
+                                result['scraper_instance'] = 'Unknown' # Should not happen if '_' is present
+                        else:
+                            # If source does not contain '_', assume source is the scraper_type and instance is unknown
+                            result['scraper_type'] = source_field
+                            result['scraper_instance'] = 'Unknown' # Or a default instance identifier
+                    elif (not current_scraper_instance or current_scraper_instance == 'N/A') and '_' in source_field:
+                        # Scraper type might be present, but instance might be missing.
+                        # This case is less likely if type is already there but let's be safe.
+                        parts = source_field.rsplit('_', 1)
+                        if len(parts) > 1 and (parts[0] == current_scraper_type or current_scraper_type is None or current_scraper_type == 'N/A'):
+                            # Only update instance if type matches or type was also missing
+                            if current_scraper_type is None or current_scraper_type == 'N/A':
+                                result['scraper_type'] = parts[0] # Update type as well if it was missing
+                            result['scraper_instance'] = parts[1]
                     
                 normalized_result = result.copy()
                 original_title = result.get('title', '')

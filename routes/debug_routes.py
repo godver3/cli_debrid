@@ -3460,7 +3460,17 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
 
                 if item_id_from_db:
                     try:
-                        symlink_success = create_symlink(original_file_path_str, symlink_dest_path, media_item_id=item_id_from_db, skip_verification=True)
+                        # Determine if symlink verification should be skipped based on the context
+                        # Webhook (trigger_plex_update_on_success=True) -> skip_verification=False (i.e., DO verify)
+                        # Debug tool (trigger_plex_update_on_success=False) -> skip_verification=True (i.e., DO NOT verify)
+                        skip_verification_for_symlink = not trigger_plex_update_on_success
+                        
+                        symlink_success = create_symlink(
+                            original_file_path_str, 
+                            symlink_dest_path, 
+                            media_item_id=item_id_from_db, 
+                            skip_verification=skip_verification_for_symlink # Dynamically set based on context
+                        )
                         if not symlink_success: raise Exception("create_symlink returned False")
                         symlinks_created += 1; update_progress(symlinks_created=symlinks_created)
                         

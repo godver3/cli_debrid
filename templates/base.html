@@ -506,6 +506,32 @@
         body[data-notifications-disabled="true"] #notifications_button.has-notifications::after {
             display: none !important;
         }
+
+        /* Easter Egg Modal Styles */
+        #easterEggModal .modal-content { /* Target specific modal */
+            width: 50%; /* Or your preferred size */
+            background-color: #2c3e50; /* A different dark theme color */
+            border-left: 5px solid #f1c40f; /* Gold border */
+            margin-top: 80px;
+        }
+
+        #easterEggModal .modal-header h2 { /* Target specific modal */
+            color: #f1c40f; /* Gold title */
+        }
+
+        #easterEggModal .modal-body img {
+            max-width: 100%;
+            max-height: 60vh; /* Adjust for content */
+            border-radius: 8px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        #easterEggModal .modal-body p {
+            margin-top: 15px;
+            color: #ddd;
+            text-align: center;
+        }
     </style>
     
     {% block head %}{% endblock %}
@@ -669,6 +695,12 @@
                     console.log('Closing support modal via outside click');
                     supportModal.style.display = 'none';
                     document.body.classList.remove('modal-open'); // Ensure removed for support modal too
+                }
+                // Close Easter Egg modal if clicking outside
+                const easterEggModal = document.getElementById('easterEggModal');
+                if (easterEggModal && event.target == easterEggModal) {
+                    easterEggModal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
                 }
             });
 
@@ -854,6 +886,13 @@
                          // document.getElementById('help-overlay').style.display = 'none'; // Example
                          // document.body.classList.remove('modal-open'); // Example
                      }
+                     // Close Easter Egg modal via ESC key
+                    const easterEggModal = document.getElementById('easterEggModal');
+                    if (easterEggModal && easterEggModal.style.display === 'block') {
+                        console.log('Closing easter egg modal via ESC key');
+                        easterEggModal.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                    }
                 }
             });
 
@@ -895,6 +934,48 @@
                 console.warn('One or more release notes elements not found.');
             }
             // --- End Release Notes Modal Event Listeners ---
+
+            // --- Easter Egg Modal Logic ---
+            const easterEggModal = document.getElementById('easterEggModal');
+            const easterEggModalClose = document.getElementById('easterEggModalClose');
+
+            if (easterEggModal && easterEggModalClose) {
+                easterEggModalClose.addEventListener('click', function() {
+                    easterEggModal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
+                });
+            } else {
+                console.warn('Easter egg modal elements not found.');
+            }
+
+            // Konami Code
+            const konamiSequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+            let konamiCurrentIndex = 0;
+
+            document.addEventListener('keydown', (e) => {
+                if (!easterEggModal) return; // Do nothing if modal element isn't there
+
+                const key = e.key.toLowerCase();
+                const expectedKey = konamiSequence[konamiCurrentIndex].toLowerCase();
+
+                if (key === expectedKey) {
+                    konamiCurrentIndex++;
+                    if (konamiCurrentIndex === konamiSequence.length) {
+                        easterEggModal.style.display = 'block';
+                        document.body.classList.add('modal-open');
+                        konamiCurrentIndex = 0; // Reset for next time
+                    }
+                } else {
+                    // If the pressed key is the first in the sequence, restart from the second char
+                    if (key === konamiSequence[0].toLowerCase()) {
+                        konamiCurrentIndex = 1;
+                    } else {
+                        // Otherwise, completely reset
+                        konamiCurrentIndex = 0;
+                    }
+                }
+            });
+            // --- End Easter Egg Modal Logic ---
         });
     </script>
 </head>
@@ -1179,6 +1260,20 @@
     <main>
         {% block content %}{% endblock %}
     </main>
+
+    <!-- Easter Egg Modal -->
+    <div id="easterEggModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🎉 You found an Easter Egg! 🎉</h2>
+                <span class="close" id="easterEggModalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <img src="{{ url_for('static', filename='1.png') }}" alt="Easter Egg Image">
+                <p>What are you doing step-bro?</p>
+            </div>
+        </div>
+    </div>
 
     <!-- Release notes popup -->
     <div class="release-notes-overlay" id="releaseNotesOverlay"></div>

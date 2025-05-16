@@ -379,7 +379,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             thead.innerHTML = `
                 <tr>
                     <th style="color: rgb(191 191 190); width: 40%;">Name</th>
-                    <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Size</th>
+                    <th style="color: rgb(191 191 190); width: 12%; text-align: right;">Size Per File</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Source</th>
                     <th style="color: rgb(191 191 190); width: 10%%; text-align: right;">Score</th>
                     <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
@@ -2277,6 +2277,10 @@ function showMobileActionModal(item) {
     const yearEl = modal.querySelector('.mobile-action-year');
     const scrapeButton = modal.querySelector('.mobile-scrape-button');
     const requestButton = modal.querySelector('.mobile-request-button');
+
+    // Get requester status
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
     
     // Set content title and year
     titleEl.textContent = item.title;
@@ -2301,6 +2305,13 @@ function showMobileActionModal(item) {
             </svg>
             Scrape Content
         `;
+    }
+
+    // Conditionally display the scrape button
+    if (isRequester) {
+        scrapeButton.style.display = 'none';
+    } else {
+        scrapeButton.style.display = 'flex'; // Or 'block', 'inline-block' depending on original styling
     }
     
     // Set up button actions

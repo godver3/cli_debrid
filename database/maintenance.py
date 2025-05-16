@@ -1107,12 +1107,37 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
         symlink_base_path = get_setting('File Management', 'symlinked_files_path')
         
         if not symlink_base_path:
-            logging.error("Symlink path not configured")
+            logging.error("Symlink path ('File Management.symlinked_files_path') not configured. Maintenance cannot proceed.")
             return
             
         if not os.path.exists(symlink_base_path):
-            logging.error(f"Symlink location does not exist: {symlink_base_path}")
+            logging.error(f"Symlink base path {symlink_base_path} does not exist. Maintenance cannot proceed.")
             return
+
+        try:
+            dir_contents = os.listdir(symlink_base_path)
+            if not dir_contents:
+                logging.error(f"Symlink base path {symlink_base_path} is empty. Maintenance will not proceed as this might indicate an issue.")
+                return
+            logging.info(f"Symlink base path {symlink_base_path} is accessible and contains {len(dir_contents)} item(s).")
+        except OSError as e:
+            logging.error(f"Error accessing symlink base path {symlink_base_path}: {str(e)}. Maintenance cannot proceed.")
+            return
+
+        # Get and check original files path
+        original_files_path = get_setting('File Management', 'original_files_path')
+        if not original_files_path:
+            logging.warning("Original files path ('File Management.original_files_path') not configured. Target accessibility checks might be affected.")
+        else:
+            if not os.path.exists(original_files_path):
+                logging.error(f"Original files path {original_files_path} does not exist. Maintenance cannot proceed as target files cannot be verified.")
+                return
+            try:
+                os.listdir(original_files_path) # Check accessibility
+                logging.info(f"Original files path {original_files_path} is accessible.")
+            except OSError as e:
+                logging.error(f"Error accessing original files path {original_files_path}: {str(e)}. Maintenance cannot proceed as target files cannot be verified.")
+                return
             
         # Connect to database
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
