@@ -351,10 +351,34 @@ def get_queue_contents():
         
         for item in items:
             item_dict = dict(item)
+            # Ensure title is a string, defaulting if None from DB
+            base_title = item_dict.get('title', "Unknown Title")
+
             if item_dict['type'] == 'episode':
-                item_dict['title'] = f"{item_dict['title']} S{item_dict['season_number']:02d}E{item_dict['episode_number']:02d}"
+                s_num = item_dict.get('season_number')
+                e_num = item_dict.get('episode_number')
+                
+                display_title = base_title
+                
+                if s_num is not None and e_num is not None:
+                    display_title = f"{base_title} S{s_num:02d}E{e_num:02d}"
+                elif s_num is not None: # Only season
+                    display_title = f"{base_title} S{s_num:02d}"
+                elif e_num is not None: # Only episode
+                    display_title = f"{base_title} E{e_num:02d}"
+                # If both s_num and e_num are None, display_title remains base_title
+                
+                item_dict['title'] = display_title
+
             elif item_dict['type'] == 'movie':
-                item_dict['title'] = f"{item_dict['title']} ({item_dict['year']})"
+                year = item_dict.get('year')
+                if year is not None:
+                    item_dict['title'] = f"{base_title} ({year})"
+                else:
+                    item_dict['title'] = base_title # Just the title if year is None
+            
+            # The SQL query filters by states that are keys in queue_contents,
+            # so direct assignment should be safe.
             queue_contents[item_dict['state']].append(item_dict)
         
         return jsonify(queue_contents)
