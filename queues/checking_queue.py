@@ -612,10 +612,10 @@ class CheckingQueue:
                     logging.warning(f"Temporary issue determining progress for torrent {torrent_id} in process method. Skipping this cycle.")
                     continue # Move to the next torrent
                 
-                # If we are here, progress_or_status is an int
+                # If we are here, progress_or_status is an int or float
                 current_progress = progress_or_status
-                # Ensure it's an int if logic downstream strictly expects it
-                if not isinstance(current_progress, int):
+                # Ensure it's an int or float, as provider can return float percentages like 0.2 for 0.2%
+                if not isinstance(current_progress, (int, float)):
                     logging.error(f"Unexpected type for current_progress after checks: {type(current_progress)}. Value: {current_progress}. Skipping torrent {torrent_id}.")
                     continue
 
@@ -628,7 +628,8 @@ class CheckingQueue:
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
                 
                 # Check if progress just hit 100% (transition from downloading to downloaded)
-                if current_progress == 100 and last_progress is not None and last_progress < 100:
+                # Use int(current_progress) to robustly compare with 100, handles floats like 100.0
+                if int(current_progress) == 100 and last_progress is not None and last_progress < 100:
                     logging.info(f"Torrent {torrent_id} just finished downloading. Updating cache status.")
                     
                     # Get hash from any item's magnet link
@@ -654,7 +655,7 @@ class CheckingQueue:
                             except Exception as e:
                                 logging.error(f"Failed to update cache status: {str(e)}")
                 
-                if current_progress == 100:
+                if int(current_progress) == 100:
                     # Process completed torrents in Symlinked/Local mode
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
                         items_to_scan = [] # Keep track of items not found yet
@@ -733,7 +734,7 @@ class CheckingQueue:
                             logging.info("Full library scan disabled for now")
 
                 # Check if we've exceeded the checking queue period for non-actively-downloading items
-                if current_progress == 100:
+                if int(current_progress) == 100:
                     oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
                     time_in_queue = current_time - oldest_item_time
                     checking_queue_limit = self._calculate_dynamic_queue_period(items)
@@ -756,7 +757,7 @@ class CheckingQueue:
                         continue
 
                 # Skip remaining checks if the torrent is completed
-                if current_progress == 100:
+                if int(current_progress) == 100:
                     continue
                 
                 if current_time - last_check >= 300:  # 5 minutes
