@@ -31,7 +31,8 @@ def _save_cache(cache: Dict[str, List[Tuple[str, str, Optional[str], float]]]) -
 def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[str] = None) -> None:
     """
     Cache a Plex removal operation for later execution.
-    If caching is disabled via settings, immediately execute the removal.
+    If caching is disabled via settings, immediately execute the removal,
+    including attempting to remove symlinks from disk first.
     
     Args:
         item_title: Title of the item to remove
@@ -40,11 +41,37 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
     """
     # Check if caching is enabled
     if not get_setting('Debug', 'enable_plex_removal_caching', default=True):
-        # If caching is disabled, execute removal immediately
+        logging.info(f"Plex removal caching is disabled. Processing immediate removal for {item_title} ({item_path}).")
         from utilities.plex_functions import remove_file_from_plex
-        remove_file_from_plex(item_title, item_path, episode_title)
-        return
+        
+        can_attempt_plex_removal = True
 
+        # Step 1: If item_path is a symlink and exists on disk, try to remove it from disk.
+        if os.path.islink(item_path):
+            if os.path.exists(item_path): # Symlink exists on disk
+                logging.info(f"Immediate removal: Item {item_path} for '{item_title}' is an existing symlink. Attempting to remove from disk.")
+                try:
+                    os.unlink(item_path)
+                    logging.info(f"Immediate removal: Successfully removed symlink {item_path} from disk.")
+                except OSError as e:
+                    logging.error(f"Immediate removal: Failed to remove symlink {item_path} from disk: {e}. Plex removal will not be attempted.")
+                    can_attempt_plex_removal = False
+            else: # Symlink was defined, but it's already gone from disk.
+                logging.info(f"Immediate removal: Symlink {item_path} for '{item_title}' does not exist on disk (already removed). Proceeding with Plex removal.")
+        
+        # Step 2: If conditions allow, attempt to remove the item from Plex.
+        if can_attempt_plex_removal:
+            try:
+                logging.info(f"Immediate removal: Attempting Plex removal for {item_title} ({item_path}).")
+                remove_file_from_plex(item_title, item_path, episode_title)
+                logging.info(f"Immediate removal: Successfully processed Plex removal for {item_title} ({item_path}).")
+            except Exception as e:
+                logging.error(f"Immediate removal: Error during Plex removal for {item_title} ({item_path}): {str(e)}.")
+        else:
+            logging.warning(f"Immediate removal: Plex removal skipped for {item_title} ({item_path}) due to issues with symlink handling.")
+        return # End of immediate removal path
+
+    # Caching is enabled, proceed as before
     cache = _load_cache()
     timestamp = time.time()
     
@@ -63,6 +90,8 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
 def process_removal_cache(min_age_hours: int = 6) -> None:
     """
     Process cached removal operations that are older than the specified age.
+    If an item_path is a symlink and exists on disk, it will be deleted from disk first.
+    Then, the item will be removed from Plex.
     
     Args:
         min_age_hours: Minimum age in hours before processing a cached removal
@@ -71,29 +100,66 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
     
     cache = _load_cache()
     if not cache:
+        logging.debug("Plex removal cache is empty. Nothing to process.")
         return
         
     current_time = time.time()
     min_age_seconds = min_age_hours * 3600
-    processed_keys = []
     
+    # Build a new cache dictionary with only the entries that need to be kept for the next run.
+    next_run_cache = {} 
+
     for key, entries in cache.items():
+        remaining_entries_for_key = []
         for entry in entries:
             item_title, item_path, episode_title, timestamp = entry
             
-            # Check if entry is old enough
+            # Default assumption: keep the entry in the cache unless successfully processed.
+            entry_should_be_kept_in_cache = True 
+
             if current_time - timestamp >= min_age_seconds:
-                try:
-                    # Actually remove from Plex
-                    remove_file_from_plex(item_title, item_path, episode_title)
-                    logging.info(f"Processed cached Plex removal for {item_title} ({item_path})")
-                    processed_keys.append(key)
-                except Exception as e:
-                    logging.error(f"Error processing cached Plex removal for {item_title}: {str(e)}")
-    
-    # Remove processed entries
-    for key in processed_keys:
-        cache.pop(key, None)
-    
-    # Save updated cache
-    _save_cache(cache) 
+                logging.debug(f"Processing entry for {item_title} ({item_path}), age {current_time - timestamp:.0f}s / {min_age_seconds}s required")
+                
+                can_attempt_plex_removal = True # Assume true, may be set to false if symlink disk removal fails
+
+                # Step 1: If item_path is a symlink and exists on disk, try to remove it from disk.
+                if os.path.islink(item_path):
+                    if os.path.exists(item_path): # Symlink exists on disk
+                        logging.info(f"Item {item_path} for '{item_title}' is an existing symlink. Attempting to remove from disk.")
+                        try:
+                            os.unlink(item_path)
+                            logging.info(f"Successfully removed symlink {item_path} from disk.")
+                        except OSError as e:
+                            logging.error(f"Failed to remove symlink {item_path} from disk: {e}. Plex removal will not be attempted for this item in this run. Keeping in cache.")
+                            can_attempt_plex_removal = False # Prevent Plex removal attempt
+                    else: # Symlink was defined in cache, but it's already gone from disk.
+                        logging.info(f"Symlink {item_path} for '{item_title}' does not exist on disk (already removed). Proceeding with Plex removal.")
+                
+                # Step 2: If conditions allow, attempt to remove the item from Plex.
+                if can_attempt_plex_removal:
+                    try:
+                        logging.info(f"Attempting Plex removal for {item_title} ({item_path}).")
+                        remove_file_from_plex(item_title, item_path, episode_title)
+                        logging.info(f"Successfully processed Plex removal for {item_title} ({item_path}).")
+                        entry_should_be_kept_in_cache = False # Successfully processed, so don't keep this entry.
+                    except Exception as e:
+                        logging.error(f"Error during Plex removal for {item_title} ({item_path}): {str(e)}. Keeping in cache.")
+                        # entry_should_be_kept_in_cache remains True if Plex removal fails.
+                # else (can_attempt_plex_removal is False due to symlink unlink failure):
+                # entry_should_be_kept_in_cache remains True, as processing could not complete.
+            # else (entry is not old enough yet):
+            # entry_should_be_kept_in_cache remains True.
+            
+            if entry_should_be_kept_in_cache:
+                remaining_entries_for_key.append(entry)
+        
+        if remaining_entries_for_key:
+            next_run_cache[key] = remaining_entries_for_key
+            
+    _save_cache(next_run_cache)
+    if not next_run_cache and cache: # Cache was not empty before, but is now
+        logging.info("Finished processing Plex removal cache. All items processed.")
+    elif not next_run_cache and not cache: # Cache was already empty
+        pass # No need to log "finished processing" if there was nothing to process
+    else:
+        logging.info(f"Finished processing Plex removal cache. {sum(len(v) for v in next_run_cache.values())} item(s) remain.") 

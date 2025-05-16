@@ -259,56 +259,70 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
         logging.error(f"Source path does not exist: {source_path}")
         return False
         
+    symlink_ok_or_created = False
+
     # If destination exists and is a symlink, check if it points to the correct source
     if os.path.islink(dest_path):
         try:
             current_target = os.path.realpath(dest_path)
             if current_target == source_path:
                 logging.info(f"Symlink already exists and points to the correct target: {dest_path}")
-                return True # Already correctly linked
+                symlink_ok_or_created = True # Symlink is already correct
             else:
-                logging.warning(f"Symlink exists but points to wrong target ({current_target}). Removing and recreating.")
+                logging.warning(f"Symlink exists but points to wrong target ('{current_target}' vs expected '{source_path}'). Removing and recreating.")
                 os.unlink(dest_path)
+                # Will fall through to create it below
         except Exception as e:
-            logging.error(f"Error checking existing symlink {dest_path}: {e}. Removing and recreating.")
+            logging.error(f"Error checking existing symlink {dest_path}: {e}. Attempting to remove and recreate.")
             try:
-                os.unlink(dest_path)
-            except Exception as unlink_err:
-                logging.error(f"Failed to remove existing incorrect symlink {dest_path}: {unlink_err}")
-                return False # Cannot proceed if we can't remove the wrong link
+                os.unlink(dest_path) # Attempt to remove even on error
+            except Exception as unlink_err_on_check_error:
+                # If removal fails after check error, this is problematic.
+                if not isinstance(unlink_err_on_check_error, FileNotFoundError): # Don't error if it was already gone
+                    logging.error(f"Failed to remove potentially problematic symlink {dest_path} after check error: {unlink_err_on_check_error}")
+                    return False # Cannot proceed safely
+            # Will fall through to create it below, assuming problematic link is gone or never existed
 
     elif os.path.exists(dest_path):
-        # If destination exists but is not a symlink (e.g., a regular file), log an error or handle as needed.
-        # For now, let's log an error and return False to avoid overwriting.
+        # If destination exists but is not a symlink (e.g., a regular file), log an error.
         logging.error(f"Destination path exists but is not a symlink: {dest_path}. Cannot create symlink.")
         return False
         
     # Ensure the directory for the destination path exists
-    dest_dir = os.path.dirname(dest_path)
-    try:
-        os.makedirs(dest_dir, exist_ok=True)
-    except Exception as e:
-        logging.error(f"Failed to create directory for symlink {dest_path}: {e}")
-        return False
+    # This needs to happen before attempting to create the symlink if it doesn't exist yet,
+    # or if it was unlinked above.
+    if not symlink_ok_or_created or (os.path.islink(dest_path) and not os.path.exists(os.path.dirname(dest_path))): # Second condition for recreated links
+        dest_dir = os.path.dirname(dest_path)
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception as e:
+            logging.error(f"Failed to create directory for symlink {dest_path}: {e}")
+            return False
 
-    # Create the symlink
-    try:
-        os.symlink(source_path, dest_path)
-        logging.info(f"Created symlink: {dest_path} -> {source_path}")
-        
-        # Add the file to the verification queue if needed and media_item_id is provided
-        if media_item_id is not None and not skip_verification: # Add condition here
-             try:
-                 add_symlinked_file_for_verification(media_item_id, dest_path)
-                 logging.info(f"Added file to verification queue: {dest_path}")
-             except Exception as e:
-                 logging.error(f"Failed to add file to verification queue {dest_path}: {e}", exc_info=True)
-                 # Continue even if adding to verification fails for now
+    # If symlink wasn't already OK (i.e., it's a new path or an incorrect/broken one was unlinked), attempt to create it
+    if not symlink_ok_or_created:
+        try:
+            os.symlink(source_path, dest_path)
+            logging.info(f"Created symlink: {dest_path} -> {source_path}")
+            symlink_ok_or_created = True # Symlink successfully created
+        except Exception as e:
+            logging.error(f"Failed to create symlink from {source_path} to {dest_path}: {e}")
+            return False # Symlink creation failed, cannot proceed
 
-        return True
-    except Exception as e:
-        logging.error(f"Failed to create symlink from {source_path} to {dest_path}: {e}")
-        return False
+    # If the symlink is now considered OK (either pre-existing correctly or created/recreated successfully)
+    # then attempt to add/update it in the verification queue.
+    if symlink_ok_or_created:
+        if media_item_id is not None and not skip_verification:
+            try:
+                # add_symlinked_file_for_verification will handle if it's new or needs reset
+                add_symlinked_file_for_verification(media_item_id, dest_path)
+                # Use a consistent logging message whether it was pre-existing or new
+                logging.info(f"Ensured file is in/updated in verification queue: {dest_path} (Media ID: {media_item_id})")
+            except Exception as e:
+                logging.error(f"Failed to add/update file in verification queue {dest_path} (Media ID: {media_item_id}): {e}", exc_info=True)
+                # Continue even if adding to verification fails for now, as symlink itself is OK.
+    
+    return symlink_ok_or_created
 
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None) -> bool:
     """
