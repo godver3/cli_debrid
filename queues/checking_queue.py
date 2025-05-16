@@ -307,22 +307,26 @@ class CheckingQueue:
                     logging.error(f"Failed to execute handle_missing_torrent for {torrent_id} within get_torrent_state: {str(e)}")
                     return 'unknown' # Fallback if handling fails
 
-            elif isinstance(progress_or_status, int):
+            elif isinstance(progress_or_status, (int, float)):
                 current_progress = progress_or_status
-                if current_progress == 100:
+                # Cast to int for 100% check to handle 100 or 100.0
+                if int(current_progress) == 100:
                     return 'downloaded'
+                # For > 0 check, float or int works fine
                 if current_progress > 0:
                     return 'downloading'
                 
-                # Check progress history if available for 0% progress (existing logic)
+                # Check progress history if available for 0% or 0.0 progress
                 if torrent_id in self.progress_checks:
                     last_progress = self.progress_checks[torrent_id]['last_progress']
-                    if last_progress == 100: # Could have been checked just before completion
+                    # Cast to int for 100% check for last_progress
+                    if last_progress is not None and int(last_progress) == 100: 
                         return 'downloaded'
-                    if last_progress is not None and current_progress > last_progress: # Should not happen if current_progress is 0
+                    # Cast both to float for reliable comparison if last_progress might be int/float
+                    if last_progress is not None and float(current_progress) > float(last_progress):
                          return 'downloading'
                 
-                return 'unknown' # Progress is 0 or not clearly downloading yet
+                return 'unknown' # Progress is 0, 0.0 or not clearly downloading yet
 
             elif progress_or_status is None: # Temporary error, progress unknown for this cycle
                 logging.warning(f"Could not determine progress for torrent {torrent_id} in get_torrent_state (temporary error). Returning 'unknown' state.")
