@@ -320,6 +320,9 @@ class AddingQueue:
                 else:
                     filtered_raw_files = raw_files # No filter applied, or filters list was empty
 
+                # Log the files before attempting to parse them
+                logging.debug(f"Files being considered for parsing (filtered_raw_files) for {item_identifier}: {filtered_raw_files}")
+
                 # Parse the filtered files ONCE
                 parsed_torrent_files = []
                 for file_dict in filtered_raw_files:
@@ -330,7 +333,9 @@ class AddingQueue:
 
                 if not parsed_torrent_files:
                     logging.error(f"No valid video files found in torrent after parsing/filtering for {item_identifier}")
-                    logging.debug(f"Files considered for parsing (filtered_raw_files): {filtered_raw_files}") # Log the files
+                    # The log here is redundant if the one above captures the content of filtered_raw_files correctly.
+                    # If filtered_raw_files was empty, the log above would show that.
+                    # If it had files but parsing yielded nothing, the log above shows what was attempted.
                     item['torrent_id'] = torrent_info.get('id') # Ensure torrent_id is set for removal
                     self._handle_failed_item(item, "No valid video files found in torrent", queue_manager)
                     continue
