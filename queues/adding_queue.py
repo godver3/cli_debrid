@@ -330,6 +330,7 @@ class AddingQueue:
 
                 if not parsed_torrent_files:
                     logging.error(f"No valid video files found in torrent after parsing/filtering for {item_identifier}")
+                    logging.debug(f"Files considered for parsing (filtered_raw_files): {filtered_raw_files}") # Log the files
                     item['torrent_id'] = torrent_info.get('id') # Ensure torrent_id is set for removal
                     self._handle_failed_item(item, "No valid video files found in torrent", queue_manager)
                     continue
