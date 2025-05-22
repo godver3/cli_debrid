@@ -379,18 +379,23 @@ function hideTooltip(originatingElement = null, originatingKey = null) {
 }
 
 function createMobileTooltipButtons() {
-    const tooltipElements = document.querySelectorAll('[data-tooltip]');
-    tooltipElements.forEach(element => {
-        const button = document.createElement('i');
-        button.className = 'fas fa-info-circle mobile-tooltip-button';
-        button.setAttribute('aria-label', 'More information');
-        element.appendChild(button);
+    // Do nothing to disable mobile tooltip buttons
+    console.log('Mobile tooltip button creation is disabled.');
+    return;
 
-        button.addEventListener('click', (event) => {
-            event.stopPropagation();
-            showMobileTooltip(element.getAttribute('data-tooltip'), button);
-        });
-    });
+    // Original code:
+    // const tooltipElements = document.querySelectorAll('[data-tooltip]');
+    // tooltipElements.forEach(element => {
+    //     const button = document.createElement('i');
+    //     button.className = 'fas fa-info-circle mobile-tooltip-button';
+    //     button.setAttribute('aria-label', 'More information');
+    //     element.appendChild(button);
+
+    //     button.addEventListener('click', (event) => {
+    //         event.stopPropagation();
+    //         showMobileTooltip(element.getAttribute('data-tooltip'), button);
+    //     });
+    // });
 }
 
 function showMobileTooltip(tooltipKey, button) {
@@ -523,16 +528,22 @@ function initializeDatabaseTooltips() {
     console.log('Database tooltips initialized');
 }
 
-function addMobileTooltipButton(cell) {
-    const button = document.createElement('i');
-    button.className = 'fas fa-ellipsis-h mobile-tooltip-button';
-    button.setAttribute('aria-label', 'Show full content');
-    cell.appendChild(button);
+function addMobileTooltipButton(element) {
+    // Do nothing to disable mobile tooltip buttons
+    console.log('Mobile tooltip button creation for element is disabled.');
+    return;
 
-    button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        showMobileDatabaseTooltip(cell, button);
-    });
+    // Original code:
+    // const button = document.createElement('i');
+    // button.className = 'fas fa-ellipsis-h mobile-tooltip-button'; // or fa-info-circle
+    // button.setAttribute('aria-label', 'Show full content'); // or 'More information'
+    // element.appendChild(button);
+
+    // button.addEventListener('click', (event) => {
+    //     event.stopPropagation();
+    //     // Logic for showMobileDatabaseTooltip or showMobileTooltip based on context
+    //     // This part is now irrelevant as the button isn't created.
+    // });
 }
 
 function showMobileDatabaseTooltip(cell, button) {
@@ -620,7 +631,7 @@ function applyTooltipsForSection(sectionName, sectionTooltips) {
         if (element) {
             console.log(`Adding tooltip to element with ID: ${elementId}`);
             if (isMobileDevice()) {
-                addMobileTooltipButton(element, tooltipText);
+                addMobileTooltipButton(element);
             } else {
                 element.setAttribute('data-tooltip', `${sectionName}.${elementId}`);
                 element.addEventListener('mouseenter', showTooltip);

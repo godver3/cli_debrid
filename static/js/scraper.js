@@ -1143,24 +1143,35 @@ function createMovieElement(data) {
     
     // Add click handlers for the poster
     movieElement.onclick = function() {
-        // Check if we're on mobile (screen width <= 768px)
-        if (window.innerWidth <= 768) {
-            // Prepare data for mobile modal
-            const item = {
+        if (isRequester) {
+            // Requester behavior: always show version modal for movies
+            showVersionModal({
                 id: data.tmdb_id,
                 title: data.title,
-                year: data.year,
-                media_type: 'movie',
-                genre_ids: data.genre_ids,
-                poster_path: data.poster_path,
-                tmdb_api_key_set: document.getElementById('tmdb_api_key_set').value === 'True'
-            };
-            
-            // Show mobile action modal
-            showMobileActionModal(item);
+                mediaType: 'movie', // Explicitly 'movie'
+                year: data.year
+            });
         } else {
-            // Desktop behavior - direct scrape
-            selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.genre_ids);
+            // Non-requester behavior (existing logic)
+            // Check if we're on mobile (screen width <= 768px)
+            if (window.innerWidth <= 768) {
+                // Prepare data for mobile modal
+                const item = {
+                    id: data.tmdb_id,
+                    title: data.title,
+                    year: data.year,
+                    media_type: 'movie',
+                    genre_ids: data.genre_ids,
+                    poster_path: data.poster_path,
+                    tmdb_api_key_set: document.getElementById('tmdb_api_key_set').value === 'True'
+                };
+                
+                // Show mobile action modal
+                showMobileActionModal(item);
+            } else {
+                // Desktop behavior - direct scrape
+                selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.genre_ids);
+            }
         }
     };
     

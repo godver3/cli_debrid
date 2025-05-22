@@ -61,6 +61,7 @@ from utilities.local_library_scan import convert_item_to_symlink, get_symlink_pa
 from scraper.functions.ptt_parser import parse_with_ptt
 from database.database_writing import add_media_item
 from routes.program_operation_routes import get_program_runner # <-- ADD THIS IMPORT
+from utilities.plex_removal_cache import cache_plex_removal # Added import
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -1103,7 +1104,8 @@ def rescrape_item():
 
     try:
         from database.database_reading import get_media_item_by_id
-        from utilities.plex_functions import remove_file_from_plex
+        # remove_file_from_plex is still needed if there are other direct calls,
+        # but for this specific logic, we'll use the cache.
 
         # Get the item details first
         item = get_media_item_by_id(item_id)
@@ -1113,8 +1115,8 @@ def rescrape_item():
         # Get file management settings
         file_management = get_setting('File Management', 'file_collection_management', 'Plex')
         mounted_location = get_setting('Plex', 'mounted_file_location', get_setting('File Management', 'original_files_path', ''))
-        original_files_path = get_setting('File Management', 'original_files_path', '')
-        symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
+        # original_files_path = get_setting('File Management', 'original_files_path', '') # Not directly used in this logic block
+        # symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '') # Not directly used
 
         # Handle file deletion based on management type
         if file_management == 'Plex' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
@@ -1122,22 +1124,31 @@ def rescrape_item():
                 try:
                     if os.path.exists(item['location_on_disk']):
                         os.remove(item['location_on_disk'])
+                        logging.info(f"Rescrape: Deleted file {item['location_on_disk']} for item {item_id} (Plex mode).")
                 except Exception as e:
                     logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
 
-            time.sleep(1)
+            time.sleep(1) # Allow time for filesystem operations
 
-            if item['type'] == 'movie':
-                remove_file_from_plex(item['title'], item['filled_by_file'])
-            elif item['type'] == 'episode':
-                remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
+            if item.get('filled_by_file'): # Ensure filled_by_file exists
+                if item['type'] == 'movie':
+                    cache_plex_removal(item['title'], item['filled_by_file'])
+                    logging.info(f"Rescrape: Queued Plex removal via cache for movie {item['title']} (item {item_id}), path: {item['filled_by_file']}.")
+                elif item['type'] == 'episode':
+                    cache_plex_removal(item['title'], item['filled_by_file'], item.get('episode_title'))
+                    logging.info(f"Rescrape: Queued Plex removal via cache for episode {item.get('episode_title')} of {item['title']} (item {item_id}), path: {item['filled_by_file']}.")
+            else:
+                logging.warning(f"Rescrape: Missing 'filled_by_file' for item {item_id} (Plex mode), cannot queue Plex removal.")
 
         elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
+            symlink_path_for_plex = None
             # Handle symlink removal
             if item.get('location_on_disk'):
+                symlink_path_for_plex = item['location_on_disk'] # Store for potential Plex removal path
                 try:
                     if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
                         os.unlink(item['location_on_disk'])
+                        logging.info(f"Rescrape: Removed symlink {item['location_on_disk']} for item {item_id} (Symlinked/Local mode).")
                 except Exception as e:
                     logging.error(f"Error removing symlink at {item['location_on_disk']}: {str(e)}")
 
@@ -1146,24 +1157,43 @@ def rescrape_item():
                 try:
                     if os.path.exists(item['original_path_for_symlink']):
                         os.remove(item['original_path_for_symlink'])
+                        logging.info(f"Rescrape: Deleted original file {item['original_path_for_symlink']} for item {item_id} (Symlinked/Local mode).")
                 except Exception as e:
                     logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
 
-            time.sleep(1)
+            time.sleep(1) # Allow time for filesystem operations
 
-            # Remove from Plex if configured
+            # Queue for Plex removal if configured
             plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
             if plex_url:
-                if item['type'] == 'movie':
-                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']))
-                elif item['type'] == 'episode':
-                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']), item['episode_title'])
+                # For Symlinked/Local, Plex usually sees the symlink.
+                # The path given to cache_plex_removal should be what Plex uses to identify the file.
+                # remove_file_from_plex matches basenames.
+                path_to_tell_plex = None
+                if symlink_path_for_plex: # Prefer the symlink path's basename if it existed
+                    path_to_tell_plex = os.path.basename(symlink_path_for_plex)
+                elif item.get('original_path_for_symlink'): # Fallback to original file's basename
+                     path_to_tell_plex = os.path.basename(item['original_path_for_symlink'])
+
+                if path_to_tell_plex:
+                    if item['type'] == 'movie':
+                        cache_plex_removal(item['title'], path_to_tell_plex)
+                        logging.info(f"Rescrape: Queued Plex removal via cache for movie {item['title']} (item {item_id}), path: {path_to_tell_plex} (Symlinked/Local mode).")
+                    elif item['type'] == 'episode':
+                        cache_plex_removal(item['title'], path_to_tell_plex, item.get('episode_title'))
+                        logging.info(f"Rescrape: Queued Plex removal via cache for episode {item.get('episode_title')} of {item['title']} (item {item_id}), path: {path_to_tell_plex} (Symlinked/Local mode).")
+                else:
+                    logging.warning(f"Rescrape: No valid path (symlink or original) found for Plex removal for item {item_id} (Symlinked/Local mode).")
+            else:
+                logging.info(f"Rescrape: Plex URL for symlink not configured, skipping Plex removal for item {item_id} (Symlinked/Local mode).")
+
 
         # Move the item to Wanted queue
-        move_item_to_wanted(item_id)
-        return jsonify({'success': True, 'message': 'Item deleted and moved to Wanted queue for rescraping'}), 200
+        move_item_to_wanted(item_id) # This function should handle DB updates (state to 'Wanted', clear file paths)
+        logging.info(f"Rescrape: Moved item {item_id} to Wanted queue.")
+        return jsonify({'success': True, 'message': 'Item files processed, Plex removal cached (if applicable), and item moved to Wanted queue for rescraping'}), 200
     except Exception as e:
-        logging.error(f"Error rescraping item: {str(e)}")
+        logging.error(f"Error rescraping item {data.get('item_id', 'N/A')}: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 def move_item_to_wanted(item_id):
