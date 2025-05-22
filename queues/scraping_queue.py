@@ -391,22 +391,16 @@ class ScrapingQueue:
 
                     # --- End of Multi-pack logic ---
 
-                    logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack})") # Log includes multi-pack status
+                    logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with check_pack_wantedness=True")
                     results, filtered_out_results = self.scrape_with_fallback(item_to_process, is_multi_pack, queue_manager, check_pack_wantedness=True)
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
-                    filtered_out_results = filtered_out_results if filtered_out_results is not None else []
+                    # filtered_out_results = filtered_out_results if filtered_out_results is not None else [] # This is not used directly here
 
-                    if not results:
-                        logging.warning(f"No results found for {item_identifier} after fallback.")
-                        self.handle_no_results(item_to_process, queue_manager) # Calls move internally
-                        processed_successfully_or_moved = True # Handled by handle_no_results
-                        processed_count += 1
-                        # Removed return
-                    else:
-                        # Filter and process results
-                        filtered_results = []
+                    # Filter and process results from the first attempt
+                    filtered_results = []
+                    if results: # Only filter if there are raw results
                         for result in results:
                             if not item_to_process.get('disable_not_wanted_check'):
                                 if is_magnet_not_wanted(result['magnet']):
@@ -415,73 +409,63 @@ class ScrapingQueue:
                                     continue
                             filtered_results.append(result)
 
-                        if not filtered_results:
-                            logging.warning(f"All results filtered out for {item_identifier}. Retrying individual scraping.")
-                            # For individual scraping, check_pack_wantedness=True is fine as we aren't expecting a pack here anyway.
-                            # If a pack IS returned by a scraper for an individual request, the True flag would apply, which is reasonable.
-                            individual_results, individual_filtered_out = self.scrape_with_fallback(item_to_process, False, queue_manager, check_pack_wantedness=True)
-                            logging.info(f"Individual scraping returned {len(individual_results)} results")
+                    # If no filtered results from the first attempt (which includes multi->single internal fallback)
+                    # AND the item is an episode, try the final fallback: multi-pack with check_pack_wantedness=False
+                    if not filtered_results and item_to_process['type'] == 'episode':
+                        logging.info(f"No valid results after initial scraping for {item_identifier}. "
+                                     f"Attempting final multi-pack fallback (check_pack_wantedness=False).")
+                        
+                        # For this final attempt, force multi-pack and disable pack wantedness check
+                        fallback_results, fallback_filtered_out = self.scrape_with_fallback(
+                            item_to_process, 
+                            is_multi_pack=True, # Force multi-pack
+                            queue_manager=queue_manager, 
+                            check_pack_wantedness=False # Disable pack wantedness
+                        )
+                        
+                        fallback_results = fallback_results if fallback_results is not None else []
+                        # fallback_filtered_out = fallback_filtered_out if fallback_filtered_out is not None else [] # Not used directly
 
-                            filtered_individual_results = []
-                            for result in individual_results:
+                        if fallback_results: # Only filter if there are raw results from fallback
+                            current_filtered_fallback_results = []
+                            for result in fallback_results:
                                 if not item_to_process.get('disable_not_wanted_check'):
                                     if is_magnet_not_wanted(result['magnet']):
                                         continue
                                     if is_url_not_wanted(result['magnet']):
                                         continue
-                                filtered_individual_results.append(result)
-
-                            if not filtered_individual_results and item_to_process['type'] == 'episode':
-                                # Final fallback - try multi-pack even if not all episodes have aired
-                                logging.info(f"No individual episode results, trying final multi-pack fallback for {item_identifier} (less strict pack wantedness).")
-                                # Pass check_pack_wantedness=False for this final attempt
-                                fallback_results, fallback_filtered_out = self.scrape_with_fallback(item_to_process, True, queue_manager, check_pack_wantedness=False)
-
-                                filtered_fallback_results = []
-                                for result in fallback_results:
-                                    if not item_to_process.get('disable_not_wanted_check'):
-                                        if is_magnet_not_wanted(result['magnet']):
-                                            continue
-                                        if is_url_not_wanted(result['magnet']):
-                                            continue
-                                    filtered_fallback_results.append(result)
-
-                                if filtered_fallback_results:
-                                    logging.info(f"Found {len(filtered_fallback_results)} results in multi-pack fallback")
-                                    filtered_individual_results = filtered_fallback_results
-
-                            if not filtered_individual_results:
-                                logging.warning(f"No valid results after individual scraping for {item_identifier}. Moving to Sleeping.")
-                                queue_manager.move_to_sleeping(item_to_process, "Scraping")
-                                self.reset_not_wanted_check(item_to_process['id'])
-                                processed_successfully_or_moved = True
-                                processed_count += 1
-                                # Removed return
+                                current_filtered_fallback_results.append(result)
+                            
+                            if current_filtered_fallback_results:
+                                logging.info(f"Found {len(current_filtered_fallback_results)} results in final multi-pack fallback for {item_identifier}.")
+                                filtered_results = current_filtered_fallback_results # Use these results
                             else:
-                                filtered_results = filtered_individual_results
+                                logging.info(f"No valid (post-filter) results from final multi-pack fallback for {item_identifier}.")
+                        else:
+                            logging.info(f"No raw results from final multi-pack fallback for {item_identifier}.")
 
-                        if filtered_results and not processed_successfully_or_moved: # Check flag again
-                            best_result = filtered_results[0]
-                            logging.info(f"Best result for {item_identifier}: {best_result['title']}")
+                    # After all scraping attempts, check if we have any filtered_results
+                    if not filtered_results:
+                        logging.warning(f"No suitable results found for {item_identifier} after all scraping attempts.")
+                        self.handle_no_results(item_to_process, queue_manager)
+                        processed_successfully_or_moved = True
+                        processed_count += 1
+                    else:
+                        # We have filtered_results, proceed to process them
+                        best_result = filtered_results[0]
+                        logging.info(f"Best result for {item_identifier}: {best_result['title']}")
 
-                            if get_setting("Debug", "enable_reverse_order_scraping", default=False):
-                                filtered_results.reverse()
+                        if get_setting("Debug", "enable_reverse_order_scraping", default=False):
+                            filtered_results.reverse()
 
-                            logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
-                            try:
-                                queue_manager.move_to_adding(item_to_process, "Scraping", best_result['title'], filtered_results)
-                                self.reset_not_wanted_check(item_to_process['id'])
-                                processed_successfully_or_moved = True
-                            except Exception as e:
-                                logging.error(f"Failed to move {item_identifier} to Adding queue: {str(e)}", exc_info=True)
-                                had_error = True # Keep track of errors
-                                # Don't set processed_successfully_or_moved = True on error
-                        elif not processed_successfully_or_moved: # If still not handled (e.g., filtered_results became empty)
-                            logging.info(f"No valid results for {item_identifier} after all checks, moving to Sleeping")
-                            queue_manager.move_to_sleeping(item_to_process, "Scraping")
+                        logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
+                        try:
+                            queue_manager.move_to_adding(item_to_process, "Scraping", best_result['title'], filtered_results)
                             self.reset_not_wanted_check(item_to_process['id'])
                             processed_successfully_or_moved = True
-
+                        except Exception as e:
+                            logging.error(f"Failed to move {item_identifier} to Adding queue: {str(e)}", exc_info=True)
+                            had_error = True
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
                 try:

@@ -594,19 +594,7 @@ document.addEventListener('DOMContentLoaded', function() {
             localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
         }
 
-        // const filtersForUpdate = savedFiltersJSON ? JSON.parse(savedFiltersJSON) : [];
-
-        // console.log("restoreSettings calling updateContent with selected_columns:", columnValuesForUpdate);
-        // updateContent('{{ url_for('database.index') }}', {
-        //     filters: JSON.stringify(filtersForUpdate.filter(f => columnValuesForUpdate.includes(f.column) || templateData.all_columns.includes(f.column) )), // Also filter here for safety
-        //     sort_column: sortColumn || '',
-        //     sort_order: sortOrder || 'asc',
-        //     content_type: validContentType,
-        //     selected_columns: JSON.stringify(columnValuesForUpdate),
-        //     filter_logic: savedFilterLogic,
-        //     letter: currentLetter || 'A' // Ensure letter is passed for the initial load consistency
-        // });
-        // The updateContent call above is removed to prevent the second AJAX load.
+        // The updateContent call below is removed to prevent the second AJAX load.
         // The UI controls are now set. The displayed data is from the initial server render.
         // If these differ, the user can click "Apply" or "Update View" to synchronize.
     }
@@ -1127,9 +1115,20 @@ document.addEventListener('DOMContentLoaded', function() {
         setUpdatingContent(true);
 
         fetch(fetchUrl)
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    // Try to parse error from JSON response first for more specific messages
+                    return response.json().then(errData => {
+                        throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+                    }).catch(() => {
+                        // Fallback if response is not JSON or has no 'error' field
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
             .then(data => {
-                if (data.error) {
+                if (data.error) { // Should be caught by the !response.ok above, but good as a fallback
                     throw new Error(data.error);
                 }
                 
@@ -1243,11 +1242,41 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .catch(error => {
                 console.error('Error updating content:', error);
-                showPopup({
+                let popupMessage = 'Failed to update database content: ' + error.message;
+                let showRetryButton = false;
+                let retryAction = null;
+
+                // Check if the error is a database lock error
+                // The backend error message is "Database error: database is locked"
+                if (error.message && (error.message.toLowerCase().includes('database is locked'))) {
+                    popupMessage = 'The database is currently busy. Would you like to try again?';
+                    showRetryButton = true;
+                    // Capture current url and params for retry.
+                    // Ensure 'url' and 'params' are the ones used for the current fetch.
+                    // The 'fetchUrl' is already constructed, but updateContent itself takes 'url' and 'params'
+                    // which are more fundamental to reconstruct the call.
+                    retryAction = () => updateContent('{{ url_for('database.index') }}', params);
+                }
+
+                const popupOptions = {
                     type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Failed to update database content: ' + error.message,
-                });
+                    title: 'Database Busy',
+                    message: popupMessage,
+                };
+
+                if (showRetryButton && retryAction) {
+                    popupOptions.type = POPUP_TYPES.CONFIRM; // Change type to CONFIRM to get buttons
+                    popupOptions.confirmText = 'Retry';
+                    popupOptions.onConfirm = retryAction;
+                    popupOptions.cancelText = 'Close';
+                    popupOptions.onCancel = () => { /* Just close the popup */ };
+                } else {
+                    // For non-retryable errors, perhaps just an OK button or auto-close
+                    popupOptions.confirmText = 'OK'; // Or remove if not needed for simple error
+                    popupOptions.onConfirm = () => { /* Just close */ };
+                }
+
+                showPopup(popupOptions);
             })
             .finally(() => {
                 setUpdatingContent(false);
@@ -1486,36 +1515,89 @@ document.addEventListener('DOMContentLoaded', function() {
                 blacklist: blacklistItem 
             })
         })
-        .then(response => {
+        .then(async response => {
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                let errorMsg = `Default error: Network response was not ok. Status: ${response.status}`;
+                let databaseLocked = false;
+                try {
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.includes("application/json")) {
+                        const errData = await response.json();
+                        if (errData && errData.error) {
+                            errorMsg = errData.error;
+                            if (errData.database_locked === true) {
+                                databaseLocked = true;
+                            }
+                        } else if (errData) {
+                            errorMsg = `Unexpected JSON error format. Status: ${response.status}`;
+                        }
+                    } else {
+                        const textError = await response.text();
+                        if (textError && textError.length < 500 && !textError.toLowerCase().includes("<html")) {
+                             errorMsg = textError;
+                        }
+                    }
+                } catch (parseError) {
+                    // errorMsg remains the default one
+                }
+                const errorToThrow = new Error(errorMsg);
+                if (databaseLocked || response.status === 503) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
             return response.json();
         })
         .then(data => {
             if (data.success) {
-                // Remove the row from the table
                 const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
-                row.remove();
-                // Show success popup
+                if (row) { // Check if row exists
+                    row.remove();
+                }
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
                     message: 'Item deleted successfully',
-                    autoClose: 3000 // Close after 3 seconds
+                    autoClose: 3000
                 });
             } else {
-                throw new Error(data.error || 'Unknown error');
+                const errorToThrow = new Error(data.error || 'Unknown error deleting item.');
+                if (data.database_locked === true) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            // Show error popup
-            showPopup({
+            console.error('Error deleting item:', error);
+            let popupMessage = 'An error occurred while deleting the item: ' + error.message;
+            let showRetryButton = false;
+            let retryAction = null;
+
+            if (error.database_locked) {
+                popupMessage = 'The database is currently busy. Would you like to try deleting again?';
+                showRetryButton = true;
+                retryAction = () => deleteItem(itemId, blacklistItem);
+            } else if (error.message && error.message.includes(`Status: 503`)) {
+                popupMessage = 'The server is temporarily unavailable (503). This might be due to a database lock. Would you like to try again?';
+                showRetryButton = true;
+                retryAction = () => deleteItem(itemId, blacklistItem);
+            }
+
+            const popupOptions = {
                 type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: 'An error occurred while deleting the item: ' + error.message,
-            });
+                title: 'Database Busy',
+                message: popupMessage,
+            };
+             if (showRetryButton && retryAction) {
+                popupOptions.type = POPUP_TYPES.CONFIRM;
+                popupOptions.confirmText = 'Retry';
+                popupOptions.onConfirm = retryAction;
+                popupOptions.cancelText = 'Close';
+            } else {
+                popupOptions.confirmText = 'OK';
+            }
+            showPopup(popupOptions);
         })
         .finally(() => {
             Loading.hide();
@@ -1531,35 +1613,115 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: JSON.stringify({ item_id: itemId })
         })
-        .then(response => {
+        .then(async response => {
+            console.log('Response received. Status:', response.status, 'Ok:', response.ok);
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                let errorMsg = `Default error: Network response was not ok. Status: ${response.status}`;
+                let databaseLocked = false;
+                console.log('Response not OK. Initial errorMsg:', errorMsg);
+                try {
+                    const contentType = response.headers.get("content-type");
+                    console.log('Response Content-Type:', contentType);
+                    if (contentType && contentType.includes("application/json")) {
+                        console.log('Attempting to parse response as JSON...');
+                        const errData = await response.json();
+                        console.log('Parsed errData from JSON:', errData);
+                        if (errData && errData.error) {
+                            errorMsg = errData.error;
+                            if (errData.database_locked === true) {
+                                databaseLocked = true;
+                            }
+                            console.log('Updated errorMsg from errData.error:', errorMsg, 'DB Locked:', databaseLocked);
+                        } else if (errData) {
+                            errorMsg = `Unexpected JSON error format. Status: ${response.status}`;
+                            console.log('Updated errorMsg due to unexpected JSON format:', errorMsg);
+                        } else {
+                             console.log('errData was null or undefined after parsing JSON.');
+                        }
+                    } else {
+                        console.log('Content-Type is not application/json. Attempting to read as text.');
+                        const textError = await response.text();
+                        console.log('Response text (if not JSON):', textError.substring(0, 200)); // Log first 200 chars
+                        if (textError && textError.length < 500 && !textError.toLowerCase().includes("<html")) {
+                             errorMsg = textError;
+                             console.log('Updated errorMsg from textError:', errorMsg);
+                        } else if (textError) {
+                            console.warn("Error response was text, but seems like an HTML page or too long. Sticking with default status error.");
+                        }
+                    }
+                } catch (parseError) {
+                    console.error('Error parsing error response (JSON or text):', parseError);
+                    // errorMsg remains the default one from above if parsing fails
+                }
+                console.log('Throwing error with message:', errorMsg);
+                const errorToThrow = new Error(errorMsg);
+                if (databaseLocked || response.status === 503) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
+            console.log('Response OK. Attempting to parse as JSON...');
             return response.json();
         })
         .then(data => {
+            // This block is now only processed if response.ok was true and JSON parsing succeeded
             if (data.success) {
-                // Remove the row from the table
                 const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
-                row.remove();
-                // Show success popup
+                if (row) { // Check if row exists before trying to remove
+                    row.remove();
+                }
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
                     message: 'Item deleted and moved to Wanted queue for rescraping',
-                    autoClose: 3000 // Close after 3 seconds
+                    autoClose: 3000
                 });
             } else {
-                throw new Error(data.error || 'Unknown error');
+                // If data.success is false, but response was ok (e.g. 200 OK but logical error)
+                const errorToThrow = new Error(data.error || 'An unknown error occurred processing the request.');
+                if (data.database_locked === true) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            // Show error popup
+            console.error('Final error caught for popup:', error);
+            console.error('Error message for popup:', error.message);
+            
+            let popupTitle = 'Error';
+            let popupMessageText = 'An error occurred while processing the item: ' + error.message;
+            let popupType = POPUP_TYPES.ERROR;
+            let confirmButtonText = 'OK';
+            let cancelButtonText = undefined;
+            let confirmAction = undefined;
+            let cancelAction = undefined;
+
+            if (error.database_locked) {
+                popupTitle = 'Database Busy';
+                popupMessageText = 'The database is currently busy. Would you like to try again?';
+                popupType = POPUP_TYPES.CONFIRM;
+                confirmButtonText = 'Retry';
+                cancelButtonText = 'Close';
+                confirmAction = () => rescrapeItem(itemId);
+            } else if ( (error.message && error.message.includes(`Status: 503`)) ||
+                        (error.message && error.message.toLowerCase().includes('database is locked')) ) {
+                popupTitle = 'Database Busy';
+                popupMessageText = 'The database appears to be busy. Would you like to try again?';
+                popupType = POPUP_TYPES.CONFIRM;
+                confirmButtonText = 'Retry';
+                cancelButtonText = 'Close';
+                confirmAction = () => rescrapeItem(itemId);
+            }
+
             showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: 'An error occurred while processing the item: ' + error.message
+                type: popupType,
+                title: popupTitle,
+                message: popupMessageText,
+                confirmText: confirmButtonText,
+                cancelText: cancelButtonText,
+                onConfirm: confirmAction,
+                onCancel: cancelAction 
             });
         })
         .finally(() => {
@@ -1701,12 +1863,12 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
-        const BATCH_SIZE = 450; // Reduced to stay well under Flask's form data limit
+        const BATCH_SIZE = 450; 
         let totalProcessed = 0;
         let errors = [];
         let batches = Math.ceil(items.length / BATCH_SIZE);
+        let databaseLockedInAnyBatch = false;
 
-        // Show initial loading message
         Loading.show(`Processing items in ${batches} batches...`);
 
         for (let i = 0; i < items.length; i += BATCH_SIZE) {
@@ -1717,14 +1879,12 @@ document.addEventListener('DOMContentLoaded', function() {
             const formData = new FormData();
             formData.append('action', action);
             
-            // Handle blacklist flag properly
             if (action === 'delete') {
                 formData.append('blacklist', targetQueue === 'true');
             } else if (targetQueue) {
                 formData.append('target_queue', targetQueue);
             }
             
-            // Add all items in this batch to form data
             batch.forEach(id => {
                 formData.append('selected_items', id);
             });
@@ -1736,35 +1896,137 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
                 
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    let errorMsg = `HTTP error! status: ${response.status}`;
+                    let isDbLock = response.status === 503; 
+                    let responseDataForError = null;
+
+                    try {
+                        const errData = await response.json();
+                        responseDataForError = errData;
+                        errorMsg = errData.error || errorMsg;
+                        if (errData.database_locked === true) {
+                            isDbLock = true;
+                        }
+                    } catch (e) { /* JSON parsing failed */ }
+
+                    if (isDbLock) {
+                        databaseLockedInAnyBatch = true;
+                        const err = new Error(errorMsg);
+                        err.database_locked = true;
+                        err.batchNumber = batchNumber;
+                        err.details = responseDataForError; // Optionally add more details
+                        throw err;
+                    }
+                    throw new Error(errorMsg); 
                 }
                 
                 const data = await response.json();
                 
                 if (data.success) {
                     totalProcessed += batch.length;
+                     if (data.warning) { 
+                        errors.push(`Batch ${batchNumber}: ${data.message}`);
+                    }
                 } else {
-                    errors.push(`Batch ${batchNumber}: ${data.error}`);
+                    if (data.database_locked === true) {
+                        databaseLockedInAnyBatch = true;
+                        const err = new Error(data.error || 'Database locked');
+                        err.database_locked = true;
+                        err.batchNumber = batchNumber;
+                        err.details = data; // Optionally add more details
+                        throw err;
+                    }
+                    errors.push(`Batch ${batchNumber}: ${data.error || 'Unknown error'}`);
                 }
-            } catch (error) {
+            } catch (error) { // This is the inner catch for each batch
                 console.error(`Error in batch ${batchNumber}:`, error);
-                errors.push(`Batch ${batchNumber}: ${error.message}`);
+                // We always re-throw to stop processing on any batch error and let executeBulkAction handle it.
+                // The 'error' object here will be what executeBulkAction receives.
+                throw error; 
             }
 
-            // Small delay between batches to prevent overwhelming the server
-            await new Promise(resolve => setTimeout(resolve, 100));
+            if (batchNumber < batches) {
+                 await new Promise(resolve => setTimeout(resolve, 100));
+            }
         }
 
-        Loading.hide();
+        Loading.hide(); 
 
         return {
-            success: errors.length === 0,
-            warning: errors.length > 0 && totalProcessed > 0,
+            success: errors.length === 0 && !databaseLockedInAnyBatch, 
+            warning: errors.length > 0 && totalProcessed > 0, 
             message: errors.length > 0 
-                ? `Processed ${totalProcessed}/${items.length} items with ${errors.length} batch errors. First few errors: ${errors.slice(0, 3).join('; ')}`
+                ? `Processed ${totalProcessed}/${items.length} items. Batch errors: ${errors.join('; ')}`
                 : `Successfully processed ${totalProcessed} items`,
+            database_locked: databaseLockedInAnyBatch 
         };
     }
+
+    // --- Helper to create the main logic for bulk actions to enable retry ---
+    async function executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix) {
+        Loading.show();
+        try {
+            const result = await processBatchedItems(selectedItems, actionType, targetQueueOrBlacklist);
+            
+            // This part is reached if processBatchedItems completes without throwing a db_lock error
+            showPopup({
+                type: result.warning || result.database_locked ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                message: result.message,
+                title: result.warning || result.database_locked ? 'Process Ended' : 'Success',
+            });
+            // Reload only on full success without db lock issues from any batch
+            if (result.success && !result.database_locked) {
+                 setTimeout(() => { window.location.reload(); }, 2000);
+            }
+
+        } catch (error) {
+            console.error('Error during bulk ' + actionType + ':', error);
+            if (error.database_locked) {
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Database Busy',
+                    message: `The database is currently busy (encountered in batch ${error.batchNumber || 'N/A'}). Would you like to retry the entire bulk ${actionType} operation?`,
+                    confirmText: 'Retry All',
+                    cancelText: 'Close',
+                    onConfirm: () => executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix), // Retry the whole thing
+                });
+            } else {
+                let popupTitle = 'Error';
+                let popupMessageText = `Failed to ${actionType} items: ${error.message || 'Unknown error'}`;
+                let popupType = POPUP_TYPES.ERROR;
+                let confirmButtonText = 'OK';
+                let cancelButtonText = undefined;
+                let confirmAction = undefined;
+
+                if (error.message && 
+                    (
+                        (error.message.toLowerCase().indexOf('database') > -1 && error.message.toLowerCase().indexOf('locked') > -1) || 
+                        error.message.includes('Status: 503')
+                    )
+                   ) {
+                    popupTitle = 'Database Busy';
+                    popupMessageText = `The database appears to be busy. Would you like to retry the entire bulk ${actionType} operation?`;
+                    popupType = POPUP_TYPES.CONFIRM;
+                    confirmButtonText = 'Retry All';
+                    cancelButtonText = 'Close';
+                    confirmAction = () => executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix);
+                }
+
+                showPopup({
+                    type: popupType,
+                    title: popupTitle,
+                    message: popupMessageText,
+                    confirmText: confirmButtonText,
+                    cancelText: cancelButtonText,
+                    onConfirm: confirmAction,
+                    // onCancel can be omitted if it's just closing
+                });
+            }
+        } finally {
+            Loading.hide();
+        }
+    }
+
 
     // Handle bulk delete
     bulkDeleteBtn.addEventListener('click', function() {
@@ -1786,31 +2048,9 @@ document.addEventListener('DOMContentLoaded', function() {
             `,
             confirmText: 'Delete',
             cancelText: 'Cancel',
-            onConfirm: async () => {
-                Loading.show();
+            onConfirm: () => { // Removed async here, executeBulkAction is async
                 const blacklistItems = document.getElementById('bulk-blacklist-checkbox').checked;
-                
-                try {
-                    // Pass 'true' or 'false' string based on checkbox state
-                    const result = await processBatchedItems(selectedItems, 'delete', blacklistItems.toString());
-                    showPopup({
-                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: result.message,
-                        title: result.warning ? 'Partial Success' : 'Success',
-                    });
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 2000);
-                } catch (error) {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error',
-                    });
-                } finally {
-                    Loading.hide();
-                }
+                executeBulkAction(selectedItems, 'delete', blacklistItems.toString(), 'Deletion', 'deleted');
             },
         });
     });
@@ -1823,40 +2063,41 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
             .map(checkbox => checkbox.dataset.itemId);
         
-        if (selectedItems.length === 0) return;
+        if (selectedItems.length === 0) { this.value = ''; return; }
+
 
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             message: `Are you sure you want to move ${selectedItems.length} item(s) to ${selectedQueue} queue?`,
             title: 'Confirm Move',
-            onConfirm: async () => {
-                Loading.show();
-                try {
-                    const result = await processBatchedItems(selectedItems, 'move', selectedQueue);
-                    showPopup({
-                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: result.message,
-                        title: result.warning ? 'Partial Success' : 'Success',
-                    });
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 2000);
-                } catch (error) {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error',
-                    });
-                } finally {
-                    Loading.hide();
-                }
+            onConfirm: () => { // Removed async
+                executeBulkAction(selectedItems, 'move', selectedQueue, 'Move', `moved to ${selectedQueue}`);
             },
         });
-        
-        // Reset the select element
-        this.value = '';
+        this.value = ''; // Reset select after confirmation
     });
+
+    // Handle bulk version change
+    bulkChangeVersion.addEventListener('change', function() {
+        const selectedVersion = this.value;
+        if (!selectedVersion) return;
+
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) {this.value = ''; return;}
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: `Are you sure you want to change the version of ${selectedItems.length} item(s) to ${selectedVersion}?`,
+            title: 'Confirm Version Change',
+            onConfirm: () => { // Removed async
+                executeBulkAction(selectedItems, 'change_version', selectedVersion, 'Version Change', `version changed for`);
+            },
+        });
+        this.value = ''; // Reset select
+    });
+
 
     // Handle bulk early release
     bulkEarlyReleaseBtn.addEventListener('click', function() {
@@ -1873,28 +2114,8 @@ document.addEventListener('DOMContentLoaded', function() {
             `,
             confirmText: 'Mark',
             cancelText: 'Cancel',
-            onConfirm: async () => {
-                Loading.show();
-                try {
-                    const result = await processBatchedItems(selectedItems, 'early_release');
-                    showPopup({
-                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: result.message,
-                        title: result.warning ? 'Partial Success' : 'Success',
-                    });
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 2000);
-                } catch (error) {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error',
-                    });
-                } finally {
-                    Loading.hide();
-                }
+            onConfirm: () => { // Removed async
+                executeBulkAction(selectedItems, 'early_release', null, 'Early Release', 'marked as early release for');
             },
         });
     });
@@ -1912,28 +2133,8 @@ document.addEventListener('DOMContentLoaded', function() {
             message: 'Are you sure you want to delete these items and move them to the Wanted queue for rescraping? This will delete the files from disk and remove them from Plex.',
             confirmText: 'Delete & Rescrape',
             cancelText: 'Cancel',
-            onConfirm: async () => {
-                Loading.show();
-                try {
-                    const result = await processBatchedItems(selectedItems, 'rescrape');
-                    showPopup({
-                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
-                        message: result.message,
-                        title: result.warning ? 'Partial Success' : 'Success',
-                    });
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 2000);
-                } catch (error) {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error',
-                    });
-                } finally {
-                    Loading.hide();
-                }
+            onConfirm: () => { // Removed async
+                 executeBulkAction(selectedItems, 'rescrape', null, 'Rescrape', 'rescrape initiated for');
             },
         });
     });

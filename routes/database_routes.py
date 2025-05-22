@@ -532,8 +532,13 @@ def bulk_queue_action():
                             
                             if isinstance(response, tuple):
                                 success = response[0].json.get('success', False)
+                                if response[0].json.get('error') == 'database is locked':
+                                    # Propagate the specific error response
+                                    return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
                             else:
                                 success = response.json.get('success', False)
+                                if response.json.get('error') == 'database is locked':
+                                     return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
                                 
                             if success:
                                 total_processed += 1
@@ -542,6 +547,14 @@ def bulk_queue_action():
                                 error_msg = response.json.get('error', 'Unknown error')
                                 errors.append(f"Error processing item {item_id}: {error_msg}")
                                 
+                    except sqlite3.OperationalError as e:
+                        if "database is locked" in str(e):
+                            logging.error(f"Database is locked during bulk delete for item {item_id}.")
+                            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                        else:
+                            error_count += 1
+                            errors.append(f"Error processing item {item_id}: {str(e)}")
+                            logging.error(f"Error processing item {item_id} in bulk delete: {str(e)}")
                     except Exception as e:
                         error_count += 1
                         errors.append(f"Error processing item {item_id}: {str(e)}")
@@ -560,6 +573,16 @@ def bulk_queue_action():
                     )
                     total_processed += cursor.rowcount
                     conn.commit()
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk move.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
@@ -579,6 +602,16 @@ def bulk_queue_action():
                     )
                     total_processed += cursor.rowcount
                     conn.commit()
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk change_version.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
@@ -599,6 +632,16 @@ def bulk_queue_action():
                     )
                     total_processed += cursor.rowcount
                     conn.commit()
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk early_release.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
@@ -741,6 +784,23 @@ def bulk_queue_action():
                             errors.append(mismatch_error_msg)
                             error_count += len(item_ids_for_update_clause) 
                     
+                    except sqlite3.OperationalError as e_db_update:
+                        if "database is locked" in str(e_db_update):
+                            logging.error(f"Database is locked during bulk rescrape update for batch {i//BATCH_SIZE + 1}.")
+                            if conn_rescape_batch: conn_rescape_batch.rollback()
+                            # Specific error response for database locked
+                            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                        else:
+                            if conn_rescape_batch: 
+                                try:
+                                    conn_rescape_batch.rollback() 
+                                except Exception as e_rollback:
+                                    logging.error(f"Rescrape: Error during rollback attempt: {e_rollback}", exc_info=True)
+
+                            db_update_err_msg = f"Error during batch database update for rescrape (batch {i//BATCH_SIZE + 1}): {str(e_db_update)}"
+                            errors.append(db_update_err_msg)
+                            logging.error(f"Rescrape: {db_update_err_msg}", exc_info=True)
+                            error_count += len(prepared_items_for_db_update)
                     except Exception as e_db_update: 
                         if conn_rescape_batch: 
                             try:
@@ -782,9 +842,16 @@ def bulk_queue_action():
             message = f"Successfully {action_text} {total_processed} items"
             return jsonify({'success': True, 'message': message})
 
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e):
+            logging.error(f"Database is locked during outer try block for bulk action '{action}'.")
+            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+        else:
+            logging.error(f"Outer operational error in bulk action '{action}': {str(e)}", exc_info=True)
+            return jsonify({'success': False, 'error': f"An operational error occurred during bulk {action}: {str(e)}"}), 500
     except Exception as e:
         logging.error(f"Outer exception in bulk action '{action}': {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'error': f"An unexpected error occurred during bulk {action}: {str(e)}"})
+        return jsonify({'success': False, 'error': f"An unexpected error occurred during bulk {action}: {str(e)}"}), 500
     finally:
         if bulk_action_paused_queue and program_runner and hasattr(program_runner, 'resume_queue') and callable(program_runner.resume_queue):
             logging.info("Resuming program queue in finally block after bulk DB action.")
@@ -877,7 +944,13 @@ def delete_item():
             remove_from_media_items(item_id)
 
         return jsonify({'success': True})
-
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e):
+            logging.error(f"Database is locked during delete_item for item_id {item_id}.")
+            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+        else:
+            logging.error(f"Operational error processing delete request for item_id {item_id}: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         logging.error(f"Error processing delete request: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1003,19 +1076,46 @@ def apply_parsed_versions():
     data = request.get_json()
     items_to_update = data.get('items_to_update', [])
     updated_count = 0
+    errors = []
+    database_locked_encountered = False
+
     for item in items_to_update:
         if item['filled_by_file']:
             parsed_version = parse_filename_for_version(item['filled_by_file'])
             
-            # Only update if the parsed version is different from the current version
-            current_version = item['version'] if 'version' in item.keys() else None
+            current_version = item.get('version') # Use .get() for safety
             if parsed_version != current_version:
                 try:
-                    from database import update_media_item_state
+                    from database import update_media_item_state # Assuming this handles its own DB connection
                     update_media_item_state(item['id'], item['state'], version=parsed_version)
                     updated_count += 1
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error(f"Database is locked while updating item {item['id']} to version {parsed_version}.")
+                        errors.append(f"Database locked for item {item['id']}.")
+                        database_locked_encountered = True 
+                        # Optionally break or continue, for now, we'll try others but report lock
+                    else:
+                        logging.error(f"Operational error updating item {item['id']}: {str(e)}")
+                        errors.append(f"Error for item {item['id']}: {str(e)}")
                 except Exception as e:
                     logging.error(f"Error updating item {item['id']}: {str(e)}")
+                    errors.append(f"Error for item {item['id']}: {str(e)}")
+    
+    if database_locked_encountered:
+        return jsonify({
+            'success': False, 
+            'error': 'database is locked', 
+            'database_locked': True,
+            'message': f'Database was locked. Updated {updated_count} items before encountering lock. Errors: {"; ".join(errors)}'
+        }), 503
+
+    if errors:
+        return jsonify({
+            'success': True, # Partial success
+            'message': f'Parsed versions applied with some errors. Updated {updated_count} items. Errors: {"; ".join(errors)}',
+            'warning': True
+        })
     
     return jsonify({
         'success': True, 
@@ -1122,10 +1222,26 @@ def clear_watch_history():
         
         logging.info("Watch history cleared successfully")
         return jsonify({'success': True})
-        
+    except sqlite3.OperationalError as e:
+        if "database is locked" in str(e):
+            logging.error("Database is locked during clear_watch_history.")
+            # conn might not be defined or closed if error happened early in connect
+            try:
+                if conn: conn.rollback() # Rollback if possible
+            except: pass 
+            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+        else:
+            logging.error(f"Operational error clearing watch history: {str(e)}")
+            try:
+                if conn: conn.rollback()
+            except: pass
+            return jsonify({'success': False, 'error': str(e)}), 500
     except Exception as e:
         logging.error(f"Error clearing watch history: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)})
+        try:
+            if conn: conn.rollback()
+        except: pass
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @database_bp.route('/phalanxdb')
 @admin_required
