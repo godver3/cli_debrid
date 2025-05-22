@@ -10,6 +10,7 @@ from routes.api_tracker import api
 import logging
 from pathlib import Path
 import re
+from .models import admin_required
 
 trakt_bp = Blueprint('trakt', __name__)
 
@@ -18,6 +19,7 @@ CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 TRAKT_CONFIG_PATH = Path(CONFIG_DIR) / '.pytrakt.json'
 
 @trakt_bp.route('/trakt_auth', methods=['POST'])
+@admin_required
 def trakt_auth():
     try:
         client_id = get_setting('Trakt', 'client_id')
@@ -42,6 +44,7 @@ def trakt_auth():
         return jsonify({'error': f'Unable to start authorization process: {str(e)}'}), 500
 
 @trakt_bp.route('/trakt_auth_status', methods=['POST'])
+@admin_required
 def trakt_auth_status():
     try:
         trakt_config = get_trakt_config()
@@ -115,6 +118,7 @@ def update_trakt_config(key, value):
     save_trakt_config(config)
 
 @trakt_bp.route('/push_trakt_auth_to_battery', methods=['POST'])
+@admin_required
 def push_trakt_auth_to_battery():
     try:
         trakt_config = get_trakt_config()

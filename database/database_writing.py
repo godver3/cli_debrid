@@ -18,11 +18,30 @@ def bulk_delete_by_id(id_value, id_type):
         deleted_count = cursor.rowcount
         conn.commit()
         return deleted_count
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in bulk_delete_by_id: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in bulk_delete_by_id after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error bulk deleting items with {id_type.upper()} {id_value}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in bulk_delete_by_id after sqlite3.Error: {rb_ex}")
+        return 0
     except Exception as e:
-        logging.error(f"Error bulk deleting items with {id_type.upper()} {id_value}: {str(e)}")
+        logging.error(f"Unexpected error bulk deleting items with {id_type.upper()} {id_value}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in bulk_delete_by_id after non-Operational error: {rb_ex}")
         return 0
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_year(item_id: int, year: int):
@@ -35,10 +54,31 @@ def update_year(item_id: int, year: int):
         ''', (year, datetime.now(), item_id))
         conn.commit()
         logging.info(f"Updated year to {year} for item ID {item_id}")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_year for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_year after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error updating year for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_year after sqlite3.Error: {rb_ex}")
+        return False
     except Exception as e:
         logging.error(f"Error updating year for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_year after non-Operational error: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_release_date_and_state(
@@ -89,26 +129,38 @@ def update_release_date_and_state(
         conn.execute(query, params)
         
         # Fetch the updated item to check its state
-        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        updated_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
 
         conn.commit()
 
-        if updated_item:
-            item_dict = dict(updated_item)
-            # handle_state_change(item_dict) # REMOVED: Handle notifications etc based on the new state - Let callers handle this based on context
-
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
         
-        # Return the updated item dictionary if found
-        return dict(updated_item) if updated_item else None
+        return dict(updated_item_row) if updated_item_row else None
 
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_release_date_and_state for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_release_date_and_state after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error updating media item (ID: {item_id}): {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_release_date_and_state after sqlite3.Error: {rb_ex}")
+        return None
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
-        conn.rollback()
-        # Return None on error
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_release_date_and_state after non-Operational error: {rb_ex}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
     
 @retry_on_db_lock()
 def update_media_item_state(item_id, state, **kwargs):
@@ -152,10 +204,9 @@ def update_media_item_state(item_id, state, **kwargs):
         conn.commit()
 
         # Get updated item for post-processing
-        updated_item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
-        if updated_item:
-            # Convert to dict for post-processing
-            item_dict = dict(updated_item)
+        updated_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        if updated_item_row:
+            item_dict = dict(updated_item_row)
             
             # Handle post-processing based on state
             if state == 'Collected':
@@ -165,16 +216,32 @@ def update_media_item_state(item_id, state, **kwargs):
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
         
-        # Return the updated item dictionary if found
-        return dict(updated_item) if updated_item else None
+        return dict(updated_item_row) if updated_item_row else None
 
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_media_item_state for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item_state after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error updating media item (ID: {item_id}): {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item_state after sqlite3.Error: {rb_ex}")
+        return None
     except Exception as e:
         logging.error(f"Error updating media item (ID: {item_id}): {str(e)}")
-        conn.rollback()
-        # Return None on error
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item_state after non-Operational error: {rb_ex}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
     
 @retry_on_db_lock()
 def remove_from_media_items(item_id):
@@ -183,10 +250,31 @@ def remove_from_media_items(item_id):
         conn.execute('DELETE FROM media_items WHERE id = ?', (item_id,))
         conn.commit()
         logging.info(f"Removed item (ID: {item_id}) from media items")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in remove_from_media_items for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in remove_from_media_items after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error removing item (ID: {item_id}) from media items: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in remove_from_media_items after sqlite3.Error: {rb_ex}")
+        return False
     except Exception as e:
         logging.error(f"Error removing item (ID: {item_id}) from media items: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in remove_from_media_items after non-Operational error: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def add_to_collected_notifications(media_item):
     # Get db_content directory from environment variable with fallback
@@ -231,10 +319,31 @@ def update_media_item(item_id: int, **kwargs):
         conn.commit()
 
         logging.info(f"Updated media item ID {item_id} with values: {kwargs}")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_media_item for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error updating media item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item after sqlite3.Error: {rb_ex}")
+        return False
     except Exception as e:
         logging.error(f"Error updating media item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item after non-Operational error: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
@@ -247,19 +356,41 @@ def update_blacklisted_date(item_id: int, blacklisted_date: datetime | None):
         ''', (blacklisted_date, datetime.now(), item_id))
         conn.commit()
         logging.info(f"Updated blacklisted_date to {blacklisted_date} for item ID {item_id}")
-    except Exception as e:
-        logging.error(f"Error updating blacklisted_date for item ID {item_id}: {str(e)}")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_blacklisted_date for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_blacklisted_date after OperationalError: {rb_ex}")
         raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error updating blacklisted date for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_blacklisted_date after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e:
+        logging.error(f"Error updating blacklisted date for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_blacklisted_date after non-Operational error: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
-def update_anime_format(tmdb_id: str, format_type: str):
+def update_anime_format(tmdb_id: str, format_type: str) -> bool:
     """Update the preferred anime format for all episodes of a show.
     
     Args:
         tmdb_id: The TMDB ID of the show
         format_type: The format type ('regular', 'absolute', or 'combined')
+    Returns:
+        bool: True if successful, False otherwise.
     """
     conn = get_db_connection()
     try:
@@ -270,11 +401,31 @@ def update_anime_format(tmdb_id: str, format_type: str):
         ''', (format_type, datetime.now(), tmdb_id))
         conn.commit()
         logging.info(f"Updated anime_format to {format_type} for show with TMDB ID {tmdb_id}")
-    except Exception as e:
-        logging.error(f"Error updating anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        return True
+    except sqlite3.OperationalError as e: 
+        logging.debug(f"OperationalError in update_anime_format for TMDB ID {tmdb_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_anime_format after OperationalError: {rb_ex}")
         raise
+    except sqlite3.Error as e: 
+        logging.error(f"SQLite error updating anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_anime_format after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e: 
+        logging.error(f"Unexpected error updating anime_format for TMDB ID {tmdb_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_anime_format after Exception: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn: 
+            conn.close()
 
 def get_anime_format(tmdb_id: str) -> str | None:
     """Get the preferred anime format for a show.
@@ -302,7 +453,7 @@ def get_anime_format(tmdb_id: str) -> str | None:
         conn.close()
 
 @retry_on_db_lock()
-def update_preferred_alias(tmdb_id: str, imdb_id: str, alias: str, media_type: str, season_number: int = None):
+def update_preferred_alias(tmdb_id: str, imdb_id: str, alias: str, media_type: str, season_number: int = None) -> bool:
     """Update the preferred alias for a movie or show.
     
     Args:
@@ -311,6 +462,8 @@ def update_preferred_alias(tmdb_id: str, imdb_id: str, alias: str, media_type: s
         alias: The preferred alias to use
         media_type: The type of media ('movie' or 'episode')
         season_number: The season number (only for TV shows)
+    Returns:
+        bool: True if successful, False otherwise.
     """
     conn = get_db_connection()
     try:
@@ -330,11 +483,31 @@ def update_preferred_alias(tmdb_id: str, imdb_id: str, alias: str, media_type: s
             ''', (alias, datetime.now(), tmdb_id, imdb_id))
         conn.commit()
         logging.info(f"Updated preferred_alias to '{alias}' for {'show season ' + str(season_number) if media_type == 'episode' else 'movie'} with TMDB ID {tmdb_id}")
-    except Exception as e:
-        logging.error(f"Error updating preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        return True
+    except sqlite3.OperationalError as e: 
+        logging.debug(f"OperationalError in update_preferred_alias for TMDB ID {tmdb_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_preferred_alias after OperationalError: {rb_ex}")
         raise
+    except sqlite3.Error as e: 
+        logging.error(f"SQLite error updating preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_preferred_alias after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e: 
+        logging.error(f"Unexpected error updating preferred_alias for TMDB ID {tmdb_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_preferred_alias after Exception: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn: 
+            conn.close()
 
 def get_preferred_alias(tmdb_id: str, imdb_id: str = None, media_type: str = None, season_number: int = None) -> str | None:
     """Get the preferred alias for a movie or show.
@@ -405,11 +578,30 @@ def add_media_item(item: dict) -> int:
         
         logging.info(f"Added new media item to database with ID {item_id}")
         return item_id
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in add_media_item: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in add_media_item after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error adding media item to database: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in add_media_item after sqlite3.Error: {rb_ex}")
+        return None
     except Exception as e:
-        logging.error(f"Error adding media item to database: {str(e)}")
+        logging.error(f"Unexpected error adding media item to database: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in add_media_item after Exception: {rb_ex}")
         return None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_version_name(old_version: str, new_version: str) -> int:
@@ -442,12 +634,32 @@ def update_version_name(old_version: str, new_version: str) -> int:
         conn.commit()
         logging.info(f"Updated version prefix from '{old_version}' to '{new_version}' for {updated_count} media items (preserving suffixes)")
         return updated_count
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_version_name from '{old_version}' to '{new_version}': {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_version_name after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        # conn.rollback() # Rollback is implicitly handled by the transaction context if commit isn't reached
+        logging.error(f"SQLite error updating version name prefix from '{old_version}' to '{new_version}': {str(e)}")
+        try:
+            if conn: conn.rollback() # Explicit rollback for clarity and safety
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_version_name after sqlite3.Error: {rb_ex}")
+        return 0
     except Exception as e:
-        conn.rollback()
-        logging.error(f"Error updating version name prefix from '{old_version}' to '{new_version}': {str(e)}")
+        # conn.rollback() # Rollback is implicitly handled
+        logging.error(f"Unexpected error updating version name prefix from '{old_version}' to '{new_version}': {str(e)}")
+        try:
+            if conn: conn.rollback() # Explicit rollback
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_version_name after Exception: {rb_ex}")
         return 0
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_version_for_items(old_version_id: str, new_version_id: str | None) -> int:
@@ -472,16 +684,30 @@ def update_version_for_items(old_version_id: str, new_version_id: str | None) ->
         updated_count = cursor.rowcount
         conn.commit()
         logging.info(f"Reassigned {updated_count} items from version '{old_version_id}' to '{new_version_id or 'None'}'")
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_version_for_items: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_version_for_items after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        logging.error(f"Error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
-        conn.rollback() # Rollback on error
-        raise # Re-raise the exception to be caught by the caller
+        logging.error(f"SQLite error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
+        try:
+            if conn: conn.rollback() 
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_version_for_items after sqlite3.Error: {rb_ex}")
+        return 0 
     except Exception as e:
         logging.error(f"Unexpected error updating items from version '{old_version_id}' to '{new_version_id}': {str(e)}")
-        conn.rollback()
-        raise
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_version_for_items after Exception: {rb_ex}")
+        return 0
     finally:
-        conn.close()
+        if conn:
+            conn.close()
     return updated_count
 
 @retry_on_db_lock()
@@ -535,15 +761,33 @@ def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
                     handle_state_change(item_dict)
 
         logging.info(f"Batch updated {len(item_ids)} items to state {state}")
-    except Exception as e:
-        logging.error(f"Error in batch state update: {str(e)}")
-        conn.rollback()
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_media_items_state_batch: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_items_state_batch after OperationalError: {rb_ex}")
         raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error in batch state update: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_items_state_batch after sqlite3.Error: {rb_ex}")
+        # This function does not return a value, so no return here on error.
+    except Exception as e:
+        logging.error(f"Unexpected error in batch state update: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_items_state_batch after Exception: {rb_ex}")
+        # This function does not return a value, so no return here on error.
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
-def update_media_item_torrent_id(item_id: int, new_torrent_id: str):
+def update_media_item_torrent_id(item_id: int, new_torrent_id: str) -> bool:
     """Updates the 'filled_by_torrent_id' for a specific media item."""
     conn = get_db_connection()
     try:
@@ -558,12 +802,30 @@ def update_media_item_torrent_id(item_id: int, new_torrent_id: str):
         else:
             logging.warning(f"No media item found with id {item_id} to update torrent ID.")
             return False
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_media_item_torrent_id for item {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item_torrent_id after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
         logging.error(f"Database error updating torrent ID for item {item_id}: {e}")
-        conn.rollback()
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item_torrent_id after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error updating torrent ID for item {item_id}: {e}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_media_item_torrent_id after Exception: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def set_wake_count(item_id: int, wake_count: int):
@@ -577,11 +839,30 @@ def set_wake_count(item_id: int, wake_count: int):
         ''', (wake_count, datetime.now(), item_id))
         conn.commit()
         # logging.debug(f"Set wake_count to {wake_count} for item ID {item_id}")
-    except Exception as e:
-        logging.error(f"Error setting wake_count for item ID {item_id}: {str(e)}")
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in set_wake_count for item {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in set_wake_count after OperationalError: {rb_ex}")
         raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error setting wake_count for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in set_wake_count after sqlite3.Error: {rb_ex}")
+        # No return value for this function on error, implicitly None
+    except Exception as e:
+        logging.error(f"Unexpected error setting wake_count for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in set_wake_count after Exception: {rb_ex}")
+        # No return value for this function on error, implicitly None
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def increment_wake_count(item_id: int) -> int:
@@ -610,10 +891,29 @@ def increment_wake_count(item_id: int) -> int:
         conn.commit()
         # logging.debug(f"Incremented wake_count to {new_wake_count} for item ID {item_id}")
         return new_wake_count
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in increment_wake_count for item {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in increment_wake_count after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        # conn.rollback() # Handled by transaction context or explicit rollback
+        logging.error(f"SQLite error incrementing wake_count for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback() # Explicit rollback
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in increment_wake_count after sqlite3.Error: {rb_ex}")
+        return 0 
     except Exception as e:
-        conn.rollback()
-        logging.error(f"Error incrementing wake_count for item ID {item_id}: {str(e)}")
-        # Return the last known count or 0 on error
-        return new_wake_count 
+        # conn.rollback() # Handled by transaction context or explicit rollback
+        logging.error(f"Unexpected error incrementing wake_count for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback() # Explicit rollback
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in increment_wake_count after Exception: {rb_ex}")
+        return 0 
     finally:
-        conn.close()
+        if conn:
+            conn.close()

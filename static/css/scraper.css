@@ -1417,3 +1417,26 @@ p.torresult-title {
 }
 /* --- END NEW --- */
 
+.filtered-out-item td,
+.torresult.filtered-out-item .torresult-info p {
+    color: #ff7b7b !important; /* Light red text */
+}
+
+.torresult.filtered-out-item {
+    background-color: #4a3838 !important; 
+    border-color: #604040 !important;
+}
+
+tr.filtered-out-item {
+    background-color: #4a3838 !important; 
+}
+
+tr.filtered-out-item:hover {
+    background-color: #503030 !important; 
+}
+
+/* Ensure normal items don't get overridden if they also match a generic 'tr' hover */
+.overlay-content tbody tr:not(.filtered-out-item):hover {
+    background-color: rgba(255, 255, 255, 0.05); /* Or your default hover color */
+}
+

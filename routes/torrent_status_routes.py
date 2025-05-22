@@ -2,16 +2,19 @@ from flask import Blueprint, render_template, jsonify
 from debrid.common.utils import format_torrent_status
 from debrid import get_debrid_provider
 from utilities.settings import get_setting
+from .models import user_required
 
 # Create Blueprint
 torrent_status_bp = Blueprint('torrent_status', __name__, url_prefix='/torrent_status')
 
 @torrent_status_bp.route('/')
+@user_required
 def torrent_status():
     """Display the torrent status page"""
     return render_template('torrent_status.html')
 
 @torrent_status_bp.route('/api/torrent-status')
+@user_required
 def get_torrent_status():
     """API endpoint to get current torrent status"""
     try:

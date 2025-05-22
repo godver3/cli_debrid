@@ -29,11 +29,11 @@ def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str
     blacklist = get_manual_blacklist()
     logging.info(f"Inside add_to_manual_blacklist: IMDB_ID='{imdb_id}', MediaType='{media_type}', Title='{title}', Year='{year}', Season={season}")
     
-    if season is not None and media_type == 'tv':
+    if season is not None and media_type == 'episode':
         # If this is the first season for this show
         if imdb_id not in blacklist:
             blacklist[imdb_id] = {
-                'media_type': 'tv',
+                'media_type': 'episode',
                 'title': title,
                 'year': year,
                 'seasons': [season]
@@ -52,7 +52,7 @@ def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str
             'title': title,
             'year': year
         }
-        if media_type == 'tv':
+        if media_type == 'episode':
             blacklist[imdb_id]['seasons'] = []  # Empty list means all seasons
 
     save_manual_blacklist(blacklist)
@@ -76,7 +76,7 @@ def is_blacklisted(imdb_id, season: int = None):
         return False
         
     item = blacklist[imdb_id]
-    if item['media_type'] != 'tv':
+    if item['media_type'] != 'episode':
         return True
         
     # If seasons is empty or doesn't exist, the entire show is blacklisted

@@ -7,6 +7,7 @@ import requests
 from datetime import datetime, timedelta
 from utilities.settings import load_config
 from queues.config_manager import add_content_source, save_config
+from .models import admin_required
 
 trakt_friends_bp = Blueprint('trakt_friends', __name__)
 
@@ -32,6 +33,7 @@ def get_trakt_client_credentials():
     }
 
 @trakt_friends_bp.route('/authorize', methods=['POST'])
+@admin_required
 def authorize_friend():
     """Start the authorization process for a friend's Trakt account"""
     # Generate a unique ID for this authorization
@@ -101,6 +103,7 @@ def authorize_friend():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @trakt_friends_bp.route('/check_auth/<auth_id>', methods=['GET'])
+@admin_required
 def check_auth_status(auth_id):
     """Check the status of a friend's Trakt authorization"""
     try:
@@ -200,6 +203,7 @@ def check_auth_status(auth_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @trakt_friends_bp.route('/add_source/<auth_id>', methods=['POST'])
+@admin_required
 def add_friend_source(auth_id):
     """Add a friend's Trakt account as a content source"""
     try:
@@ -247,8 +251,9 @@ def add_friend_source(auth_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @trakt_friends_bp.route('/refresh_token/<auth_id>', methods=['POST'])
+@admin_required
 def refresh_token(auth_id):
-    """Refresh the access token for a friend's Trakt account"""
+    """Refresh a friend's Trakt token if it's expired or nearing expiration"""
     try:
         # Load the state
         state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
@@ -303,8 +308,9 @@ def refresh_token(auth_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @trakt_friends_bp.route('/list', methods=['GET'])
+@admin_required
 def list_friends():
-    """List all authorized friend's Trakt accounts"""
+    """List all authorized Trakt friends with their status and associated content sources."""
     try:
         friends = []
         
@@ -340,8 +346,9 @@ def list_friends():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @trakt_friends_bp.route('/delete/<auth_id>', methods=['POST'])
+@admin_required
 def delete_friend(auth_id):
-    """Delete a friend's Trakt authorization"""
+    """Delete a friend's authorization and any associated content source."""
     try:
         # Check if the auth file exists
         state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
@@ -371,6 +378,9 @@ def delete_friend(auth_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @trakt_friends_bp.route('/manage', methods=['GET'])
+@admin_required
 def manage_friends():
-    """Render the friend management page"""
-    return render_template('trakt_friends.html')
+    """Render the page to manage Trakt friends authorizations."""
+    # Get Trakt client ID and secret from main settings for pre-filling the form
+    trakt_settings = get_trakt_client_credentials()
+    return render_template('trakt_friends.html', trakt_settings=trakt_settings)

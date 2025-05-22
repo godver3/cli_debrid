@@ -69,7 +69,10 @@ def get_show_status(imdb_id: str) -> str:
             response = trakt._make_request(url)
             if response and response.status_code == 200:
                 show_data = response.json()
-                return show_data.get('status', '').lower()
+                status = show_data.get('status', '').lower()
+                if status == 'canceled':
+                    return 'ended'
+                return status
     except Exception as e:
         logging.error(f"Error getting show status for {imdb_id}: {str(e)}")
     return ''

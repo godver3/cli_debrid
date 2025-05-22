@@ -67,9 +67,10 @@ def convert_anime_episode_format(season: int, episode: int, total_episodes: int)
         'combined': combined_format
     }
 
-def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False, check_pack_wantedness: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
-    logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}")
+    logging.info(f"Scraping with parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, content_type={content_type}, version={version}, season={season}, episode={episode}, multi={multi}, genres={genres}, skip_cache_check={skip_cache_check}, check_pack_wantedness={check_pack_wantedness}")
+    logging.debug(f"[scrape_main] Initializing for '{title}' ({year}).")
 
     # Store original season/episode and initialize scene numbers
     original_season = season
@@ -78,6 +79,17 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
     scene_episode = None
     
     xem_applied = False # Flag to track if XEM logic actually modified/confirmed season/episode
+
+    # NEW: Fetch show's season episode structure for accurate num_items calculation in ranking
+    show_season_episode_counts_for_query = {} # Default to empty
+    if content_type.lower() == 'episode':
+        try:
+            # This function is already available and used in database_reading.py
+            show_season_episode_counts_for_query = get_all_season_episode_counts(tmdb_id)
+            logging.info(f"Fetched show_season_episode_counts for {tmdb_id} (for ranking num_items): {show_season_episode_counts_for_query}")
+        except Exception as e:
+            logging.error(f"Failed to get_all_season_episode_counts for {tmdb_id} (for ranking num_items): {e}", exc_info=True)
+            # show_season_episode_counts_for_query remains empty on error
 
     try:
         start_time = time.time()
@@ -369,6 +381,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Initialize results lists
         all_filtered_results = []
         all_filtered_out_results = []
+        logging.debug(f"[scrape_main] Initialized all_filtered_results: {len(all_filtered_results)}, all_filtered_out_results: {len(all_filtered_out_results)}")
 
         # Parse scraping settings based on version to get language preference early
         scraping_versions = get_setting('Scraping', 'versions', {})
@@ -442,10 +455,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             translated_title: str = None,
             target_air_date: Optional[str] = None,
             scene_season_map: Optional[int] = None,
-            scene_episode_map: Optional[int] = None
+            scene_episode_map: Optional[int] = None,
+            check_pack_wantedness: bool = False
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
+            logging.debug(f"[_do_scrape] Starting for search_title: '{search_title}'.")
 
             # Get country code for media item from metadata
             task_start = time.time()
@@ -508,11 +523,13 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 is_translated_search=is_translated # Pass the flag here
             )
             task_timings['scraping'] = time.time() - task_start
+            logging.debug(f"[_do_scrape] scraper_manager.scrape_all for '{search_title}' returned: {len(all_results)} raw items.")
 
             # Deduplicate results before filtering
             task_start = time.time()
             all_results = deduplicate_results(all_results)
             task_timings['deduplication'] = time.time() - task_start
+            logging.debug(f"[_do_scrape] After deduplication for '{search_title}': {len(all_results)} items.")
             logging.debug(f"Total results after deduplication and before filtering: {len(all_results)}")
 
             task_start = time.time()
@@ -524,11 +541,14 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Batch process all titles
             parsed_results = batch_parse_torrent_info(titles, sizes)
             
-            # Create normalized results
+            # Create normalized results and capture parsing failures
             normalized_results = []
+            items_that_failed_normalization = [] # New list to capture parsing failures
+
             for result, parsed_info in zip(all_results, parsed_results):
                 if 'parsing_error' in parsed_info or 'invalid_parse' in parsed_info:
-                    logging.error(f"Error parsing title '{result.get('title', '')}'")
+                    logging.error(f"Error parsing title '{result.get('title', '')}' for scrape of '{search_title}'")
+                    items_that_failed_normalization.append(result)
                     continue
                     
                 # --- Populate scraper_type and scraper_instance from source if missing ---
@@ -578,14 +598,20 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 normalized_results, tmdb_id, original_media_title, year, content_type,
                 season, episode, multi, version_settings, runtime, episode_count,
                 season_episode_counts, genres, matching_aliases,
-                imdb_id=imdb_id_for_fallback, # Pass imdb_id
-                direct_api=direct_api_instance, # Pass direct_api instance
+                imdb_id=imdb_id_for_fallback, 
+                direct_api=direct_api_instance, 
                 preferred_language=preferred_language,
                 translated_title=translated_title,
-                target_air_date=target_air_date
+                target_air_date=target_air_date,
+                check_pack_wantedness=check_pack_wantedness,
+                current_scrape_target_version=version # Pass the 'version' from _do_scrape's scope
             )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
+
+            # Combine all types of filtered out items for this specific scrape attempt
+            comprehensive_filtered_out_list = filtered_out_results + items_that_failed_normalization
+            logging.debug(f"[_do_scrape] For '{search_title}', comprehensive_filtered_out_list length: {len(comprehensive_filtered_out_list)}")
 
             # --- Attach scene mapping info to results --- 
             if scene_season_map is not None and scene_episode_map is not None:
@@ -595,7 +621,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # --- End attaching scene mapping --- 
 
             logging.info(f"_do_scrape task timings for '{search_title}': {task_timings}")
-            return filtered_results, filtered_out_results, task_timings
+            logging.debug(f"[_do_scrape] Returning for '{search_title}': passed_final_filters={len(filtered_results)}, comprehensive_filtered_out_list={len(comprehensive_filtered_out_list)}")
+            return filtered_results, comprehensive_filtered_out_list, task_timings # Return the comprehensive list
 
         # Determine titles to scrape with
         titles_to_try = []
@@ -622,6 +649,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         # Execute scraping based on the determined titles
         for source, search_title in titles_to_try:
             logging.info(f"Scraping with {source}: {search_title}")
+            logging.debug(f"[scrape_main] Calling _do_scrape for '{search_title}' (source: {source}).")
 
             # --- START ADDED LOGGING ---
             logging.info(f"Calling _do_scrape with: search_title='{search_title}', original_media_title='{title}', season={season}, episode={episode}, target_air_date='{target_air_date}'")
@@ -648,13 +676,16 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 target_air_date=target_air_date, # Pass target_air_date here
                 # Pass the determined scene mapping (or None) to _do_scrape
                 scene_season_map=scene_season, # This is the XEM-mapped season (or None)
-                scene_episode_map=scene_episode # This is the XEM-mapped episode (or None)
+                scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
+                check_pack_wantedness=check_pack_wantedness # Pass parameter
             )
+            logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
             
             if filtered_results:
                 all_filtered_results.extend(filtered_results)
-                if filtered_out_results:
-                    all_filtered_out_results.extend(filtered_out_results)
+            if filtered_out_results: # Ensure filtered_out_results is not None
+                all_filtered_out_results.extend(filtered_out_results)
+            logging.debug(f"[scrape_main] After '{search_title}' scrape: all_filtered_results: {len(all_filtered_results)}, all_filtered_out_results: {len(all_filtered_out_results)}")
 
         # If no results from first pass, try aliases
         if not aliases_disabled and not all_filtered_results and matching_aliases:
@@ -690,15 +721,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         target_air_date=target_air_date, # Pass target_air_date here
                         # Pass the determined scene mapping (or None) to _do_scrape
                         scene_season_map=scene_season, 
-                        scene_episode_map=scene_episode
+                        scene_episode_map=scene_episode,
+                        check_pack_wantedness=check_pack_wantedness # Pass parameter
                     )
+                    logging.debug(f"[scrape_main] _do_scrape for alias '{alias}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
                     
                     if filtered_results and len(filtered_results) > len(best_alias_results):
                         logging.info(f"New best alias found: {alias} with {len(filtered_results)} results")
                         best_alias = alias
                         best_alias_results = filtered_results
-                        if filtered_out_results:
+                        if filtered_out_results: # Ensure filtered_out_results is not None
                             all_filtered_out_results.extend(filtered_out_results)
+                        logging.debug(f"[scrape_main] After alias '{alias}' scrape: all_filtered_results (from best alias): {len(best_alias_results)}, all_filtered_out_results (cumulative): {len(all_filtered_out_results)}")
 
             # If we found a better alias, update it as preferred and add its results
             if best_alias and best_alias_results:
@@ -709,8 +743,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 except Exception as alias_update_err:
                     logging.error(f"Error updating preferred alias: {alias_update_err}")
                 all_filtered_results.extend(best_alias_results)
+                logging.debug(f"[scrape_main] Extended with best alias results: all_filtered_results: {len(all_filtered_results)}")
 
         # Deduplicate final results while preserving order
+        logging.debug(f"[scrape_main] Before final deduplication: all_filtered_results: {len(all_filtered_results)}")
         seen = set()
         deduplicated_results = []
         for result in all_filtered_results:
@@ -718,6 +754,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             if result_key not in seen:
                 seen.add(result_key)
                 deduplicated_results.append(result)
+        logging.debug(f"[scrape_main] After final deduplication (these are 'passed' results): deduplicated_results: {len(deduplicated_results)}")
 
         # Parse scraping settings for final sorting
         # version_settings already loaded and defaulted/merged above
@@ -732,7 +769,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 x, deduplicated_results, title, year, scene_season if xem_applied else original_season, scene_episode if xem_applied else original_episode, multi, # Pass original title to ranker
                 content_type, version_settings,
                 preferred_language=preferred_language, # Pass new arg
-                translated_title=translated_title     # Pass new arg
+                translated_title=translated_title,     # Pass new arg
+                show_season_episode_counts=show_season_episode_counts_for_query # MODIFIED: Pass the fetched counts
             )
 
         # Apply ultimate sort order if present
@@ -745,7 +783,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         else:
             deduplicated_results = sorted(deduplicated_results, key=stable_rank_key)
 
-                # --- Apply Minimum Scrape Score Filter ---
+        # --- Apply Minimum Scrape Score Filter ---
         minimum_scrape_score_setting = get_setting('Scraping', 'minimum_scrape_score', 0.0)
         if minimum_scrape_score_setting != 0.0: # Check if the filter is enabled (not the default disabled value)
             initial_count = len(deduplicated_results)
@@ -770,8 +808,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             score = result.get('score_breakdown', {}).get('total_score', 'N/A')
             logging.info(f"  - Score: {score} | Title: {result.get('original_title')}")
 
+        logging.info(f"[scrape_main] Returning: passed_results={len(deduplicated_results)}, filtered_out_results={len(all_filtered_out_results)}")
         return deduplicated_results, all_filtered_out_results
 
     except Exception as e:
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)
+        logging.debug(f"[scrape_main] Error, returning empty lists.")
         return [], []  # Return empty lists in case of an error

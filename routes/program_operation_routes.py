@@ -448,8 +448,10 @@ def check_service_connectivity():
     return services_reachable, failed_services_details
 
 @program_operation_bp.route('/api/start_program', methods=['POST'])
+@admin_required
 def start_program():
     global program_runner
+    config = load_config()
     check_result, failed_services_info = check_service_connectivity()
     if not check_result:
         # Construct a more informative error message using the structured details
@@ -529,16 +531,19 @@ def stop_program():
         return {"status": "error", "message": f"Error stopping program: {str(e)}"}
 
 @program_operation_bp.route('/api/stop_program', methods=['POST'])
+@admin_required
 def stop_program_route():
     result = stop_program()
     return jsonify(result)
 
 @program_operation_bp.route('/api/update_program_state', methods=['POST'])
+@admin_required
 def update_program_state():
-    state = request.json.get('state')
-    if state in ['Running', 'Initialized']:
-        current_app.config['PROGRAM_RUNNING'] = (state == 'Running')
-        return jsonify({"status": "success", "message": f"Program state updated to {state}"})
+    data = request.json
+    action = data.get('action')
+    if action in ['Running', 'Initialized']:
+        current_app.config['PROGRAM_RUNNING'] = (action == 'Running')
+        return jsonify({"status": "success", "message": f"Program state updated to {action}"})
     else:
         return jsonify({"status": "error", "message": "Invalid state"}), 400
 
@@ -801,53 +806,61 @@ def disable_task():
 @program_operation_bp.route('/save_task_toggles', methods=['POST'])
 @admin_required
 def save_task_toggles():
-    """Save the current state of task toggles to a JSON file, preserving metadata."""
+    """Save the current state of task toggles to a JSON file, based on ProgramRunner's live state."""
     MIGRATION_VERSION_KEY = "_migration_version"
+    runner = get_program_runner()
+
+    if not runner:
+        return jsonify({'success': False, 'error': 'ProgramRunner not available. Cannot determine live task states.'}), 500
+
     try:
-        # Get task states from request
-        data = request.json
-        if not data or 'task_states' not in data:
-            return jsonify({'success': False, 'error': 'No task states provided'})
-        
-        new_task_states = data['task_states']
-        if not isinstance(new_task_states, dict):
-             return jsonify({'success': False, 'error': 'task_states must be an object'})
+        # Construct live_task_states from ProgramRunner
+        live_task_states = {}
+        if hasattr(runner, 'task_intervals') and hasattr(runner, 'enabled_tasks'):
+            all_defined_tasks = runner.task_intervals.keys()
+            for task_name in all_defined_tasks:
+                # Ensure we use the same normalized name that would be stored/checked
+                normalized_name = runner._normalize_task_name(task_name) 
+                live_task_states[normalized_name] = normalized_name in runner.enabled_tasks
+        else:
+            return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
 
         # Get the file path
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
         
-        current_data = {}
+        current_data_from_file = {}
         migration_version = None
 
-        # Read existing file to preserve metadata
+        # Read existing file to preserve metadata (like _migration_version)
         if os.path.exists(toggles_file_path):
             try:
                 with open(toggles_file_path, 'r') as f:
-                    current_data = json.load(f)
-                    if isinstance(current_data, dict) and MIGRATION_VERSION_KEY in current_data:
-                        migration_version = current_data[MIGRATION_VERSION_KEY]
+                    current_data_from_file = json.load(f)
+                    if isinstance(current_data_from_file, dict) and MIGRATION_VERSION_KEY in current_data_from_file:
+                        migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
             except (json.JSONDecodeError, OSError) as e:
                 logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
-                # Proceed with saving new state, potentially losing metadata
+                # Proceed with saving new state, potentially losing metadata if file was corrupt
 
-        # Prepare data to save: merge new states with preserved metadata
-        data_to_save = new_task_states.copy() # Start with the new states
+        # Prepare data to save: use live_task_states and add back any preserved metadata
+        data_to_save = live_task_states.copy() 
         if migration_version is not None:
-            data_to_save[MIGRATION_VERSION_KEY] = migration_version # Add back the metadata tag
+            data_to_save[MIGRATION_VERSION_KEY] = migration_version 
 
         # Save the combined data to JSON file
         try:
+            os.makedirs(os.path.dirname(toggles_file_path), exist_ok=True)
             with open(toggles_file_path, 'w') as f:
                 json.dump(data_to_save, f, indent=4)
-            logging.info(f"Task toggle states saved to {toggles_file_path}")
-            return jsonify({'success': True, 'message': 'Task toggle states saved successfully'})
+            logging.info(f"Live task toggle states saved to {toggles_file_path}")
+            return jsonify({'success': True, 'message': 'Task toggle states saved successfully based on live program state.'})
         except OSError as e:
              logging.error(f"Error writing task toggles file: {str(e)}")
              return jsonify({'success': False, 'error': f"Failed to write file: {str(e)}"})
 
     except Exception as e:
-        logging.error(f"Error saving task toggles: {str(e)}")
+        logging.error(f"Error saving task toggles: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)})
 
 @program_operation_bp.route('/load_task_toggles', methods=['GET'])

@@ -50,7 +50,10 @@ def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2,
                     return result
                 except sqlite3.OperationalError as e:
                     last_exception = e
-                    if "database is locked" in str(e):
+                    # TEMPORARY DEBUG LOGGING
+                    logging.critical(f"RETRY_DEBUG: Decorator caught OperationalError in {func.__name__}. Error type: {type(e)}. Error str: '{str(e)}'")
+                    
+                    if "database is locked" in str(e): # Original check
                         # Check if we have retries left.
                         # attempt is 0-indexed count of failures. So, if attempt = max_attempts - 1, all retries are exhausted.
                         if attempt < max_attempts - 1:
@@ -71,6 +74,8 @@ def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2,
                             attempt += 1 # Reflect this last failed attempt
                             break # Exit loop to handle final failure
                     else:
+                        # TEMPORARY DEBUG LOGGING
+                        logging.critical(f"RETRY_DEBUG: Decorator in {func.__name__} - error IS NOT 'database is locked'. Actual: '{str(e)}'")
                         # Database error not related to lock
                         overall_end_time = time.monotonic()
                         duration = overall_end_time - overall_start_time
@@ -115,7 +120,7 @@ def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2,
 
 # --- Schema Initialization --- Now defined AFTER the decorator ---
 @retry_on_db_lock()
-def initialize_notifications_table(conn: sqlite3.Connection):
+def initialize_notifications_table(conn: sqlite3.Connection) -> bool:
     """Creates the notifications table if it doesn't exist."""
     try:
         cursor = conn.cursor()
@@ -140,10 +145,30 @@ def initialize_notifications_table(conn: sqlite3.Connection):
         ''')
         conn.commit()
         # logging.debug("Notifications table initialized successfully.")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in initialize_notifications_table: {e}. Handing over to retry_on_db_lock.")
+        try:
+            # conn is passed in, attempt rollback if it's usable
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in initialize_notifications_table after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        logging.error(f"Database error initializing notifications table: {e}")
-        conn.rollback()
-        # Do not close connection here, let the caller manage it
+        logging.error(f"SQLite error initializing notifications table: {e}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in initialize_notifications_table after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error initializing notifications table: {e}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in initialize_notifications_table after Exception: {rb_ex}")
+        return False
+    # No finally block to close conn, as it's passed in and managed by the caller.
 
 # --- Database Connection --- Now defined AFTER initialize_notifications_table ---
 def get_db_connection(db_path=None):
@@ -177,7 +202,7 @@ def get_existing_airtime(conn, imdb_id):
     return result[0] if result else None
 
 @retry_on_db_lock()
-def reset_item_to_upgrading(imdb_id: str, original_file: str, original_version: str):
+def reset_item_to_upgrading(imdb_id: str, original_file: str, original_version: str) -> bool:
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -192,11 +217,31 @@ def reset_item_to_upgrading(imdb_id: str, original_file: str, original_version: 
         ''', (original_file, original_file, original_version, imdb_id))
         conn.commit()
         logging.info(f"Reset item with IMDB ID {imdb_id} to Upgrading state with original file: {original_file}")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in reset_item_to_upgrading for IMDB ID {imdb_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in reset_item_to_upgrading for IMDB ID {imdb_id} after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        logging.error(f"Database error: {e}")
-        conn.rollback()
+        logging.error(f"SQLite error resetting item to upgrading for IMDB ID {imdb_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in reset_item_to_upgrading for IMDB ID {imdb_id} after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error resetting item to upgrading for IMDB ID {imdb_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in reset_item_to_upgrading for IMDB ID {imdb_id} after Exception: {rb_ex}")
+        return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 # --- Notification Functions ---
 
@@ -233,12 +278,30 @@ def add_db_notification(
         conn.commit()
         # logging.debug(f"Added notification {notification_id} and pruned old ones.")
         return True, None # Success
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in add_db_notification: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in add_db_notification after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        logging.error(f"Database error adding notification: {e}")
-        conn.rollback()
-        return False, str(e) # Failure + error message
+        logging.error(f"SQLite error adding notification: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in add_db_notification after sqlite3.Error: {rb_ex}")
+        return False, str(e) 
+    except Exception as e:
+        logging.error(f"Unexpected error adding notification: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in add_db_notification after Exception: {rb_ex}")
+        return False, str(e)
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def get_db_notifications(
@@ -247,9 +310,9 @@ def get_db_notifications(
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """Gets notifications from the database, ordered by timestamp."""
     conn = get_db_connection()
-    notifications = []
+    notifications: List[Dict[str, Any]] = []
     query = f"SELECT * FROM notifications ORDER BY timestamp {sort_order}"
-    params = []
+    params: List[Any] = []
     if limit is not None:
         query += " LIMIT ?"
         params.append(limit)
@@ -260,11 +323,22 @@ def get_db_notifications(
         rows = cursor.fetchall()
         notifications = [row_to_dict(row) for row in rows]
         return notifications, None # Success
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in get_db_notifications: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback() 
+        except Exception as rb_ex:
+            logging.error(f"Rollback attempt failed in get_db_notifications after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        logging.error(f"Database error getting notifications: {e}")
-        return [], str(e) # Failure + error message
+        logging.error(f"SQLite error getting notifications: {str(e)}")
+        return [], str(e) 
+    except Exception as e:
+        logging.error(f"Unexpected error getting notifications: {str(e)}")
+        return [], str(e)
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def mark_db_notification_read(notification_id: str) -> Tuple[bool, bool, Optional[str]]:
@@ -275,7 +349,6 @@ def mark_db_notification_read(notification_id: str) -> Tuple[bool, bool, Optiona
         cursor.execute("UPDATE notifications SET read = 1 WHERE id = ?", (notification_id,))
         conn.commit()
         
-        # Check if any row was actually updated
         found = cursor.rowcount > 0
         if found:
             # logging.debug(f"Marked notification {notification_id} as read.")
@@ -284,28 +357,60 @@ def mark_db_notification_read(notification_id: str) -> Tuple[bool, bool, Optiona
             logging.warning(f"Attempted to mark notification as read, but ID not found: {notification_id}")
             
         return True, found, None # Success, Found status, No error
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in mark_db_notification_read for ID {notification_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in mark_db_notification_read for ID {notification_id} after OperationalError: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        logging.error(f"Database error marking notification {notification_id} as read: {e}")
-        conn.rollback()
-        return False, False, str(e) # Failure, Not Found, Error message
+        logging.error(f"SQLite error marking notification {notification_id} as read: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in mark_db_notification_read for ID {notification_id} after sqlite3.Error: {rb_ex}")
+        return False, False, str(e)
+    except Exception as e:
+        logging.error(f"Unexpected error marking notification {notification_id} as read: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in mark_db_notification_read for ID {notification_id} after Exception: {rb_ex}")
+        return False, False, str(e)
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def mark_all_db_notifications_read() -> Tuple[bool, int, Optional[str]]:
-    """Marks all notifications as read. Returns (success, count_updated, error_message)."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        # Update only those that are currently unread
         cursor.execute("UPDATE notifications SET read = 1 WHERE read = 0")
         count_updated = cursor.rowcount
         conn.commit()
         # logging.debug(f"Marked {count_updated} notifications as read.")
-        return True, count_updated, None # Success, Count updated, No error
-    except sqlite3.Error as e:
-        logging.error(f"Database error marking all notifications as read: {e}")
-        conn.rollback()
-        return False, 0, str(e) # Failure, 0 updated, Error message
+        return True, count_updated, None # Success
+    except sqlite3.OperationalError as e:
+        # Let "database is locked" (and other OperationalErrors) propagate to the decorator
+        # The decorator will handle retries for "locked" or log other operational errors.
+        # We might still want to rollback here if a non-lock OperationalError occurs
+        # and the decorator re-raises it.
+        try:
+            conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in mark_all_db_notifications_read after OperationalError: {rb_ex}")
+        raise # Re-raise the OperationalError for the decorator
+    except sqlite3.Error as e: # Catch other sqlite3.Errors that are NOT OperationalError
+        logging.error(f"Non-Operational SQLite error in mark_all_db_notifications_read: {e}")
+        try:
+            conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in mark_all_db_notifications_read after non-Operational sqlite3.Error: {rb_ex}")
+        # Decide what to return or if this should also raise.
+        # For consistency with original, maybe return an error tuple,
+        # but this type of error won't be retried by the current decorator.
+        return False, 0, f"Non-Operational SQLite error: {str(e)}"
     finally:
         conn.close()

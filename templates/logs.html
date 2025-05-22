@@ -805,80 +805,54 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
         fetch(`/logs/api/logs/share/status/${taskId}`)
         .then(response => response.json())
         .then(statusData => {
-            // Update progress bar
             progressBar.style.width = statusData.progress + '%';
             
-            // Update button text based on status
-            if (statusData.status === 'collecting') {
-                button.textContent = 'Collecting logs...';
+            // Update button text based on dynamic message from backend if available
+            if (statusData.message && statusData.status !== 'completed') { // Don't use backend message for button if completed
+                button.textContent = statusData.message.substring(0, 25); // Keep it short
+            } else if (statusData.status === 'collecting') {
+                button.textContent = 'Collecting...';
             } else if (statusData.status === 'compressing') {
                 button.textContent = 'Compressing...';
-            } else if (statusData.status === 'reducing') {
-                button.textContent = 'Reducing size...';
-            } else if (statusData.status === 'uploading') {
+            } else if (statusData.status === 'uploading_to_pastebin') {
                 button.textContent = 'Uploading...';
+            } else if (statusData.status !== 'completed' && statusData.status !== 'failed') {
+                 button.textContent = 'Processing...'; // Generic fallback
             }
             
-            // Check if completed or failed
-            if (statusData.status === 'completed' && statusData.url) {
+            if (statusData.status === 'completed') {
                 clearInterval(intervalId);
-
-                // Construct the command to copy
-                const commandToCopy = `wget -qO - ${statusData.url} | gzip -dc | lnav`;
-
-                // Update share URL link (display raw URL)
-                shareUrl.href = statusData.url;
-                // shareUrl.textContent = `oshi.at link`; // Old text
-                shareUrl.textContent = `View Raw Log`; // New text
+                
+                shareUrl.href = statusData.url; 
+                shareUrl.textContent = 'View Shared Log (paste.c-net.org)';
+                shareUrl.title = statusData.url; // Show full URL on hover
+                shareUrl.target = '_blank'; 
                 shareUrl.style.display = 'inline-block';
 
-                // Show copy button (optional, could be removed if only command matters)
                 document.getElementById('copy-url-btn').style.display = 'inline-block';
 
-                // Try to copy the command to clipboard with fallback
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(commandToCopy)
-                        .then(() => {
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                title: 'Success',
-                                message: `Logs shared! Command copied to clipboard:\n${commandToCopy}`,
-                                autoClose: 15000 // Longer time to read the command
-                            });
-                        })
-                        .catch(err => {
-                            console.warn('Failed to copy command to clipboard:', err);
-                            // Show command in popup if copy failed
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                title: 'Success',
-                                message: `Logs shared! Use this command:\n${commandToCopy}`,
-                                autoClose: 60000
-                            });
-                        });
-                } else {
-                    // Fallback for browsers without clipboard API
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        title: 'Success',
-                        message: `Logs shared! Use this command:\n${commandToCopy}`,
-                        autoClose: 60000
-                    });
-                }
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success!',
+                    message: `Logs uploaded successfully to paste.c-net.org! URL: ${statusData.url}`,
+                    autoClose: 10000 
+                });
 
-                button.textContent = 'Share Logs';
+                button.textContent = 'Share Logs'; // Reset button text
                 button.disabled = false;
 
             } else if (statusData.status === 'failed') {
                 clearInterval(intervalId);
                 shareUrl.style.display = 'none';
+                document.getElementById('copy-url-btn').style.display = 'none';
+                
                 showPopup({
                     type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: statusData.error || 'Failed to share logs',
-                    autoClose: 5000
+                    title: 'Error Sharing Logs',
+                    message: statusData.error || 'An unknown error occurred during log sharing.',
+                    autoClose: 7000
                 });
-                button.textContent = 'Share Logs';
+                button.textContent = 'Share Logs'; // Reset button text
                 button.disabled = false;
             }
         })
@@ -886,10 +860,11 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
             console.error('Error checking upload status:', error);
             clearInterval(intervalId);
             shareUrl.style.display = 'none';
+            document.getElementById('copy-url-btn').style.display = 'none';
             showPopup({
                 type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: 'Lost connection to server while sharing logs',
+                title: 'Connection Error',
+                message: 'Lost connection while checking share status.',
                 autoClose: 5000
             });
             button.textContent = 'Share Logs';
@@ -898,7 +873,7 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     }
 });
 
-// Add copy button functionality (now copies the raw URL if clicked)
+// Add copy button functionality (for paste.c-net.org URL)
 document.getElementById('copy-url-btn').addEventListener('click', function() {
     const shareUrl = document.getElementById('share-url');
     navigator.clipboard.writeText(shareUrl.href).then(() => {

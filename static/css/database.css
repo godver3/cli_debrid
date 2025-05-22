@@ -511,3 +511,10 @@
             display: none;
         }
     }
+
+    /* static/css/database.css */
+    .result-count {
+        margin: 10px 0 0 0;
+        font-size: 14px;
+        color: #666;
+    }

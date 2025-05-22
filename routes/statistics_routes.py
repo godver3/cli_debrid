@@ -430,28 +430,37 @@ def set_compact_preference():
 @user_required
 @onboarding_required
 def root():
-    start_time = time.perf_counter()
-    
+    overall_start_time = time.perf_counter()
+    logging.info("Statistics page load: START")
+
     # Get view preferences from settings
+    settings_fetch_start = time.perf_counter()
     use_24hour_format = get_setting('UI Settings', 'use_24hour_format', True)
     compact_view = get_setting('UI Settings', 'compact_view', False)
-    
+    logging.info(f"Statistics page load: Fetched UI settings in {(time.perf_counter() - settings_fetch_start)*1000:.2f}ms")
+
     # Check if user is on mobile using User-Agent
+    user_agent_check_start = time.perf_counter()
     user_agent = request.headers.get('User-Agent', '').lower()
     is_mobile = any(device in user_agent for device in ['mobile', 'android', 'iphone', 'ipad', 'ipod'])
-    
+    logging.info(f"Statistics page load: User agent check in {(time.perf_counter() - user_agent_check_start)*1000:.2f}ms")
+
     # Force compact view on mobile devices
     if is_mobile:
+        compact_view_mobile_start = time.perf_counter()
         compact_view = True
+        logging.info(f"Statistics page load: Forced compact view for mobile in {(time.perf_counter() - compact_view_mobile_start)*1000:.2f}ms")
     
     # Get all statistics data
     stats = {}
     
     # Get timezone using our robust function
+    tz_uptime_start = time.perf_counter()
     from metadata.metadata import _get_local_timezone
     local_tz = _get_local_timezone()
     stats['timezone'] = str(local_tz)
     stats['uptime'] = int(time.time() - app_start_time)
+    logging.info(f"Statistics page load: Fetched timezone and uptime in {(time.perf_counter() - tz_uptime_start)*1000:.2f}ms")
     
     # Get collection counts from the optimized summary function
     collection_start = time.perf_counter()
@@ -460,7 +469,7 @@ def root():
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
-    logging.info(f"Collection counts took {(time.perf_counter() - collection_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Collection counts took {(time.perf_counter() - collection_start)*1000:.2f}ms")
     
     # Get active downloads and usage stats
     downloads_start = time.perf_counter()
@@ -483,9 +492,10 @@ def root():
             'percentage': 0,
             'error': 'provider_error'
         }
-    logging.info(f"Download stats check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Download stats check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
     
     # --- Read Cached Library Size for Initial Display ---
+    library_cache_read_start = time.perf_counter()
     cached_size_data = _read_size_cache()
     if cached_size_data:
         stats['total_library_size'] = f"{cached_size_data['size_str']} (cached)"
@@ -493,18 +503,21 @@ def root():
     else:
         # Default if cache is missing, invalid, or expired
         stats['total_library_size'] = "Click Refresh" # Changed default text
+    logging.info(f"Statistics page load: Reading library size cache took {(time.perf_counter() - library_cache_read_start)*1000:.2f}ms")
 
     # Get recently aired and upcoming shows
     shows_start = time.perf_counter()
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
-    logging.info(f"Recently aired and upcoming shows took {(time.perf_counter() - shows_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Recently aired and upcoming shows took {(time.perf_counter() - shows_start)*1000:.2f}ms")
     
     # Get upcoming releases
     releases_start = time.perf_counter()
     upcoming_releases = get_upcoming_releases()
+    formatting_upcoming_releases_start = time.perf_counter()
     for release in upcoming_releases:
         release['formatted_date'] = format_date(release['release_date'])
-    logging.info(f"Upcoming releases took {(time.perf_counter() - releases_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Upcoming releases (data retrieval) took {(formatting_upcoming_releases_start - releases_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Upcoming releases (formatting) took {(time.perf_counter() - formatting_upcoming_releases_start)*1000:.2f}ms")
     
     # Get recently added items and upgraded items
     recent_start = time.perf_counter()
@@ -513,8 +526,12 @@ def root():
     
     try:
         # Get recently added items
+        get_recent_added_items_start = time.perf_counter()
         from database import get_recently_added_items
         recently_added_data = loop.run_until_complete(get_recently_added_items())
+        logging.info(f"Statistics page load: get_recently_added_items (async) took {(time.perf_counter() - get_recent_added_items_start)*1000:.2f}ms")
+        
+        recently_added_processing_start = time.perf_counter()
         recently_added = {
             'movies': [],
             'shows': []
@@ -539,12 +556,17 @@ def root():
                 )
                 show['formatted_collected_at'] = show['formatted_date']
                 recently_added['shows'].append(show)
+        logging.info(f"Statistics page load: Processing recently added items took {(time.perf_counter() - recently_added_processing_start)*1000:.2f}ms")
         
         # Get recently upgraded items
+        get_recent_upgraded_start = time.perf_counter()
         upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
+        recently_upgraded_processing_start = time.perf_counter()
         if upgrade_enabled:
             from database import get_recently_upgraded_items
+            recently_upgraded_async_start = time.perf_counter()
             recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+            logging.info(f"Statistics page load: get_recently_upgraded_items (async) took {(time.perf_counter() - recently_upgraded_async_start)*1000:.2f}ms")
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
@@ -564,18 +586,20 @@ def root():
                     item['original_collected_at'] = 'Unknown'
         else:
             recently_upgraded = []
+        logging.info(f"Statistics page load: Fetched and processed recently upgraded items in {(time.perf_counter() - get_recent_upgraded_start)*1000:.2f}ms (processing part: {(time.perf_counter() - recently_upgraded_processing_start)*1000:.2f}ms)")
     
     finally:
         loop.close()
-    logging.info(f"Recently added and upgraded items took {(time.perf_counter() - recent_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Recently added and upgraded items (total async block) took {(time.perf_counter() - recent_start)*1000:.2f}ms")
     
     # Check if TMDB API key is set
-    api_start = time.time()
+    api_key_check_start = time.perf_counter()
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     stats['tmdb_api_key_set'] = bool(tmdb_api_key)
+    logging.info(f"Statistics page load: TMDB API key check took {(time.perf_counter() - api_key_check_start)*1000:.2f}ms")
     
     # Format dates for recently aired and airing soon
-    formatting_start = time.perf_counter()
+    date_formatting_start = time.perf_counter()
     for item in recently_aired:
         item['formatted_datetime'] = format_datetime_preference(
             item['air_datetime'], 
@@ -587,12 +611,11 @@ def root():
             item['air_datetime'], 
             use_24hour_format
         )
-    logging.info(f"Date/time formatting took {(time.perf_counter() - formatting_start)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Date/time formatting for aired/airing soon took {(time.perf_counter() - date_formatting_start)*1000:.2f}ms")
     
     # Log total time
-    logging.info(f"Total route processing took {(time.perf_counter() - start_time)*1000:.2f}ms")
-
-    return render_template('statistics.html',
+    render_start_time = time.perf_counter()
+    template_rendered = render_template('statistics.html',
                          stats=stats,
                          recently_aired=recently_aired,
                          airing_soon=airing_soon,
@@ -601,6 +624,10 @@ def root():
                          recently_upgraded=recently_upgraded,
                          use_24hour_format=use_24hour_format,
                          compact_view=compact_view)
+    logging.info(f"Statistics page load: render_template call took {(time.perf_counter() - render_start_time)*1000:.2f}ms")
+    logging.info(f"Statistics page load: Total route processing took {(time.perf_counter() - overall_start_time)*1000:.2f}ms. END")
+
+    return template_rendered
 
 @root_bp.route('/set_time_preference', methods=['POST'])
 @user_required

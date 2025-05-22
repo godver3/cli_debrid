@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from scraper.functions.similarity_checks import similarity, normalize_title
 from scraper.functions.other_functions import smart_search
 from fuzzywuzzy import fuzz
@@ -42,7 +42,8 @@ def rank_result_key(
     query: str, query_year: int, query_season: int, query_episode: int,
     multi: bool, content_type: str, version_settings: Dict[str, Any],
     preferred_language: str = None,
-    translated_title: str = None
+    translated_title: str = None,
+    show_season_episode_counts: Optional[Dict[int, int]] = None
 ) -> Tuple:
     torrent_title = result.get('title', '')
     parsed_info = result.get('parsed_info', {})
@@ -168,25 +169,49 @@ def rank_result_key(
 
     # --- Size and Bitrate Calculation ---
     
-    # Determine if this result is a multi-episode pack
+    # Determine if this result is a multi-episode pack and calculate accurate num_items
     is_multi_pack = False
-    season_pack = 'N/A' # Default
-    num_items = 1 # Default
+    season_pack_type = 'N/A' # Default
+    num_items = 1 # Default to 1 (for movies or single episodes not otherwise classified)
+
     if content_type.lower() == 'episode':
-        season_pack = result.get('parsed_info', {}).get('season_episode_info', {}).get('season_pack', 'Unknown')
-        is_multi_pack = season_pack not in ['N/A', 'Unknown'] or len(result.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', [])) > 1
-        if is_multi_pack:
-            if season_pack == 'Complete':
-                # Use a fixed moderate value instead of huge count
-                num_items = 10 # Represents 'many' seasons
-            elif season_pack not in ['N/A', 'Unknown']:
-                 try:
-                    num_items = len([s for s in season_pack.split(',') if s.isdigit()])
-                 except:
-                    num_items = 1 # Fallback
-            else: # Unknown pack type (e.g., multiple episodes detected)
-                 num_items = len(result.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', []))
-                 
+        parsed_sei = parsed_info.get('season_episode_info', {})
+        parsed_episodes_list = parsed_sei.get('episodes', [])
+        parsed_seasons_list = parsed_sei.get('seasons', [])
+        season_pack_type = parsed_sei.get('season_pack', 'Unknown') # This will be 'Complete'
+
+        # --- NEW LOGIC FOR ACCURATE NUM_ITEMS ---
+        if season_pack_type == 'Complete' and show_season_episode_counts:
+            # If detect_season_episode_info identified it as a 'Complete' pack,
+            # use the comprehensive show_season_episode_counts for num_items.
+            num_items = sum(count for s_num, count in show_season_episode_counts.items() if isinstance(s_num, int) and s_num > 0)
+            is_multi_pack = num_items > 1
+        elif parsed_episodes_list and len(parsed_episodes_list) > 1:
+            # This typically means a range like S02E01-E10 identified by detect_season_episode_info
+            # or a non-'Complete' pack where detect_season_episode_info did populate episodes.
+            num_items = len(parsed_episodes_list)
+            is_multi_pack = True
+        elif parsed_seasons_list and show_season_episode_counts:
+            # Covers one or more specific seasons (not marked 'Complete')
+            current_total_episodes = 0
+            for s_num_str in parsed_seasons_list:
+                try:
+                    s_num_int = int(s_num_str)
+                    if s_num_int > 0:
+                        current_total_episodes += show_season_episode_counts.get(s_num_int, 0)
+                except ValueError:
+                    logging.warning(f"[RRK] Could not convert season '{s_num_str}' to int for '{torrent_title}'")
+            if current_total_episodes > 0:
+                num_items = current_total_episodes
+                is_multi_pack = True
+        elif parsed_episodes_list and len(parsed_episodes_list) == 1:
+             num_items = 1
+             is_multi_pack = False
+
+        # Fallback for is_multi_pack if num_items is still 1 but parsed_sei indicates a pack
+        if num_items <= 1 and season_pack_type not in ['N/A', 'Unknown', 'Complete'] and season_pack_type: # Avoid 'Complete' here as num_items handles it
+            is_multi_pack = True # e.g. "S01" but no episodes were found/counted in show_season_episode_counts
+
     # Get the appropriate size for comparison based on 'multi' flag
     def get_comparison_size(r, is_multi_search):
         size_val = r.get('size', 0.0) # Default to 'size' (total size usually)
@@ -295,11 +320,11 @@ def rank_result_key(
         # Check if the pack contains the queried season
         is_queried_season_pack = False
         if is_multi_pack:
-             if season_pack == 'Complete':
+             if season_pack_type == 'Complete':
                   # Assume complete pack contains the queried season
                   is_queried_season_pack = True
-             elif season_pack not in ['N/A', 'Unknown']:
-                  is_queried_season_pack = str(query_season) in [s for s in season_pack.split(',') if s.isdigit()]
+             elif season_pack_type not in ['N/A', 'Unknown']:
+                  is_queried_season_pack = str(query_season) in [s for s in season_pack_type.split(',') if s.isdigit()]
 
         # Apply a FLAT bonus for multi-packs when requested and correct season found
         FLAT_PACK_BONUS = 30 # Tunable flat bonus value
@@ -343,6 +368,11 @@ def rank_result_key(
         single_episode_score +
         preferred_filter_score
     )
+
+    # Add points based on num_items
+    from utilities.settings import get_setting
+    if get_setting('Debug', 'emphasize_number_of_items_over_quality', False):
+        total_score += num_items * 1
 
     # Content type matching score
     content_type_score = 0
@@ -438,6 +468,7 @@ def rank_result_key(
     # Add multi-pack information to the score breakdown
     score_breakdown['is_multi_pack'] = is_multi_pack if content_type.lower() == 'episode' else False
     score_breakdown['num_items'] = num_items if content_type.lower() == 'episode' else 1
+    logging.debug(f"[RRK] Final num_items for score_breakdown: {score_breakdown['num_items']} for '{torrent_title}'")
     score_breakdown['multi_pack_score'] = multi_pack_score
     score_breakdown['single_episode_score'] = single_episode_score
 
@@ -463,6 +494,7 @@ def rank_result_key(
 
     # Log detailed score breakdown
     # logging.debug(f"Score breakdown for '{torrent_title}':")
+    # logging.debug(f"├─ Num Items Covered (for ranking): {num_items}") # Add this to logging if needed
     # logging.debug(f"├─ Title Similarity: {score_breakdown['similarity_score']:.2f} (weight: {similarity_weight})")
     # logging.debug(f"├─ Resolution: {score_breakdown['resolution_score']:.2f} (weight: {resolution_weight})")
     # logging.debug(f"├─ HDR: {score_breakdown['hdr_score']:.2f} (weight: {hdr_weight})")
@@ -492,4 +524,6 @@ def rank_result_key(
 
     # Return negative total_score to sort in descending order
     # Year match raw score is used as a tie-breaker
+    # If you want to prioritize by num_items, it would be the first element:
+    # return (-num_items, -total_score, -year_match, -season_match_score, -episode_match_score)
     return (-total_score, -year_match, -season_match_score, -episode_match_score)

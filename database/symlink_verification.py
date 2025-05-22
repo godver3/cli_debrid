@@ -66,12 +66,30 @@ def add_symlinked_file_for_verification(media_item_id: int, full_path: str) -> b
         conn.commit()
         logger.info(f"Added file to verification queue: {filename}")
         return True
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in add_symlinked_file_for_verification: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in add_symlinked_file_for_verification: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error adding file to verification queue for {filename}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in add_symlinked_file_for_verification for {filename}: {rb_ex}")
+        return False
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error adding file to verification queue: {str(e)}")
+        logger.error(f"Unexpected error adding file to verification queue for {filename}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in add_symlinked_file_for_verification for {filename}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def get_unverified_files(limit: int = 100) -> List[Dict[str, Any]]:
@@ -133,11 +151,23 @@ def get_unverified_files(limit: int = 100) -> List[Dict[str, Any]]:
             })
         
         return results
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in get_unverified_files: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback() # Attempt rollback even for reads on OpError, as per example
+        except Exception as rb_ex:
+            logger.error(f"Rollback attempt failed after OperationalError in get_unverified_files: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error getting unverified files: {str(e)}")
+        # No specific rollback needed for pure read usually, but good for consistency on error
+        return []
     except Exception as e:
-        logger.error(f"Error getting unverified files: {str(e)}")
+        logger.error(f"Unexpected error getting unverified files: {str(e)}")
         return []
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def mark_file_as_verified(verification_id: int) -> bool:
@@ -191,12 +221,30 @@ def mark_file_as_verified(verification_id: int) -> bool:
         conn.commit()
         logger.info(f"Marked file as verified: {verification_id}")
         return True
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in mark_file_as_verified for ID {verification_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in mark_file_as_verified for ID {verification_id}: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error marking file as verified for ID {verification_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in mark_file_as_verified for ID {verification_id}: {rb_ex}")
+        return False
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error marking file as verified: {str(e)}")
+        logger.error(f"Unexpected error marking file as verified for ID {verification_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in mark_file_as_verified for ID {verification_id}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_verification_attempt(verification_id: int) -> bool:
@@ -224,12 +272,30 @@ def update_verification_attempt(verification_id: int) -> bool:
         conn.commit()
         logger.info(f"Updated verification attempt for file: {verification_id}")
         return True
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in update_verification_attempt for ID {verification_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in update_verification_attempt for ID {verification_id}: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error updating verification attempt for ID {verification_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in update_verification_attempt for ID {verification_id}: {rb_ex}")
+        return False
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error updating verification attempt: {str(e)}")
+        logger.error(f"Unexpected error updating verification attempt for ID {verification_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in update_verification_attempt for ID {verification_id}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def mark_file_as_permanently_failed(verification_id: int, reason: str) -> bool:
@@ -287,12 +353,30 @@ def mark_file_as_permanently_failed(verification_id: int, reason: str) -> bool:
         conn.commit()
         logger.info(f"Marked file as permanently failed and moved back to Wanted state: {verification_id} - Reason: {reason}")
         return True
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in mark_file_as_permanently_failed for ID {verification_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in mark_file_as_permanently_failed for ID {verification_id}: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error marking file as permanently failed for ID {verification_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in mark_file_as_permanently_failed for ID {verification_id}: {rb_ex}")
+        return False
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error marking file as permanently failed: {str(e)}")
+        logger.error(f"Unexpected error marking file as permanently failed for ID {verification_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in mark_file_as_permanently_failed for ID {verification_id}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def mark_verification_as_max_attempts_failed(verification_id: int, reason: str) -> bool:
@@ -325,18 +409,34 @@ def mark_verification_as_max_attempts_failed(verification_id: int, reason: str) 
         
         if cursor.rowcount == 0:
             logger.warning(f"No verification record found with ID {verification_id} to mark as max attempts failed, or it was already processed.")
-            # conn.close() # Already in finally
             return False
 
         conn.commit()
         logger.info(f"Marked verification record {verification_id} as permanently failed (max attempts exceeded). Reason: {reason}. Associated media item state NOT changed.")
         return True
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in mark_verification_as_max_attempts_failed for ID {verification_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in mark_verification_as_max_attempts_failed for ID {verification_id}: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error marking verification {verification_id} as max attempts failed: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in mark_verification_as_max_attempts_failed for ID {verification_id}: {rb_ex}")
+        return False
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error marking verification record {verification_id} as max attempts failed: {str(e)}")
+        logger.error(f"Unexpected error marking verification {verification_id} as max attempts failed: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in mark_verification_as_max_attempts_failed for ID {verification_id}: {rb_ex}")
         return False
     finally:
-        if conn: # Ensure conn is defined before trying to close
+        if conn: 
             conn.close()
 
 @retry_on_db_lock()
@@ -348,6 +448,14 @@ def get_verification_stats() -> Dict[str, int]:
         Dict with verification statistics
     """
     conn = get_db_connection()
+    default_stats = {
+        'total': 0,
+        'verified': 0,
+        'unverified': 0,
+        'permanently_failed': 0,
+        'multiple_attempts': 0,
+        'percent_verified': 0
+    }
     try:
         cursor = conn.cursor()
         
@@ -379,18 +487,22 @@ def get_verification_stats() -> Dict[str, int]:
             'multiple_attempts': multiple_attempts,
             'percent_verified': round((verified / total) * 100, 2) if total > 0 else 0
         }
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in get_verification_stats: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback attempt failed after OperationalError in get_verification_stats: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error getting verification stats: {str(e)}")
+        return default_stats
     except Exception as e:
-        logger.error(f"Error getting verification stats: {str(e)}")
-        return {
-            'total': 0,
-            'verified': 0,
-            'unverified': 0,
-            'permanently_failed': 0,
-            'multiple_attempts': 0,
-            'percent_verified': 0
-        }
+        logger.error(f"Unexpected error getting verification stats: {str(e)}")
+        return default_stats
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def cleanup_old_verifications(days: int = 30) -> int:
@@ -418,12 +530,30 @@ def cleanup_old_verifications(days: int = 30) -> int:
         conn.commit()
         logger.info(f"Cleaned up {deleted} old verification records")
         return deleted
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in cleanup_old_verifications: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in cleanup_old_verifications: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error cleaning up old verifications: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in cleanup_old_verifications: {rb_ex}")
+        return 0
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Error cleaning up old verifications: {str(e)}")
+        logger.error(f"Unexpected error cleaning up old verifications: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in cleanup_old_verifications: {rb_ex}")
         return 0
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def get_recent_unverified_files(hours: int = 24, limit: int = 100) -> List[Dict[str, Any]]:
@@ -490,11 +620,22 @@ def get_recent_unverified_files(hours: int = 24, limit: int = 100) -> List[Dict[
             })
         
         return results
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in get_recent_unverified_files: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback attempt failed after OperationalError in get_recent_unverified_files: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logger.error(f"SQLite error getting recent unverified files: {str(e)}")
+        return []
     except Exception as e:
-        logger.error(f"Error getting recent unverified files: {str(e)}")
+        logger.error(f"Unexpected error getting recent unverified files: {str(e)}")
         return []
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def migrate_verification_database() -> bool:
     """
@@ -614,16 +755,30 @@ def add_path_for_removal_verification(item_path: str, item_title: str, episode_t
         conn.commit()
         logger.info(f"Added path to Plex removal verification queue: {item_path}")
         return True
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in add_path_for_removal_verification for path {item_path}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in add_path_for_removal_verification for path {item_path}: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        conn.rollback()
         logger.error(f"Database error adding path for removal verification '{item_path}': {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in add_path_for_removal_verification for path {item_path}: {rb_ex}")
         return False
     except Exception as e:
-        conn.rollback()
         logger.error(f"Unexpected error adding path for removal verification '{item_path}': {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in add_path_for_removal_verification for path {item_path}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def get_pending_removal_paths(limit: int = 50) -> List[Dict[str, Any]]:
@@ -660,6 +815,13 @@ def get_pending_removal_paths(limit: int = 50) -> List[Dict[str, Any]]:
         
         results = [dict(row) for row in cursor.fetchall()]
         return results
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in get_pending_removal_paths: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback attempt failed after OperationalError in get_pending_removal_paths: {rb_ex}")
+        raise
     except sqlite3.Error as e:
         logger.error(f"Database error getting pending removal paths: {str(e)}")
         return []
@@ -667,7 +829,8 @@ def get_pending_removal_paths(limit: int = 50) -> List[Dict[str, Any]]:
         logger.error(f"Unexpected error getting pending removal paths: {str(e)}")
         return []
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def update_removal_status(queue_id: int, status: str, failure_reason: Optional[str] = None) -> bool:
@@ -706,20 +869,33 @@ def update_removal_status(queue_id: int, status: str, failure_reason: Optional[s
             logger.info(f"Updated Plex removal status to '{status}' for queue ID: {queue_id}")
             return True
         else:
-            # Could be that the status was already changed or ID doesn't exist
             logger.warning(f"Could not update Plex removal status for queue ID {queue_id}. Might already be updated or ID is invalid.")
-            return False
+            return False # Return False if no rows updated, but not necessarily an exception
             
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in update_removal_status for ID {queue_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in update_removal_status for ID {queue_id}: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        conn.rollback()
         logger.error(f"Database error updating removal status for queue ID {queue_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in update_removal_status for ID {queue_id}: {rb_ex}")
         return False
     except Exception as e:
-        conn.rollback()
         logger.error(f"Unexpected error updating removal status for queue ID {queue_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in update_removal_status for ID {queue_id}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def increment_removal_attempt(queue_id: int) -> bool:
@@ -752,18 +928,32 @@ def increment_removal_attempt(queue_id: int) -> bool:
             return True
         else:
             logger.warning(f"Could not increment attempt count for queue ID {queue_id}. Status might not be 'Pending' or ID is invalid.")
-            return False
+            return False # Return False if no rows updated
             
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in increment_removal_attempt for ID {queue_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in increment_removal_attempt for ID {queue_id}: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        conn.rollback()
         logger.error(f"Database error incrementing removal attempt for queue ID {queue_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in increment_removal_attempt for ID {queue_id}: {rb_ex}")
         return False
     except Exception as e:
-        conn.rollback()
         logger.error(f"Unexpected error incrementing removal attempt for queue ID {queue_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in increment_removal_attempt for ID {queue_id}: {rb_ex}")
         return False
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def cleanup_old_verified_removals(days: int = 7) -> int:
@@ -779,8 +969,7 @@ def cleanup_old_verified_removals(days: int = 7) -> int:
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        # Import timedelta if not already imported
-        from datetime import timedelta
+        from datetime import timedelta # Keep import local if only used here
         cutoff_date = datetime.now() - timedelta(days=days)
         cursor.execute(
             """
@@ -795,16 +984,30 @@ def cleanup_old_verified_removals(days: int = 7) -> int:
         if deleted > 0:
             logger.info(f"Cleaned up {deleted} old Plex removal verification records")
         return deleted
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in cleanup_old_verified_removals: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in cleanup_old_verified_removals: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        conn.rollback()
         logger.error(f"Database error cleaning up old removal verifications: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in cleanup_old_verified_removals: {rb_ex}")
         return 0
     except Exception as e:
-        conn.rollback()
         logger.error(f"Unexpected error cleaning up old removal verifications: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in cleanup_old_verified_removals: {rb_ex}")
         return 0
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 @retry_on_db_lock()
 def get_removal_stats() -> Dict[str, int]:
@@ -815,6 +1018,7 @@ def get_removal_stats() -> Dict[str, int]:
         Dict with removal verification statistics.
     """
     conn = get_db_connection()
+    default_stats = {'total': 0, 'pending': 0, 'verified': 0, 'failed': 0}
     try:
         cursor = conn.cursor()
         
@@ -832,14 +1036,22 @@ def get_removal_stats() -> Dict[str, int]:
         stats['failed'] = cursor.fetchone()[0]
         
         return stats
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in get_removal_stats: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback attempt failed after OperationalError in get_removal_stats: {rb_ex}")
+        raise
     except sqlite3.Error as e:
         logger.error(f"Database error getting removal stats: {str(e)}")
-        return {'total': 0, 'pending': 0, 'verified': 0, 'failed': 0}
+        return default_stats
     except Exception as e:
         logger.error(f"Unexpected error getting removal stats: {str(e)}")
-        return {'total': 0, 'pending': 0, 'verified': 0, 'failed': 0}
+        return default_stats
     finally:
-        conn.close()
+        if conn:
+            conn.close()
 
 def create_plex_removal_queue_table():
     """Create the plex_removal_queue table if it doesn't exist, including title columns."""
@@ -1032,13 +1244,26 @@ def remove_verification_by_media_item_id(media_item_id: int) -> int:
         else:
             logger.debug(f"No verification records found to delete for media_item_id: {media_item_id}")
         return deleted_count
+    except sqlite3.OperationalError as e:
+        logger.debug(f"OperationalError in remove_verification_by_media_item_id for media_item_id {media_item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after OperationalError in remove_verification_by_media_item_id for media_item_id {media_item_id}: {rb_ex}")
+        raise
     except sqlite3.Error as e:
-        conn.rollback()
         logger.error(f"Database error removing verification for media_item_id {media_item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after sqlite3.Error in remove_verification_by_media_item_id for media_item_id {media_item_id}: {rb_ex}")
         return 0
     except Exception as e:
-        conn.rollback()
         logger.error(f"Unexpected error removing verification for media_item_id {media_item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logger.error(f"Rollback failed after Exception in remove_verification_by_media_item_id for media_item_id {media_item_id}: {rb_ex}")
         return 0
     finally:
         if conn:

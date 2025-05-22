@@ -2,15 +2,18 @@ from flask import Blueprint, render_template, jsonify, request
 import json
 import os
 from datetime import datetime, timedelta
+from .models import user_required
 
 performance_bp = Blueprint('performance', __name__)
 
 @performance_bp.route('/dashboard')
+@user_required
 def performance_dashboard():
     """Render the performance monitoring dashboard."""
     return render_template('performance/dashboard.html')
 
 @performance_bp.route('/api/performance/log')
+@user_required
 def get_performance_log():
     """Get the performance data from JSON file."""
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
@@ -74,6 +77,7 @@ def get_performance_log():
         return jsonify({'error': str(e)}), 500
 
 @performance_bp.route('/api/performance/cpu')
+@user_required
 def get_cpu_metrics():
     """Get CPU performance metrics from the log file."""
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
@@ -131,6 +135,7 @@ def get_cpu_metrics():
         return jsonify({'error': str(e)}), 500
 
 @performance_bp.route('/api/performance/memory')
+@user_required
 def get_memory_metrics():
     """Get memory performance metrics from the log file."""
     log_dir = os.environ.get('USER_LOGS', '/user/logs')

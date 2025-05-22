@@ -26,7 +26,7 @@ This page provides a real-time view of the application's background task queues,
     *   **Cached:** Items found in the debrid cache, ready for immediate transfer/linking.
     *   **Downloading:** Items actively being downloaded by the debrid service. Shows a progress bar and the current download state. Multiple files from the same torrent may be grouped under a single progress bar.
     *   Filenames (toggleable) show the specific file being processed.
-*   **`Final Check`:** Items for which initial scraping attempts failed. These items wait for a configured delay (defined in settings) before one last search attempt is automatically triggered. Shows when the item entered this waiting period. If the final search is successful, the item moves to `Adding`. If it fails again, the item is typically moved to `Blacklisted`.
+*   **`Final Scrape`:** Items for which initial scraping attempts failed. These items wait for a configured delay (defined in settings) before one last search attempt is automatically triggered. Shows when the item entered this waiting period. If the final search is successful, the item moves to `Adding`. If it fails again, the item is typically moved to `Blacklisted`.
 *   **`Pending Uncached`:** Items associated with uncached torrents that would take your account over its limit wait in the Pending Uncached queue until your download limit returns to normal.
 *   **`Sleeping`:** Items that cli_debrid failed to find. Shows a "Wake Count" indicating how many times the item has been retried.
 *   **`Unreleased`:** Items identified but waiting for their release date before processing continues. Displays the relevant release date(s). Items requiring a physical release will indicate this.

@@ -345,7 +345,7 @@ def get_collected_counts():
     finally:
         conn.close()
 
-@cache_for_seconds(30)
+@cache_for_seconds(300) # Cache for 5 minutes
 async def get_recently_added_items(movie_limit=5, show_limit=5):
     import time
     overall_start = time.perf_counter()
@@ -522,7 +522,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
     finally:
         conn.close()
 
-@cache_for_seconds(30)
+@cache_for_seconds(300) # Cache for 5 minutes
 async def get_recently_upgraded_items(upgraded_limit=5):
     import time
     overall_start = time.perf_counter()

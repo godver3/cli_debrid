@@ -25,10 +25,8 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('version', torrent.version || '');
             formData.append('tmdb_id', torrent.tmdb_id || '');
             formData.append('genres', torrent.genres || '');
-            formData.append('original_scraped_torrent_title', torrent.original_title || ''); // Add the original torrent title
-            // --- START EDIT: Add current_score to form data ---
-            formData.append('current_score', torrent.score_breakdown?.total_score || '0'); // Add the score, default to 0 if missing
-            // --- END EDIT ---
+            formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
+            formData.append('current_score', torrent.score_breakdown?.total_score || '0');
 
             fetch('/scraper/add_to_debrid', {
                 method: 'POST',
@@ -308,9 +306,16 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
     const overlay = document.getElementById('overlay');
     const overlayContent = document.getElementById('overlayContent');
 
+    // data is now the full object: { torrent_results: [...], filtered_out_torrent_results: [...] }
+    const passedTorrents = data.torrent_results || [];
+    const filteredOutTorrents = data.filtered_out_torrent_results || [];
+
+    const allDisplayItems = passedTorrents.map(t => ({ ...t, __isActuallyFilteredOut: false }))
+                                     .concat(filteredOutTorrents.map(t => ({ ...t, __isActuallyFilteredOut: true })));
+
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     function handleScreenChange(e) {
-        if (e.matches) {
+        if (e.matches) { // Mobile view
             overlayContent.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
             const gridContainer = document.createElement('div');
             gridContainer.style.display = 'flex';
@@ -318,70 +323,55 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             gridContainer.style.gap = '15px';
             gridContainer.style.justifyContent = 'center';
 
-            data.forEach((torrent, index) => {
+            allDisplayItems.forEach((torrent, index) => {
+                const isFilteredOut = torrent.__isActuallyFilteredOut;
                 const torResDiv = document.createElement('div');
-                torResDiv.className = 'torresult';
-                var options = {year: 'numeric', month: 'long', day: 'numeric' };
-                var date = torrent.air_date ? new Date(torrent.air_date) : null;
-                
-                // Prepare the torrent data with both magnet_link and torrent_url for cache checking
-                if (torrent.magnet) {
-                    torrent.magnet_link = torrent.magnet;
-                }
+                torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
                 
                 torResDiv.innerHTML = `
-                    <button>
+                    <button ${isFilteredOut ? 'disabled style="cursor:default;"' : ''}>
                     <div class="torresult-info">
-                        <p class="torresult-title">${torrent.title}</p>
-                        <p class="torresult-item">${(torrent.size).toFixed(1)} GB | ${torrent.score_breakdown.total_score}</p>
-                        <p class="torresult-item">${torrent.source}</p>
-                        <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' : 
-                                      torrent.cached === 'No' ? 'not-cached' : 
+                        <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
+                        <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | ${isFilteredOut ? 'N/A' : (torrent.score_breakdown?.total_score || 'N/A')}</p>
+                        <p class="torresult-item">${torrent.source || 'N/A'}</p>
+                        <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
+                                      torrent.cached === 'No' ? 'not-cached' :
                                       torrent.cached === 'Not Checked' ? 'not-checked' :
-                                      torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached}</span>
+                                      torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached || 'N/A'}</span>
                     </div>
                     </button>             
                 `;
-                torResDiv.onclick = function() {
-                    // Add metadata to torrent object
-                    const torrentData = {
-                        title: title,
-                        year: year,
-                        version: version,
-                        media_type: mediaType,
-                        season: season || null,
-                        episode: episode || null,
-                        tmdb_id: mediaId,
-                        genres: genre_ids
+                if (!isFilteredOut) {
+                    torResDiv.onclick = function() {
+                        const torrentData = {
+                            title: title, year: year, version: version, media_type: mediaType,
+                            season: season || null, episode: episode || null, tmdb_id: mediaId,
+                            genres: genre_ids, original_title: torrent.original_title // Pass original_title
+                        };
+                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                     };
-                    addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
-                };
+                }
                 gridContainer.appendChild(torResDiv);
             });
-
             overlayContent.appendChild(gridContainer);
-        } else {
-            // Clear content first
+
+        } else { // Desktop view
             overlayContent.innerHTML = '';
-            
-            // Add the header
             const header = document.createElement('h3');
             header.textContent = `Torrent Results for ${title} (${year})`;
             overlayContent.appendChild(header);
             
-            // Create table element
             const table = document.createElement('table');
             table.style.width = '100%';
             table.style.borderCollapse = 'collapse';
 
-            // Create table header with corrected widths
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="color: rgb(191 191 190); width: 40%;">Name</th>
+                    <th style="color: rgb(191 191 190); width: 38%;">Name</th>
                     <th style="color: rgb(191 191 190); width: 12%; text-align: right;">Size Per File</th>
                     <th style="color: rgb(191 191 190); width: 10%;">Source</th>
-                    <th style="color: rgb(191 191 190); width: 10%%; text-align: right;">Score</th>
+                    <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Score</th>
                     <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
                     <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Add</th>
                     <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Assign</th>
@@ -389,103 +379,118 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             `;
             table.appendChild(thead);
 
-            // Create table body
             const tbody = document.createElement('tbody');
-            data.forEach((torrent, index) => {
+            allDisplayItems.forEach((torrent, index) => {
+                const isFilteredOut = torrent.__isActuallyFilteredOut;
                 const cacheStatus = torrent.cached || 'Unknown';
-                const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' : 
-                                      cacheStatus === 'No' ? 'not-cached' : 
+                const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' :
+                                      cacheStatus === 'No' ? 'not-cached' :
                                       cacheStatus === 'Not Checked' ? 'not-checked' :
                                       cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
                 
-                // Prepare the torrent data with both magnet_link and torrent_url for cache checking
                 if (torrent.magnet) {
                     torrent.magnet_link = torrent.magnet;
                 }
 
-                // --- Prepare data for Assign Magnet button ---
-                const currentVersion = document.getElementById('version-select').value; // <-- Get current version
+                const currentVersion = document.getElementById('version-select').value;
                 const assignUrlParams = new URLSearchParams({
-                    prefill_id: mediaId,
-                    prefill_type: mediaType,
-                    prefill_title: title,
-                    prefill_year: year,
-                    prefill_magnet: torrent.magnet,
-                    prefill_version: currentVersion // <-- Add version
+                    prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
+                    prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: currentVersion
                 });
                 const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
-                // --- End Prepare data ---
 
                 const row = document.createElement('tr');
-                // --- MODIFIED row.innerHTML with adjusted column styles ---
+                if (isFilteredOut) {
+                    row.classList.add('filtered-out-item'); 
+                }
+
                 row.innerHTML = `
                     <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); word-wrap: break-word; white-space: normal; padding: 10px;">
                         <div style="display: block; line-height: 1.4; min-height: fit-content;">
-                            ${torrent.title}
+                            ${torrent.title || torrent.original_title || 'N/A'}
                         </div>
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: right;">${(torrent.size).toFixed(1)} GB</td>
-                    <td style="color: rgb(191 191 190);">${torrent.source}</td>
-                    <td style="color: rgb(191 191 190); text-align: right;">${torrent.score_breakdown.total_score}</td>
+                    <td style="color: rgb(191 191 190); text-align: right;">${(torrent.size || 0).toFixed(1)} GB</td>
+                    <td style="color: rgb(191 191 190);">${torrent.source || 'N/A'}</td>
+                    <td style="color: rgb(191 191 190); text-align: right;">${isFilteredOut ? 'N/A' : (torrent.score_breakdown?.total_score || 'N/A')}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        <button class="action-button add-button" onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
-                            ...torrent, // Ensure original_title is included here if present
-                            year,
-                            version: torrent.version || version,
-                            title, // Media title
-                            media_type: mediaType,
-                            season: season || null,
-                            episode: episode || null,
-                            tmdb_id: torrent.tmdb_id || mediaId,
-                            genres: genre_ids
-                        }).replace(/"/g, '&quot;')})">Add</button>
+                        ${!isFilteredOut ? `<button class="action-button add-button" onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
+                            ...torrent, year, version: torrent.version || version, title,
+                            media_type: mediaType, season: season || null, episode: episode || null,
+                            tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title // Pass original_title
+                        }).replace(/"/g, '&quot;')})">Add</button>` : ''}
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                         <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
+                         ${!isFilteredOut ? `<button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>` : ''}
                     </td>
                 `;
                 tbody.appendChild(row);
             });
             table.appendChild(tbody);
-
             overlayContent.appendChild(table);
         }
     }
-    mediaQuery.addListener(handleScreenChange);
-    handleScreenChange(mediaQuery);
+    mediaQuery.addListener(handleScreenChange); // Add listener
+    handleScreenChange(mediaQuery); // Initial call
 
-    // Add modal-open class to body
     document.body.classList.add('modal-open');
     overlay.style.display = 'flex';
     
-    // Add click handler for close button if not already added
     const closeButton = overlay.querySelector('.close-btn');
     if (closeButton) {
-        closeButton.onclick = function() {
-            closeOverlay();
-        };
+        // Ensure only one listener is attached - simple re-assignment might be enough if this is the only place it's set.
+        // For now, let's keep the clone for the button as it's less likely to affect layout.
+        const newCloseButton = closeButton.cloneNode(true);
+        closeButton.parentNode.replaceChild(newCloseButton, closeButton);
+        newCloseButton.onclick = function() { closeOverlay(); };
     }
 
-    // Add click handler for overlay background if not already added
-    overlay.onclick = function(event) {
-        if (event.target === overlay) {
-            closeOverlay();
-        }
+    // --- START TEMPORARY COMMENT OUT FOR TESTING ---
+    /*
+    // Ensure overlay click listener is also managed to prevent duplicates if this function is called multiple times
+    const newOverlay = overlay.cloneNode(false); // shallow clone for overlay
+    overlay.parentNode.replaceChild(newOverlay, overlay); // newOverlay is now the active #overlay
+    newOverlay.appendChild(overlayContent); // re-append original overlayContent (with table) into newOverlay
+
+    newOverlay.onclick = function(event) {
+        if (event.target === newOverlay) { closeOverlay(); }
     };
 
-    // Stop propagation on overlay content to prevent closing when clicking inside
-    const overlayContentWrapper = overlay.querySelector('.overlay-content');
-    if (overlayContentWrapper) {
-        overlayContentWrapper.onclick = function(event) {
-            event.stopPropagation();
-        };
+    // This part was finding .overlay-content inside newOverlay, which is overlayContent itself
+    const overlayContentWrapper = newOverlay.querySelector('#overlayContent'); // Use ID for precision
+    if (overlayContentWrapper) { // This should always be true if overlayContent is #overlayContent
+        // Let's not clone overlayContentWrapper for now to see if it affects layout
+        // const newOverlayContentWrapper = overlayContentWrapper.cloneNode(true);
+        // overlayContentWrapper.parentNode.replaceChild(newOverlayContentWrapper, overlayContentWrapper);
+        // newOverlayContentWrapper.onclick = function(event) { event.stopPropagation(); };
+        
+        // Simpler stop propagation for the original overlayContent
+        overlayContent.onclick = function(event) { event.stopPropagation(); };
     }
+    */
+    // --- END TEMPORARY COMMENT OUT FOR TESTING ---
+
+    // --- SIMPLER EVENT LISTENERS (if the above is commented out) ---
+    // Ensure the original overlay (if not replaced) has its click listener
+    // This might attach multiple times if displayTorrentResults is called repeatedly without full refresh
+    // So the cloning strategy was better for event listeners, but let's test layout impact first.
     
-    // Prepare data for cache check
-    checkCacheStatusInBackground(null, data);
+    // If you didn't replace 'overlay', set its listener:
+     overlay.onclick = function(event) {
+         if (event.target === overlay) { closeOverlay(); }
+     };
+    // And the original overlayContent:
+     const currentOverlayContent = document.getElementById('overlayContent');
+     if (currentOverlayContent) {
+        currentOverlayContent.onclick = function(event) { event.stopPropagation(); };
+     }
+    // --- END SIMPLER EVENT LISTENERS ---
+
+
+    checkCacheStatusInBackground(null, allDisplayItems);
 }
 
 // Function to close the overlay
@@ -761,6 +766,25 @@ document.addEventListener('DOMContentLoaded', async function() {
         });
     }
     
+    const versionSelect = document.getElementById('version-select');
+    if (versionSelect) {
+        // Load saved version from localStorage
+        const savedVersion = localStorage.getItem('selectedVersion');
+        if (savedVersion) {
+            // Ensure the saved version is still a valid option
+            if (Array.from(versionSelect.options).some(option => option.value === savedVersion)) {
+                versionSelect.value = savedVersion;
+            } else {
+                // If the saved version is no longer valid (e.g., options changed), remove it
+                localStorage.removeItem('selectedVersion');
+            }
+        }
+
+        // Save version to localStorage on change
+        versionSelect.addEventListener('change', function() {
+            localStorage.setItem('selectedVersion', versionSelect.value);
+        });
+    }
 }); // End of DOMContentLoaded
 
 // Available versions and selected content
@@ -1752,7 +1776,8 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
             displayError(data.error);
             return;
         }
-        displayTorrentResults(data.torrent_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
+        // Pass the whole 'data' object
+        displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         
         // No need to do additional cache checking since displayTorrentResults already does it
     })
@@ -1855,8 +1880,11 @@ function checkCacheStatusInBackground(hashes, results) {
 
         const result = results[index];
         
-        // Skip if no magnet link or torrent URL
-        if (!result.magnet_link && !result.torrent_url) {
+        // If the item was filtered out (score is N/A), or its score is inherently null/undefined (displayed as N/A),
+        // or if there's no magnet link or torrent URL, mark cache status as N/A and skip checking.
+        if (result.__isActuallyFilteredOut || 
+            result.score_breakdown?.total_score == null || 
+            (!result.magnet_link && !result.torrent_url)) {
             updateCacheStatusUI(index, 'check_unavailable');
             processingItems.delete(index);
             processNextItems();

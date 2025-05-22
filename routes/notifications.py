@@ -128,6 +128,7 @@ def format_notification_content(notifications, notification_type, notification_c
         'queue_start': "▶️",
         'queue_stop': "⏹️",
         'upgrade_failed': "❌",
+        'blacklisted': "🚫" # New emoji for blacklisted
     }
 
     # For system notifications (stop/crash/start/pause/resume), we'll use a different format
@@ -221,6 +222,8 @@ def format_notification_content(notifications, notification_type, notification_c
             prefix = EMOJIS['upgrade']
         elif new_state == 'Collected':
             prefix = EMOJIS['new']
+        elif new_state == 'Blacklisted': # New case for Blacklisted
+            prefix = EMOJIS['blacklisted']
         else:
             prefix = EMOJIS['show'] if media_type == 'episode' else EMOJIS['movie']
         
@@ -605,6 +608,10 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                         notification_title = "Content Upgraded"
                         final_message = f"Successfully upgraded {base_message}"
                         notif_type = 'success'
+                    elif new_state == 'Blacklisted': # New case for Blacklisted
+                        notification_title = "Item Blacklisted"
+                        final_message = f"Item has been blacklisted: {base_message}"
+                        notif_type = 'warning' # Or 'info'
                     else: # Default Collected
                         notification_title = "New Content Available"
                         if notification.get('is_upgrade'):
@@ -713,6 +720,8 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     item_category = 'downloading'
                 elif state == 'Checking':
                     item_category = 'checking'
+                elif state == 'Blacklisted': # New case for Blacklisted
+                    item_category = 'blacklisted'
                 # Add elif for other states if they map to specific notify_on keys
 
                 # Check if the target is enabled for this specific item's category
@@ -1017,7 +1026,8 @@ def send_email_notification(smtp_config, content, notification_category):
         'upgraded': "Content Upgraded",      # Using title from storage logic
         'scraping_error': "Scraping Error",
         'content_error': "Content Error",
-        'database_error': "Database Error"
+        'database_error': "Database Error",
+        'blacklisted': "Item Blacklisted" # New subject for blacklisted
         # Add other categories as needed
     }
     # Default subject if category not in map or None
