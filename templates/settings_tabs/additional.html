@@ -513,11 +513,15 @@
     </div>
     <div class="settings-section-content">
         <div class="settings-form-group">
+            <p class="settings-info-text">
+                <i class="fas fa-info-circle"></i> If you change any symlink settings (templates, folder names, organization options), please use the "Resync Symlinks with New Settings" function on the <strong>Debug</strong> page to update your existing symlink structure.
+            </p>
             <label for="additional-symlink_movie_template" class="settings-title">Symlink Movie Template:</label>
             <input type="text" id="additional-symlink_movie_template" name="Debug.symlink_movie_template"
                    value="{{ settings.get('Debug', {}).get('symlink_movie_template', '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})') }}" 
                    class="settings-input"
                    data-section="Debug" data-key="symlink_movie_template">
+            <div id="symlink_movie_template_imdb_warning" class="settings-warning-text"></div>
             <p class="settings-description">Template for movie symlink filenames</p>
         </div>
         <div class="settings-form-group">
@@ -526,6 +530,7 @@
                    value="{{ settings.get('Debug', {}).get('symlink_episode_template', '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})') }}" 
                    class="settings-input"
                    data-section="Debug" data-key="symlink_episode_template">
+            <div id="symlink_episode_template_imdb_warning" class="settings-warning-text"></div>
             <p class="settings-description">Template for episode symlink filenames</p>
         </div>
 
@@ -876,6 +881,29 @@
 
 .patreon-link i {
     font-size: 1.1em;
+}
+
+/* Warning text for settings */
+.settings-warning-text {
+    color: #ff9800; /* Orange warning color */
+    font-size: 0.9em;
+    margin-top: 5px;
+    display: none; /* Initially hidden */
+}
+
+/* Informational text for settings */
+.settings-info-text {
+    color: #fff; /* Info blue color */
+    background-color: #e18635; /* Light blue background */
+    border: 1px solid #fff; /* Light blue border */
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.9em;
+    margin-bottom: 10px; /* Space before the next element */
+}
+
+.settings-info-text i {
+    margin-right: 5px;
 }
 
 /* Logo Selection Styles */
@@ -1454,6 +1482,57 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeSymlinkFolderOrder();
     initializeSymlinkPathExamples();
     
+    function initializeImdbIdWarningLogic() {
+        const movieTemplateInput = document.getElementById('additional-symlink_movie_template');
+        const movieWarningDiv = document.getElementById('symlink_movie_template_imdb_warning');
+        const episodeTemplateInput = document.getElementById('additional-symlink_episode_template');
+        const episodeWarningDiv = document.getElementById('symlink_episode_template_imdb_warning');
+        const fileManagementSelect = document.querySelector('select[name="File Management.file_collection_management"]');
+
+        function validateSingleTemplate(templateInput, warningDiv, fcmType) {
+            if (!templateInput || !warningDiv) return;
+            warningDiv.textContent = ''; // Clear previous warning
+            warningDiv.style.display = 'none';
+
+            if (fcmType === 'Symlinked/Local') {
+                if (!templateInput.value.includes('{imdb_id}')) {
+                    warningDiv.textContent = 'Warning: {imdb_id} is required in the template for symlink recovery.';
+                    warningDiv.style.display = 'block';
+                }
+            }
+        }
+
+        function checkAllSymlinkTemplates() {
+            // Use current value from select if available, otherwise fallback to value at page load (passed by Jinja)
+            // This handles cases where the select element might not be immediately found or if tabs are isolated.
+            const fcmTypeFromJson = {{ settings.get("File Management", {}).get("file_collection_management", "Plex") | tojson }};
+            const fcmType = fileManagementSelect ? fileManagementSelect.value : fcmTypeFromJson;
+
+            validateSingleTemplate(movieTemplateInput, movieWarningDiv, fcmType);
+            validateSingleTemplate(episodeTemplateInput, episodeWarningDiv, fcmType);
+        }
+
+        if (movieTemplateInput && episodeTemplateInput && movieWarningDiv && episodeWarningDiv) {
+            movieTemplateInput.addEventListener('input', checkAllSymlinkTemplates);
+            episodeTemplateInput.addEventListener('input', checkAllSymlinkTemplates);
+
+            if (fileManagementSelect) {
+                fileManagementSelect.addEventListener('change', checkAllSymlinkTemplates);
+            } else {
+                // This might happen if required.html's content is not yet in DOM when this script part runs,
+                // or if they are in truly separate DOMs (e.g. iframes, though not typical for simple tabs).
+                console.warn('File Management select ("File Management.file_collection_management") not found by additional.html for IMDB ID warning listener. Warnings will be based on page load settings for File Collection Management or until an input event on templates triggers a check.');
+            }
+            
+            // Initial check
+            checkAllSymlinkTemplates();
+        } else {
+            console.warn('Symlink template input fields or warning divs not found. IMDB ID warning logic will not run.');
+        }
+    }
+    
+    initializeImdbIdWarningLogic(); // Initialize the new logic
+
     // Initialize logo selection
     const logoRadioButtons = document.querySelectorAll('.logo-option input[type="radio"]');
     logoRadioButtons.forEach(radio => {

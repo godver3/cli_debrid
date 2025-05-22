@@ -807,6 +807,14 @@ body {
     transform: scale(1.02);
 }
 
+.episode button:disabled {
+    cursor: default;
+}
+
+.episode button:disabled:hover {
+    transform: none;
+}
+
 .episode img {
     width: 100%;
     height: auto;
