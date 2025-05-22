@@ -21,7 +21,9 @@ def filter_results(
     direct_api: Optional[Any] = None, # Use 'Any' or the specific DirectAPI type
     preferred_language: str = None,
     translated_title: str = None,
-    target_air_date: Optional[str] = None
+    target_air_date: Optional[str] = None,
+    check_pack_wantedness: bool = False,
+    current_scrape_target_version: Optional[str] = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
     # --- START Logging for season_episode_counts ---
@@ -461,6 +463,105 @@ def filter_results(
                 
                 is_identified_as_pack = (season_pack_type_from_parse not in ['N/A', 'Unknown']) or \
                                         (len(parsed_episodes_list_from_parse) > 1)
+
+                # --- START: New Pack Wantedness Check ---
+                from database.database_reading import get_all_media_items
+
+                if check_pack_wantedness and is_identified_as_pack and imdb_id and direct_api:
+                    logging.debug(f"Performing pack wantedness check for '{original_title}' (IMDb: {imdb_id}, Pack Type: {season_pack_type_from_parse}, Target Version: {current_scrape_target_version})")
+                    pack_is_fully_wanted = True # Assume true initially
+
+                    # Get items from DB in Wanted or Scraping state for this IMDb ID and Target Version
+                    pending_db_items_for_show_raw = get_all_media_items(imdb_id=imdb_id)
+                    pending_db_episodes = [
+                        item for item in pending_db_items_for_show_raw
+                        if item.get('state') in ["Wanted", "Scraping"] and \
+                           item.get('type') == 'episode' and \
+                           (item.get('version') or "").strip('*') == (current_scrape_target_version or "").strip('*')
+                    ]
+                    
+                    pending_episodes_set = set()
+                    for item in pending_db_episodes:
+                        s_num = item.get('season_number')
+                        e_num = item.get('episode_number')
+                        if isinstance(s_num, int) and isinstance(e_num, int):
+                            pending_episodes_set.add((s_num, e_num))
+                    logging.debug(f"Found {len(pending_episodes_set)} unique S/E pairs in Wanted/Scraping for {imdb_id}: {sorted(list(pending_episodes_set))[:20]}...")
+
+                    # Get detailed show metadata (seasons and episodes)
+                    # Use the existing cache pattern for _fetched_detailed_seasons_data_cache
+                    show_metadata_for_pack_check = None
+                    if _fetched_detailed_seasons_data_cache is not None:
+                        show_metadata_for_pack_check = _fetched_detailed_seasons_data_cache
+                    else:
+                        try:
+                            detailed_s_data, _ = direct_api.get_show_seasons(imdb_id=imdb_id)
+                            _fetched_detailed_seasons_data_cache = detailed_s_data if detailed_s_data else {} # Cache it
+                            show_metadata_for_pack_check = _fetched_detailed_seasons_data_cache
+                        except Exception as api_err:
+                            logging.warning(f"API error fetching show season data for {imdb_id} for pack wantedness check: {api_err}")
+                    
+                    if not show_metadata_for_pack_check:
+                        logging.warning(f"Could not get show season data for {imdb_id} to check pack wantedness. Skipping this filter for '{original_title}'.")
+                    else:
+                        expected_episodes_for_pack_scope = set()
+                        pack_scope_description = ""
+
+                        if season_pack_type_from_parse == 'Complete':
+                            pack_scope_description = "entire series"
+                            for s_num, s_data in show_metadata_for_pack_check.items():
+                                if isinstance(s_data, dict):
+                                    # Use episode_count if available, otherwise count episodes in the dict
+                                    ep_count = s_data.get('episode_count')
+                                    if ep_count is None: # Fallback to len(episodes dict)
+                                        ep_count = len(s_data.get('episodes', {}))
+                                    
+                                    for e_num in range(1, ep_count + 1):
+                                        expected_episodes_for_pack_scope.add((s_num, e_num))
+                        elif season_pack_type_from_parse not in ['N/A', 'Unknown']: # Specific season(s) pack
+                            pack_scope_description = f"season(s) {season_pack_type_from_parse}"
+                            season_numbers_in_pack_str = season_pack_type_from_parse.split(',')
+                            parsed_season_numbers_in_pack = []
+                            for s_str in season_numbers_in_pack_str:
+                                try:
+                                    parsed_season_numbers_in_pack.append(int(s_str.strip().lstrip('S').lstrip('s')))
+                                except ValueError:
+                                    logging.warning(f"Could not parse season number '{s_str}' from pack type '{season_pack_type_from_parse}' for {original_title}")
+                            
+                            for s_num in parsed_season_numbers_in_pack:
+                                s_data = show_metadata_for_pack_check.get(s_num)
+                                if isinstance(s_data, dict):
+                                    ep_count = s_data.get('episode_count')
+                                    if ep_count is None:
+                                        ep_count = len(s_data.get('episodes', {}))
+                                    for e_num in range(1, ep_count + 1):
+                                        expected_episodes_for_pack_scope.add((s_num, e_num))
+                                else:
+                                    logging.warning(f"No metadata found for S{s_num} in show {imdb_id} for pack wantedness check of '{original_title}'.")
+                        else: # Pack identified by multiple PTT parsed episodes, not by a season_pack string
+                              # This case means we don't have a clear "pack scope" like "Complete" or "S01".
+                              # We only know PTT found multiple episode numbers.
+                              # The current logic doesn't have a defined way to determine the *intended* scope of such a pack from metadata.
+                              # For now, this specific wantedness check might be skipped for such packs,
+                              # or we could be very strict and assume it must match exactly what PTT parsed if those are few.
+                              # Given the request, focusing on "Series Pack" and "Season Pack", we might skip this for "loose" multi-episode torrents.
+                            logging.debug(f"Pack '{original_title}' identified by PTT episode list, not a defined 'Complete' or 'Season X' pack. Skipping specific wantedness check for now.")
+                            # To effectively skip, ensure expected_episodes_for_pack_scope remains empty or pack_is_fully_wanted remains true.
+                            # For safety, let's ensure it passes if scope is undetermined here.
+                            expected_episodes_for_pack_scope = set() # No specific scope defined to check against.
+
+                        if expected_episodes_for_pack_scope: # Only proceed if we have a defined set of episodes to check for
+                            if not expected_episodes_for_pack_scope.issubset(pending_episodes_set):
+                                pack_is_fully_wanted = False
+                                missing_episodes = sorted(list(expected_episodes_for_pack_scope - pending_episodes_set))
+                                logging.info(f"Rejected: Pack '{original_title}' for {pack_scope_description} is not fully wanted/scraping. Missing {len(missing_episodes)} episodes, e.g., {missing_episodes[:5]}")
+                                result['filter_reason'] = f"Pack for {pack_scope_description} not fully wanted/scraping (missing {len(missing_episodes)} episodes)"
+                            else:
+                                logging.info(f"Pack '{original_title}' for {pack_scope_description} is fully wanted/scraping.")
+                        
+                    if not pack_is_fully_wanted:
+                        continue # Skip to the next result if the pack isn't fully wanted
+                # --- END: New Pack Wantedness Check ---
 
                 if is_identified_as_pack:
                     # If scraper provides per-item size, num_episodes_in_pack effectively becomes 1 for size calculation

@@ -44,6 +44,8 @@ connections_bp = Blueprint('connections', __name__)
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
+from .models import user_required # Added import
+
 def check_cli_battery_connection():
     """Check connection to cli_battery service using environment variables."""
     try:
@@ -1032,8 +1034,9 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
     }
 
 @connections_bp.route('/')
+@user_required
 def index():
-    """Display the connections status page."""
+    """Render the connections status page."""
     # Get connection statuses (these now include sample data in details)
     cli_battery_status = check_cli_battery_connection()
     plex_status = check_plex_connection()

@@ -185,22 +185,94 @@ label {
     width: 48%;
 }
 
+.scraper-tester-container .results-column > h3 { /* Targeting H3s within results columns */
+    position: sticky;
+    top: 0;
+    background-color: #333; /* Match scraper container or a suitable column header bg */
+    padding: 10px 8px; /* Add some padding */
+    margin-top: 0; /* Remove default margin if any */
+    margin-bottom: 0; /* Remove default margin if any */
+    z-index: 20; /* Ensure H3 is above table headers */
+    color: #f0f0f0;
+    /* Ensure it spans the full width of the column if needed, though block elements usually do */
+}
+
 .scraper-tester-container .settings-table {
     width: 100%;
     border-collapse: collapse;
+    margin-bottom: 20px;
+    border: none;
+}
+
+.scraper-tester-container .settings-table tr {
+    border: none; /* Remove borders from table rows */
+}
+
+.scraper-tester-container .settings-table th {
+    position: sticky;
+    top: 50px; /* Adjust this value based on the actual height of the sticky H3 + its padding */
+    background-color: #2c2c2c; /* Background color for sticky table header */
+    z-index: 10; /* Ensure table header is above table content but below H3 */
+    color: #e0e0e0; /* Slightly lighter text for better contrast if needed */
 }
 
 .scraper-tester-container .settings-table th,
 .scraper-tester-container .settings-table td {
     padding: 8px;
+    border: none;
     text-align: left;
-    border-bottom: 1px solid #555;
+}
+
+.scraper-tester-container .settings-table td {
+    color: #ccc;
+}
+
+.scraper-tester-container .settings-table th:nth-child(1),
+.scraper-tester-container .settings-table td:nth-child(1) {
+    width: 67%; 
+}
+
+.scraper-tester-container .settings-table th:nth-child(2),
+.scraper-tester-container .settings-table td:nth-child(2) {
+    width: 23%; 
+    color: rgb(191, 191, 190);
+}
+
+.scraper-tester-container .settings-table th:nth-child(3),
+.scraper-tester-container .settings-table td:nth-child(3) {
+    width: 10%; 
+    text-align: right;
 }
 
 .scraper-tester-container .settings-table tr:hover {
-    background-color: #444;
+    background-color: #3a3a3a;
     cursor: pointer;
 }
+
+.scraper-tester-container .settings-table tr.filtered-out-item:hover {
+    background-color: #7d3030 !important;
+}
+
+.filtered-out-item td {
+    color: #f0f0f0 !important;
+}
+
+.filtered-out-item {
+    background-color: #6e2525 !important;
+}
+
+.filtered-out-section {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px dashed #666;
+}
+
+.filtered-out-section h4 {
+    color: #ff9a9a;
+    font-size: 0.9em;
+    margin-bottom: 10px;
+}
+
 
 .scrape-results {
     margin-top: 20px;

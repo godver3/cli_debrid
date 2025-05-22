@@ -2101,7 +2101,7 @@ body.modal-open {
 
 .calendar-grid td {
     border: 1px solid #383838; /* Slightly lighter border for cells */
-    height: 100px; /* Adjust as needed, make it taller for more events */
+    height: 140px; /* Adjust as needed, make it taller for more events */
     vertical-align: top;
     text-align: left;
     padding: 5px;
@@ -2120,17 +2120,25 @@ body.modal-open {
 }
 
 .calendar-grid td.is-today {
-    background-color: #3a3a3a; /* Highlight today's cell slightly */
-    /* border: 1px solid #FFA500; */ /* Optional: border highlight */
+    background-color: #374a33; /* Highlight today's cell slightly */
+    /* border: 1px solid #FFA500; */
 }
 
 .calendar-grid td.is-today .day-number {
     background-color: #FFA500;
     color: #1a1a1a;
-    padding: 0px 7px;
+    /* padding: 0px 7px; */ /* Removed asymmetric padding */
     border-radius: 50%;
     font-weight: bold;
     font-size: 0.8em;
+    /* New properties for circular shape and centering text */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2em;  /* Equal width */
+    height: 2em; /* Equal height, makes it a circle with border-radius: 50% */
+    text-align: center; /* Ensures number is centered if flex is not fully supported */
+    line-height: 1; /* Adjust line-height to prevent interference with flex centering */
 }
 
 .calendar-grid td.other-month {
@@ -2149,7 +2157,7 @@ body.modal-open {
     padding: 0;
     margin: 20px 0 0 0; /* Space below day number */
     max-height: calc(100% - 20px); /* Fill cell, minus space for day number */
-    overflow-y: auto; /* Scroll if many events */
+    overflow-y: hidden; /* Scroll if many events */
 }
 /* Slim scrollbar for grid event list */
 .grid-event-list::-webkit-scrollbar { width: 4px; }
@@ -2387,6 +2395,7 @@ body.modal-open {
     transition: background-color 0.2s ease;
     position: relative; /* For potential future absolute positioned elements inside */
     min-height: 100px; /* Ensure cells have a minimum height for clickability */
+    overflow: hidden; /* Disable scrolling */
 }
 
 .calendar-day-cell:hover {

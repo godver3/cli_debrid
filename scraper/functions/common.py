@@ -27,6 +27,18 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
         # Parse string using PTT
         parsed_info = parse_with_ptt(parsed_info)
 
+
+    # Ensure parsed_info is a dictionary for consistent access
+    if not isinstance(parsed_info, dict):
+        logging.error(f"[DSEI] parsed_info is not a dict after potential parsing: {parsed_info}. Returning default.")
+        return {
+            'season_pack': 'Error',
+            'multi_episode': False,
+            'seasons': [],
+            'episodes': []
+        }
+
+
     result = {
         'season_pack': 'Unknown',
         'multi_episode': False,
@@ -37,8 +49,12 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     # Check for complete series indicators
     title = parsed_info.get('title', '').lower()
     original_title = parsed_info.get('original_title', '').lower()
-    
-    if any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']) or \
+    # Add PTT's own 'complete' flag to the check
+    is_ptt_complete = parsed_info.get('complete', False)
+
+
+    if is_ptt_complete or \
+       any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']) or \
        any(indicator in original_title for indicator in ['complete', 'collection', 'all.seasons']):
         result['season_pack'] = 'Complete'
         return result
@@ -83,7 +99,7 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
         else:
             episode_value = episode_info[0] if isinstance(episode_info, list) else episode_info
             result['episodes'] = [episode_value]
-            if not result['seasons']:
-                result['seasons'] = [1]
-    
+            if not result['seasons']: # Ensure seasons list is not empty if episodes are present
+                result['seasons'] = [1] # Default to season 1 if episodes found but no season
+
     return result

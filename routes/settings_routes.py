@@ -46,6 +46,8 @@ HARDCODED_DEFAULT_VERSIONS = {
       "max_resolution": "2160p",
       "max_size_gb": None,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "preferred_filter_in": [
         [
           "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
@@ -81,7 +83,11 @@ HARDCODED_DEFAULT_VERSIONS = {
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p REMUX": {
       "bitrate_weight": "3",
@@ -99,6 +105,8 @@ HARDCODED_DEFAULT_VERSIONS = {
       "max_resolution": "1080p",
       "max_size_gb": None,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "preferred_filter_in": [
         [
           "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
@@ -130,7 +138,11 @@ HARDCODED_DEFAULT_VERSIONS = {
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p WEB": {
       "bitrate_weight": "3",
@@ -147,6 +159,8 @@ HARDCODED_DEFAULT_VERSIONS = {
       "max_resolution": "1080p",
       "max_size_gb": None,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "preferred_filter_in": [
         [
           "\\b(WEBRip)\\b",
@@ -202,7 +216,11 @@ HARDCODED_DEFAULT_VERSIONS = {
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "2160p WEB": {
       "bitrate_weight": "3",
@@ -220,6 +238,8 @@ HARDCODED_DEFAULT_VERSIONS = {
       "max_resolution": "2160p",
       "max_size_gb": None,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "preferred_filter_in": [
         [
           "\\b(AMZN)\\b",
@@ -287,7 +307,11 @@ HARDCODED_DEFAULT_VERSIONS = {
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p ENCODE": {
       "enable_hdr": False,
@@ -311,10 +335,16 @@ HARDCODED_DEFAULT_VERSIONS = {
       ],
       "min_size_gb": 0,
       "max_size_gb": None,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "similarity_threshold_anime": 0.35,
       "similarity_threshold": 0.8,
       "wake_count": 0,
-      "require_physical_release": True
+      "require_physical_release": True,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "2160p BEST": {
       "bitrate_weight": "3",
@@ -330,6 +360,8 @@ HARDCODED_DEFAULT_VERSIONS = {
       "max_resolution": "2160p",
       "max_size_gb": None,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "preferred_filter_in": [
         [
           "\\b(WEBRip)\\b",
@@ -453,7 +485,11 @@ HARDCODED_DEFAULT_VERSIONS = {
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p BEST": {
       "bitrate_weight": "3",
@@ -467,6 +503,8 @@ HARDCODED_DEFAULT_VERSIONS = {
       "max_resolution": "1080p",
       "max_size_gb": None,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": float('inf'),
       "preferred_filter_in": [
         [
           "\\b(WEBRip)\\b",
@@ -578,7 +616,11 @@ HARDCODED_DEFAULT_VERSIONS = {
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     }
   }
 }
@@ -643,6 +685,7 @@ def get_trakt_friends():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/content_sources/add', methods=['POST'])
+@admin_required
 def add_content_source_route():
     try:
         if request.is_json:
@@ -672,6 +715,7 @@ def add_content_source_route():
         return jsonify({'success': False, 'error': str(e)}), 500
     
 @settings_bp.route('/content_sources/delete', methods=['POST'])
+@admin_required
 def delete_content_source_route():
     source_id = request.json.get('source_id')
     if not source_id:
@@ -695,6 +739,7 @@ def delete_content_source_route():
         return jsonify({'success': False, 'error': 'Source not found or already deleted'}), 404
 
 @settings_bp.route('/scrapers/add', methods=['POST'])
+@admin_required
 def add_scraper_route():
     logging.info(f"Received request to add scraper. Content-Type: {request.content_type}")
     logging.info(f"Request data: {request.data}")
@@ -749,6 +794,7 @@ def get_content_source_types():
     })
 
 @settings_bp.route('/scrapers/delete', methods=['POST'])
+@admin_required
 def delete_scraper():
     data = request.json
     scraper_id = data.get('scraper_id')
@@ -768,6 +814,7 @@ def delete_scraper():
         return jsonify({'success': False, 'error': 'Scraper not found'}), 404
     
 @settings_bp.route('/notifications/delete', methods=['POST'])
+@admin_required
 def delete_notification():
     try:
         notification_id = request.json.get('notification_id')
@@ -788,6 +835,7 @@ def delete_notification():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/notifications/add', methods=['POST'])
+@admin_required
 def add_notification():
     try:
         notification_data = request.json
@@ -1125,6 +1173,7 @@ def get_scraping_settings():
     return jsonify(scraping_settings)
 
 @settings_bp.route('/api/settings', methods=['POST'])
+@admin_required
 def update_settings():
     try:
         new_settings = request.json
@@ -1141,17 +1190,29 @@ def update_settings():
         # has been removed. The value should be handled by the main config update below.
         # --- END REMOVED BLOCK ---
 
+        # Process Plex library strings if they are being updated
+        if 'Plex' in new_settings:
+            plex_updates = new_settings['Plex']
+            if 'movie_libraries' in plex_updates and isinstance(plex_updates['movie_libraries'], str):
+                raw_movie_libraries = plex_updates['movie_libraries']
+                plex_updates['movie_libraries'] = ','.join([lib.strip() for lib in raw_movie_libraries.split(',') if lib.strip()]) if raw_movie_libraries else ''
+            if 'shows_libraries' in plex_updates and isinstance(plex_updates['shows_libraries'], str):
+                raw_shows_libraries = plex_updates['shows_libraries']
+                plex_updates['shows_libraries'] = ','.join([lib.strip() for lib in raw_shows_libraries.split(',') if lib.strip()]) if raw_shows_libraries else ''
+
 
         # Validate Plex libraries if Plex is selected
-        file_management = new_settings.get('File Management', {})
+        file_management = new_settings.get('File Management', config.get('File Management', {})) # Use existing config as fallback
         if file_management.get('file_collection_management') == 'Plex':
-            plex_settings = new_settings.get('Plex', {})
-            movie_libraries = plex_settings.get('movie_libraries', '').strip()
-            show_libraries = plex_settings.get('shows_libraries', '').strip()
+            # Use potentially updated plex_settings from new_settings, or fallback to existing config
+            plex_settings_for_validation = new_settings.get('Plex', config.get('Plex', {}))
             
-            logging.info(f"Validating Plex libraries - Movie: '{movie_libraries}', Shows: '{show_libraries}'")
+            movie_libraries_for_validation = plex_settings_for_validation.get('movie_libraries', '').strip()
+            show_libraries_for_validation = plex_settings_for_validation.get('shows_libraries', '').strip()
             
-            if not movie_libraries or not show_libraries:
+            logging.info(f"Validating Plex libraries - Movie: '{movie_libraries_for_validation}', Shows: '{show_libraries_for_validation}'")
+            
+            if not movie_libraries_for_validation or not show_libraries_for_validation:
                 error_msg = "When using Plex as your library management system, you must specify both a movie library and a TV show library."
                 logging.error(f"Settings validation failed: {error_msg}")
                 return jsonify({
@@ -1303,6 +1364,7 @@ def update_nested_settings(current, new):
             current[key] = value
 
 @settings_bp.route('/versions/add', methods=['POST'])
+@admin_required
 def add_version():
     data = request.json
     version_name = data.get('name')
@@ -1342,6 +1404,7 @@ def add_version():
     return jsonify({'success': True, 'version_id': version_name})
 
 @settings_bp.route('/versions/delete', methods=['POST'])
+@admin_required
 def delete_version():
     data = request.json
     version_id = data.get('version_id')
@@ -1396,6 +1459,7 @@ def delete_version():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/versions/import_defaults', methods=['POST'])
+@admin_required
 def import_default_versions():
     default_versions = None
     try:
@@ -1466,6 +1530,7 @@ def import_default_versions():
         return jsonify({'success': False, 'error': f'Unexpected error: {str(e)}'}), 500
 
 @settings_bp.route('/versions/rename', methods=['POST'])
+@admin_required
 def rename_version():
     data = request.json
     old_name = data.get('old_name')
@@ -1531,6 +1596,7 @@ def rename_version():
         return jsonify({'success': False, 'error': 'Scraping versions configuration not found'}), 404
 
 @settings_bp.route('/versions/duplicate', methods=['POST'])
+@admin_required
 def duplicate_version():
     data = request.json
     version_id = data.get('version_id')
@@ -1626,6 +1692,7 @@ def get_version_settings_route():
         return jsonify({'error': str(e)}), 500
     
 @settings_bp.route('/save_version_settings', methods=['POST'])
+@admin_required
 def save_version_settings():
     data = request.json
     version = data.get('version')
@@ -1771,6 +1838,7 @@ def get_enabled_notifications_for_category(category):
         }), 500
 
 @settings_bp.route('/notifications/update_defaults', methods=['POST'])
+@admin_required
 def update_notification_defaults():
     try:
         config = load_config()
@@ -1795,6 +1863,7 @@ def update_notification_defaults():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/versions/add_default', methods=['POST'])
+@admin_required
 def add_default_version():
     try:
         config = load_config()
@@ -1845,6 +1914,7 @@ def add_default_version():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/versions/add_separate_versions', methods=['POST'])
+@admin_required
 def add_separate_versions():
     try:
         config = load_config()
@@ -1997,6 +2067,7 @@ def add_separate_versions():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/versions/clear_all', methods=['POST'])
+@admin_required
 def clear_all_versions():
     try:
         config = load_config()
@@ -2009,6 +2080,7 @@ def clear_all_versions():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/notifications/test', methods=['POST'])
+@admin_required
 def test_notification():
     try:
         notification_id = request.json.get('notification_id')
@@ -2142,6 +2214,7 @@ def get_phalanx_disclaimer_status():
         return jsonify({'hasSeenDisclaimer': False})
 
 @settings_bp.route('/api/phalanx-disclaimer-accept', methods=['POST'])
+@admin_required
 def accept_phalanx_disclaimer():
     try:
         data = request.json
@@ -2201,6 +2274,7 @@ def get_support_modal_status():
         })
 
 @settings_bp.route('/api/support-modal-seen', methods=['POST'])
+@admin_required
 def mark_support_modal_seen():
     try:
         # Ensure db_content directory exists
@@ -2225,6 +2299,7 @@ def mark_support_modal_seen():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/api/support-modal-pageview', methods=['POST'])
+@admin_required
 def increment_pageview():
     try:
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -2283,6 +2358,7 @@ def get_enabled_content_sources_route():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/api/save_content_source_order', methods=['POST'])
+@admin_required
 def save_content_source_order():
     try:
         source_order_from_request = request.json.get('order', [])

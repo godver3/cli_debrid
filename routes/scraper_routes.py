@@ -29,6 +29,7 @@ import time
 import json
 from utilities.web_scraper import get_media_meta
 from typing import List, Dict, Any, Optional
+import iso8601
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -38,8 +39,8 @@ _phalanx_cache_manager = PhalanxDBClassManager() if get_setting('UI Settings', '
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
     from metadata.metadata import get_imdb_id_if_missing
-    max_retries = 3
-    base_delay = 1  # Base delay in seconds
+    max_retries = 0
+    base_delay = 0.1  # Base delay in seconds
     
     for attempt in range(max_retries):
         try:
@@ -411,38 +412,35 @@ def add_torrent_to_debrid():
                 
                 # Get release date from metadata
                 if media_type in ['tv', 'show']:
-                    release_date = 'Unknown' # Initialize to 'Unknown'
+                    release_date = 'Unknown'  # Initialize to 'Unknown'
                     # For TV shows, get episode-specific release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
-                        season_data = metadata['seasons'].get(str(season_number), {})
-                        episode_data = season_data.get('episodes', {}).get(str(episode_number), {})
-                        first_aired_val = episode_data.get('first_aired') # Use a temporary variable
-                        if first_aired_val: # Check if first_aired_val is not None or empty
-                            parsed_successfully = False
+                        # Use integer keys directly since that's how the data is structured
+                        season_data = metadata['seasons'].get(season_number, {})
+                        
+                        # Use integer keys for episodes as well
+                        episode_data = season_data.get('episodes', {}).get(episode_number, {})
+                        
+                        first_aired_str = episode_data.get('first_aired')
+                        
+                        if first_aired_str:
                             try:
-                                # Attempt 1: Parse with milliseconds and Z (often show-level)
-                                first_aired_utc = datetime.strptime(first_aired_val, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-                                parsed_successfully = True
-                            except ValueError:
-                                # Attempt 2: Parse without milliseconds and Z (often episode-level)
-                                try:
-                                    first_aired_utc = datetime.strptime(first_aired_val, "%Y-%m-%dT%H:%M:%S")
-                                    # Assume UTC if 'Z' is not present but it's a common ISO-like format
+                                # Use iso8601 library for robust parsing
+                                first_aired_utc = iso8601.parse_date(first_aired_str)
+                                # Ensure it's timezone-aware
+                                if first_aired_utc.tzinfo is None:
                                     first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-                                    parsed_successfully = True
-                                except ValueError:
-                                    logging.warning(f"Could not parse first_aired_val: '{first_aired_val}' with known datetime formats. Setting release_date to 'Unknown'.")
-                                    # release_date remains 'Unknown' due to initialization and if both parsing attempts fail
-
-                            if parsed_successfully:
+                                
                                 # Convert UTC to local timezone
                                 local_tz = _get_local_timezone()
-                                local_dt = first_aired_utc.astimezone(local_tz)
-                                # Format the local date as string
-                                release_date = local_dt.strftime("%Y-%m-%d")
-                        # If first_aired_val was None, empty, or unparseable by any tried format, release_date remains 'Unknown'
+                                premiere_dt_local_tz = first_aired_utc.astimezone(local_tz)
+                                
+                                # Format the local date
+                                release_date = premiere_dt_local_tz.strftime("%Y-%m-%d")
+                                logging.info(f"Successfully parsed release date: {release_date}")
+                            except (ValueError, iso8601.ParseError) as e:
+                                logging.warning(f"Could not parse first_aired_val: '{first_aired_str}' for episode S{season_number}E{episode_number}: {e}")
                 else:
                     # For movies, get movie release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
@@ -867,7 +865,8 @@ def select_media():
         if is_requester:
             return jsonify({
                 'error': 'As a Requester, you can view content but cannot perform scraping actions.',
-                'torrent_results': []  # Return empty results to avoid errors in the UI
+                'torrent_results': [],
+                'filtered_out_torrent_results': [] # Ensure this key is present
             }), 403  # 403 Forbidden status code
             
         media_id = request.form.get('media_id')
@@ -880,15 +879,12 @@ def select_media():
         version = request.form.get('version', 'default')
         genre_ids = request.form.get('genre_ids', '')
         
-        # Parse skip_cache_check parameter
         skip_cache_check = request.form.get('skip_cache_check', 'false').lower() == 'true'
-        
-        # Parse background_check parameter
         background_check = request.form.get('background_check', 'true').lower() == 'true'
         
-        # Log the parameters
         logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
         logging.info(f"Cache check settings: skip_cache_check={skip_cache_check}, background_check={background_check}")
+        logging.debug(f"[select_media_route] Calling process_media_selection for '{title}'.")
         
         if not media_id or not title or not year or not media_type:
             return jsonify({'error': 'Missing required parameters'}), 400
@@ -898,19 +894,18 @@ def select_media():
         if episode:
             episode = int(episode)
             
-        # Parse genre_ids
         genres = []
         if genre_ids:
             try:
-                # First try parsing as integers (for genre IDs)
                 genres = [int(g) for g in genre_ids.split(',') if g]
             except ValueError:
-                # If that fails, treat them as genre names
                 genres = [g.strip() for g in genre_ids.split(',') if g.strip()]
                 logging.info(f"Using genre names: {genres}")
                 
-        # Process the media selection
-        result = process_media_selection(
+        # --- MODIFICATION: Assume process_media_selection now returns two lists ---
+        # result variable is a tuple: (passed_results, filtered_out_results_list)
+        # or an error dictionary.
+        result_tuple_or_error = process_media_selection(
             media_id, 
             title, 
             year, 
@@ -925,11 +920,44 @@ def select_media():
         )
         
         # Check if there was an error
-        if isinstance(result, dict) and 'error' in result:
-            return jsonify(result), 400
+        if isinstance(result_tuple_or_error, dict) and 'error' in result_tuple_or_error:
+            logging.info(f"select_media: process_media_selection returned an error: {result_tuple_or_error.get('error')}")
+            # Ensure filtered_out_torrent_results is an empty list in case of error, if it's expected by frontend
+            if 'filtered_out_torrent_results' not in result_tuple_or_error:
+                 result_tuple_or_error['filtered_out_torrent_results'] = []
+            return jsonify(result_tuple_or_error), 400
+        
+        # Unpack the tuple if no error
+        try:
+            passed_results, filtered_out_results_list = result_tuple_or_error
+            logging.info(f"select_media: process_media_selection returned {len(passed_results)} passed and {len(filtered_out_results_list if filtered_out_results_list else [])} filtered_out results.")
+        except (TypeError, ValueError) as e:
+            logging.error(
+                f"select_media: CRITICAL - Failed to unpack results from process_media_selection. Expected 2-tuple. Got type: {type(result_tuple_or_error)}. Value (first 500 chars): {str(result_tuple_or_error)[:500]}... Exception: {e}",
+                exc_info=True
+            )
+            # This will be caught by the outer try/except and return a generic 500
+            raise # Re-raise to ensure the function exits with an error
             
+        # --- START DEBUGGING LOGS ---
+        logging.info(f"select_media: PRE-JSONIFY check. Type of passed_results: {type(passed_results)}, Type of filtered_out_results_list: {type(filtered_out_results_list)}")
+        if isinstance(passed_results, list):
+            logging.info(f"select_media: PRE-JSONIFY passed_results is a list with {len(passed_results)} items. First item (if any): {str(passed_results[0]) if passed_results else 'Empty list'}")
+        else:
+            logging.info(f"select_media: PRE-JSONIFY passed_results is NOT a list. Value: {str(passed_results)[:500]}")
+
+        if isinstance(filtered_out_results_list, list):
+            logging.info(f"select_media: PRE-JSONIFY filtered_out_results_list is a list with {len(filtered_out_results_list)} items. First item (if any): {str(filtered_out_results_list[0]) if filtered_out_results_list else 'Empty list'}")
+        else:
+            logging.info(f"select_media: PRE-JSONIFY filtered_out_results_list is NOT a list. Value: {str(filtered_out_results_list)[:500]}")
+        # --- END DEBUGGING LOGS ---
+
         # Return the results
-        return jsonify(result)
+        logging.debug(f"[select_media_route] Returning JSON for '{title}': passed_results={len(passed_results)}, filtered_out_results_list={len(filtered_out_results_list if filtered_out_results_list else [])}")
+        return jsonify({
+            'torrent_results': passed_results,
+            'filtered_out_torrent_results': filtered_out_results_list 
+        })
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
@@ -995,6 +1023,7 @@ def scraper_tester():
     return render_template('scraper_tester.html', versions=versions)
 
 @scraper_bp.route('/get_item_details', methods=['POST'])
+@user_required
 def get_item_details():
     from metadata.metadata import get_metadata, get_release_date
     item = request.json
@@ -1047,10 +1076,12 @@ def run_scrape():
         config = load_config()
         original_version_settings = config['Scraping']['versions'].get(version, {}).copy()
         
+        logging.debug(f"[run_scrape_route] Calling scrape for original settings, title '{title}'.")
         # Run first scrape with current settings
-        original_results, _ = scrape(
+        original_results, original_filtered_out_results = scrape(
             imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres, skip_cache_check
         )
+        logging.debug(f"[run_scrape_route] Original scrape returned: passed={len(original_results)}, filtered_out={len(original_filtered_out_results if original_filtered_out_results else [])}")
 
         # Update version settings with modified settings
         updated_version_settings = original_version_settings.copy()
@@ -1073,9 +1104,11 @@ def run_scrape():
 
         # Run second scrape with modified settings
         try:
-            adjusted_results, _ = scrape(
+            logging.debug(f"[run_scrape_route] Calling scrape for adjusted settings, title '{title}'.")
+            adjusted_results, adjusted_filtered_out_results = scrape(
                 imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres, skip_cache_check
             )
+            logging.debug(f"[run_scrape_route] Adjusted scrape returned: passed={len(adjusted_results)}, filtered_out={len(adjusted_filtered_out_results if adjusted_filtered_out_results else [])}")
         finally:
             # Revert settings back to original
             config = load_config()
@@ -1083,7 +1116,9 @@ def run_scrape():
             save_config(config)
 
         # Ensure score_breakdown is included in the results
-        for result in original_results + adjusted_results:
+        # Also process filtered out results for score_breakdown and cache status
+        all_results_to_process = original_results + adjusted_results + original_filtered_out_results + adjusted_filtered_out_results
+        for result in all_results_to_process:
             if 'score_breakdown' not in result:
                 result['score_breakdown'] = {'total_score': result.get('score', 0)}
             
@@ -1091,7 +1126,7 @@ def run_scrape():
             if 'cached' not in result:
                 result['cached'] = 'N/A'
         
-        # Check cache status for the first 5 results of each list
+        # Check cache status for the first 5 results of each main list (not filtered out ones)
         if not skip_cache_check:
             try:
                 debrid_provider = get_debrid_provider()
@@ -1121,9 +1156,14 @@ def run_scrape():
         else:
             logging.info("Skipping cache check as requested")
 
+        logging.debug(f"[run_scrape_route] Returning JSON for '{title}': "
+                      f"originalResults={len(original_results)}, originalFilteredOutResults={len(original_filtered_out_results if original_filtered_out_results else [])}, "
+                      f"adjustedResults={len(adjusted_results)}, adjustedFilteredOutResults={len(adjusted_filtered_out_results if adjusted_filtered_out_results else [])}")
         return jsonify({
             'originalResults': original_results,
-            'adjustedResults': adjusted_results
+            'adjustedResults': adjusted_results,
+            'originalFilteredOutResults': original_filtered_out_results,
+            'adjustedFilteredOutResults': adjusted_filtered_out_results
         })
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)

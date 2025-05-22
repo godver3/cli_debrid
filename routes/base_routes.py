@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger # Add this import
 import pytz # Add pytz for timezone handling
 import markdown
 import threading
+from .models import user_required # Assuming user_required can be imported
 
 # Import notification functions
 from .notifications import (
@@ -360,6 +361,7 @@ def get_notifications():
     return result_data
 
 @base_bp.route('/api/notifications/mark-read', methods=['POST'])
+@user_required
 def mark_notification_read():
     """Mark a notification as read via the centralized handler."""
     notification_id = request.json.get('id')
@@ -370,6 +372,7 @@ def mark_notification_read():
     return jsonify(result), status_code
 
 @base_bp.route('/api/notifications/mark-all-read', methods=['POST'])
+@user_required
 def mark_all_notifications_read():
     """Mark all notifications as read via the centralized handler."""
     result, status_code = mark_all_read()

@@ -68,6 +68,29 @@ def extract_imdb_id(guid: str, title: str = None) -> str:
             logging.error(f"Error converting TVDB ID {tvdb_id} to IMDB ID: {str(e)}")
     return None
 
+def get_show_status(imdb_id: str) -> str:
+    """Get the status of a TV show from Trakt."""
+    try:
+        trakt = TraktMetadata()
+        # Assuming _search_by_imdb is available or we adapt to what TraktMetadata provides
+        # For simplicity, let's assume a similar structure to plex_watchlist.py
+        search_result = trakt._search_by_imdb(imdb_id) # This might need adjustment if TraktMetadata API differs
+        if search_result and search_result['type'] == 'show':
+            show = search_result['show']
+            slug = show['ids']['slug']
+            
+            url = f"{trakt.base_url}/shows/{slug}?extended=full"
+            response = trakt._make_request(url)
+            if response and response.status_code == 200:
+                show_data = response.json()
+                status = show_data.get('status', '').lower()
+                if status == 'canceled':
+                    return 'ended'
+                return status
+    except Exception as e:
+        logging.error(f"Error getting show status for {imdb_id}: {str(e)}")
+    return ''
+
 def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
     processed_items = []
@@ -91,27 +114,60 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         logging.info(f"Successfully parsed RSS feed. Found {len(feed.entries)} entries")
         skipped_count = 0
         cache_skipped = 0
+        removed_count = 0
+        collected_skipped_count = 0 # For items that are collected but kept
 
+        # Get removal settings
+        should_remove = get_setting('Debug', 'plex_watchlist_removal', False)
+        keep_series = get_setting('Debug', 'plex_watchlist_keep_series', False)
+
+        if should_remove:
+            logging.debug("Plex RSS item removal (if collected) enabled")
+            if keep_series:
+                logging.debug("Keeping collected TV series from RSS")
+        
         for entry in feed.entries:
             try:
+                entry_title = entry.title if hasattr(entry, 'title') else 'Unknown title'
                 # Extract IMDB ID from the guid
                 if not hasattr(entry, 'guid'):
-                    logging.debug(f"Entry missing guid: {entry.title if hasattr(entry, 'title') else 'Unknown title'}")
+                    logging.debug(f"Entry missing guid: {entry_title}")
                     skipped_count += 1
                     continue
 
-                imdb_id = extract_imdb_id(entry.guid, entry.title)
+                imdb_id = extract_imdb_id(entry.guid, entry_title)
                 if not imdb_id:
-                    logging.debug(f"Could not extract IMDB ID from guid: {entry.guid}")
+                    logging.debug(f"Could not extract IMDB ID from guid: {entry.guid} for title: {entry_title}")
                     skipped_count += 1
                     continue
 
-                logging.debug(f"Processing entry: {entry.title} (IMDB: {imdb_id})")
+                logging.debug(f"Processing entry: {entry_title} (IMDB: {imdb_id})")
 
                 # Get content type from RSS category
                 media_type = 'movie'  # default to movie
                 if hasattr(entry, 'category') and entry.category.lower() == 'show':
                     media_type = 'tv'
+
+                # Check if the item is already collected
+                item_state = get_media_item_presence(imdb_id=imdb_id)
+                if item_state == "Collected" and should_remove:
+                    if media_type == 'tv':
+                        if keep_series:
+                            logging.debug(f"Keeping collected TV series from RSS: {imdb_id} ('{entry_title}') - keep_series is enabled")
+                            collected_skipped_count +=1
+                            continue
+                        else:
+                            show_status = get_show_status(imdb_id)
+                            if show_status != 'ended': # This includes 'canceled' due to get_show_status logic
+                                logging.debug(f"Keeping ongoing/non-ended TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
+                                collected_skipped_count +=1
+                                continue
+                            logging.debug(f"Skipping (simulating removal) collected and ended/canceled TV series from RSS: {imdb_id} ('{entry_title}') - status: {show_status}")
+                    else: # Movie
+                        logging.debug(f"Skipping (simulating removal) collected movie from RSS: {imdb_id} ('{entry_title}')")
+                    
+                    removed_count += 1
+                    continue # Skip adding to processed_items
 
                 # Check cache
                 if not disable_caching:
@@ -121,13 +177,13 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                         last_processed = datetime.fromtimestamp(cache_item['timestamp'])
                         cache_age = current_time - last_processed
                         if cache_age < timedelta(days=CACHE_EXPIRY_DAYS):
-                            logging.debug(f"Skipping {media_type} '{entry.title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
+                            logging.debug(f"Skipping {media_type} '{entry_title}' (IMDB: {imdb_id}) - cached {cache_age.days} days ago")
                             cache_skipped += 1
                             continue
                         else:
-                            logging.debug(f"Cache expired for {media_type} '{entry.title}' (IMDB: {imdb_id}) - last processed {cache_age.days} days ago")
+                            logging.debug(f"Cache expired for {media_type} '{entry_title}' (IMDB: {imdb_id}) - last processed {cache_age.days} days ago")
                     else:
-                        logging.debug(f"New item found: {media_type} '{entry.title}' (IMDB: {imdb_id})")
+                        logging.debug(f"New item found: {media_type} '{entry_title}' (IMDB: {imdb_id})")
 
                     # Add or update cache entry
                     cache[cache_key] = {
@@ -147,7 +203,7 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                 }
 
                 processed_items.append(item)
-                logging.debug(f"Added {media_type} '{entry.title}' (IMDB: {imdb_id}) to processed items")
+                logging.debug(f"Added {media_type} '{entry_title}' (IMDB: {imdb_id}) to processed items")
 
                 if len(processed_items) >= 20:
                     all_wanted_items.append((processed_items.copy(), versions.copy()))
@@ -166,6 +222,11 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
         logging.info(f"Plex RSS Watchlist Summary:")
         logging.info(f"- Total entries: {len(feed.entries)}")
         logging.info(f"- Skipped (no IMDB ID): {skipped_count}")
+        if should_remove:
+            logging.info(f"- Items 'removed' (collected and not kept): {removed_count}")
+            logging.info(f"- Items skipped (collected but kept): {collected_skipped_count}")
+        if not disable_caching:
+            logging.info(f"- Items skipped (cached): {cache_skipped}")
         logging.info(f"- Items added to wanted: {sum(len(items) for items, _ in all_wanted_items)}")
 
         return all_wanted_items

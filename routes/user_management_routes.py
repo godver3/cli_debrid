@@ -78,6 +78,7 @@ def delete_user(user_id):
 
 # Modify the register route
 @user_management_bp.route('/register', methods=['GET', 'POST'])
+@admin_required
 def register():
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))

@@ -120,7 +120,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
         query_params = {'Query': query}
 
         if enabled_indexers:
-            query_params['Tracker'] = [indexer.strip() for indexer in enabled_indexers.split(',')]
+            query_params['Tracker[]'] = [indexer.strip() for indexer in enabled_indexers.split(',')]
 
         full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
 
@@ -251,7 +251,7 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
 
 def construct_url(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, jackett_filter: str = "!status:failing,test:passed", multi: bool = False) -> str:
     jackett_url = settings.get('url', '')
-    jackett_api = settings.get('api_key', '')
+    jackett_api = settings.get('api', '')
     enabled_indexers = settings.get('enabled_indexers', '')
 
     # Build the search query
@@ -271,7 +271,7 @@ def construct_url(settings: Dict[str, Any], title: str, year: int, content_type:
     query_params = {'Query': params}
     
     if enabled_indexers:
-        query_params.update({f'Tracker[]': {enabled_indexers}})
+        query_params['Tracker[]'] = [indexer.strip() for indexer in enabled_indexers.split(',')]
 
     full_url = f"{search_endpoint}&{urlencode(query_params, doseq=True)}"
 

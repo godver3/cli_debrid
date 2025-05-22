@@ -718,23 +718,43 @@ export function updateSettings() {
     // Handle Reverse Parser settings
     const reverseParserSettings = {
         version_terms: {},
-        default_version: document.getElementById('default-version').value,
-        version_order: [] // New array to store the order
+        default_version: '', // Initialize with a default value
+        version_order: [] 
     };
+
+    const defaultVersionInputElement = document.getElementById('default-version');
+    if (defaultVersionInputElement) {
+        reverseParserSettings.default_version = defaultVersionInputElement.value;
+    } else {
+        console.warn("Element with ID 'default-version' not found. Reverse Parser default_version will use an empty or previously loaded value if available.");
+        // Attempt to preserve existing value if settingsData['Reverse Parser'] was pre-loaded and not cleared
+        // However, settingsData is cleared at the beginning of this function.
+        // A default or handling on the backend for missing value might be necessary.
+    }
 
     // Get the container of all version inputs
     const versionContainer = document.querySelector('#version-terms-container');
     
-    // Get all version inputs in their current order
+    if (versionContainer) {
         const versionInputs = Array.from(versionContainer.children);
     
-    versionInputs.forEach((inputElement, index) => {
+        versionInputs.forEach((inputElement) => { // index removed as it's not used
             const version = inputElement.getAttribute('data-version');
-            const termsValue = inputElement.querySelector('.version-terms').value;
-        const terms = splitRespectingParentheses(termsValue);
-        reverseParserSettings.version_terms[version] = terms;
-        reverseParserSettings.version_order.push(version); // Add version to order array
-    });
+            const termsInputElement = inputElement.querySelector('.version-terms');
+            if (version && termsInputElement) {
+                const termsValue = termsInputElement.value;
+                const terms = splitRespectingParentheses(termsValue);
+                reverseParserSettings.version_terms[version] = terms;
+                reverseParserSettings.version_order.push(version); // Add version to order array
+            } else {
+                console.warn("Skipping a version input in Reverse Parser settings due to missing 'data-version' attribute or '.version-terms' child element.");
+            }
+        });
+    } else {
+        console.warn("Element with ID 'version-terms-container' not found. Reverse Parser version terms and order will be empty or based on pre-loaded data if available.");
+        // As settingsData is cleared at the function start, this will likely result in empty version_terms and version_order
+        // if the container is not found, potentially clearing these settings on save.
+    }
 
     settingsData['Reverse Parser'] = reverseParserSettings;
 

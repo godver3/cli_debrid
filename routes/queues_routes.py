@@ -19,47 +19,74 @@ def init_limiter(app):
     limiter.init_app(app)
 
 def consolidate_items(items, limit=None):
-    consolidated = {}
-    original_count = len(items)  # Keep track of original count
-    
+    # If no items, return immediately
+    if not items:
+        return [], 0
+        
     # If limit is specified, only process that many items
     items_to_process = items[:limit] if limit else items
+    original_count = len(items_to_process)
     
+    # Use a dictionary comprehension for faster initial grouping
+    consolidated = {}
+    
+    # Pre-allocate sets for versions and seasons to avoid repeated set creation
     for item in items_to_process:
-        key = f"{item['title']}_{item.get('year', 'Unknown')}"
+        # Create a unique key that includes season/episode for TV shows
+        if item.get('type') == 'episode':
+            key = f"{item['title']}_{item.get('year', 'Unknown')}_S{item.get('season_number', 'Unknown')}E{item.get('episode_number', 'Unknown')}"
+        else:
+            key = f"{item['title']}_{item.get('year', 'Unknown')}"
+            
         if key not in consolidated:
             # Handle null or empty release dates
             release_date = item.get('release_date')
             if release_date is None or release_date == '' or release_date == 'null':
                 release_date = 'Unknown'
 
+            # Create the base item with all fields at once
             consolidated[key] = {
                 'title': item['title'],
                 'year': item.get('year', 'Unknown'),
-                'versions': set(),
+                'type': item.get('type', 'movie'),
+                'versions': {item.get('version', 'Unknown')},  # Initialize with first version
                 'seasons': set(),
                 'release_date': release_date,
                 'physical_release_date': item.get('physical_release_date'),
                 'scraping_versions': item.get('scraping_versions', {}),
-                'version': item.get('version')  # Store the version for checking requirements
+                'version': item.get('version')
             }
-        consolidated[key]['versions'].add(item.get('version', 'Unknown'))
-        if item.get('type') == 'episode' and 'season_number' in item:
-            consolidated[key]['seasons'].add(item['season_number'])
+            
+            # Add season/episode info for episodes
+            if item.get('type') == 'episode':
+                consolidated[key]['season_number'] = item.get('season_number')
+                consolidated[key]['episode_number'] = item.get('episode_number')
+                consolidated[key]['seasons'].add(item.get('season_number'))
+        else:
+            # Just add the version to existing item
+            consolidated[key]['versions'].add(item.get('version', 'Unknown'))
+            if item.get('type') == 'episode' and 'season_number' in item:
+                consolidated[key]['seasons'].add(item['season_number'])
     
-    # Convert sets to lists for JSON serialization
+    # Convert to list and convert sets to lists in one pass
     result = []
     for key, data in consolidated.items():
-        result.append({
+        item_data = {
             'title': data['title'],
             'year': data['year'],
+            'type': data['type'],
             'versions': list(data['versions']),
             'seasons': list(data['seasons']),
             'release_date': data['release_date'],
             'physical_release_date': data['physical_release_date'],
             'scraping_versions': data['scraping_versions'],
-            'version': data['version']  # Keep the version for checking requirements
-        })
+            'version': data['version']
+        }
+        if data['type'] == 'episode':
+            item_data['season_number'] = data.get('season_number')
+            item_data['episode_number'] = data.get('episode_number')
+        result.append(item_data)
+            
     return result, original_count
 
 @queues_bp.route('/')

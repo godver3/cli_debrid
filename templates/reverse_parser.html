@@ -7,18 +7,20 @@
 
     <div class="settings-section">
         <div class="settings-section-header">
-            <h4>Version Terms</h4>
+            <h4>Information</h4>
         </div>
         <div class="settings-section-content">
-            <div id="version-terms-container" class="version-terms-container">
-                <!-- Version terms will be dynamically added here -->
-            </div>
+            <p class="info-note">
+                This page tests the reverse parsing logic which assigns a "Scraping Version" to filenames. 
+                The "Default Version" below is used as a fallback if no specific scraping version matches a filename based on its content and your scraping configurations.
+                The parsing is primarily automatic, based on your 'Scraping' version configurations.
+            </p>
         </div>
     </div>
 
     <div class="settings-section default-version-container">
         <div class="settings-section-header">
-            <h4>Default Version</h4>
+            <h4>Default Version (Fallback)</h4>
         </div>
         <div class="settings-section-content">
             <select id="default-version" name="Reverse Parser.default_version" class="settings-input">
@@ -80,7 +82,6 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log("DOMContentLoaded event fired");
 
     // DOM Elements
-    const versionTermsContainer = document.getElementById('version-terms-container');
     const defaultVersionSelect = document.getElementById('default-version');
     const filterDefaultButton = document.getElementById('filterDefaultButton');
     const applyParsedVersionsButton = document.getElementById('applyParsedVersionsButton');
@@ -102,6 +103,13 @@ document.addEventListener('DOMContentLoaded', function() {
         if (applyParsedVersionsButton) {
             applyParsedVersionsButton.addEventListener('click', handleApplyParsedVersions);
         }
+        if (defaultVersionSelect) {
+            defaultVersionSelect.addEventListener('change', function() {
+                currentDefaultVersion = this.value;
+                updateVersionSettings();
+                updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
+            });
+        }
     }
 
     // Event Handlers
@@ -117,156 +125,38 @@ document.addEventListener('DOMContentLoaded', function() {
             fetch('/settings/get_scraping_versions').then(response => response.json()),
             fetch('/settings/api/reverse_parser_settings').then(response => response.json())
         ]).then(([versionsData, reverseParserData]) => {
-            setupVersions(versionsData.versions, reverseParserData);
+            setupDefaultVersion(versionsData.versions, reverseParserData);
         }).catch(error => {
             console.error("Error loading version data:", error);
         });
     }
 
-    function setupVersions(allVersions, reverseParserData) {
-        const versionTerms = reverseParserData.version_terms || {};
-        const versionOrder = reverseParserData.version_order || [];
-        
-        const allVersionsSet = new Set(allVersions);
-        
-        versionOrder.forEach(version => {
-            if (allVersionsSet.has(version)) {
-                createVersionTermsInput(version, versionTerms[version] || []);
-                allVersionsSet.delete(version);
-            }
-        });
-        
-        allVersions.forEach(version => {
-            if (allVersionsSet.has(version)) {
-                createVersionTermsInput(version, versionTerms[version] || []);
-            }
-        });
-        
-        updateMoveButtons();
-        updateDefaultVersionOptions();
-        currentDefaultVersion = reverseParserData.default_version || versionOrder[0] || allVersions[0] || '';
+    function setupDefaultVersion(allScrapingVersions, reverseParserData) {
+        updateDefaultVersionOptions(allScrapingVersions, reverseParserData.default_version);
+        currentDefaultVersion = reverseParserData.default_version || (allScrapingVersions.length > 0 ? allScrapingVersions[0] : '');
         defaultVersionSelect.value = currentDefaultVersion;
 
         assignVersions();
-
-        setupVersionInputListeners();
     }
 
-    function createVersionTermsInput(version, terms) {
-        const div = document.createElement('div');
-        div.className = 'version-terms-input';
-        div.setAttribute('data-version', version);
-        div.innerHTML = `
-            <span class="version-name">${version}</span>
-            <input type="text" class="settings-input version-terms" value="${terms.join(', ')}" placeholder="Enter terms separated by commas">
-            <button type="button" class="move-btn move-up" title="Move Up">↑</button>
-            <button type="button" class="move-btn move-down" title="Move Down">↓</button>
-        `;
-        versionTermsContainer.appendChild(div);
-
-        div.querySelector('.move-up').addEventListener('click', () => moveVersion(div, 'up'));
-        div.querySelector('.move-down').addEventListener('click', () => moveVersion(div, 'down'));
-    }
-
-    function moveVersion(versionDiv, direction) {
-        const sibling = direction === 'up' ? versionDiv.previousElementSibling : versionDiv.nextElementSibling;
-        if (sibling) {
-            const moveUp = direction === 'up';
-            versionDiv.style.zIndex = '2';
-            sibling.style.zIndex = '1';
-
-            versionDiv.classList.add(moveUp ? 'moving-up' : 'moving-down');
-            sibling.classList.add(moveUp ? 'moving-down' : 'moving-up');
-
-            setTimeout(() => {
-                versionDiv.classList.remove(moveUp ? 'moving-up' : 'moving-down');
-                sibling.classList.remove(moveUp ? 'moving-down' : 'moving-up');
-                
-                versionDiv.style.transform = moveUp ? 'translateY(-100%)' : 'translateY(100%)';
-                sibling.style.transform = moveUp ? 'translateY(100%)' : 'translateY(-100%)';
-                
-                setTimeout(() => {
-                    versionDiv.style.transition = 'none';
-                    sibling.style.transition = 'none';
-                    versionDiv.style.transform = '';
-                    sibling.style.transform = '';
-                    versionDiv.style.zIndex = '';
-                    sibling.style.zIndex = '';
-
-                    if (moveUp) {
-                        sibling.parentNode.insertBefore(versionDiv, sibling);
-                    } else {
-                        sibling.parentNode.insertBefore(sibling, versionDiv);
-                    }
-
-                    setTimeout(() => {
-                        versionDiv.style.transition = '';
-                        sibling.style.transition = '';
-                        updateMoveButtons();
-                        updateDefaultVersionOptions();
-                        updateVersionSettings();
-                    }, 0);
-                }, 300);
-            }, 300);
-        }
-    }
-
-    function updateMoveButtons() {
-        const versionDivs = versionTermsContainer.querySelectorAll('.version-terms-input');
-        versionDivs.forEach((div, index) => {
-            div.querySelector('.move-up').disabled = index === 0;
-            div.querySelector('.move-down').disabled = index === versionDivs.length - 1;
-        });
-    }
-
-    function updateDefaultVersionOptions() {
-        const versions = Array.from(document.querySelectorAll('.version-terms-input')).map(div => div.getAttribute('data-version'));
-        const currentSelection = defaultVersionSelect.value;
+    function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        const currentSelection = defaultVersionSelect.value || currentConfiguredDefault;
         defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
         
-        // Restore the previously selected default version
-        if (currentSelection && versions.includes(currentSelection)) {
+        if (versions.includes(currentSelection)) {
             defaultVersionSelect.value = currentSelection;
-        } else if (currentDefaultVersion && versions.includes(currentDefaultVersion)) {
-            defaultVersionSelect.value = currentDefaultVersion;
-        }
-    }
-
-    function setupVersionInputListeners() {
-        const versionInputs = document.querySelectorAll('.version-terms');
-        versionInputs.forEach(input => {
-            input.addEventListener('input', () => {
-                updateVersionSettings();
-                updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
-            });
-        });
-
-        if (defaultVersionSelect) {
-            defaultVersionSelect.addEventListener('change', function() {
-                currentDefaultVersion = this.value;
-                updateVersionSettings();
-                updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
-            });
+        } else if (currentConfiguredDefault && versions.includes(currentConfiguredDefault)) {
+            defaultVersionSelect.value = currentConfiguredDefault;
+        } else if (versions.length > 0) {
+            defaultVersionSelect.value = versions[0];
         }
     }
 
     function updateVersionSettings() {
-        const versionSettings = {};
-        const versionOrder = [];
-        document.querySelectorAll('.version-terms-input').forEach(div => {
-            const version = div.getAttribute('data-version');
-            const termsValue = div.querySelector('.version-terms').value;
-            const terms = splitRespectingParentheses(termsValue).filter(Boolean);
-            versionSettings[version] = terms;
-            versionOrder.push(version);
-        });
-
         const defaultVersion = document.getElementById('default-version').value;
 
         const settingsToUpdate = {
             'Reverse Parser': {
-                version_terms: versionSettings,
-                version_order: versionOrder,
                 default_version: defaultVersion
             }
         };
@@ -293,8 +183,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function assignVersions() {
-        const defaultVersionSelect = document.getElementById('default-version');
-        const defaultVersion = defaultVersionSelect ? defaultVersionSelect.value : null;
+        const defaultVersionSelectElem = document.getElementById('default-version');
+        const defaultVersion = defaultVersionSelectElem ? defaultVersionSelectElem.value : null;
 
         const rows = document.querySelectorAll('#items-table tbody tr');
 
@@ -382,7 +272,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table id="items-table"><thead><tr>';
         selectedColumns.forEach(column => {
-            tableHTML += `<th>${column.charAt(0).toUpperCase() + column.slice(1)}</th>`;
+            if (column !== 'version') {
+                tableHTML += `<th>${column.charAt(0).toUpperCase() + column.slice(1)}</th>`;
+            }
         });
         tableHTML += '<th>Assigned Version</th></tr></thead><tbody>';
         tableHTML += renderTableRows(items, selectedColumns);
@@ -395,13 +287,14 @@ document.addEventListener('DOMContentLoaded', function() {
         items.forEach(item => {
             rowsHTML += '<tr>';
             selectedColumns.forEach(column => {
-                let cellContent = item[column];
-                if (cellContent === null || cellContent === undefined || cellContent === '') {
-                    cellContent = 'None';
+                if (column !== 'version') {
+                    let cellContent = item[column];
+                    if (cellContent === null || cellContent === undefined || cellContent === '') {
+                        cellContent = 'None';
+                    }
+                    rowsHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
                 }
-                rowsHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
             });
-            // Use the parsed_version from the item data
             rowsHTML += `<td class="assigned-version" data-parsed-version="${item.parsed_version || ''}"></td></tr>`;
         });
         return rowsHTML;

@@ -8,7 +8,7 @@ from utilities.settings import get_setting
 import json
 from utilities.reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
 from .models import admin_required
-from utilities.plex_functions import remove_file_from_plex
+from utilities.plex_removal_cache import cache_plex_removal
 from database.database_reading import get_media_item_by_id
 import os
 from datetime import datetime
@@ -59,6 +59,7 @@ def get_item_size_gb(location_on_disk, original_path_for_symlink):
 @admin_required
 def index():
     request_start_time = time.perf_counter() # Start timer for the whole request
+    timings = {'overall_start': request_start_time}
     logging.info(f"Database index route started. Request method: {request.method}, Args: {request.args}")
     global cached_stats_data, stats_cache_timestamp # Allow modification of module-level cache variables
     
@@ -100,6 +101,7 @@ def index():
         cached_stats_data = counts
         stats_cache_timestamp = current_time
         logging.info(f"Statistics summary cached for {STATS_CACHE_DURATION_SECONDS} seconds.")
+    timings['stats_fetched'] = time.perf_counter()
 
     data['stats'] = {
         'total_movies': counts['total_movies'],
@@ -119,9 +121,11 @@ def index():
         from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
+        timings['db_connection_established'] = time.perf_counter()
 
         cursor.execute("PRAGMA table_info(media_items)")
         db_actual_columns = [column[1] for column in cursor.fetchall()]
+        timings['table_info_fetched'] = time.perf_counter()
         
         all_columns_for_ui = db_actual_columns[:]
         if 'size' not in all_columns_for_ui:
@@ -177,6 +181,7 @@ def index():
 
         # 5. Update the data dictionary with the final selected columns for the template
         data['selected_columns'] = current_selected_columns_for_display
+        timings['column_processing_done'] = time.perf_counter()
 
         # Validate filter_logic, sort_order_req, and sort_column_req (now that it's defined)
         if filter_logic not in ['AND', 'OR']: filter_logic = 'AND'
@@ -210,6 +215,7 @@ def index():
         
         filter_where_clauses = []
         filter_params = []
+        timings['query_setup_done'] = time.perf_counter()
 
         if filters:
             for filter_item in filters:
@@ -324,9 +330,11 @@ def index():
         
         query = f"{base_query} {final_where_clause} {order_clause}"
         logging.debug(f"Executing query: {query} with params: {final_params}")
+        timings['filter_processing_done'] = time.perf_counter()
         cursor.execute(query, final_params)
         items_from_db = cursor.fetchall()
         logging.debug(f"Fetched {len(items_from_db)} items from the database")
+        timings['main_query_executed'] = time.perf_counter()
         
         items_dict_list = [dict(zip(final_columns_for_sql_query_list, item_row)) for item_row in items_from_db]
 
@@ -338,6 +346,7 @@ def index():
         
         if sort_column_req == 'size':
             items_dict_list.sort(key=lambda x: x.get('size_gb', 0.0), reverse=(sort_order_req == 'desc'))
+        timings['item_data_processing_done'] = time.perf_counter()
 
         logging.info("Starting to fetch distinct column values for filters.")
         time_before_all_distinct_values = time.perf_counter()
@@ -383,18 +392,38 @@ def index():
                     column_values[column_for_distinct_fetch] = ["None"]
         
         logging.info(f"Finished fetching all distinct column values in {time.perf_counter() - time_before_all_distinct_values:.4f}s.")
+        timings['distinct_values_fetched'] = time.perf_counter()
+        
+        from routes.queues_routes import consolidate_items
+        unique_items, _ = consolidate_items(items_dict_list)
+        timings['items_consolidated'] = time.perf_counter()
 
         data.update({
             'items': items_dict_list,
-            # 'selected_columns' is already updated with current_selected_columns_for_display
-            # 'all_columns' is already updated with all_columns_for_ui
-            'filters': filters, 
-            # 'sort_column' and 'sort_order' are already updated with validated ones
+            'result_count': len(items_dict_list),
+            'filters': filters,
             'current_letter': current_letter_for_template,
             'content_type': content_type_for_template,
             'filter_logic': filter_logic,
             'column_values': column_values,
+            'unique_result_count': len(unique_items),
         })
+
+        timings['data_updated_for_template'] = time.perf_counter()
+
+        # Calculate and log durations
+        timing_log = "Database index route timing breakdown:\n"
+        last_timing = request_start_time
+        for key, timestamp in timings.items():
+            if key != 'overall_start':
+                duration = timestamp - last_timing
+                timing_log += f"  - {key}: {duration:.4f} seconds\n"
+                last_timing = timestamp
+        total_duration = time.perf_counter() - request_start_time
+        timing_log += f"Total processing time for request: {total_duration:.4f} seconds."
+        logging.info(timing_log)
+        data['timings'] = {k: v - request_start_time for k, v in timings.items() if k != 'overall_start'} # Relative timings for template
+        data['total_request_time'] = total_duration
 
         if request.args.get('ajax') == '1':
             logging.info(f"Database index route finished (AJAX). Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
@@ -426,11 +455,18 @@ def index():
             conn.close()
 
 @database_bp.route('/bulk_queue_action', methods=['POST'])
+@admin_required
 def bulk_queue_action():
     action = request.form.get('action')
-    target_queue = request.form.get('target_queue')
     selected_items = request.form.getlist('selected_items')
-    blacklist = request.form.get('blacklist', 'false').lower() == 'true' if action == 'delete' else False
+    from routes.program_operation_routes import get_program_runner # Existing import
+
+    target_queue = request.form.get('target_queue') 
+    
+    blacklist = False
+    if action == 'delete':
+        blacklist_str = request.form.get('blacklist', 'false')
+        blacklist = blacklist_str.lower() == 'true'
 
     logging.info(f"Bulk action route called. Action: '{action}', Items: {selected_items[:5]}...")
 
@@ -444,8 +480,36 @@ def bulk_queue_action():
     errors = []
 
     from database import get_db_connection
+    
+    program_runner = get_program_runner()
+    bulk_action_paused_queue = False # Flag to track if this function paused the queue
 
     try:
+        if program_runner and program_runner.is_running() and hasattr(program_runner, 'pause_queue') and callable(program_runner.pause_queue) and hasattr(program_runner, 'resume_queue') and callable(program_runner.resume_queue):
+            logging.info("Attempting to pause program queue for bulk DB action.")
+            # Set the pause reason specifically for this bulk action
+            program_runner.pause_info = { # Assuming pause_info attribute exists and is used by pause_queue
+                "reason_string": "Bulk database operation in progress",
+                "error_type": "SYSTEM_MAINTENANCE", 
+                "service_name": "Database Bulk Action",
+                "status_code": None,
+                "retry_count": 0
+            }
+            program_runner.pause_queue() 
+            bulk_action_paused_queue = True
+            logging.info("Program queue paused successfully for bulk action.")
+        else:
+            log_message = "Program runner not found, not running, or missing pause_queue/resume_queue methods. Proceeding without pausing queue."
+            if program_runner:
+                if not program_runner.is_running():
+                    log_message = "Program runner found but not running. Proceeding without pausing queue."
+                elif not (hasattr(program_runner, 'pause_queue') and callable(program_runner.pause_queue)):
+                    log_message = "Program runner found and running, but 'pause_queue' method is missing. Proceeding without pausing queue."
+                elif not (hasattr(program_runner, 'resume_queue') and callable(program_runner.resume_queue)):
+                    log_message = "Program runner found and running, but 'resume_queue' method is missing. Proceeding without pausing queue."
+            logging.info(log_message)
+
+
         for i in range(0, len(selected_items), BATCH_SIZE):
             batch = selected_items[i:i + BATCH_SIZE]
             logging.info(f"Processing batch {i//BATCH_SIZE + 1}. Action: '{action}'")
@@ -543,82 +607,162 @@ def bulk_queue_action():
                 finally:
                     conn.close()
             elif action == 'rescrape':
-                logging.info(f"Entering 'rescrape' block for batch: {batch}")
-                # --- New Rescrape Logic ---
-                # Get file management settings once per batch
+                logging.info(f"Entering 'rescrape' block for batch: {batch}") # batch is a list of item IDs for this BATCH_SIZE chunk
+                # Get file management settings (once per BATCH_SIZE chunk)
                 file_management = get_setting('File Management', 'file_collection_management', 'Plex')
                 mounted_location = get_setting('Plex', 'mounted_file_location', get_setting('File Management', 'original_files_path', ''))
                 original_files_path = get_setting('File Management', 'original_files_path', '')
                 symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
-                plex_url_for_symlink = get_setting('File Management', 'plex_url_for_symlink', '') # Get setting for symlinked Plex
 
-                for item_id in batch:
-                    item = None # Reset item for each iteration
+                items_in_batch_details_raw = [] # To store raw data fetched from DB for this batch of IDs
+                
+                conn_rescape_batch = None 
+                try:
+                    from database import get_db_connection 
+                    conn_rescape_batch = get_db_connection()
+                    cursor_rescape_batch = conn_rescape_batch.cursor()
+
+                    placeholders_select = ','.join('?' * len(batch)) # 'batch' here is the current chunk of item IDs
+                    query_select = f"""
+                        SELECT id, state, location_on_disk, original_path_for_symlink, 
+                               filled_by_file, title, type, episode_title, version  -- Added version
+                        FROM media_items 
+                        WHERE id IN ({placeholders_select})
+                    """
+                    cursor_rescape_batch.execute(query_select, batch)
+                    db_columns = [column[0] for column in cursor_rescape_batch.description]
+                    items_in_batch_details_raw = [dict(zip(db_columns, row)) for row in cursor_rescape_batch.fetchall()]
+                
+                except Exception as e:
+                    logging.error(f"Error fetching batch details for rescrape: {str(e)}", exc_info=True)
+                    errors.append(f"Error fetching details for batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    if conn_rescape_batch: conn_rescape_batch.close()
+                    continue # Skip to the next BATCH_SIZE chunk of selected_items
+                
+                prepared_items_for_db_update = [] 
+
+                for item_db_data in items_in_batch_details_raw: 
+                    item_id = item_db_data['id']
                     try:
-                        logging.info(f"Rescrape: Processing item_id: {item_id}")
-                        item = get_media_item_by_id(item_id)
-                        if not item:
-                            errors.append(f"Item {item_id} not found.")
-                            error_count += 1
-                            logging.warning(f"Rescrape: Item {item_id} not found, skipping.")
-                            continue
+                        logging.info(f"Rescrape: Processing item_id: {item_id} for file/Plex ops. Current state: {item_db_data.get('state')}, Version: {item_db_data.get('version')}")
 
-                        # 1. Handle File Deletion
-                        if item['state'] in ['Collected', 'Upgrading']: # Only delete if currently collected/upgrading
-                             if file_management == 'Plex':
-                                 if mounted_location and item.get('location_on_disk'):
-                                     if os.path.exists(item['location_on_disk']):
-                                         os.remove(item['location_on_disk'])
-                                         logging.info(f"Rescrape: Deleted Plex file: {item['location_on_disk']}")
+                        # --- Start: File Deletion & Plex Removal Logic (using item_db_data) ---
+                        if item_db_data['state'] in ['Collected', 'Upgrading']:
+                            if file_management == 'Plex' and item_db_data.get('filled_by_file'):
+                                if item_db_data['type'] == 'movie':
+                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'])
+                                elif item_db_data['type'] == 'episode':
+                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'], item_db_data.get('episode_title'))
+                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Plex mode).")
+                            elif file_management == 'Symlinked/Local' and item_db_data.get('location_on_disk'): # Check location_on_disk for path
+                                # Path for symlinked items should be location_on_disk, which is the symlink path
+                                path_to_remove = item_db_data['location_on_disk']
+                                if item_db_data['type'] == 'movie':
+                                    cache_plex_removal(item_db_data['title'], path_to_remove)
+                                elif item_db_data['type'] == 'episode':
+                                    cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
+                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
+                        
+                        if item_db_data['state'] in ['Collected', 'Upgrading'] and \
+                           (item_db_data.get('location_on_disk') or item_db_data.get('original_path_for_symlink')):
+                            sleep(0.5) 
 
-                             elif file_management == 'Symlinked/Local':
-                                 # Handle symlink removal
-                                 if item.get('location_on_disk'):
-                                     if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
-                                         os.unlink(item['location_on_disk'])
-                                         logging.info(f"Rescrape: Removed symlink: {item['location_on_disk']}")
-                                 # Handle original file removal
-                                 if item.get('original_path_for_symlink'):
-                                     if os.path.exists(item['original_path_for_symlink']):
-                                         os.remove(item['original_path_for_symlink'])
-                                         logging.info(f"Rescrape: Deleted original file: {item['original_path_for_symlink']}")
+                        if item_db_data['state'] in ['Collected', 'Upgrading']:
+                            if file_management == 'Plex' and item_db_data.get('filled_by_file'):
+                                if item_db_data['type'] == 'movie':
+                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'])
+                                elif item_db_data['type'] == 'episode':
+                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'], item_db_data.get('episode_title'))
+                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Plex mode).")
+                            elif file_management == 'Symlinked/Local' and item_db_data.get('location_on_disk'): # Check location_on_disk for path
+                                # Path for symlinked items should be location_on_disk, which is the symlink path
+                                path_to_remove = item_db_data['location_on_disk']
+                                if item_db_data['type'] == 'movie':
+                                    cache_plex_removal(item_db_data['title'], path_to_remove)
+                                elif item_db_data['type'] == 'episode':
+                                    cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
+                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
+                        # --- End: File Deletion & Plex Removal Logic ---
 
-                        sleep(0.5) # Small delay before Plex removal
+                        current_version_val = item_db_data.get('version')
+                        cleaned_version_val = current_version_val 
 
-                        # 2. Remove from Plex (if applicable)
-                        if item['state'] in ['Collected', 'Upgrading']:
-                             if file_management == 'Plex' and item.get('filled_by_file'):
-                                 if item['type'] == 'movie':
-                                     remove_file_from_plex(item['title'], item['filled_by_file'])
-                                 elif item['type'] == 'episode':
-                                     remove_file_from_plex(item['title'], item['filled_by_file'], item.get('episode_title')) # Use .get for safety
-                             elif file_management == 'Symlinked/Local' and plex_url_for_symlink and item.get('location_on_disk'):
-                                 if item['type'] == 'movie':
-                                     remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']))
-                                 elif item['type'] == 'episode':
-                                     remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']), item.get('episode_title'))
+                        if isinstance(current_version_val, str) and '*' in current_version_val:
+                            cleaned_version_val = current_version_val.replace('*', '')
+                            logging.info(f"Rescrape: Item {item_id}, original version '{current_version_val}', will be updated to cleaned version '{cleaned_version_val}'.")
+                        
+                        prepared_items_for_db_update.append({'id': item_id, 'cleaned_version': cleaned_version_val})
 
-                        # 3. Update Database State to 'Wanted' and clear file info
-                        logging.info(f"Rescrape: Attempting to update item {item_id} state to 'Wanted'. Current state: {item.get('state')}")
-                        update_media_item_state(
-                            item_id,
-                            'Wanted',
-                            location_on_disk=None,
-                            original_path_for_symlink=None,
-                            filled_by_file=None,
-                        )
-                        logging.info(f"Rescrape: Successfully called update_media_item_state for item {item_id}.")
-                        total_processed += 1
-
-                    except Exception as e:
+                    except Exception as e_indiv_item_proc: 
                         error_count += 1
-                        error_msg = f"Error processing item {item_id} for rescrape: {str(e)}"
+                        error_msg = f"Error during file/Plex processing for item {item_id} (for rescrape): {str(e_indiv_item_proc)}"
                         errors.append(error_msg)
                         logging.error(f"Rescrape: {error_msg}", exc_info=True)
+                
+                if prepared_items_for_db_update: 
+                    try:
+                        item_ids_for_update_clause = [item['id'] for item in prepared_items_for_db_update]
+                        placeholders_for_in_clause = ','.join('?' * len(item_ids_for_update_clause))
+                        
+                        version_case_sql_parts = []
+                        params_for_version_case_values = []
+                        for item_update_payload in prepared_items_for_db_update:
+                            version_case_sql_parts.append("WHEN ? THEN ?") 
+                            params_for_version_case_values.extend([item_update_payload['id'], item_update_payload['cleaned_version']])
+                        
+                        version_case_final_sql = "version" 
+                        if version_case_sql_parts:
+                             version_case_final_sql = "CASE id " + " ".join(version_case_sql_parts) + " ELSE version END"
+
+                        logging.info(f"Rescrape: Attempting to batch update {len(item_ids_for_update_clause)} items in DB: set to 'Wanted' and update versions for batch {i//BATCH_SIZE + 1}.")
+                        
+                        final_db_update_query = f"""UPDATE media_items 
+                               SET state = 'Wanted', 
+                                   location_on_disk = NULL, 
+                                   original_path_for_symlink = NULL, 
+                                   filled_by_file = NULL,
+                                   version = {version_case_final_sql},
+                                   last_updated = ? 
+                               WHERE id IN ({placeholders_for_in_clause})"""
+                        
+                        sql_params_for_final_db_update = params_for_version_case_values + [datetime.now()] + item_ids_for_update_clause
+                        
+                        cursor_rescape_batch.execute(final_db_update_query, sql_params_for_final_db_update)
+                        rows_affected_by_update = cursor_rescape_batch.rowcount
+
+                        if rows_affected_by_update == len(item_ids_for_update_clause):
+                            conn_rescape_batch.commit()
+                            total_processed += rows_affected_by_update
+                            logging.info(f"Rescrape: Successfully committed DB update for {rows_affected_by_update} items for batch {i//BATCH_SIZE + 1}.")
+                        else:
+                            conn_rescape_batch.rollback()
+                            mismatch_error_msg = f"Rescrape DB Update: Expected to affect {len(item_ids_for_update_clause)} items, but DB reported {rows_affected_by_update}. Rolled back changes for this group of items in batch {i//BATCH_SIZE + 1}."
+                            logging.error(mismatch_error_msg)
+                            errors.append(mismatch_error_msg)
+                            error_count += len(item_ids_for_update_clause) 
+                    
+                    except Exception as e_db_update: 
+                        if conn_rescape_batch: 
+                            try:
+                                conn_rescape_batch.rollback() 
+                            except Exception as e_rollback:
+                                logging.error(f"Rescrape: Error during rollback attempt: {e_rollback}", exc_info=True)
+
+                        db_update_err_msg = f"Error during batch database update for rescrape (batch {i//BATCH_SIZE + 1}): {str(e_db_update)}"
+                        errors.append(db_update_err_msg)
+                        logging.error(f"Rescrape: {db_update_err_msg}", exc_info=True)
+                        error_count += len(prepared_items_for_db_update) 
+                
+                elif items_in_batch_details_raw: 
+                    logging.info(f"Rescrape: No items from batch {i//BATCH_SIZE + 1} were successfully prepared for database update (e.g., all had file/Plex processing errors).")
+
+                if conn_rescape_batch:
+                    conn_rescape_batch.close()
                 # --- End New Rescrape Logic ---
 
             else:
                 logging.warning(f"Bulk action returning error: Invalid action '{action}'")
+                # No need to explicitly resume here, finally block will handle it.
                 return jsonify({'success': False, 'error': 'Invalid action or missing target queue'})
 
         if error_count > 0:
@@ -641,10 +785,17 @@ def bulk_queue_action():
     except Exception as e:
         logging.error(f"Outer exception in bulk action '{action}': {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f"An unexpected error occurred during bulk {action}: {str(e)}"})
+    finally:
+        if bulk_action_paused_queue and program_runner and hasattr(program_runner, 'resume_queue') and callable(program_runner.resume_queue):
+            logging.info("Resuming program queue in finally block after bulk DB action.")
+            program_runner.resume_queue() 
+        elif program_runner and not bulk_action_paused_queue:
+            logging.info("Queue was not paused by this bulk operation or program_runner not available/suitable for resume.")
 
 @database_bp.route('/delete_item', methods=['POST'])
+@admin_required
 def delete_item():
-    data = request.json
+    data = request.get_json()
     item_id = data.get('item_id')
     blacklist = data.get('blacklist', False)
     
@@ -671,16 +822,23 @@ def delete_item():
                 except Exception as e:
                     logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
 
+            # Allow time for file system operations to complete before Plex scan might occur
             sleep(1)
 
-            if item['type'] == 'movie':
-                remove_file_from_plex(item['title'], item['filled_by_file'])
-            elif item['type'] == 'episode':
-                remove_file_from_plex(item['title'], item['filled_by_file'], item['episode_title'])
+            # Use cache_plex_removal
+            if item.get('filled_by_file'): # Ensure filled_by_file exists
+                if item['type'] == 'movie':
+                    cache_plex_removal(item['title'], item['filled_by_file'])
+                elif item['type'] == 'episode':
+                    cache_plex_removal(item['title'], item['filled_by_file'], item.get('episode_title'))
+                logging.info(f"Delete item: Queued Plex removal for item {item_id} (Plex mode). Path: {item['filled_by_file']}")
+
 
         elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
             # Handle symlink removal
+            symlink_path_to_use_for_plex = None
             if item.get('location_on_disk'):
+                symlink_path_to_use_for_plex = item['location_on_disk'] # Store for Plex removal
                 try:
                     if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
                         os.unlink(item['location_on_disk'])
@@ -695,15 +853,20 @@ def delete_item():
                 except Exception as e:
                     logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
 
+            # Allow time for file system operations to complete
             sleep(1)
 
-            # Remove from Plex if configured
-            plex_url = get_setting('File Management', 'plex_url_for_symlink', '')
-            if plex_url:
+            # Use cache_plex_removal, preferring the symlink path for Plex if it existed
+            # The path given to Plex should be what Plex sees, which is usually the symlink path.
+            path_for_plex_removal = symlink_path_to_use_for_plex if symlink_path_to_use_for_plex else item.get('original_path_for_symlink')
+            
+            if path_for_plex_removal: # Check if we have a path to give to Plex
                 if item['type'] == 'movie':
-                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']))
+                    cache_plex_removal(item['title'], path_for_plex_removal)
                 elif item['type'] == 'episode':
-                    remove_file_from_plex(item['title'], os.path.basename(item['location_on_disk']), item['episode_title'])
+                    cache_plex_removal(item['title'], path_for_plex_removal, item.get('episode_title'))
+                logging.info(f"Delete item: Queued Plex removal for item {item_id} (Symlinked/Local mode). Path: {path_for_plex_removal}")
+
 
         # Handle database operation based on blacklist flag
         if blacklist:
@@ -738,7 +901,10 @@ def perform_database_migration():
     db.session.commit()
 
 @database_bp.route('/reverse_parser', methods=['GET', 'POST'])
+@admin_required
 def reverse_parser():
+    # config = load_config() # Not strictly needed here anymore for version_settings
+    # version_settings = config.get('Scraping', {}).get('versions', {}) # Unused in this route directly
     logging.debug("Entering reverse_parser function")
     data = {
         'selected_columns': ['title', 'filled_by_file', 'version'],
@@ -832,32 +998,29 @@ def reverse_parser():
         return render_template('reverse_parser.html', **data)
     
 @database_bp.route('/apply_parsed_versions', methods=['POST'])
+@admin_required
 def apply_parsed_versions():
-    try:
-        from database import get_all_media_items
-        items = get_all_media_items()
-        updated_count = 0
-        for item in items:
-            if item['filled_by_file']:
-                parsed_version = parse_filename_for_version(item['filled_by_file'])
-                
-                # Only update if the parsed version is different from the current version
-                current_version = item['version'] if 'version' in item.keys() else None
-                if parsed_version != current_version:
-                    try:
-                        from database import update_media_item_state
-                        update_media_item_state(item['id'], item['state'], version=parsed_version)
-                        updated_count += 1
-                    except Exception as e:
-                        logging.error(f"Error updating item {item['id']}: {str(e)}")
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Parsed versions applied successfully. Updated {updated_count} items.'
-        })
-    except Exception as e:
-        logging.error(f"Error applying parsed versions: {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+    data = request.get_json()
+    items_to_update = data.get('items_to_update', [])
+    updated_count = 0
+    for item in items_to_update:
+        if item['filled_by_file']:
+            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            
+            # Only update if the parsed version is different from the current version
+            current_version = item['version'] if 'version' in item.keys() else None
+            if parsed_version != current_version:
+                try:
+                    from database import update_media_item_state
+                    update_media_item_state(item['id'], item['state'], version=parsed_version)
+                    updated_count += 1
+                except Exception as e:
+                    logging.error(f"Error updating item {item['id']}: {str(e)}")
+    
+    return jsonify({
+        'success': True, 
+        'message': f'Parsed versions applied successfully. Updated {updated_count} items.'
+    })
 
 @database_bp.route('/watch_history', methods=['GET'])
 @admin_required

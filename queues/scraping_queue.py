@@ -392,7 +392,7 @@ class ScrapingQueue:
                     # --- End of Multi-pack logic ---
 
                     logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack})") # Log includes multi-pack status
-                    results, filtered_out_results = self.scrape_with_fallback(item_to_process, is_multi_pack, queue_manager)
+                    results, filtered_out_results = self.scrape_with_fallback(item_to_process, is_multi_pack, queue_manager, check_pack_wantedness=True)
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
@@ -417,7 +417,9 @@ class ScrapingQueue:
 
                         if not filtered_results:
                             logging.warning(f"All results filtered out for {item_identifier}. Retrying individual scraping.")
-                            individual_results, individual_filtered_out = self.scrape_with_fallback(item_to_process, False, queue_manager)
+                            # For individual scraping, check_pack_wantedness=True is fine as we aren't expecting a pack here anyway.
+                            # If a pack IS returned by a scraper for an individual request, the True flag would apply, which is reasonable.
+                            individual_results, individual_filtered_out = self.scrape_with_fallback(item_to_process, False, queue_manager, check_pack_wantedness=True)
                             logging.info(f"Individual scraping returned {len(individual_results)} results")
 
                             filtered_individual_results = []
@@ -431,8 +433,9 @@ class ScrapingQueue:
 
                             if not filtered_individual_results and item_to_process['type'] == 'episode':
                                 # Final fallback - try multi-pack even if not all episodes have aired
-                                logging.info(f"No individual episode results, trying final multi-pack fallback for {item_identifier}")
-                                fallback_results, fallback_filtered_out = self.scrape_with_fallback(item_to_process, True, queue_manager)
+                                logging.info(f"No individual episode results, trying final multi-pack fallback for {item_identifier} (less strict pack wantedness).")
+                                # Pass check_pack_wantedness=False for this final attempt
+                                fallback_results, fallback_filtered_out = self.scrape_with_fallback(item_to_process, True, queue_manager, check_pack_wantedness=False)
 
                                 filtered_fallback_results = []
                                 for result in fallback_results:
@@ -522,7 +525,7 @@ class ScrapingQueue:
         # Or if we actually processed an item in this call (even if it resulted in removal)
         return len(self.items) > 0 or processed_an_item_this_cycle
 
-    def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False):
+    def scrape_with_fallback(self, item, is_multi_pack, queue_manager, skip_filter=False, check_pack_wantedness: bool = False):
         item_identifier = queue_manager.generate_identifier(item)
         original_season = item.get('season_number')
         original_episode = item.get('episode_number')
@@ -541,7 +544,8 @@ class ScrapingQueue:
             item.get('season_number'),
             item.get('episode_number'),
             is_multi_pack,  # This will now be False if fall_back_to_single_scraper is True
-            item.get('genres')
+            item.get('genres'),
+            check_pack_wantedness=check_pack_wantedness # Pass parameter
         )
 
         # Ensure results and filtered_out are lists
@@ -606,7 +610,8 @@ class ScrapingQueue:
             item.get('season_number'),
             item.get('episode_number'),
             False,
-            item.get('genres')
+            item.get('genres'),
+            check_pack_wantedness=check_pack_wantedness # Pass parameter
         )
 
         # Ensure individual results and filtered_out are lists

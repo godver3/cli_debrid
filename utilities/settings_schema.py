@@ -418,7 +418,7 @@ SETTINGS_SCHEMA = {
                 },
                 "min_bitrate_mbps": {
                     "type": "number",
-                    "default": 0.0
+                    "default": 0.01
                 },
                 "max_bitrate_mbps": {
                     "type": "number",
@@ -450,7 +450,7 @@ SETTINGS_SCHEMA = {
                 },
                 "year_match_weight": {
                     "type": "number",
-                    "default": 3.0
+                    "default": 3
                 },
                 "wake_count": {
                     "type": "integer",
@@ -736,6 +736,11 @@ SETTINGS_SCHEMA = {
             "default": 100,
             "min": 1
         },
+        "emphasize_number_of_items_over_quality": {
+            "type": "boolean",
+            "description": "Emphasize the number of items over quality when ranking results",
+            "default": True
+        }
     },
     "Scrapers": {
         "tab": "Scrapers",

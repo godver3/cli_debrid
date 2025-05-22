@@ -926,8 +926,10 @@ def confirm_manual_assignment():
         return jsonify({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}), 500
 
 @magnet_bp.route('/verify_media_type')
+@admin_required
 def verify_media_type():
     tmdb_id = request.args.get('tmdb_id')
+    media_type_hint = request.args.get('media_type_hint') # e.g., 'movie' or 'show'
     if not tmdb_id:
         return jsonify({'error': 'No TMDB ID provided'}), 400
 

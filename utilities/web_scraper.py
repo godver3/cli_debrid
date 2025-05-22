@@ -814,9 +814,10 @@ def trending_shows():
         logging.error(f"Error retrieving Trakt Trending Shows: {e}")
         return []
 
-def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = True, background_cache_check: bool = False) -> List[Dict[str, Any]]:
+def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = True, background_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     from metadata.metadata import get_metadata
     logging.info(f"Processing media selection with skip_cache_check={skip_cache_check}, background_cache_check={background_cache_check}")
+    logging.debug(f"[process_media_selection] Starting for '{title}' ({year}).")
 
     # Convert TMDB ID to IMDB ID using the metadata battery
     tmdb_id = int(media_id)
@@ -837,6 +838,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         
         if not has_enabled_jackett:
             logging.error(f"Could not find IMDB ID for TMDB ID {tmdb_id} and no Jackett scrapers are enabled")
+            # Return an error structure that the route can handle
             return {"error": "Could not find IMDB ID for the selected media and no Jackett scrapers are enabled"}
         else:
             logging.info(f"No IMDB ID found for TMDB ID {tmdb_id}, but proceeding with Jackett scraper(s)")
@@ -868,14 +870,18 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
 
     logging.info(f"Scraping parameters: imdb_id={imdb_id}, tmdb_id={tmdb_id}, title={title}, year={year}, "
                    f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}, genres={genres}")
+    logging.debug(f"[process_media_selection] Calling scraper.scrape for '{title}'.")
 
     # Call the scraper function with the version parameter
-    scrape_results, filtered_out_results = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
+    # scrape_results here are the "passed" torrents from the scrape function
+    # filtered_out_results are those filtered by the scrape function
+    passed_results_from_scrape, filtered_out_results_from_scrape = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
+    logging.debug(f"[process_media_selection] scraper.scrape for '{title}' returned: passed={len(passed_results_from_scrape)}, filtered_out={len(filtered_out_results_from_scrape if filtered_out_results_from_scrape else [])}")
 
-    # Process the results
-    processed_results = []
+    # Process the passed results (e.g., for cache status, hash extraction)
+    processed_passed_results = []
     hashes = []
-    for result in scrape_results:
+    for result in passed_results_from_scrape: # Iterate over the passed results from scrape
         if isinstance(result, dict):
             magnet_link = result.get('magnet')
             torrent_url = None
@@ -910,14 +916,14 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         hashes.append(magnet_hash)
                     # Make sure magnet_link is also available for the frontend
                     result['magnet_link'] = result['magnet']
-                    processed_results.append(result)
+                    processed_passed_results.append(result)
                 except Exception as e:
                     logging.error(f"Error processing magnet link {magnet_link}: {str(e)}")
                     continue
             # Process torrent URLs
             elif torrent_url:
                 # No hash extraction needed for torrent URLs, but include them in results
-                processed_results.append(result)
+                processed_passed_results.append(result)
                 logging.info(f"Added torrent URL result: {result['title']}")
 
     # Get the debrid provider and check its capabilities
@@ -931,7 +937,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     logging.info(f"Debrid provider: supports_cache_check={supports_cache_check}, supports_bulk_check={supports_bulk_check}, is_real_debrid={is_real_debrid}")
 
     # Initialize all cache statuses as 'Not Checked'
-    for result in processed_results:
+    for result in processed_passed_results:
         result['cached'] = 'Not Checked'
         
         # Ensure both magnet and magnet_link are set (for UI and cache checking)
@@ -970,7 +976,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         cache_status = {hash_value: cache_status for hash_value in hashes_to_check}
                     
                     # Update results with cache status
-                    for result in processed_results:
+                    for result in processed_passed_results:
                         hash_value = result.get('hash')
                         if hash_value and hash_value in cache_status:
                             is_cached = cache_status[hash_value]
@@ -978,7 +984,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 else:
                     # Check hashes individually for providers that don't support bulk checking
                     checked_count = 0
-                    for result in processed_results:
+                    for result in processed_passed_results:
                         hash_value = result.get('hash')
                         if hash_value and checked_count < 5:  # Limit to 5 checks
                             try:
@@ -990,14 +996,14 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                                 result['cached'] = 'Error'
                 
                 # Mark all remaining results as N/A
-                for result in processed_results:
+                for result in processed_passed_results:
                     if result['cached'] == 'Not Checked':
                         result['cached'] = 'N/A'
                         
             except Exception as e:
                 logging.error(f"Error checking cache status: {e}")
                 # Fall back to N/A on error
-                for result in processed_results:
+                for result in processed_passed_results:
                     if result['cached'] == 'Not Checked':
                         result['cached'] = 'N/A'
         else:
@@ -1008,7 +1014,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                 
                 # Only check first 5 results
                 checked_count = 0
-                for i, result in enumerate(processed_results):
+                for i, result in enumerate(processed_passed_results):
                     hash_value = result.get('hash')
                     if not hash_value or checked_count >= 5:  # Limit to 5 checks
                         continue
@@ -1044,21 +1050,21 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                         logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
                 
                 # Mark all remaining results as N/A
-                for result in processed_results:
+                for result in processed_passed_results:
                     if result['cached'] == 'Not Checked':
                         result['cached'] = 'N/A'
             else:
                 # Mark all results as N/A if provider doesn't support direct checking
-                for result in processed_results:
+                for result in processed_passed_results:
                     result['cached'] = 'N/A'
                 logging.info("Provider does not support direct cache checking, marking all as N/A")
     else:
         logging.info(f"Skipping immediate cache check. Skip: {skip_cache_check}, Background: {background_cache_check}")
         
-    # Get media info for display
-    media_info = get_media_details(media_id, media_type)
-    
-    return {"torrent_results": processed_results, "media_info": media_info}
+    # The filtered_out_results_from_scrape are already in the correct list format.
+    # We return the processed passed results and the original filtered-out results.
+    logging.info(f"[process_media_selection] Returning for '{title}': processed_passed_results={len(processed_passed_results)}, filtered_out_results_from_scrape={len(filtered_out_results_from_scrape if filtered_out_results_from_scrape else [])}")
+    return processed_passed_results, filtered_out_results_from_scrape
 
 def get_available_versions():
     scraping_versions = get_setting('Scraping', 'versions', default={})

@@ -117,109 +117,93 @@ def check_share_status(task_id):
     return jsonify({
         'status': task_info['status'],
         'progress': task_info['progress'],
-        'url': task_info['url'],
+        'url': task_info['url'], 
+        'message': task_info.get('message'), 
         'error': task_info['error'],
         'timestamp': task_info['timestamp']
     })
 
 def process_log_upload(task_id):
-    """Background task to process log upload"""
+    """Background task to process log upload to paste.c-net."""
     try:
-        # Update status
-        upload_tasks[task_id]['status'] = 'collecting'
-        upload_tasks[task_id]['progress'] = 10
+        upload_tasks[task_id].update({'status': 'collecting', 'progress': 10, 'message': 'Collecting logs...'})
         
-        # Get all logs without any filtering
-        logs = get_all_logs_for_upload(max_lines=500000)
+        # Always attempt to get up to 500,000 lines
+        logs = get_all_logs_for_upload(max_lines=1500000)
         if not logs:
-            upload_tasks[task_id]['status'] = 'failed'
-            upload_tasks[task_id]['error'] = 'No logs found'
+            upload_tasks[task_id].update({'status': 'failed', 'error': 'No logs found', 'progress': 10, 'message': 'Failed: No logs found.'})
             return
         
-        upload_tasks[task_id]['progress'] = 20
-        logging.info(f"Task {task_id}: Collected {len(logs)} log entries, preparing for compression")
+        upload_tasks[task_id].update({'progress': 20, 'message': 'Preparing for compression...'})
+        logging.info(f"Task {task_id}: Collected {len(logs)} log entries for upload.")
         
-        # Format logs for sharing
         log_content = '\n'.join(logs)
         
-        # Compress the logs with maximum compression
-        upload_tasks[task_id]['status'] = 'compressing'
-        upload_tasks[task_id]['progress'] = 30
-        logging.info(f"Task {task_id}: Compressing logs")
-        
+        upload_tasks[task_id].update({'status': 'compressing', 'progress': 30, 'message': 'Compressing logs...'})
         compressed_buffer = io.BytesIO()
         with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
             gz.write(log_content.encode('utf-8'))
-        
         compressed_data = compressed_buffer.getvalue()
         compressed_size_kb = len(compressed_data) / 1024
-        original_size_kb = len(log_content) / 1024
-        logging.info(f"Task {task_id}: Compressed size: {compressed_size_kb:.2f}KB (Original: {original_size_kb:.2f}KB)")
-        
+        logging.info(f"Task {task_id}: Compressed logs to {compressed_size_kb:.2f}KB.")
         upload_tasks[task_id]['progress'] = 40
+
+        # Check size against paste.c-net limit (50MB)
+        # No reduction attempt; if it's too large with 500k lines, it fails.
+        if compressed_size_kb > 50000:
+            error_message = f'Log file too large after compression ({compressed_size_kb:.2f}KB). Limit is 50MB.'
+            logging.warning(f"Task {task_id}: {error_message}")
+            upload_tasks[task_id].update({
+                'status': 'failed', 
+                'error': error_message, 
+                'progress': 45,
+                'message': 'Failed: Log file too large.'
+            })
+            return
         
-        # Check if the compressed size exceeds typical limits
-        # paste.c-net.org has a 50MB limit
-        if compressed_size_kb > 50000:  # 50MB limit
-            logging.warning(f"Task {task_id}: Compressed log size ({compressed_size_kb:.2f}KB) exceeds paste.c-net.org's 50MB limit")
-            # Try with a reduced set of logs (only errors and warnings) - keep this logic
-            upload_tasks[task_id]['status'] = 'reducing'
-            try:
-                logging.info(f"Task {task_id}: Attempting to create a reduced log set due to size constraints")
-                reduced_logs = get_all_logs_for_upload(max_lines=100000) # Keep a max_lines limit for performance
-                if reduced_logs:
-                    reduced_content = '\n'.join(reduced_logs)
-
-                    compressed_buffer = io.BytesIO()
-                    with gzip.GzipFile(fileobj=compressed_buffer, mode='wb', compresslevel=9) as gz:
-                        gz.write(reduced_content.encode('utf-8'))
-
-                    compressed_data = compressed_buffer.getvalue()
-                    compressed_size_kb = len(compressed_data) / 1024
-                    logging.info(f"Task {task_id}: Reduced log set: {len(reduced_logs)} entries, size: {compressed_size_kb:.2f}KB")
-
-                    # Still too large even after reduction
-                    if compressed_size_kb > 50000:
-                        upload_tasks[task_id]['status'] = 'failed'
-                        upload_tasks[task_id]['error'] = 'Log file is too large even after reduction (limit 50MB)'
-                        return
-            except Exception as e:
-                logging.error(f"Task {task_id}: Error creating reduced logs: {str(e)}")
-                upload_tasks[task_id]['status'] = 'failed'
-                upload_tasks[task_id]['error'] = f'Error creating reduced logs: {str(e)}'
-                return
-
-        # Update status to uploading
-        upload_tasks[task_id]['status'] = 'uploading'
-        upload_tasks[task_id]['progress'] = 50
-
+        upload_tasks[task_id].update({
+            'status': 'uploading_to_pastebin', 
+            'progress': 50, 
+            'message': 'Uploading to paste.c-net.org...'
+        })
+        
+        paste_url = None
         try:
-            # logging.info(f"Task {task_id}: Attempting upload to oshi.at")
-            # file_url = upload_to_oshi(compressed_data, task_id) # Commented out
-            logging.info(f"Task {task_id}: Attempting upload to paste.c-net.org")
-            file_url = upload_to_paste_cnet(compressed_data, task_id) # Use new function
+            # upload_to_paste_cnet updates progress internally
+            paste_url = upload_to_paste_cnet(compressed_data, task_id) 
+            if not paste_url:
+                # This case should ideally be handled by upload_to_paste_cnet raising an exception
+                raise Exception("Upload to paste.c-net completed but no URL returned.")
+            
+            logging.info(f"Task {task_id}: Successfully uploaded to paste.c-net: {paste_url}")
+            upload_tasks[task_id].update({
+                'status': 'completed', 
+                'progress': 100,
+                'url': paste_url,
+                'message': f"Log uploaded successfully: {paste_url.split('/')[-1]}" # Display only last part of URL for brevity
+            })
 
-            if file_url:
-                # logging.info(f"Task {task_id}: Upload completed successfully to oshi.at") # Updated log message
-                logging.info(f"Task {task_id}: Upload completed successfully to paste.c-net.org")
-                upload_tasks[task_id]['status'] = 'completed'
-                upload_tasks[task_id]['progress'] = 100
-                upload_tasks[task_id]['url'] = file_url
-            else:
-                upload_tasks[task_id]['status'] = 'failed'
-                upload_tasks[task_id]['error'] = 'Upload completed but no URL returned'
-        except Exception as e:
-            # logging.error(f"Task {task_id}: Failed to upload to oshi.at: {str(e)}") # Updated log message
-            logging.error(f"Task {task_id}: Failed to upload to paste.c-net.org: {str(e)}")
-            upload_tasks[task_id]['status'] = 'failed'
-            upload_tasks[task_id]['error'] = f'Upload failed: {str(e)}'
+        except Exception as upload_err:
+            logging.error(f"Task {task_id}: Failed to upload to paste.c-net: {upload_err}")
+            # Preserve progress if set by upload_to_paste_cnet before error
+            current_progress = upload_tasks[task_id].get('progress', 50) 
+            upload_tasks[task_id].update({
+                'status': 'failed', 
+                'error': f'Upload to paste.c-net failed: {upload_err}',
+                'progress': current_progress,
+                'message': 'Failed: Upload error.'
+            })
 
     except Exception as e:
-        logging.error(f"Task {task_id}: Error during log sharing: {str(e)}")
-        upload_tasks[task_id]['status'] = 'failed'
-        upload_tasks[task_id]['error'] = f'An error occurred: {str(e)}'
+        logging.error(f"Task {task_id}: Critical error in process_log_upload: {e}")
+        current_progress = upload_tasks[task_id].get('progress', 5)
+        upload_tasks[task_id].update({
+            'status': 'failed', 
+            'error': f'An unexpected error occurred: {e}', 
+            'progress': current_progress,
+            'message': 'Failed: Unexpected error.'
+        })
     
-    # Update timestamp regardless of outcome
     upload_tasks[task_id]['timestamp'] = time.time()
 
 def upload_to_paste_cnet(data, task_id=None):
@@ -268,7 +252,7 @@ def upload_to_paste_cnet(data, task_id=None):
         logging.error(f"Request error during upload to {url}: {str(e)}")
         raise Exception(f"Upload failed: {str(e)}")
 
-def get_all_logs_for_upload(max_lines=500000):
+def get_all_logs_for_upload(max_lines=1500000):
     """Optimized: Get the last N raw log lines from rotated files for upload."""
     logs_dir = os.environ.get('USER_LOGS', '/user/logs')
     base_log_path = os.path.join(logs_dir, 'debug.log')

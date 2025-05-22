@@ -8,6 +8,7 @@ import time
 from utilities.settings import get_config_dir, load_config, save_config # Import main config functions
 from utilities.file_lock import FileLock # For safe JSON writing
 from datetime import datetime # To timestamp the fetch
+from .models import admin_required # Added import for admin_required
 
 user_token_bp = Blueprint('user_token', __name__)
 
@@ -97,7 +98,7 @@ def save_user_tokens(tokens):
 # --- Routes ---
 
 @user_token_bp.route('/collect_tokens')
-@login_required # Add role check if needed: @admin_required
+@admin_required
 def collect_tokens_page():
     """Renders the page for the admin to manage user token collection."""
     stored_tokens = load_user_tokens()
@@ -106,7 +107,7 @@ def collect_tokens_page():
     return render_template('user_token_collection.html', stored_usernames=stored_usernames)
 
 @user_token_bp.route('/collect_tokens/initiate', methods=['POST'])
-@login_required # Add role check if needed
+@admin_required
 def initiate_user_plex_auth():
     """Generates a Plex PIN for a user to authenticate."""
     try:
@@ -158,7 +159,7 @@ def initiate_user_plex_auth():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @user_token_bp.route('/collect_tokens/check_pin', methods=['POST'])
-@login_required # Add role check if needed
+@admin_required
 def check_user_plex_pin():
     """Checks the status of the PIN the user is authorizing."""
     try:
@@ -220,7 +221,7 @@ def check_user_plex_pin():
 
 
 @user_token_bp.route('/collect_tokens/delete', methods=['POST'])
-@login_required # Add role check if needed
+@admin_required
 def delete_user_token():
     """Deletes a stored token for a given username."""
     try:
@@ -244,7 +245,7 @@ def delete_user_token():
 # --- START: New Routes ---
 
 @user_token_bp.route('/collect_tokens/get_usernames', methods=['GET'])
-@login_required # Add role check if needed
+@admin_required
 def get_stored_usernames():
     """Returns a list of usernames for which tokens are stored."""
     try:
@@ -256,9 +257,10 @@ def get_stored_usernames():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @user_token_bp.route('/collect_tokens/assign_to_source', methods=['POST'])
-@login_required # Add role check if needed
+@admin_required
 def assign_user_to_source():
-    """Assigns a stored user's username and token to a specific 'Other Plex Watchlist' content source."""
+    """Assigns a user (and their token) to a content source."""
+    config = load_config() # Load main config
     try:
         data = request.json
         source_id = data.get('source_id')
@@ -275,11 +277,10 @@ def assign_user_to_source():
             return jsonify({'success': False, 'error': f'No stored token found for user: {username}'}), 404
 
         # 2. Update the main application config
-        app_config = load_config() # Load the main config
         save_needed = False
 
-        if 'Content Sources' in app_config and source_id in app_config['Content Sources']:
-            source_config = app_config['Content Sources'][source_id]
+        if 'Content Sources' in config and source_id in config['Content Sources']:
+            source_config = config['Content Sources'][source_id]
 
             # Ensure the source is the correct type
             if source_config.get('type') == 'Other Plex Watchlist':
@@ -302,7 +303,7 @@ def assign_user_to_source():
 
         # 3. Save config if changes were made
         if save_needed:
-            save_config(app_config) # Save the entire updated config
+            save_config(config) # Save the entire updated config
 
         # 4. Return username and token for frontend update
         # WARNING: Sending token back to frontend is necessary to update the field,

@@ -5,7 +5,12 @@ from datetime import datetime, timedelta, date
 from utilities.settings import get_setting
 from queues.config_manager import get_version_settings, load_config
 from database.database_reading import check_existing_media_item, get_media_item_by_id, get_media_item_presence
-from database.database_writing import update_release_date_and_state, update_media_item_state, update_blacklisted_date
+from database.database_writing import (
+    update_release_date_and_state,
+    update_media_item_state,
+    update_blacklisted_date,
+    add_to_collected_notifications
+)
 from database.core import get_db_connection
 
 class BlacklistedQueue:
@@ -202,7 +207,7 @@ class BlacklistedQueue:
 
         logging.info(f"Blacklisting item {item_identifier} (version: {current_version or 'N/A'}). No fallback applied.")
 
-        update_media_item_state(item_id, 'Blacklisted')
+        updated_db_item_state = update_media_item_state(item_id, 'Blacklisted')
         
         update_blacklisted_date(item_id, datetime.now())
 
@@ -210,6 +215,46 @@ class BlacklistedQueue:
              queue_manager.queue_timer.item_entered_queue(item_id, 'Blacklisted', item_identifier)
 
         logging.info(f"Moved item {item_identifier} to Blacklisted state and updated blacklisted_date")
+
+        # --- Add Notification Trigger ---
+        if updated_db_item_state: # Ensure state update was successful and we have item details
+            try:
+                # Fetch the most up-to-date item details for the notification
+                # The 'updated_db_item_state' dict from update_media_item_state should be sufficient
+                # if it contains all necessary fields. If not, uncomment get_media_item_by_id.
+                # fresh_item_details = get_media_item_by_id(item_id)
+                # if fresh_item_details:
+                #    notification_data = dict(fresh_item_details)
+                # else:
+                #    logging.warning(f"Could not fetch full item details for {item_identifier} (ID: {item_id}) for notification. Using initial data.")
+                #    notification_data = dict(item) # Fallback to original item dict
+
+                notification_data = dict(updated_db_item_state) # Use the returned dict from update_media_item_state
+
+                # Ensure 'new_state' is correctly set for the notification processing
+                notification_data['new_state'] = 'Blacklisted' 
+                
+                # Ensure all potentially required fields by notification formatter are present, even if None
+                # This depends on what format_notification_content and store_notification expect.
+                # Common fields: title, year, type, version, season_number, episode_number, content_source, content_source_detail
+                # Ensure these are present in `updated_db_item_state` or add them with defaults if necessary.
+                # For example:
+                if 'title' not in notification_data: notification_data['title'] = item.get('title', 'Unknown Title')
+                if 'year' not in notification_data: notification_data['year'] = item.get('year', '')
+                if 'type' not in notification_data: notification_data['type'] = item.get('type', 'movie') # Sensible default
+                if 'version' not in notification_data: notification_data['version'] = current_version # Use version from earlier in function
+                if notification_data['type'] == 'episode':
+                    if 'season_number' not in notification_data: notification_data['season_number'] = item.get('season_number')
+                    if 'episode_number' not in notification_data: notification_data['episode_number'] = item.get('episode_number')
+
+
+                add_to_collected_notifications(notification_data)
+                logging.info(f"Queued notification for blacklisted item: {item_identifier} (ID: {item_id})")
+            except Exception as e_notif:
+                logging.error(f"Error queueing blacklist notification for {item_identifier} (ID: {item_id}): {e_notif}", exc_info=True)
+        else:
+            logging.warning(f"Skipped blacklist notification for {item_identifier} (ID: {item_id}) because item details after state update were not available.")
+        # --- End Notification Trigger ---
 
     def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)

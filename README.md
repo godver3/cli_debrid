@@ -22,7 +22,7 @@ cli_debrid will always be free.
 
 ## Community
 
-- [Discord](https://discord.gg/jAmqZJCZJ4)
+- [Discord](https://discord.gg/ynqnXGJ4hU)
 - Feel free to join and ask questions or to share ideas.
 
 ## Screenshots

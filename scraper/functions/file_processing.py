@@ -120,11 +120,11 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
             # Parse with PTT (cached)
             try:
                 # Get the parsed info from PTT
-                parsed_info = _parse_with_ptt(title)
+                parsed_info_from_ptt = _parse_with_ptt(title)
 
                 # Extract the clean title - if there's a site field, make sure it's not in the title
-                clean_title = parsed_info.get('title', title)
-                site = parsed_info.get('site')
+                clean_title = parsed_info_from_ptt.get('title', title)
+                site = parsed_info_from_ptt.get('site')
                 
                 # If PTT didn't detect a site but the title looks like it contains site info, try to extract it
                 if not site and isinstance(clean_title, str):
@@ -154,22 +154,22 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                 processed_info = {
                     'title': clean_title,  # Use the clean title without site info
                     'original_title': title,  # Store original title
-                    'year': parsed_info.get('year'),
-                    'resolution': parsed_info.get('resolution', 'Unknown'),
-                    'source': parsed_info.get('source'),
-                    'audio': parsed_info.get('audio'),
-                    'codec': parsed_info.get('codec'),
-                    'group': parsed_info.get('group'),
-                    'season': parsed_info.get('season'),
-                    'seasons': parsed_info.get('seasons', []),  # Add seasons field
-                    'episode': parsed_info.get('episode'),
-                    'episodes': parsed_info.get('episodes', []),
-                    'type': parsed_info.get('type'),
-                    'country': parsed_info.get('country'),
-                    'date': parsed_info.get('date'),
-                    'documentary': parsed_info.get('documentary', False),  # Preserve documentary field
-                    'site': site,  # Store site info separately
-                    'trash': parsed_info.get('trash', False)  # Include trash flag
+                    'year': parsed_info_from_ptt.get('year'),
+                    'resolution': parsed_info_from_ptt.get('resolution', 'Unknown'),
+                    'source': parsed_info_from_ptt.get('source'),
+                    'audio': parsed_info_from_ptt.get('audio'),
+                    'codec': parsed_info_from_ptt.get('codec'),
+                    'group': parsed_info_from_ptt.get('group'),
+                    'season': parsed_info_from_ptt.get('season'),
+                    'seasons': parsed_info_from_ptt.get('seasons', []),
+                    'episode': parsed_info_from_ptt.get('episode'),
+                    'episodes': parsed_info_from_ptt.get('episodes', []),
+                    'type': parsed_info_from_ptt.get('type'),
+                    'country': parsed_info_from_ptt.get('country'),
+                    'date': parsed_info_from_ptt.get('date'),
+                    'documentary': parsed_info_from_ptt.get('documentary', False),
+                    'site': site,
+                    'trash': parsed_info_from_ptt.get('trash', False)
                 }
                 
                 # Handle size if provided
@@ -178,10 +178,10 @@ def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, floa
                 
                 # Add additional information
                 processed_info['resolution_rank'] = get_resolution_rank(processed_info['resolution'])
-                processed_info['is_hdr'] = detect_hdr(parsed_info)
+                processed_info['is_hdr'] = detect_hdr(parsed_info_from_ptt)
                 
                 # Extract season/episode info
-                season_episode_info = detect_season_episode_info(processed_info)
+                season_episode_info = detect_season_episode_info(processed_info.copy())
                 processed_info['season_episode_info'] = season_episode_info
                 
                 results.append(processed_info)

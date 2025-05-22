@@ -198,6 +198,7 @@ def debug_functions():
     )
 
 @debug_bp.route('/bulk_delete_by_imdb', methods=['POST'])
+@admin_required
 def bulk_delete_by_imdb():
     id_value = request.form.get('imdb_id')
     if not id_value:
@@ -284,6 +285,7 @@ def delete_database():
         # Delete cache files and not wanted files
         cache_files = glob.glob(os.path.join(db_content_dir, '*cache*.pkl'))
         not_wanted_files = ['not_wanted_magnets.pkl', 'not_wanted_urls.pkl']
+        rclone_progress_file = 'rclone_to_symlink_processed_files.json' # Define the file name
         deleted_files = []
 
         # Delete cache files
@@ -305,6 +307,16 @@ def delete_database():
                     logging.info(f"Deleted not wanted file: {file_path}")
                 except Exception as e:
                     logging.warning(f"Failed to delete not wanted file {file_path}: {str(e)}")
+        
+        # Delete Rclone progress file
+        rclone_progress_file_path = os.path.join(db_content_dir, rclone_progress_file)
+        if os.path.exists(rclone_progress_file_path):
+            try:
+                os.remove(rclone_progress_file_path)
+                deleted_files.append(rclone_progress_file)
+                logging.info(f"Deleted Rclone progress file: {rclone_progress_file_path}")
+            except Exception as e:
+                logging.warning(f"Failed to delete Rclone progress file {rclone_progress_file_path}: {str(e)}")
         
         message = 'Database deleted successfully'
         if retain_blacklist:
@@ -532,13 +544,14 @@ def manual_blacklist():
     return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
 
 @debug_bp.route('/api/get_collected_from_plex', methods=['POST'])
+@admin_required
 def get_collected_from_plex():
-    from routes.extensions import task_queue
-
-    collection_type = request.form.get('collection_type')
+    collection_type = request.json.get('collection_type', 'recent')
     
     if collection_type not in ['all', 'recent']:
         return jsonify({'success': False, 'error': 'Invalid collection type'}), 400
+
+    from routes.extensions import task_queue
 
     task_id = task_queue.add_task(async_get_collected_from_plex, collection_type)
     return jsonify({'task_id': task_id}), 202
@@ -1051,12 +1064,12 @@ def get_content_sources():
     return program_runner.get_content_sources()
 
 @debug_bp.route('/api/get_wanted_content', methods=['POST'])
+@admin_required
 def get_wanted_content():
-    from routes.extensions import task_queue
-
-    source = request.form.get('source')
-    task_id = task_queue.add_task(async_get_wanted_content, source)
-    return jsonify({'task_id': task_id}), 202
+    source_id = request.json.get('source_id', 'all')
+    from routes.extensions import task_queue # Import the task_queue
+    task_id = task_queue.add_task(async_get_wanted_content, source_id) # Use task_queue
+    return jsonify({'task_id': task_id}), 202 # Return the real task_id and 202 Accepted
 
 @debug_bp.route('/api/rate_limit_info')
 def get_rate_limit_info():
@@ -1081,15 +1094,17 @@ def get_rate_limit_info():
     return jsonify(rate_limit_info)
 
 @debug_bp.route('/rescrape_item', methods=['POST'])
+@admin_required
 def rescrape_item():
-    from database import get_media_item_by_id
-    from utilities.plex_functions import remove_file_from_plex
-    from metadata.metadata import process_metadata
-    item_id = request.json.get('item_id')
+    data = request.get_json()
+    item_id = data.get('item_id')
     if not item_id:
         return jsonify({'success': False, 'error': 'Item ID is required'}), 400
 
     try:
+        from database.database_reading import get_media_item_by_id
+        from utilities.plex_functions import remove_file_from_plex
+
         # Get the item details first
         item = get_media_item_by_id(item_id)
         if not item:
@@ -1436,51 +1451,72 @@ def get_available_tasks():
     }), 200
 
 @debug_bp.route('/not_wanted')
+@admin_required
 def not_wanted():
-    """Display not wanted magnets and URLs."""
-    magnets = get_not_wanted_magnets()
+    config = load_config()
+    not_wanted_magnets = get_not_wanted_magnets()
     urls = get_not_wanted_urls()
-    return render_template('debug_not_wanted.html', magnets=magnets, urls=urls)
+    return render_template('debug_not_wanted.html', magnets=not_wanted_magnets, urls=urls)
 
 @debug_bp.route('/not_wanted/magnet/remove', methods=['POST'])
+@admin_required
 def remove_not_wanted_magnet():
-    """Remove a magnet from the not wanted list."""
-    magnet = request.form.get('magnet')
-    if magnet:
+    magnet_hash = request.form.get('hash')
+    if not magnet_hash:
+        return jsonify({'success': False, 'error': 'Magnet hash is required'}), 400
+
+    try:
         magnets = get_not_wanted_magnets()
-        if magnet in magnets:
-            magnets.remove(magnet)
+        if magnet_hash in magnets:
+            magnets.remove(magnet_hash)
             save_not_wanted_magnets(magnets)
-            flash('Magnet removed from not wanted list.', 'success')
+            return jsonify({'success': True, 'message': 'Magnet removed from not wanted list.'}), 200
         else:
-            flash('Magnet not found in not wanted list.', 'error')
-    return redirect(url_for('debug.not_wanted'))
+            return jsonify({'success': False, 'error': 'Magnet not found in not wanted list.'}), 404
+    except Exception as e:
+        logging.error(f"Error removing not wanted magnet: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @debug_bp.route('/not_wanted/url/remove', methods=['POST'])
+@admin_required
 def remove_not_wanted_url():
-    """Remove a URL from the not wanted list."""
-    url = request.form.get('url')
-    if url:
+    url_to_remove = request.form.get('url')
+    if not url_to_remove:
+        return jsonify({'success': False, 'error': 'URL is required'}), 400
+
+    try:
         urls = get_not_wanted_urls()
-        if url in urls:
-            urls.remove(url)
+        if url_to_remove in urls:
+            urls.remove(url_to_remove)
             save_not_wanted_urls(urls)
-            flash('URL removed from not wanted list.', 'success')
+            return jsonify({'success': True, 'message': 'URL removed from not wanted list.'}), 200
         else:
-            flash('URL not found in not wanted list.', 'error')
-    return redirect(url_for('debug.not_wanted'))
+            return jsonify({'success': False, 'error': 'URL not found in not wanted list.'}), 404
+    except Exception as e:
+        logging.error(f"Error removing not wanted URL: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @debug_bp.route('/not_wanted/purge', methods=['POST'])
+@admin_required
 def purge_not_wanted():
-    """Purge all not wanted magnets and URLs."""
-    try:
-        # Create empty sets for both magnets and URLs
-        save_not_wanted_magnets(set())
-        save_not_wanted_urls(set())
-        flash('All not wanted items have been purged.', 'success')
-    except Exception as e:
-        flash(f'Error purging not wanted items: {str(e)}', 'error')
-    return redirect(url_for('debug.not_wanted'))
+    purge_type = request.form.get('purge_type')
+    
+    if purge_type == 'magnets':
+        try:
+            save_not_wanted_magnets(set())
+            return jsonify({'success': True, 'message': 'All not wanted magnets have been purged.'}), 200
+        except Exception as e:
+            logging.error(f"Error purging not wanted magnets: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    elif purge_type == 'urls':
+        try:
+            save_not_wanted_urls(set())
+            return jsonify({'success': True, 'message': 'All not wanted URLs have been purged.'}), 200
+        except Exception as e:
+            logging.error(f"Error purging not wanted URLs: {str(e)}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+    else:
+        return jsonify({'success': False, 'error': 'Invalid purge type'}), 400
 
 @debug_bp.route('/propagate_version', methods=['POST'])
 @admin_required
@@ -1874,6 +1910,7 @@ def validate_plex_tokens_route():
         })
             
 @debug_bp.route('/simulate_crash')
+@admin_required
 def simulate_crash():
     """Route to simulate a program crash for testing notifications."""
     from utilities.settings import get_setting
@@ -2164,7 +2201,7 @@ def direct_emby_scan():
 
         if collected_data is None:
             logging.error("Failed to retrieve data from Emby/Jellyfin.")
-            return jsonify({'status': 'error', 'message': 'Failed to retrieve data from Emby/Jellyfin.'}), 500
+            return jsonify({'success': False, 'error': 'Failed to retrieve data from Emby/Jellyfin.'}), 500
 
         movies = collected_data.get('movies', [])
         episodes = collected_data.get('episodes', [])
@@ -2174,7 +2211,7 @@ def direct_emby_scan():
 
         if not combined_items:
              logging.warning("No items collected from Emby/Jellyfin scan.")
-             return jsonify({'status': 'success', 'message': 'No items collected from Emby/Jellyfin scan.'}), 200
+             return jsonify({'success': True, 'message': 'No items collected from Emby/Jellyfin scan.'}), 200
 
         # 2. Add collected items to the database
         logging.info("Adding collected Emby/Jellyfin items to the database...")
@@ -2185,7 +2222,7 @@ def direct_emby_scan():
 
     except Exception as e:
         logging.error(f"Error during direct Emby/Jellyfin scan: {str(e)}", exc_info=True)
-        return jsonify({'success': False, 'message': f'An error occurred: {str(e)}'}), 500 # Also change error response for consistency
+        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
 
 # --- New route to delete cache files ---
 @debug_bp.route('/api/delete_cache_files', methods=['POST'])
@@ -2983,6 +3020,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 logging.error(f"[RcloneScan {task_id}] Could not save progress file {progress_file_path}: {e}")
     # --- End Progress File Setup ---
 
+    MOVIE_SIZE_THRESHOLD_BYTES = 300 * 1024 * 1024 # 300 MB
+
     rclone_scan_progress[task_id] = {
         'status': 'starting',
         'message': 'Initializing Rclone scan...',
@@ -2996,46 +3035,17 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         'db_errors': 0,
         'symlink_errors': 0,
         'skipped_duplicates': 0,
-        'skipped_smaller_movies_in_folder': 0,
+        'skipped_due_to_size': 0, # New counter
         'skipped_previously_processed': 0, # New counter
         'preview': [], 
         'errors': [], 
         'complete': False
     }
 
-    # --- Helper to find largest video file in a folder ---
-    def get_largest_video_file_in_folder(folder_path, video_extensions_set):
-        largest_file = None
-        max_size = -1
-        potential_files = []
-        try:
-            for f_path in folder_path.iterdir():
-                if f_path.is_file() and f_path.suffix.lower() in video_extensions_set:
-                    try:
-                        # Skip if already processed
-                        if str(f_path) in processed_original_files:
-                            # If this *already processed* file is the one we are looking for,
-                            # it implies the folder's champion was processed.
-                            # We'll handle this check more explicitly where this function is called.
-                            logging.debug(f"[RcloneScan {task_id}] File {f_path} in folder scan is already in processed_original_files.")
-                            # We still consider it for size comparison in case it *is* the largest.
-                        
-                        size = f_path.stat().st_size
-                        potential_files.append(f_path)
-                        if size > max_size:
-                            max_size = size
-                            largest_file = f_path
-                    except OSError as e:
-                        logging.warning(f"[RcloneScan {task_id}] Could not get stats for file {f_path} in folder {folder_path}: {e}")
-            return largest_file, [pf for pf in potential_files if pf != largest_file]
-        except Exception as e:
-            logging.error(f"[RcloneScan {task_id}] Error iterating folder {folder_path} to find largest file: {e}")
-            return None, []
-    # --- End Helper ---
+    # REMOVED: get_largest_video_file_in_folder helper function
 
-    processed_movie_folders = {} 
-    files_to_skip_in_movie_folders = set() 
     skipped_previously_processed_count = 0 # Local counter
+    skipped_due_to_size_count = 0 # Local counter for size skips
 
     def update_progress(**kwargs):
         if task_id in rclone_scan_progress:
@@ -3075,7 +3085,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         db_errors = 0
         symlink_errors = 0
         skipped_duplicates = 0
-        skipped_smaller_movies_in_folder_count = 0
+        # REMOVED: skipped_smaller_movies_in_folder_count = 0
         preview_list = []
         error_list = []
         direct_api = DirectAPI()
@@ -3097,11 +3107,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 update_progress(skipped_previously_processed=skipped_previously_processed_count)
                 continue
 
-            if item_path in files_to_skip_in_movie_folders:
-                logging.debug(f"[RcloneScan {task_id}] Skipping {item_path.name} as it's a smaller movie file in an already processed folder (this run).")
-                skipped_smaller_movies_in_folder_count +=1
-                update_progress(skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count)
-                continue
+            # REMOVED: Logic for files_to_skip_in_movie_folders
             
             media_files_found += 1
             logging.debug(f"[RcloneScan {task_id}] Evaluating media file: {original_file_path_str}")
@@ -3158,56 +3164,21 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 parser_errors += 1; update_progress(parser_errors=parser_errors); continue
             # --- End of merged parsing logic ---
 
-            # --- Movie: Largest file in folder logic (with progress check) ---
+            # --- Movie: Size check logic ---
             if current_parsed_type == 'movie':
-                parent_folder_path = item_path.parent
-                
-                if parent_folder_path in processed_movie_folders:
-                    # Decision for this folder was made in this run.
-                    # The item_path should either be the chosen one or already in files_to_skip_in_movie_folders.
-                    # The initial skip check `if item_path in files_to_skip_in_movie_folders:` handles most of these.
-                    if item_path != processed_movie_folders[parent_folder_path]:
-                        # This is a safeguard.
-                        logging.debug(f"[RcloneScan {task_id}] Safeguard skip (movie): {item_path.name}, folder already decided this run.")
+                try:
+                    file_size = item_path.stat().st_size
+                    if file_size < MOVIE_SIZE_THRESHOLD_BYTES:
+                        logging.info(f"[RcloneScan {task_id}] Skipping movie '{item_path.name}' due to size ({file_size / (1024*1024):.2f}MB) below threshold ({MOVIE_SIZE_THRESHOLD_BYTES / (1024*1024):.2f}MB).")
+                        skipped_due_to_size_count += 1
+                        update_progress(skipped_due_to_size=skipped_due_to_size_count)
                         continue 
-                else:
-                    # First time seeing this movie folder *in this run* or making a decision.
-                    logging.info(f"[RcloneScan {task_id}] Movie file '{item_path.name}' in new folder '{parent_folder_path.name}'. Finding largest...")
-                    largest_file_in_folder, other_files_in_folder = get_largest_video_file_in_folder(parent_folder_path, video_extensions)
-
-                    if largest_file_in_folder:
-                        # Check if this identified largest file was *already processed in a previous run*
-                        if str(largest_file_in_folder) in processed_original_files:
-                            logging.info(f"[RcloneScan {task_id}] Largest file '{largest_file_in_folder.name}' for folder '{parent_folder_path.name}' was already processed. Skipping this folder.")
-                            processed_movie_folders[parent_folder_path] = largest_file_in_folder # Mark folder as "decided" for this run
-                            # Add all files from this folder (including current item_path) to skip list for this run
-                            files_to_skip_in_movie_folders.add(item_path)
-                            for other_file in other_files_in_folder: files_to_skip_in_movie_folders.add(other_file)
-                            if item_path != largest_file_in_folder : skipped_smaller_movies_in_folder_count +=1 # if current wasn't the (already processed) largest
-                                
-                            # The current item_path itself will be caught by the top-level "previously_processed" check if it IS the largest,
-                            # or by files_to_skip_in_movie_folders if it's not.
-                            # We need to make sure to update the global skip counter if the current item_path leads to this folder skip.
-                            if str(item_path) not in processed_original_files: # only count if current wasn't the one causing the "previously processed" skip
-                                skipped_previously_processed_count +=1 # this item leads to skipping the folder due to prior processing of its champion
-                            update_progress(skipped_previously_processed=skipped_previously_processed_count, skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count)
-                            continue # Skip current item_path as its folder's champion is done
-
-                        # Largest file not previously processed, so proceed with this run's decision
-                        processed_movie_folders[parent_folder_path] = largest_file_in_folder
-                        logging.info(f"[RcloneScan {task_id}] Largest for '{parent_folder_path.name}' is '{largest_file_in_folder.name}'.")
-                        for other_file in other_files_in_folder:
-                            files_to_skip_in_movie_folders.add(other_file)
-                        
-                        if item_path != largest_file_in_folder:
-                            logging.info(f"[RcloneScan {task_id}] '{item_path.name}' is not largest. Skipping for '{largest_file_in_folder.name}'.")
-                            files_to_skip_in_movie_folders.add(item_path)
-                            skipped_smaller_movies_in_folder_count += 1
-                            update_progress(skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count)
-                            continue
-                    else:
-                        logging.warning(f"[RcloneScan {task_id}] No largest file in '{parent_folder_path.name}'. Processing '{item_path.name}' standalone.")
-            # --- End Movie Logic ---
+                except OSError as e:
+                    logging.warning(f"[RcloneScan {task_id}] Could not get stats for movie file {item_path.name}: {e}. Skipping.")
+                    # parser_errors += 1 # Or a new counter for stat errors
+                    # update_progress(parser_errors=parser_errors)
+                    continue
+            # --- End Movie Size Check Logic ---
             
             update_progress(message=f'Processing: {item_path.name} ({current_parsed_type})')
             items_processed += 1
@@ -3219,36 +3190,74 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 item_id_to_use = None
                 search_type_for_api = 'show' if current_parsed_type == 'episode' else 'movie'
                 
-                # Clean up the parsed_title by replacing periods with spaces
-                cleaned_parsed_title = parsed_title.replace('.', ' ') if parsed_title else None
+                # Determine titles from filename and folder
+                filename_title_raw = parsed_info_file.get('title')
+                cleaned_filename_title = filename_title_raw.replace('.', ' ') if filename_title_raw and filename_title_raw.strip() else None
 
-                logging.info(f"[RcloneScan {task_id}] Attempting search with: Title='{cleaned_parsed_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}' (Original parsed title: '{parsed_title}')")
+                folder_title_raw = parsed_info_folder.get('title')
+                cleaned_folder_title = folder_title_raw.replace('.', ' ') if folder_title_raw and folder_title_raw.strip() else None
+
+                final_search_results = None
+                title_that_yielded_search_results = None
+
+                # Attempt 1: Search using cleaned filename title
+                if cleaned_filename_title:
+                    logging.info(f"[RcloneScan {task_id}] Attempting primary search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                    search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
+                    if search_results_file:
+                        final_search_results = search_results_file
+                        title_that_yielded_search_results = cleaned_filename_title
+                        logging.info(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' was successful.")
+                    else:
+                        logging.warning(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' yielded no results.")
+                else:
+                    logging.debug(f"[RcloneScan {task_id}] No valid cleaned filename title to attempt primary search.")
+
+                # Attempt 2: If primary search failed or wasn't possible, try folder title (if different and valid)
+                if not final_search_results and cleaned_folder_title and cleaned_folder_title != cleaned_filename_title:
+                    logging.info(f"[RcloneScan {task_id}] Attempting fallback search with folder title: '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                    search_results_folder, _ = direct_api.search_media(query=cleaned_folder_title, year=parsed_year, media_type=search_type_for_api)
+                    if search_results_folder:
+                        final_search_results = search_results_folder
+                        title_that_yielded_search_results = cleaned_folder_title
+                        logging.info(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' was successful.")
+                    else:
+                        logging.warning(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' also yielded no results.")
+                elif not final_search_results and cleaned_folder_title and cleaned_folder_title == cleaned_filename_title:
+                    logging.debug(f"[RcloneScan {task_id}] Folder title is same as filename title, already attempted or filename title was null; no separate folder title search needed.")
                 
-                search_results, _ = direct_api.search_media(query=cleaned_parsed_title, year=parsed_year, media_type=search_type_for_api)
+                if not final_search_results:
+                    logging.warning(f"[RcloneScan {task_id}] All search attempts failed for file '{item_path.name}'. Parsed folder title: '{cleaned_folder_title}', Parsed filename title: '{cleaned_filename_title}'.")
+
+                # Determine the best title to use for find_best_match_from_results scoring (prioritize filename)
+                if cleaned_filename_title:
+                    title_for_best_match_selection = cleaned_filename_title
+                    logging.debug(f"[RcloneScan {task_id}] Using cleaned filename title for best_match selection: '{title_for_best_match_selection}'")
+                elif cleaned_folder_title: # Fallback to folder title if filename title was not usable
+                    title_for_best_match_selection = cleaned_folder_title
+                    logging.debug(f"[RcloneScan {task_id}] Filename title not suitable, falling back to folder title for best_match selection: '{title_for_best_match_selection}'")
+                else: # Should ideally not happen if PTT parsed something for `parsed_title`
+                    title_for_best_match_selection = parsed_title # Raw PTT output as last resort
+                    logging.debug(f"[RcloneScan {task_id}] No suitable cleaned filename or folder title, falling back to raw parsed_title for best_match selection: '{title_for_best_match_selection}'")
                 
                 best_match_from_search = None
-                if search_results:
-                    # Ensure MetadataManager is imported or accessible here
-                    # If not, you might need: from cli_battery.app.metadata_manager import MetadataManager
-                    # (Assuming it's not already imported at the top of debug_routes.py)
+                if final_search_results:
                     from cli_battery.app.metadata_manager import MetadataManager 
-
                     best_match_from_search = MetadataManager.find_best_match_from_results(
-                        original_query_title=parsed_title, # Pass the PTT title (can have dots)
+                        original_query_title=title_for_best_match_selection, 
                         query_year=parsed_year,
-                        search_results=search_results
-                        # You can add year_match_boost and min_score_threshold if needed
+                        search_results=final_search_results
                     )
                 
                 if best_match_from_search:
-                    logging.info(f"[RcloneScan {task_id}] Best match selected by find_best_match_from_results: {best_match_from_search.get('title')} ({best_match_from_search.get('year')})")
+                    logging.info(f"[RcloneScan {task_id}] Best match selected by find_best_match_from_results: {best_match_from_search.get('title')} ({best_match_from_search.get('year')}) using matching title '{title_for_best_match_selection}' (search performed with '{title_that_yielded_search_results}')")
                     item_id_to_use = best_match_from_search.get('imdb_id') or best_match_from_search.get('tmdb_id')
-                elif search_results: # Fallback to old logic if find_best_match_from_results returns None but there were results
-                    logging.warning(f"[RcloneScan {task_id}] No confident match from find_best_match_from_results. Falling back to first search result for '{cleaned_parsed_title}'.")
-                    first_match_fallback = search_results[0]
+                elif final_search_results: 
+                    logging.warning(f"[RcloneScan {task_id}] No confident match from find_best_match_from_results using matching title '{title_for_best_match_selection}'. Falling back to first search result (search performed with '{title_that_yielded_search_results}').")
+                    first_match_fallback = final_search_results[0]
                     item_id_to_use = first_match_fallback.get('imdb_id') or first_match_fallback.get('tmdb_id')
-                else: # No search results at all
-                    logging.warning(f"[RcloneScan {task_id}] No search results found for '{cleaned_parsed_title}'.")
+                else: 
+                    logging.warning(f"[RcloneScan {task_id}] No search results found for file '{item_path.name}' after all attempts to feed into find_best_match_from_results.")
                     item_id_to_use = None
 
                 if item_id_to_use:
@@ -3535,7 +3544,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         else:
              final_message_parts.append(f"DB Added: {items_added_to_db}, Symlinks Created: {symlinks_created}.")
         if skipped_previously_processed_count > 0: final_message_parts.append(f"Skipped (Previously Processed): {skipped_previously_processed_count}.")
-        if skipped_smaller_movies_in_folder_count > 0: final_message_parts.append(f"Skipped (Smaller Movie in Folder): {skipped_smaller_movies_in_folder_count}.")
+        if skipped_due_to_size_count > 0: final_message_parts.append(f"Skipped (Movie Size Below Threshold): {skipped_due_to_size_count}.") # Updated counter
         if skipped_duplicates > 0: final_message_parts.append(f"Skipped (DB Duplicates): {skipped_duplicates}.")
         # ... (other error counts) ...
         error_counts_str = []
@@ -3555,7 +3564,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             symlinks_created=symlinks_created, parser_errors=parser_errors,
             metadata_errors=metadata_errors, db_errors=db_errors, symlink_errors=symlink_errors,
             skipped_duplicates=skipped_duplicates, 
-            skipped_smaller_movies_in_folder=skipped_smaller_movies_in_folder_count,
+            skipped_due_to_size=skipped_due_to_size_count, # Updated counter
             skipped_previously_processed=skipped_previously_processed_count
         )
 
@@ -4057,6 +4066,7 @@ def analyze_riven_symlinks():
     return jsonify({'success': True, 'task_id': task_id})
 
 @debug_bp.route('/riven_analysis_progress/<task_id>') # New route
+@admin_required
 def riven_analysis_progress_stream(task_id): # New function
     """SSE endpoint for tracking Riven analysis progress."""
     def generate():

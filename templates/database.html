@@ -35,13 +35,13 @@
                 <option value="Adding">Adding</option>
                 <option value="Blacklisted">Blacklisted</option>
                 <option value="Checking">Checking</option>
-                <option value="Collected">Collected</option>
+                <option value="Final_Check">Final Scrape</option>
+                <option value="Pending Uncached">Pending Uncached</option>
                 <option value="Scraping">Scraping</option>
                 <option value="Sleeping">Sleeping</option>
                 <option value="Unreleased">Unreleased</option>
-                <option value="Wanted">Wanted</option>
-                <option value="Pending Uncached">Pending Uncached</option>
                 <option value="Upgrading">Upgrading</option>
+                <option value="Wanted">Wanted</option>
             </select>
             <select id="bulk-change-version" class="bulk-action-select" disabled>
                 <option value="">Change Selected Version...</option>
@@ -81,6 +81,10 @@
     </div>
     <div id="filter-sort">
         <h3>Filter and Sort:</h3>
+        <div class="result-count">
+            Showing {{ result_count }} results
+            <span class="unique-count">(Unique: {{ unique_result_count }})</span>
+        </div>
         <form id="filter-form" class="mb-3">
 
             
@@ -197,6 +201,117 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+
+<script>
+// Early redirect script to load page with localStorage settings
+(function() {
+    const STORAGE_KEYS = {
+        FILTERS: 'db_filters',
+        SORT_COLUMN: 'db_sort_column',
+        SORT_ORDER: 'db_sort_order',
+        SELECTED_COLUMNS: 'db_selected_columns',
+        CONTENT_TYPE: 'db_content_type',
+        FILTER_LOGIC: 'db_filter_logic',
+        LETTER: 'db_current_letter' // Persist current letter
+    };
+    const DEFAULTS = {
+        SORT_COLUMN: 'id',
+        SORT_ORDER: 'asc',
+        CONTENT_TYPE: 'movie',
+        FILTER_LOGIC: 'AND',
+        LETTER: 'A' // Default letter, adjust if empty is preferred
+    };
+
+    function getQueryParam(param) {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get(param);
+    }
+
+    const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
+    const savedSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
+    const savedSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
+    const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+    const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+    const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
+    const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
+
+    const queryParams = new URLSearchParams();
+    let needsRedirect = false;
+
+    // Selected Columns
+    let columnsToUse = null;
+    if (savedColumnsJSON) {
+        try {
+            const parsed = JSON.parse(savedColumnsJSON);
+            if (Array.isArray(parsed) && parsed.length > 0) columnsToUse = parsed;
+        } catch (e) { /* ignore */ }
+    }
+    if (columnsToUse) {
+        const columnsToUseJSON = JSON.stringify(columnsToUse);
+        if (getQueryParam('selected_columns') !== columnsToUseJSON) needsRedirect = true;
+        queryParams.set('selected_columns', columnsToUseJSON);
+    } else if (getQueryParam('selected_columns')) {
+        // If LS is empty but param exists, it implies manual URL or shared link.
+        // To strictly enforce LS (i.e. clear columns if not in LS), set needsRedirect = true
+        // and DON'T set the queryParam. For now, we'll let existing params pass if LS is empty.
+    }
+
+    // Filters
+    if (savedFiltersJSON) {
+        try {
+            JSON.parse(savedFiltersJSON); // Validate JSON
+            if (getQueryParam('filters') !== savedFiltersJSON) needsRedirect = true;
+            queryParams.set('filters', savedFiltersJSON);
+        } catch(e) { /* ignore */ }
+    } else if (getQueryParam('filters')) {
+        // similar to columns: let existing param pass if LS is empty for filters.
+    }
+
+    // Sort Column
+    const sortColumn = savedSortColumn || DEFAULTS.SORT_COLUMN;
+    if (getQueryParam('sort_column') !== sortColumn) needsRedirect = true;
+    queryParams.set('sort_column', sortColumn);
+
+    // Sort Order
+    const sortOrder = savedSortOrder || DEFAULTS.SORT_ORDER;
+    if (getQueryParam('sort_order') !== sortOrder) needsRedirect = true;
+    queryParams.set('sort_order', sortOrder);
+
+    // Content Type
+    const contentType = (savedContentType === 'movie' || savedContentType === 'episode') ? savedContentType : DEFAULTS.CONTENT_TYPE;
+    if (getQueryParam('content_type') !== contentType) needsRedirect = true;
+    queryParams.set('content_type', contentType);
+
+    // Filter Logic
+    const filterLogic = (savedFilterLogic === 'AND' || savedFilterLogic === 'OR') ? savedFilterLogic : DEFAULTS.FILTER_LOGIC;
+    if (getQueryParam('filter_logic') !== filterLogic) needsRedirect = true;
+    queryParams.set('filter_logic', filterLogic);
+
+    // Letter
+    const letter = savedLetter || DEFAULTS.LETTER;
+    if (getQueryParam('letter') !== letter) needsRedirect = true;
+    queryParams.set('letter', letter);
+
+    const redirectFlag = 'database_redirect_marker';
+    const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
+
+    if (getQueryParam('ajax') === '1' || flagIsSet) {
+        needsRedirect = false;
+    }
+
+    if (needsRedirect) {
+        sessionStorage.setItem(redirectFlag, 'true');
+        const baseUrl = "{{ url_for('database.index') }}";
+        const newUrl = queryParams.toString() ? `${baseUrl}?${queryParams.toString()}` : baseUrl;
+        window.location.replace(newUrl);
+    } else {
+        if (flagIsSet) {
+            sessionStorage.removeItem(redirectFlag);
+        }
+    }
+})();
+</script>
+
 <script>
     window.templateData = {
         selectedColumns: {{ selected_columns|tojson|safe }},
@@ -237,7 +352,8 @@ document.addEventListener('DOMContentLoaded', function() {
         SORT_ORDER: 'db_sort_order',
         SELECTED_COLUMNS: 'db_selected_columns',
         CONTENT_TYPE: 'db_content_type',
-        FILTER_LOGIC: 'db_filter_logic'
+        FILTER_LOGIC: 'db_filter_logic',
+        LETTER: 'db_current_letter' // Persist current letter
     };
 
     // Function to validate and sanitize localStorage data
@@ -359,11 +475,13 @@ document.addEventListener('DOMContentLoaded', function() {
             select.className = 'filter-value';
             select.innerHTML = `
                 <option value="">Select Value</option>
-                ${templateData.columnValues[column].map(val => `
-                    <option value="${val}" ${value === val ? 'selected' : ''}>
-                        ${val}
-                    </option>
-                `).join('')}
+                ${templateData.columnValues[column].map(val => {
+                    let displayVal = val;
+                    if (column === 'state' && val === 'Final_Check') {
+                        displayVal = 'Final Scrape';
+                    }
+                    return `<option value="${val}" ${value === val ? 'selected' : ''}>${displayVal}</option>`;
+                }).join('')}
             `;
             container.appendChild(select);
         }
@@ -400,12 +518,13 @@ document.addEventListener('DOMContentLoaded', function() {
         const validContentType = (currentContentType === 'movie' || currentContentType === 'episode') 
             ? currentContentType 
             : 'movie';
-        
+
         localStorage.setItem(STORAGE_KEYS.FILTERS, JSON.stringify(filters));
         localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
         localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
         localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
         localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, filterLogic);
+        localStorage.setItem(STORAGE_KEYS.LETTER, currentLetter); // Save current letter
     }
 
     // Function to restore settings from localStorage
@@ -446,7 +565,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         // Ensure the column for the filter is actually among the currently selected displayable columns
                         // or allow it if it's a valid column from all_columns (more flexible)
                         if (columnValuesForUpdate.includes(filter.column) || templateData.all_columns.includes(filter.column)) {
-                           filtersContainer.appendChild(createFilterRow(filter));
+                       filtersContainer.appendChild(createFilterRow(filter));
                         } else {
                             console.warn(`Skipping saved filter for column "${filter.column}" as it's not currently selected or available.`);
                         }
@@ -462,7 +581,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (sortColumn) document.getElementById('sort-column').value = sortColumn;
         if (sortOrder) document.getElementById('sort-order').value = sortOrder;
-        
+
         const logicRadio = document.querySelector(`input[name="filter_logic"][value="${savedFilterLogic}"]`);
         if (logicRadio) logicRadio.checked = true;
         else document.getElementById('filter-logic-and').checked = true;
@@ -475,34 +594,37 @@ document.addEventListener('DOMContentLoaded', function() {
             localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
         }
 
-        const filtersForUpdate = savedFiltersJSON ? JSON.parse(savedFiltersJSON) : [];
+        // const filtersForUpdate = savedFiltersJSON ? JSON.parse(savedFiltersJSON) : [];
 
-        console.log("restoreSettings calling updateContent with selected_columns:", columnValuesForUpdate);
-        updateContent('{{ url_for('database.index') }}', {
-            filters: JSON.stringify(filtersForUpdate.filter(f => columnValuesForUpdate.includes(f.column) || templateData.all_columns.includes(f.column) )), // Also filter here for safety
-            sort_column: sortColumn || '',
-            sort_order: sortOrder || 'asc',
-            content_type: validContentType,
-            selected_columns: JSON.stringify(columnValuesForUpdate),
-            filter_logic: savedFilterLogic,
-            letter: currentLetter || 'A' // Ensure letter is passed for the initial load consistency
-        });
+        // console.log("restoreSettings calling updateContent with selected_columns:", columnValuesForUpdate);
+        // updateContent('{{ url_for('database.index') }}', {
+        //     filters: JSON.stringify(filtersForUpdate.filter(f => columnValuesForUpdate.includes(f.column) || templateData.all_columns.includes(f.column) )), // Also filter here for safety
+        //     sort_column: sortColumn || '',
+        //     sort_order: sortOrder || 'asc',
+        //     content_type: validContentType,
+        //     selected_columns: JSON.stringify(columnValuesForUpdate),
+        //     filter_logic: savedFilterLogic,
+        //     letter: currentLetter || 'A' // Ensure letter is passed for the initial load consistency
+        // });
+        // The updateContent call above is removed to prevent the second AJAX load.
+        // The UI controls are now set. The displayed data is from the initial server render.
+        // If these differ, the user can click "Apply" or "Update View" to synchronize.
     }
 
     // Add filter button handler
-    document.getElementById('add-filter').addEventListener('click', () => {
-        document.getElementById('filters-container').appendChild(createFilterRow());
-    });
+        document.getElementById('add-filter').addEventListener('click', () => {
+            document.getElementById('filters-container').appendChild(createFilterRow());
+        });
 
     // Filter form submit (no page reset)
-    const filterForm = document.getElementById('filter-form');
-    if (filterForm) {
-        filterForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveSettings();
+        const filterForm = document.getElementById('filter-form');
+        if (filterForm) {
+            filterForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                saveSettings();
 
             // --- Corrected filter extraction ---
-            const filterRows = document.querySelectorAll('.filter-row');
+                const filterRows = document.querySelectorAll('.filter-row');
             const filters = Array.from(filterRows).map(row => {
                 return { // Explicit return
                     column: row.querySelector('.filter-column').value,
@@ -513,42 +635,42 @@ document.addEventListener('DOMContentLoaded', function() {
             // --- End correction ---
 
             // --- Get other parameters ---
-            const sortColumn = document.getElementById('sort-column').value;
-            const sortOrder = document.getElementById('sort-order').value;
-            const filterLogic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
+                const sortColumn = document.getElementById('sort-column').value;
+                const sortOrder = document.getElementById('sort-order').value;
+                const filterLogic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
             const selectedColumnValues = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
 
             // --- Construct params ---
-            const params = {
-                filters: JSON.stringify(filters),
-                sort_column: sortColumn,
-                sort_order: sortOrder,
-                content_type: currentContentType || 'movie',
-                selected_columns: JSON.stringify(selectedColumnValues),
-                filter_logic: filterLogic,
-                letter: currentLetter || ''
-            };
+                const params = {
+                    filters: JSON.stringify(filters),
+                    sort_column: sortColumn,
+                    sort_order: sortOrder,
+                    content_type: currentContentType || 'movie',
+                    selected_columns: JSON.stringify(selectedColumnValues),
+                    filter_logic: filterLogic,
+                    letter: currentLetter || ''
+                };
 
             // --- Call updateContent ---
-            updateContent('{{ url_for('database.index') }}', params);
+                updateContent('{{ url_for('database.index') }}', params);
 
         }); // Close addEventListener
     } // Close if (filterForm)
 
     // Clear filter button (no page reset)
-    document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
-        e.preventDefault();
+        document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
+            e.preventDefault();
         clearFilterAndSort();
     });
 
     // Revert clearFilterAndSort
     function clearFilterAndSort() {
-        localStorage.removeItem(STORAGE_KEYS.FILTERS);
-        localStorage.removeItem(STORAGE_KEYS.SORT_COLUMN);
-        localStorage.removeItem(STORAGE_KEYS.SORT_ORDER);
-        localStorage.removeItem(STORAGE_KEYS.FILTER_LOGIC);
+            localStorage.removeItem(STORAGE_KEYS.FILTERS);
+            localStorage.removeItem(STORAGE_KEYS.SORT_COLUMN);
+            localStorage.removeItem(STORAGE_KEYS.SORT_ORDER);
+            localStorage.removeItem(STORAGE_KEYS.FILTER_LOGIC);
 
-        document.getElementById('filters-container').innerHTML = '';
+            document.getElementById('filters-container').innerHTML = '';
         
         const sortColumn = document.getElementById('sort-column');
         const sortOrder = document.getElementById('sort-order');
@@ -559,16 +681,16 @@ document.addEventListener('DOMContentLoaded', function() {
             sortOrder.value = 'asc';
         }
 
-        currentContentType = 'movie';
-        currentLetter = 'A';
-        
+            currentContentType = 'movie';
+            currentLetter = 'A';
+            
         localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
 
         const contentTypeLinks = document.querySelectorAll('.content-type-link');
         contentTypeLinks.forEach(function(link) {
             if (link.getAttribute('data-content-type') === 'movie') {
                 link.classList.add('active');
-            } else {
+                    } else {
                 link.classList.remove('active');
             }
         });
@@ -591,7 +713,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Add event listener for clear filter & sort button
     document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
-        e.preventDefault();
+                e.preventDefault();
         clearFilterAndSort();
     });
 
@@ -672,10 +794,10 @@ document.addEventListener('DOMContentLoaded', function() {
         textarea.select();
         try {
             document.execCommand('copy');
-            showPopup({
-                type: POPUP_TYPES.SUCCESS,
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
                 message: 'Content copied to clipboard!',
-                title: 'Success',
+                    title: 'Success',
                 autoClose: 2000
             });
         } catch (err) {
@@ -700,7 +822,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const cell = e.target.closest('.truncate');
             if (cell && !e.target.closest('button')) {
                 const content = cell.getAttribute('data-full-content');
-                    showPopup({
+            showPopup({
                         type: POPUP_TYPES.INFO,
                         title: 'Cell Content',
                         message: `<div style="word-break: break-word;">${content}</div>`,
@@ -782,7 +904,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             sourceOfColumns = "js_defaults_after_invalid_localstorage_entries";
                             localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
                         }
-                    } else {
+                } else {
                         console.warn("Invalid or empty columns array from localStorage, using JS defaults.");
                         columnsToUse = defaultColumns;
                         sourceOfColumns = "js_defaults_after_empty_or_invalid_array_localstorage";
@@ -854,9 +976,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
 
             if (selectedColumnValues.length === 0) {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
                     message: 'Please select at least one column to display.',
                 });
                 return;
@@ -868,8 +990,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Hide the column selector
             columnSelector.classList.add('hidden');
-            toggleColumnSelectorBtn.classList.remove('active');
-            toggleColumnSelectorBtn.textContent = 'Select Columns to Display';
+                 toggleColumnSelectorBtn.classList.remove('active');
+                 toggleColumnSelectorBtn.textContent = 'Select Columns to Display';
 
             // --- START CHANGE ---
             // Gather all current settings to refresh the view correctly
@@ -947,6 +1069,10 @@ document.addEventListener('DOMContentLoaded', function() {
                      displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
                         ? 'None'
                         : String(rawCellContent).replace(/"/g, '&quot;');
+                    
+                    if (column === 'state' && displayContent === 'Final_Check') {
+                        displayContent = 'Final Scrape';
+                    }
                 }
                 tableHTML += `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
             });
@@ -973,7 +1099,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Update currentContentType with what we're using
         currentContentType = params.content_type;
-        
+
         // Ensure letter is always set
         params.letter = params.letter || currentLetter || 'A';
 
@@ -1108,6 +1234,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Reinitialize tooltips for the updated content
                 initializeDatabaseTooltips();
+
+                // Update result count
+                const resultCountElement = document.querySelector('.result-count');
+                if (resultCountElement && typeof data.result_count !== "undefined") {
+                    resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span>`;
+                }
             })
             .catch(error => {
                 console.error('Error updating content:', error);
@@ -1191,7 +1323,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (newContentType === 'movie' || newContentType === 'episode') {
                         currentContentType = newContentType;
                         currentLetter = ''; // Reset letter
-                        saveSettings();
+                    saveSettings();
                         const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
                             column: row.querySelector('.filter-column').value,
                             operator: row.querySelector('.filter-operator').value,
@@ -1201,15 +1333,15 @@ document.addEventListener('DOMContentLoaded', function() {
                         const currentSortOrder = document.getElementById('sort-order').value;
                         const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
                         const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
-                        const params = {
-                            content_type: currentContentType,
+                    const params = {
+                        content_type: currentContentType,
                             letter: currentLetter,
                             selected_columns: JSON.stringify(currentSelectedColumns),
                             filter_logic: currentFilterLogic
                         };
                         if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
                         if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
-                        updateContent('{{ url_for('database.index') }}', params);
+                    updateContent('{{ url_for('database.index') }}', params);
                     } else {
                         console.error('Invalid content type:', newContentType);
                         showPopup({
@@ -1254,7 +1386,7 @@ document.addEventListener('DOMContentLoaded', function() {
             radio.addEventListener('change', function() {
                 const filterForm = document.getElementById('filter-form');
                 if (filterForm) {
-                     saveSettings();
+                saveSettings();
                      filterForm.requestSubmit();
                 }
             });
@@ -1449,7 +1581,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             if (data.versions) {
                 data.versions.forEach(version => {
-                    const option = document.createElement('option');
+            const option = document.createElement('option');
                     option.value = version;
                     option.textContent = version;
                     bulkChangeVersion.appendChild(option);
@@ -1458,12 +1590,12 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => {
             console.error('Error fetching versions:', error);
-            showPopup({
-                type: POPUP_TYPES.ERROR,
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
                 message: 'Failed to load available versions',
-                title: 'Error',
-            });
+                        title: 'Error',
         });
+    });
 
     // Handle bulk version change
     bulkChangeVersion.addEventListener('change', function() {

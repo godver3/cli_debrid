@@ -33,6 +33,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
     <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}"> -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/library_management.css') }}">
     
     <style>
         .advice-section {
@@ -1046,7 +1047,8 @@
                         ('torrent_status.torrent_status', 'Torrent Status'),
                         ('connections.index', 'Connections'),
                         ('api_summary.index', 'API Summary'),
-                        ('real_time_api.index', 'Real Time API')
+                        ('real_time_api.index', 'Real Time API'),
+                        ('library_management.library_shows_overview_page', 'Shows Library Status')
                     ],
                     'Tools': [
                         ('scraper.scraper_tester', 'Tester'),
@@ -1148,8 +1150,11 @@
                         <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
                         <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
                     </button>
+                    <button class="icon-button" id="notifications_button" role="button" data-tooltip="global.notificationsButton">
+                        <i class="fas fa-bell" style="color: white;"></i>
+                    </button>
                     <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
-                        <i class="fas fa-clipboard-list"></i>
+                        <i class="fas fa-file-alt"></i>
                     </button>
                 </div>
             {% endif %}

@@ -157,6 +157,15 @@
                        min="1" data-section="Debug" data-key="tracemalloc_sample_rate">
                 <p class="settings-description">Sample rate for tracemalloc (1 in X tasks). Lower values give more frequent data but increase overhead significantly. Default: 100.</p>
             </div>
+
+            <!-- Emphasize Number of Items Over Quality -->
+            <div class="settings-form-group">
+                <label for="debug-emphasize_number_of_items_over_quality" class="settings-title">Emphasize Number of Items Over Quality:</label>
+                <input type="checkbox" id="debug-emphasize_number_of_items_over_quality" name="Debug.emphasize_number_of_items_over_quality"
+                       data-section="Debug" data-key="emphasize_number_of_items_over_quality"
+                       {% if settings.get('Debug', {}).get('emphasize_number_of_items_over_quality') %}checked{% endif %}>
+                <p class="settings-description">Emphasize the number of items over quality when ranking results</p>
+            </div>
         </div>
     </div>
 </div>

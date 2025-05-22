@@ -1166,19 +1166,39 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
             
         directory = os.path.dirname(file_location)
         
+        found_matching_section = False
         for section in plex.library.sections():
             try:
                 for location in section.locations:
                     if directory.startswith(location):
                         logger.info(f"Found matching section {section.title}, scanning directory: {directory}")
                         section.update(path=directory)
-                        return True
+                        found_matching_section = True
+                        return True  # Exit after finding and updating the first matching section
             except Exception as e:
                 logger.error(f"Error checking section {section.title}: {str(e)}")
                 continue
-                
-        logger.warning(f"Could not find matching library section for directory: {directory}")
-        return False
+        
+        if not found_matching_section:
+            logger.warning(f"Could not find matching library section for directory: {directory}. Attempting to update all sections.")
+            any_section_updated = False
+            for section in plex.library.sections():
+                try:
+                    logger.info(f"Attempting update on section {section.title} for directory: {directory}")
+                    section.update(path=directory)
+                    any_section_updated = True # If any update call succeeds, mark as true.
+                                               # We don't return immediately to try all sections.
+                except Exception as e:
+                    logger.error(f"Error updating section {section.title} with path {directory}: {str(e)}")
+                    continue
+            if any_section_updated:
+                logger.info(f"Finished attempting update on all sections for directory: {directory}.")
+                return True # Return true if at least one section update was attempted without specific error.
+            else:
+                logger.warning(f"No sections could be updated for directory: {directory}")
+                return False
+        
+        return False # Should not be reached if logic is correct, but as a fallback.
         
     except Exception as e:
         logger.error(f"Error updating item in Plex via scan: {str(e)}")

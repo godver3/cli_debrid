@@ -19,6 +19,8 @@
       "max_resolution": "2160p",
       "max_size_gb": null,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "preferred_filter_in": [
         [
           "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
@@ -54,7 +56,11 @@
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p REMUX": {
       "bitrate_weight": "3",
@@ -72,6 +78,8 @@
       "max_resolution": "1080p",
       "max_size_gb": null,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "preferred_filter_in": [
         [
           "\\b(3L|BiZKiT|BLURANiUM|BMF|CiNEPHiLES|FraMeSToR|PmP|WiLDCAT|ZQ)\\b",
@@ -103,7 +111,11 @@
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p WEB": {
       "bitrate_weight": "3",
@@ -120,6 +132,8 @@
       "max_resolution": "1080p",
       "max_size_gb": null,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "preferred_filter_in": [
         [
           "\\b(WEBRip)\\b",
@@ -175,7 +189,11 @@
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "2160p WEB": {
       "bitrate_weight": "3",
@@ -193,6 +211,8 @@
       "max_resolution": "2160p",
       "max_size_gb": null,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "preferred_filter_in": [
         [
           "\\b(AMZN)\\b",
@@ -260,7 +280,11 @@
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p ENCODE": {
       "enable_hdr": false,
@@ -284,10 +308,16 @@
       ],
       "min_size_gb": 0,
       "max_size_gb": null,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "similarity_threshold_anime": 0.35,
       "similarity_threshold": 0.8,
       "wake_count": 0,
-      "require_physical_release": true
+      "require_physical_release": true,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "2160p BEST": {
       "bitrate_weight": "3",
@@ -303,6 +333,8 @@
       "max_resolution": "2160p",
       "max_size_gb": null,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "preferred_filter_in": [
         [
           "\\b(WEBRip)\\b",
@@ -426,7 +458,11 @@
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     },
     "1080p BEST": {
       "bitrate_weight": "3",
@@ -440,6 +476,8 @@
       "max_resolution": "1080p",
       "max_size_gb": null,
       "min_size_gb": 0,
+      "min_bitrate_mbps": 0.01,
+      "max_bitrate_mbps": null,
       "preferred_filter_in": [
         [
           "\\b(WEBRip)\\b",
@@ -551,7 +589,11 @@
       "similarity_threshold_anime": "0.35",
       "similarity_weight": "3",
       "size_weight": "3",
-      "wake_count": 0
+      "wake_count": 0,
+      "language_code": "en",
+      "fallback_version": "None",
+      "year_match_weight": 3,
+      "anime_filter_mode": "None"
     }
   }
 }

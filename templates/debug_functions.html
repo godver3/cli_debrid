@@ -958,6 +958,7 @@
         getCollectedForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
+            const collectionType = formData.get('collection_type');
 
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
@@ -965,9 +966,12 @@
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();
-                    fetch(this.action, {
+                    fetch(this.action, { // this.action is /debug/api/get_collected_from_plex
                         method: 'POST',
-                        body: formData
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ collection_type: collectionType })
                     })
                     .then(response => response.json())
                     .then(data => {
@@ -1000,6 +1004,7 @@
         getWantedForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
+            const sourceId = formData.get('source');
             
             // Get the selected source text (display name) and value
             const sourceSelect = document.getElementById('wanted_source');
@@ -1018,9 +1023,12 @@
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();
-                    fetch(this.action, {
+                    fetch(this.action, { // this.action is /debug/api/get_wanted_content
                         method: 'POST',
-                        body: formData
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ source_id: sourceId })
                     })
                     .then(response => response.json())
                     .then(data => {

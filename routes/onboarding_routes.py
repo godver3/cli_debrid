@@ -11,6 +11,7 @@ import json
 import requests
 import uuid
 import urllib.parse
+from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
@@ -170,12 +171,19 @@ def onboarding_step(step):
                     'plex_token_for_symlink': plex_token
                 }
 
+                # Process Plex library strings
+                raw_movie_libraries = request.form.get('movie_libraries', '')
+                processed_movie_libraries = ','.join([lib.strip() for lib in raw_movie_libraries.split(',') if lib.strip()]) if raw_movie_libraries else ''
+                
+                raw_shows_libraries = request.form.get('shows_libraries', '')
+                processed_shows_libraries = ','.join([lib.strip() for lib in raw_shows_libraries.split(',') if lib.strip()]) if raw_shows_libraries else ''
+
                 # Set up Plex section with all fields
                 config['Plex'] = {
                     'url': plex_url,
                     'token': plex_token,
-                    'shows_libraries': request.form.get('shows_libraries', ''),
-                    'movie_libraries': request.form.get('movie_libraries', ''),
+                    'shows_libraries': processed_shows_libraries,
+                    'movie_libraries': processed_movie_libraries,
                     'update_plex_on_file_discovery': request.form.get('Plex.update_plex_on_file_discovery', 'false') == 'on',
                     'mounted_file_location': original_files_path
                 }
@@ -376,6 +384,7 @@ def setup_admin():
     return render_template('setup_admin.html', is_onboarding=True)
 
 @onboarding_bp.route('/content_sources/add', methods=['POST'])
+@admin_required
 def add_onboarding_content_source():
     from routes.auth_routes import db
 
@@ -434,6 +443,7 @@ def get_onboarding_content_sources():
     })
 
 @onboarding_bp.route('/scrapers/add', methods=['POST'])
+@admin_required
 def add_onboarding_scraper():
     logging.info(f"Received request to add scraper during onboarding. Content-Type: {request.content_type}")
     logging.info(f"Request data: {request.data}")
@@ -476,6 +486,7 @@ def get_onboarding_scrapers():
     })
 
 @onboarding_bp.route('/settings/api/update', methods=['POST'])
+@admin_required
 def update_settings():
     try:
         data = request.json
@@ -746,6 +757,7 @@ def get_plex_libraries():
         }), 500
 
 @onboarding_bp.route('/plex/auth/pin', methods=['POST'])
+@admin_required
 def create_plex_pin():
     try:
         import uuid
@@ -840,6 +852,7 @@ def plex_auth_callback():
                              error=str(e))
 
 @onboarding_bp.route('/plex/verify_token', methods=['POST'])
+@admin_required
 def verify_plex_token():
     """Verify if a Plex token is valid."""
     try:
@@ -895,6 +908,7 @@ def verify_plex_token():
         })
 
 @onboarding_bp.route('/plex/auth/pin/check', methods=['POST'])
+@admin_required
 def check_plex_pin():
     """Check the status of a Plex auth pin."""
     try:

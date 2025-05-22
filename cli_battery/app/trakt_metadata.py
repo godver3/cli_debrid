@@ -492,26 +492,26 @@ class TraktMetadata:
         Search Trakt for movies or shows based on query, optionally filtering by year and type.
         Args:
             query: The search query (title).
-            year: Optional year to filter by.
+            year: Optional year to filter by. (NO LONGER USED FOR API CALL)
             media_type: Optional type ('movie' or 'show') to filter by.
         Returns:
             A list of search result dictionaries, or None if an error occurs.
             Each dictionary contains keys like 'title', 'year', 'imdb_id', 'tmdb_id', 'type'.
         """
-        logger.debug(f"Searching Trakt: query='{query}', year={year}, type={media_type}")
+        logger.debug(f"Searching Trakt: query='{query}', year={year} (year not used in API call), type={media_type}")
         
         # Determine search type filter for URL
         search_type = media_type if media_type in ['movie', 'show'] else 'movie,show'
         
         # Construct URL parameters
         params = {'query': query, 'extended': 'full'}
-        if year:
-            params['years'] = str(year)
+        # if year: # <-- REMOVE OR COMMENT OUT THIS BLOCK
+        #     params['years'] = str(year)
             
         encoded_params = urlencode(params)
         url = f"{self.base_url}/search/{search_type}?{encoded_params}"
         
-        logger.debug(f"Constructed Trakt Search URL: {url}")
+        logger.debug(f"Constructed Trakt Search URL (without year filter): {url}")
         
         response = self._make_request(url)
         
@@ -527,6 +527,11 @@ class TraktMetadata:
                         item_data = item_raw.get(item_type) # Get 'movie' or 'show' object
                         
                         if item_type and item_data and isinstance(item_data, dict):
+                            # Perform year filtering client-side IF a year was provided
+                            if year and item_data.get('year') != year:
+                                logger.debug(f"Skipping item '{item_data.get('title')}' (year {item_data.get('year')}) due to year mismatch with requested year {year}.")
+                                continue
+
                             ids = item_data.get('ids', {})
                             processed_results.append({
                                 'title': item_data.get('title'),
@@ -538,7 +543,7 @@ class TraktMetadata:
                         else:
                             logger.warning(f"Skipping invalid search result item: {item_raw}")
                             
-                    logger.info(f"Processed {len(processed_results)} search results for query '{query}'")
+                    logger.info(f"Processed {len(processed_results)} search results for query '{query}' (after potential client-side year filtering)")
                     return processed_results
                 else:
                     logger.error(f"Trakt search response was not a list: {type(results_raw)}")
@@ -549,11 +554,11 @@ class TraktMetadata:
             except Exception as e:
                  logger.error(f"Unexpected error processing Trakt search results: {e}", exc_info=True)
                  return None
-        elif response:
+        elif response: # Covers 500 errors and other non-200s if raise_for_status wasn't hit or was handled
             logger.warning(f"Trakt Search for '{query}' failed with status {response.status_code}: {response.text}")
             return None
-        else:
-            logger.warning(f"Trakt Search for '{query}' received no response.")
+        else: # No response from _make_request (e.g., network error, pre-request auth failure)
+            logger.warning(f"Trakt Search for '{query}' received no response from _make_request.")
             return None
 
 # Add this to your MetadataManager class

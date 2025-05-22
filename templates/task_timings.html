@@ -443,32 +443,38 @@ const REGULAR_UPDATE_INTERVAL = 60000; // 60 seconds for regular task updates
 
 // Function to dismiss the reset notification
 window.dismissResetNotification = function() {
+    console.log('[TaskTimings] dismissResetNotification called');
     const banner = document.getElementById('resetNotification');
     if (banner) {
         banner.style.display = 'none';
     }
     try {
         localStorage.setItem(RESET_NOTIFICATION_KEY, 'true');
+        console.log('[TaskTimings] Reset notification dismissal saved to localStorage.');
     } catch (e) {
-        console.warn("Could not save notification dismissal state to localStorage:", e);
+        console.warn("[TaskTimings] Could not save notification dismissal state to localStorage:", e);
     }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('[TaskTimings] DOMContentLoaded event fired.');
     // Check if the reset notification should be shown
     try {
         if (localStorage.getItem(RESET_NOTIFICATION_KEY) !== 'true') {
             const banner = document.getElementById('resetNotification');
             if (banner) {
                 banner.style.display = 'flex'; // Show the banner
+                console.log('[TaskTimings] Reset notification banner displayed.');
             }
+        } else {
+            console.log('[TaskTimings] Reset notification previously dismissed.');
         }
     } catch (e) {
-        console.warn("Could not check notification dismissal state from localStorage:", e);
-        // Show banner if localStorage fails, as a safe default
+        console.warn("[TaskTimings] Could not check notification dismissal state from localStorage:", e);
         const banner = document.getElementById('resetNotification');
         if (banner) {
             banner.style.display = 'flex';
+            console.warn('[TaskTimings] Displaying reset notification due to localStorage error.');
         }
     }
 
@@ -476,42 +482,48 @@ document.addEventListener('DOMContentLoaded', function() {
     const tabs = document.querySelectorAll('.tab');
     tabs.forEach(tab => {
         tab.addEventListener('click', () => {
-            // Remove active class from all tabs and content
+            console.log(`[TaskTimings] Tab clicked: ${tab.dataset.tab}`);
             tabs.forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.tab-content > div').forEach(content => {
                 content.classList.remove('active');
             });
             
-            // Add active class to clicked tab and corresponding content
             tab.classList.add('active');
             document.getElementById(tab.dataset.tab).classList.add('active');
         });
     });
+    console.log('[TaskTimings] Tab switching logic initialized.');
 
     // Add event listener for Save Toggles button
     document.getElementById('saveTogglesBtn').addEventListener('click', saveToggleStates);
+    console.log('[TaskTimings] Event listener for Save Toggles button added.');
     // Add event listener for Save Intervals button
     document.getElementById('saveIntervalsBtn').addEventListener('click', saveIntervalStates);
+    console.log('[TaskTimings] Event listener for Save Intervals button added.');
     // Add event listener for Reset All Settings button
     document.getElementById('resetAllSettingsBtn').addEventListener('click', handleResetAllSettings);
+    console.log('[TaskTimings] Event listener for Reset All Settings button added.');
     
     // Initial fetch and setup
-    fetchAndUpdateTasks(); // This will also set up initial polling logic
+    console.log('[TaskTimings] Calling initial fetchAndUpdateTasks.');
+    fetchAndUpdateTasks(); 
     
-    // If no tasks are loaded (program not running), try to load saved toggle states and intervals
-    // This existing setTimeout can remain as a fallback for initial static page load
     setTimeout(() => {
+        console.log('[TaskTimings] setTimeout for fallback loading of saved states.');
         const taskTiles = document.querySelectorAll('.task-tile');
-        if (taskTiles.length === 0 && !isProgramConsideredRunning) { // Only if still not considered running
+        if (taskTiles.length === 0 && !isProgramConsideredRunning) { 
+            console.log('[TaskTimings] No task tiles loaded and program not considered running. Attempting to load saved states.');
             loadSavedToggleStates();
             loadSavedIntervalStates();
+        } else {
+            console.log(`[TaskTimings] Fallback load condition not met. Task tiles: ${taskTiles.length}, isProgramConsideredRunning: ${isProgramConsideredRunning}`);
         }
-    }, 1500); // Slightly increased delay
+    }, 1500); 
 });
 
 // Function to save toggle states
 function saveToggleStates() {
-    // Collect all task states
+    console.log('[TaskTimings] saveToggleStates called.');
     const taskStates = {};
     let enabledCount = 0;
     let disabledCount = 0;
@@ -520,34 +532,25 @@ function saveToggleStates() {
         const taskName = tile.dataset.taskName;
         const isEnabled = tile.querySelector('input[type="checkbox"]').checked;
         taskStates[taskName] = isEnabled;
-        
-        if (isEnabled) {
-            enabledCount++;
-        } else {
-            disabledCount++;
-        }
+        if (isEnabled) enabledCount++; else disabledCount++;
     });
+    console.log('[TaskTimings] Task states collected for saving:', taskStates);
     
-    // Show loading indicator
     const saveBtn = document.getElementById('saveTogglesBtn');
     const originalText = saveBtn.innerHTML;
     saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
     saveBtn.disabled = true;
 
-    // Send to server
     fetch('/program_operation/save_task_toggles', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task_states: taskStates })
     })
     .then(response => response.json())
     .then(data => {
-        // Restore button
         saveBtn.innerHTML = originalText;
         saveBtn.disabled = false;
-        
+        console.log('[TaskTimings] Save toggles response:', data);
         if (data.success) {
             showPopup({
                 type: POPUP_TYPES.SUCCESS,
@@ -555,87 +558,61 @@ function saveToggleStates() {
                 message: `Task toggle states saved successfully. ${enabledCount} tasks enabled, ${disabledCount} tasks disabled. These settings will be applied when the program starts.`
             });
         } else {
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: data.error || 'Failed to save task toggle states'
-            });
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'Failed to save task toggle states' });
         }
     })
     .catch(error => {
-        // Restore button
         saveBtn.innerHTML = originalText;
         saveBtn.disabled = false;
-        
-        console.error('Error:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: 'Failed to save task toggle states'
-        });
+        console.error('[TaskTimings] Error saving toggle states:', error);
+        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to save task toggle states' });
     });
 }
 
 // Function to load saved toggle states
 function loadSavedToggleStates() {
+    console.log('[TaskTimings] loadSavedToggleStates called.');
     fetch('/program_operation/load_task_toggles')
         .then(response => response.json())
         .then(data => {
+            console.log('[TaskTimings] Load saved toggles response:', data);
             if (data.success && data.task_states) {
-                const taskStates = data.task_states;
-                const taskCount = Object.keys(taskStates).length;
-                
-                if (taskCount > 0) {
-                    // Count enabled and disabled tasks
-                    let enabledCount = 0;
-                    let disabledCount = 0;
-                    
-                    Object.values(taskStates).forEach(enabled => {
-                        if (enabled) {
-                            enabledCount++;
-                        } else {
-                            disabledCount++;
-                        }
-                    });
-                    
-                }
+                // Note: This function currently doesn't apply the loaded states to the UI elements
+                // if the program isn't running and no tiles are present. It mostly logs.
+                // UI update would require creating dummy tiles or a different display strategy.
+                console.log('[TaskTimings] Saved toggle states loaded:', data.task_states);
             }
         })
         .catch(error => {
-            console.error('Error loading saved toggle states:', error);
+            console.error('[TaskTimings] Error loading saved toggle states:', error);
         });
 }
 
 // Function to save interval states
 function saveIntervalStates() {
-    const taskIntervalsSeconds = {}; // Rename variable for clarity
+    console.log('[TaskTimings] saveIntervalStates called.');
+    const taskIntervalsSeconds = {};
     document.querySelectorAll('.task-tile').forEach(tile => {
         const taskName = tile.dataset.taskName;
         const input = tile.querySelector('.interval-input');
         if (input) {
             const defaultIntervalSeconds = parseInt(input.dataset.defaultIntervalSeconds, 10);
             const currentValueStr = input.value.trim();
-
             if (currentValueStr === '') {
-                // Explicit reset (empty input): send null
                 taskIntervalsSeconds[taskName] = null;
             } else {
                 const currentValueInt = parseInt(currentValueStr, 10);
                 if (!isNaN(currentValueInt)) {
                     if (currentValueInt !== defaultIntervalSeconds) {
-                        // Different from default: send the value
                         taskIntervalsSeconds[taskName] = currentValueStr;
                     } else {
-                        // Same as default: send null to signify reset to default
                         taskIntervalsSeconds[taskName] = null;
                     }
                 }
-                // If parsing fails (e.g., non-numeric input despite type="number"),
-                // we don't add it to taskIntervalsSeconds, effectively ignoring malformed input.
-                // Alternatively, could send null here too. Current behavior is to ignore.
             }
         }
     });
+    console.log('[TaskTimings] Task intervals collected for saving (seconds):', taskIntervalsSeconds);
 
     const saveBtn = document.getElementById('saveIntervalsBtn');
     const originalText = saveBtn.innerHTML;
@@ -651,59 +628,52 @@ function saveIntervalStates() {
     .then(data => {
         saveBtn.innerHTML = originalText;
         saveBtn.disabled = false;
+        console.log('[TaskTimings] Save intervals response:', data);
         if (data.success) {
-            showPopup({
-                type: POPUP_TYPES.SUCCESS,
-                title: 'Success',
-                message: data.message || 'Task intervals saved successfully.'
-            });
-            // Refresh task data to show potentially updated 'current' intervals if live update worked
-             setTimeout(fetchAndUpdateTasks, 500);
+            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: data.message || 'Task intervals saved successfully.' });
+            console.log('[TaskTimings] Intervals saved, calling fetchAndUpdateTasks.');
+            setTimeout(fetchAndUpdateTasks, 500);
         } else {
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: data.error || 'Failed to save task intervals'
-            });
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'Failed to save task intervals' });
         }
     })
     .catch(error => {
         saveBtn.innerHTML = originalText;
         saveBtn.disabled = false;
-        console.error('Error saving intervals:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: 'Failed to save task intervals'
-        });
+        console.error('[TaskTimings] Error saving intervals:', error);
+        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to save task intervals' });
     });
 }
 
 // Function to load saved interval states
 function loadSavedIntervalStates() {
+    console.log('[TaskTimings] loadSavedIntervalStates called.');
     fetch('/program_operation/load_task_intervals')
         .then(response => response.json())
         .then(data => {
+            console.log('[TaskTimings] Load saved intervals response:', data);
             if (data.success && data.task_intervals) {
-                 console.log("Loaded saved intervals (seconds):", data.task_intervals);
-                Object.entries(data.task_intervals).forEach(([taskName, intervalSec]) => { // Iterate seconds
+                console.log("[TaskTimings] Loaded saved intervals (seconds):", data.task_intervals);
+                Object.entries(data.task_intervals).forEach(([taskName, intervalSec]) => {
                     const input = document.querySelector(`.task-tile[data-task-name="${taskName}"] .interval-input`);
                     if (input && intervalSec !== null) {
-                         input.value = intervalSec; // Set input value to seconds
-                         input.dispatchEvent(new Event('input')); // Trigger style update
+                        input.value = intervalSec;
+                        input.dispatchEvent(new Event('input'));
+                        console.log(`[TaskTimings] Applied saved interval for ${taskName}: ${intervalSec}s`);
                     } else if (input && intervalSec === null) {
-                         input.value = ''; // Clear input if reset
-                         input.dispatchEvent(new Event('input'));
+                        input.value = '';
+                        input.dispatchEvent(new Event('input'));
+                        console.log(`[TaskTimings] Cleared interval for ${taskName} (reset to default).`);
                     }
                 });
             }
         })
         .catch(error => {
-            console.error('Error loading saved intervals:', error);
+            console.error('[TaskTimings] Error loading saved intervals:', error);
         });
 }
 
-let timers = {};
+let timers = {}; // Consider console.log for timer updates if needed, but can be very verbose.
 
 function formatTime(hours, minutes, seconds) {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
@@ -711,7 +681,7 @@ function formatTime(hours, minutes, seconds) {
 
 function formatInterval(seconds) {
     if (seconds <= 0) return "N/A";
-    if (seconds < 60) return `${Math.round(seconds)} sec`; // Show seconds if less than a minute
+    if (seconds < 60) return `${Math.round(seconds)} sec`;
     const minutes = Math.round(seconds / 60);
     if (minutes < 60) return `${minutes} min`;
     const hours = Math.floor(minutes / 60);
@@ -720,6 +690,7 @@ function formatInterval(seconds) {
 }
 
 function createTaskTile(taskName, taskData) {
+    console.log(`[TaskTimings] createTaskTile called for task: ${taskName}`, taskData);
     const enabled = taskData.enabled;
     const currentIntervalSec = taskData.current_interval_seconds || 0; 
     const defaultIntervalSec = taskData.default_interval_seconds || 0; 
@@ -727,51 +698,39 @@ function createTaskTile(taskName, taskData) {
     const configuredIntervalSec = taskData.configured_interval_seconds || 0;
 
     const intervalInputValue = (configuredIntervalSec > 0) ? Math.round(configuredIntervalSec) : '';
+    const currentIntervalFormatted = formatInterval(currentIntervalSec);
+    const defaultIntervalFormatted = formatInterval(defaultIntervalSec);
 
-    const currentIntervalFormatted = formatInterval(currentIntervalSec); // For the "Current: X" badge
-    const defaultIntervalFormatted = formatInterval(defaultIntervalSec); // For display text
-
-    // Use display_name from the server if available, otherwise fall back to client-side formatting
     let displayName;
     if (taskData.display_name) {
         displayName = taskData.display_name;
     } else {
-        // Fallback to client-side formatting (for backward compatibility)
         if (taskName.endsWith('_wanted')) {
-            // Content source task
-            displayName = taskName
-                .replace('task_', '')
-                .replace('_wanted', '')
-                .replace(/_/g, ' ');
+            displayName = taskName.replace('task_', '').replace('_wanted', '').replace(/_/g, ' ');
         } else {
-            // Regular task
-            displayName = taskName
-                .replace('task_', '')
-                .replace(/_/g, ' ');
+            displayName = taskName.replace('task_', '').replace(/_/g, ' ');
         }
-        
-        // Capitalize first letter of each word
         displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
     }
+    console.log(`[TaskTimings] Display name for ${taskName}: ${displayName}`);
 
     const tile = document.createElement('div');
     tile.className = `task-tile ${enabled ? '' : 'disabled'}`;
     tile.dataset.taskName = taskName;
     
-    // Only add click handler if the task is enabled
     if (enabled) {
         tile.onclick = (e) => {
-            // Prevent trigger on input field click
             if (e.target.classList.contains('task-toggle') || 
                 e.target.classList.contains('toggle-slider') ||
                 e.target.classList.contains('toggle-switch') ||
-                e.target.tagName === 'INPUT' || // General input check
+                e.target.tagName === 'INPUT' || 
                 e.target.classList.contains('toggle-label') ||
                 e.target.closest('.task-toggle') ||
-                e.target.classList.contains('interval-input') || // Check interval input specifically
+                e.target.classList.contains('interval-input') || 
                 e.target.closest('.interval-input-container') ) {
                 return;
             }
+            console.log(`[TaskTimings] Tile clicked for triggering task: ${taskName}`);
             triggerTask(taskName);
         };
     }
@@ -807,42 +766,41 @@ function createTaskTile(taskName, taskData) {
         </div>
     `;
     
-    // Add event listener to the toggle after the HTML is set
     const toggleInput = tile.querySelector('input[type="checkbox"]');
     if (toggleInput) {
         toggleInput.addEventListener('change', function(e) {
             e.stopPropagation();
+            console.log(`[TaskTimings] Toggle changed for task: ${taskName}, new state: ${this.checked}`);
             toggleTaskStatus(taskName, this.checked);
         });
     }
 
-    // Add click handler to the toggle container to prevent event bubbling
     const toggleContainer = tile.querySelector('.task-toggle');
     if (toggleContainer) {
         toggleContainer.addEventListener('click', function(e) {
-            e.stopPropagation();
-        });
-    }
-
-    // Add input listener to update custom/default class
-    const intervalInput = tile.querySelector('.interval-input');
-    if (intervalInput) {
-        intervalInput.addEventListener('input', function() {
-            const currentValue = this.value.trim();
-            // Compare with defaultIntervalSec to determine 'default' or 'custom' class
-            // An empty input means reset to default.
-            const matchesDefault = (currentValue === '' || parseInt(currentValue) === defaultIntervalSec);
-
-            if (matchesDefault) {
-                this.classList.remove('custom');
-                this.classList.add('default');
-            } else {
-                this.classList.remove('default');
-                this.classList.add('custom');
+            e.stopPropagation(); // Prevent tile click
+            console.log(`[TaskTimings] Toggle container clicked for task: ${taskName}, propagating to input.`);
+            // Manually trigger click on the checkbox if the container (but not the switch itself) is clicked
+            if (e.target === toggleContainer || e.target.classList.contains('toggle-label')) {
+                 const checkbox = toggleContainer.querySelector('input[type="checkbox"]');
+                 if (checkbox) checkbox.click();
             }
         });
     }
 
+    const intervalInput = tile.querySelector('.interval-input');
+    if (intervalInput) {
+        intervalInput.addEventListener('input', function() {
+            const currentValue = this.value.trim();
+            const matchesDefault = (currentValue === '' || parseInt(currentValue) === defaultIntervalSec);
+            if (matchesDefault) {
+                this.classList.remove('custom'); this.classList.add('default');
+            } else {
+                this.classList.remove('default'); this.classList.add('custom');
+            }
+            // console.log(`[TaskTimings] Interval input changed for ${taskName}: ${currentValue}, default: ${defaultIntervalSec}s, matchesDefault: ${matchesDefault}`);
+        });
+    }
     return tile;
 }
 
@@ -852,11 +810,9 @@ function updateTimers() {
         if (seconds > 0) {
             seconds--;
             timers[taskName] = seconds;
-            
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             const remainingSeconds = seconds % 60;
-            
             const element = document.querySelector(`[data-task="${taskName}"]`);
             if (element) {
                 element.textContent = formatTime(hours, minutes, remainingSeconds);
@@ -866,52 +822,60 @@ function updateTimers() {
 }
 
 function updateBadgeCounts(data) {
-    document.querySelector('.queue-count').textContent = Object.keys(data.queues || {}).length;
-    document.querySelector('.source-count').textContent = Object.keys(data.content_sources || {}).length;
-    document.querySelector('.system-count').textContent = Object.keys(data.system_tasks || {}).length;
+    const queueCount = Object.keys(data.queues || {}).length;
+    const sourceCount = Object.keys(data.content_sources || {}).length;
+    const systemCount = Object.keys(data.system_tasks || {}).length;
+    console.log(`[TaskTimings] Updating badge counts: Queues=${queueCount}, Sources=${sourceCount}, System=${systemCount}`);
+    document.querySelector('.queue-count').textContent = queueCount;
+    document.querySelector('.source-count').textContent = sourceCount;
+    document.querySelector('.system-count').textContent = systemCount;
 }
 
 function fetchAndUpdateTasks() {
+    console.log('[TaskTimings] fetchAndUpdateTasks called.');
     fetch('/program_operation/api/task_timings')
-        .then(response => response.json())
+        .then(response => {
+            console.log('[TaskTimings] Raw response from /api/task_timings:', response);
+            return response.json();
+        })
         .then(data => {
+            console.log('[TaskTimings] Parsed data from /api/task_timings:', data);
             if (data.success) {
-                isProgramConsideredRunning = true;
+                if (!isProgramConsideredRunning) {
+                    console.log("[TaskTimings] Program is now considered RUNNING.");
+                    isProgramConsideredRunning = true;
+                }
                 if (programStatusPollIntervalId) {
                     clearInterval(programStatusPollIntervalId);
                     programStatusPollIntervalId = null;
-                    console.log("Program is running, stopped fast polling for status.");
+                    console.log("[TaskTimings] Program is running, stopped fast polling for status.");
                 }
 
                 const tasks = data.tasks;
-                console.log("Fetched task data:", tasks); 
+                console.log("[TaskTimings] Fetched task data for UI update:", tasks); 
 
-                // Preserve input values during update
                 const currentIntervalValues = {};
                 document.querySelectorAll('.task-tile .interval-input').forEach(input => {
                     const tile = input.closest('.task-tile');
-                    if (tile) {
-                        currentIntervalValues[tile.dataset.taskName] = input.value;
-                    }
+                    if (tile) currentIntervalValues[tile.dataset.taskName] = input.value;
                 });
+                console.log("[TaskTimings] Preserved current interval input values:", currentIntervalValues);
 
-                // Clear existing tiles before adding new ones
                 document.querySelector('#queues .task-grid').innerHTML = '';
                 document.querySelector('#sources .task-grid').innerHTML = '';
                 document.querySelector('#system .task-grid').innerHTML = '';
+                console.log("[TaskTimings] Cleared existing task tiles.");
 
-                // Update task sections
                 Object.entries(tasks.queues || {}).forEach(([name, info]) => {
                     document.querySelector('#queues .task-grid').appendChild(createTaskTile(name, info));
                 });
 
-                document.querySelector('#sources .task-grid').innerHTML = '';
                 if (Object.keys(tasks.content_sources || {}).length === 0) {
                     const noSourcesMsg = document.createElement('div');
-                    noSourcesMsg.className = 'info-banner';
-                    noSourcesMsg.style.margin = '1rem 0';
+                    noSourcesMsg.className = 'info-banner'; noSourcesMsg.style.margin = '1rem 0';
                     noSourcesMsg.innerHTML = '<p><i class="fas fa-info-circle"></i> No content sources found. Content sources will appear here when they are configured and the program is running.</p>';
                     document.querySelector('#sources .task-grid').appendChild(noSourcesMsg);
+                    console.log("[TaskTimings] No content sources found, displayed message.");
                 } else {
                     Object.entries(tasks.content_sources || {}).forEach(([name, info]) => {
                         document.querySelector('#sources .task-grid').appendChild(createTaskTile(name, info));
@@ -921,72 +885,68 @@ function fetchAndUpdateTasks() {
                 Object.entries(tasks.system_tasks || {}).forEach(([name, info]) => {
                     document.querySelector('#system .task-grid').appendChild(createTaskTile(name, info));
                 });
+                console.log("[TaskTimings] Populated task tiles.");
 
-                // Restore input values
                 Object.entries(currentIntervalValues).forEach(([taskName, value]) => {
                     const input = document.querySelector(`.task-tile[data-task-name="${taskName}"] .interval-input`);
-                    if (input) {
-                        input.value = value;
-                        input.dispatchEvent(new Event('input'));
-                    }
+                    if (input) { input.value = value; input.dispatchEvent(new Event('input')); }
                 });
+                console.log("[TaskTimings] Restored interval input values.");
 
-                // Update badge counts
                 updateBadgeCounts(tasks);
 
-                // Update timers
                 timers = {};
                 ['queues', 'content_sources', 'system_tasks'].forEach(category => {
                     Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
-                         // Only start timer if task is enabled
                         if(info.enabled) {
                              timers[taskName] = Math.max(0, Math.floor(info.next_run_in.total_seconds));
                         } else {
-                             // Ensure timer doesn't run for disabled tasks
                              delete timers[taskName];
-                             // Update display for disabled task immediately
                              const element = document.querySelector(`[data-task="${taskName}"]`);
-                             if (element) {
-                                 element.textContent = '--:--:--';
-                             }
+                             if (element) element.textContent = '--:--:--';
                         }
                     });
                 });
+                console.log("[TaskTimings] Timers updated:", timers);
 
             } else {
-                 isProgramConsideredRunning = false;
-                 console.warn("API call failed or program not running:", data.error);
+                 if (isProgramConsideredRunning) {
+                     console.warn("[TaskTimings] API call failed or program stopped. Program now considered NOT RUNNING.");
+                     isProgramConsideredRunning = false;
+                 } else {
+                     console.warn("[TaskTimings] API call failed or program not running (state unchanged):", data.error);
+                 }
                  if (!programStatusPollIntervalId) {
                      programStatusPollIntervalId = setInterval(pollProgramStatus, FAST_POLL_INTERVAL);
-                     console.log("Program not running, started fast polling for status.");
+                     console.log("[TaskTimings] Program not running, started fast polling for status.");
                  }
-                 // Clear content if program stopped
                  document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
-                 updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}}); // Reset badges
-                 // Attempt to load saved states if program stopped
+                 updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}});
+                 console.log("[TaskTimings] Cleared task content, attempting to load saved states as program is down.");
                  loadSavedToggleStates();
                  loadSavedIntervalStates();
             }
         })
         .catch(error => {
-            isProgramConsideredRunning = false;
-            console.error('Error fetching task timings:', error);
+            console.error('[TaskTimings] Error fetching task timings:', error);
+            if (isProgramConsideredRunning) {
+                 console.warn("[TaskTimings] Error fetching tasks. Program now considered NOT RUNNING.");
+                 isProgramConsideredRunning = false;
+            }
             if (!programStatusPollIntervalId) {
                 programStatusPollIntervalId = setInterval(pollProgramStatus, FAST_POLL_INTERVAL);
-                console.log("Error fetching tasks, started fast polling for status.");
+                console.log("[TaskTimings] Error fetching tasks, started fast polling for status.");
             }
-            // Clear all sections if there's an error
             document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
-             updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}}); // Reset badges
-             // Attempt to load saved states on error
-             loadSavedToggleStates();
-             loadSavedIntervalStates();
+            updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}});
+            console.log("[TaskTimings] Cleared task content due to fetch error, attempting to load saved states.");
+            loadSavedToggleStates();
+            loadSavedIntervalStates();
         });
 }
 
-// Make triggerTask available globally
 window.triggerTask = function triggerTask(taskName) {
-    // Find the display name for this task
+    console.log(`[TaskTimings] triggerTask called for: ${taskName}`);
     const taskElement = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
     const displayName = taskElement ? taskElement.querySelector('.task-name').textContent.trim() : taskName;
     
@@ -995,69 +955,54 @@ window.triggerTask = function triggerTask(taskName) {
         title: 'Trigger Task',
         message: `Do you want to trigger task: ${displayName}?`,
         onConfirm: () => {
-            // Show a small loading indicator on the task tile
+            console.log(`[TaskTimings] Confirmed trigger for task: ${displayName}`);
             const taskTile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
             if (taskTile) {
                 const countdown = taskTile.querySelector('.countdown');
                 if (countdown) {
                     const originalText = countdown.textContent;
                     countdown.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Triggering...';
-                    
-                    // Reset after 3 seconds if no response
                     setTimeout(() => {
-                        if (countdown.innerHTML.includes('Triggering')) {
-                            countdown.textContent = originalText;
-                        }
+                        if (countdown.innerHTML.includes('Triggering')) countdown.textContent = originalText;
                     }, 3000);
                 }
             }
             
             fetch('/program_operation/trigger_task', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `task_name=${encodeURIComponent(taskName)}`
             })
             .then(response => response.json())
             .then(data => {
+                console.log(`[TaskTimings] Trigger task response for ${taskName}:`, data);
                 if (data.success) {
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        title: 'Success',
-                        message: `Successfully triggered task: ${displayName}`
-                    });
-                    
-                    // Refresh data after a short delay
+                    showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: `Successfully triggered task: ${displayName}` });
+                    console.log(`[TaskTimings] Successfully triggered ${taskName}, calling fetchAndUpdateTasks.`);
                     setTimeout(fetchAndUpdateTasks, 1000);
                 } else {
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        title: 'Error',
-                        message: data.error || 'Failed to trigger task'
-                    });
+                    showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'Failed to trigger task' });
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Failed to trigger task'
-                });
+                console.error(`[TaskTimings] Error triggering task ${taskName}:`, error);
+                showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to trigger task' });
             });
         }
     });
 }
 
-// Make toggleTaskStatus available globally
 window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
+    console.log(`[TaskTimings] toggleTaskStatus called for task: ${taskName}, to enabled: ${enabled}`);
     const endpoint = enabled ? '/program_operation/enable_task' : '/program_operation/disable_task';
     const action = enabled ? 'enable' : 'disable';
+    console.log(`[TaskTimings] Endpoint for toggle: ${endpoint}, Body: task_name=${encodeURIComponent(taskName)}`);
     
     const taskElement = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
     const displayName = taskElement ? taskElement.querySelector('.task-name').textContent.trim() : taskName;
     
+    // --- START EDIT: Enhanced fetch logging ---
+    console.log(`[TaskTimings] Initiating fetch to ${endpoint}...`);
     fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -1065,11 +1010,26 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
         },
         body: `task_name=${encodeURIComponent(taskName)}`
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log(`[TaskTimings] Received response from ${endpoint}. Status: ${response.status}, StatusText: ${response.statusText}`);
+        if (!response.ok) {
+            // Log the response text if it's not OK, before trying to parse as JSON
+            return response.text().then(text => {
+                console.error(`[TaskTimings] Server responded with error ${response.status}. Response text: ${text}`);
+                // We still throw an error to be caught by the main catch block,
+                // but ensure it's a new error object so we can add properties if needed.
+                throw new Error(`Server error: ${response.status} - ${text}`);
+            });
+        }
+        console.log(`[TaskTimings] Response from ${endpoint} is OK. Attempting to parse JSON...`);
+        return response.json();
+    })
     .then(data => {
+        console.log(`[TaskTimings] Parsed JSON data from ${action} task ${taskName}:`, data);
         if (data.success) {
+            console.log(`[TaskTimings] Successfully ${action}d task ${taskName}. Updating UI and refreshing tasks.`);
             const taskTile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
-            const intervalInput = taskTile ? taskTile.querySelector('.interval-input') : null; // Get interval input
+            const intervalInput = taskTile ? taskTile.querySelector('.interval-input') : null;
 
             if (taskTile) {
                 if (enabled) {
@@ -1077,17 +1037,9 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
                     taskTile.querySelector('.status-indicator').classList.remove('disabled');
                     taskTile.querySelector('.status-indicator').classList.add('enabled');
                     taskTile.querySelector('.toggle-label').textContent = 'Enabled';
-                    if (intervalInput) intervalInput.disabled = false; // Enable interval input
-                    // Add click handler for triggering
-                    taskTile.onclick = (e) => {
-                        if (e.target.classList.contains('task-toggle') || 
-                            e.target.classList.contains('toggle-slider') ||
-                            e.target.classList.contains('toggle-switch') ||
-                            e.target.tagName === 'INPUT' ||
-                            e.target.classList.contains('toggle-label') ||
-                            e.target.closest('.task-toggle')) {
-                            return;
-                        }
+                    if (intervalInput) intervalInput.disabled = false;
+                    taskTile.onclick = (e) => { 
+                        if (e.target.classList.contains('task-toggle') || e.target.closest('.task-toggle') || e.target.tagName === 'INPUT' || e.target.classList.contains('interval-input') || e.target.closest('.interval-input-container') ) return;
                         triggerTask(taskName);
                     };
                 } else {
@@ -1095,64 +1047,57 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
                     taskTile.querySelector('.status-indicator').classList.remove('enabled');
                     taskTile.querySelector('.status-indicator').classList.add('disabled');
                     taskTile.querySelector('.toggle-label').textContent = 'Disabled';
-                    if (intervalInput) intervalInput.disabled = true; // Disable interval input
-                    // Remove click handler
-                    taskTile.onclick = null;
+                    if (intervalInput) intervalInput.disabled = true;
+                    taskTile.onclick = null; 
                 }
             }
-            
-            // Refresh data after a short delay to get updated timings
-            setTimeout(fetchAndUpdateTasks, 1000);
+            console.log(`[TaskTimings] UI updated for ${taskName}. Calling fetchAndUpdateTasks in 1s.`);
+            setTimeout(fetchAndUpdateTasks, 1000); 
         } else {
-            // Revert the checkbox state if there was an error
+            console.error(`[TaskTimings] Server reported failure to ${action} task ${taskName}: ${data.error}`);
             const checkbox = taskElement ? taskElement.querySelector('input[type="checkbox"]') : null;
             if (checkbox) {
-                checkbox.checked = !enabled;
+                checkbox.checked = !enabled; 
+                console.log(`[TaskTimings] Reverted checkbox for ${taskName} due to server failure.`);
             }
-            
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: data.error || `Failed to ${action} task: ${displayName}`
-            });
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || `Failed to ${action} task: ${displayName}` });
         }
     })
     .catch(error => {
-        console.error('Error:', error);
-        
-        // Revert the checkbox state if there was an error
+        // This will catch network errors, errors thrown from the !response.ok block, and errors from response.json()
+        console.error(`[TaskTimings] CATCH block: Error during ${action} task ${taskName}:`, error);
         const checkbox = taskElement ? taskElement.querySelector('input[type="checkbox"]') : null;
         if (checkbox) {
-            checkbox.checked = !enabled;
+            checkbox.checked = !enabled; 
+            console.log(`[TaskTimings] Reverted checkbox for ${taskName} due to CATCH block error.`);
         }
-        
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: `Failed to ${action} task: ${displayName}`
-        });
+        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: `Failed to ${action} task: ${displayName}. Error: ${error.message}` });
     });
+    // --- END EDIT ---
 }
 
 // Update countdown every second
 setInterval(updateTimers, 1000);
 
-// Refresh data every REGULAR_UPDATE_INTERVAL (e.g., 60 seconds)
+// Refresh data every REGULAR_UPDATE_INTERVAL
+console.log(`[TaskTimings] Setting up regular task update interval: ${REGULAR_UPDATE_INTERVAL}ms`);
 setInterval(fetchAndUpdateTasks, REGULAR_UPDATE_INTERVAL);
 
-// Add JavaScript functions for Reset All Settings
 function handleResetAllSettings() {
+    console.log('[TaskTimings] handleResetAllSettings called.');
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Confirm Reset',
         message: 'Are you sure you want to reset all task toggles and intervals to their default values? This will also restart the program. This action cannot be undone.',
         onConfirm: () => {
+            console.log('[TaskTimings] Confirmed reset all settings.');
             performResetAllSettings();
         }
     });
 }
 
 function performResetAllSettings() {
+    console.log('[TaskTimings] performResetAllSettings called.');
     const resetButton = document.getElementById('resetAllSettingsBtn');
     const originalButtonText = resetButton.innerHTML;
     resetButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Resetting...';
@@ -1160,75 +1105,55 @@ function performResetAllSettings() {
 
     fetch('/program_operation/api/reset_all_task_settings', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        }
+        headers: { 'Content-Type': 'application/json' }
     })
     .then(response => response.json())
     .then(data => {
+        console.log('[TaskTimings] Reset all settings response:', data);
         resetButton.innerHTML = originalButtonText;
         resetButton.disabled = false;
-
         if (data.status === "success") {
-            showPopup({
-                type: POPUP_TYPES.SUCCESS,
-                title: 'Settings Reset',
-                message: data.message || 'Task configuration files have been deleted. Please restart the program for the changes to take effect.'
-            });
-            // Clear local input fields and reload tasks to reflect default state
-            // This will show the current running state, but inputs will be clear,
-            // indicating that on next start, defaults would be used.
+            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Settings Reset', message: data.message || 'Task configuration files have been deleted. Please restart the program for the changes to take effect.' });
             document.querySelectorAll('.task-tile .interval-input').forEach(input => {
-                input.value = ''; // Clear custom values
-                input.dispatchEvent(new Event('input')); // Trigger style update if any
+                input.value = ''; input.dispatchEvent(new Event('input'));
             });
-             // Fetching tasks will show the *current* state of the running program.
-             // After restart, it would show the actual defaults.
+            console.log('[TaskTimings] Settings reset, calling fetchAndUpdateTasks.');
             setTimeout(fetchAndUpdateTasks, 1500);
-        } else { // error
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Reset Failed',
-                message: data.message || data.error || 'Failed to delete settings files. Please check logs.'
-            });
+        } else {
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Reset Failed', message: data.message || data.error || 'Failed to delete settings files. Please check logs.' });
         }
     })
     .catch(error => {
         resetButton.innerHTML = originalButtonText;
         resetButton.disabled = false;
-        console.error('Error resetting all settings:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: 'An unexpected error occurred while trying to reset settings. Check console for details.'
-        });
+        console.error('[TaskTimings] Error resetting all settings:', error);
+        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'An unexpected error occurred while trying to reset settings. Check console for details.' });
     });
 }
 
-// --- START NEW FUNCTION ---
 function pollProgramStatus() {
+    // console.log('[TaskTimings] pollProgramStatus called (fast poll).'); // Can be too verbose
     fetch('/program_operation/api/program_status')
         .then(response => response.json())
         .then(status => {
+            // console.log('[TaskTimings] Fast poll program status response:', status); // Can be too verbose
             if (status.running) {
-                console.log("Fast poll detected program is running. Triggering task update.");
-                isProgramConsideredRunning = true;
+                console.log("[TaskTimings] Fast poll detected program is running. Triggering task update.");
+                if (!isProgramConsideredRunning) isProgramConsideredRunning = true; // Ensure consistency
                 if (programStatusPollIntervalId) {
                     clearInterval(programStatusPollIntervalId);
                     programStatusPollIntervalId = null;
                 }
-                fetchAndUpdateTasks(); // Fetch full task data immediately
+                fetchAndUpdateTasks();
             } else {
-                console.log("Fast poll: Program still not running.");
-                isProgramConsideredRunning = false; // Ensure this is set
+                // console.log("[TaskTimings] Fast poll: Program still not running."); // Can be too verbose
+                if (isProgramConsideredRunning) isProgramConsideredRunning = false; // Ensure consistency
             }
         })
         .catch(error => {
-            console.error('Error polling program status:', error);
-            isProgramConsideredRunning = false; // Assume not running on error
-            // Keep polling
+            console.error('[TaskTimings] Error polling program status:', error);
+            if (isProgramConsideredRunning) isProgramConsideredRunning = false;
         });
 }
-// --- END NEW FUNCTION ---
 </script>
 {% endblock %}

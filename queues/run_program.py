@@ -89,6 +89,7 @@ import json # Added for loading intervals
 from debrid import get_debrid_provider, ProviderUnavailableError
 from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
+from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -157,8 +158,9 @@ class ProgramRunner:
             logging.info("APScheduler configured with a single worker thread for sequential job execution (using system default timezone).")
             # --- END EDIT ---
 
-        self.scheduler_lock = threading.Lock() # Lock for modifying scheduler jobs
-        self.heavy_task_lock = threading.Lock() # Lock to serialize heavy DB tasks
+        # self.scheduler_lock = threading.Lock() # Previous version
+        self.scheduler_lock = threading.RLock() # MODIFIED: Ensure RLock for reentrancy
+        self.heavy_task_lock = threading.Lock()
         self.paused_jobs_by_queue = set() # Keep track of jobs paused by pause_queue
         
         from queues.queue_manager import QueueManager
@@ -265,6 +267,7 @@ class ProgramRunner:
             # --- START EDIT: Add new task for library size refresh ---
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
             # --- END EDIT ---
+            'task_process_standalone_plex_removals': 2 * 60 * 60, # Run every 2 hours as a fallback
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -399,6 +402,7 @@ class ProgramRunner:
             # --- START EDIT: Add new task to dynamic intervals ---
             'task_refresh_library_size_cache',
             # --- END EDIT ---
+            'task_process_standalone_plex_removals', # Add to dynamic intervals as well
         }
         # Add content source tasks with interval > 900s (15 min) to dynamic set
         # This needs to happen *after* content sources are processed, let's refine this later if needed
@@ -459,6 +463,7 @@ class ProgramRunner:
             # --- START EDIT: Enable new library size task by default ---
             'task_refresh_library_size_cache',
             # --- END EDIT ---
+            'task_process_standalone_plex_removals', # Enable by default
         }
         logging.info("Initialized base enabled tasks.")
 
@@ -773,67 +778,80 @@ class ProgramRunner:
     # *** START EDIT: Use _get_task_target in _schedule_task ***
     def _schedule_task(self, task_name: str, interval_seconds: int, initial_run: bool = False):
         """Schedules a single task in APScheduler, wrapped for duration measurement."""
-        logging.debug(f"Attempting to schedule task: '{task_name}' with interval {interval_seconds}s")
+        current_thread_id_outer = threading.get_ident()
+        logging.debug(f"Attempting to schedule task: '{task_name}' with interval {interval_seconds}s (initial_run: {initial_run}) (Thread: {current_thread_id_outer})")
+        lock_acquired = False # Flag to track lock acquisition
+        try:
+            current_thread_id = threading.get_ident()
+            logging.info(f"SCHED_TASK_PRE_LOCK: Preparing to acquire scheduler_lock for task '{task_name}' (Thread: {current_thread_id})")
+            with self.scheduler_lock:
+                lock_acquired = True
+                current_thread_id_inner = threading.get_ident() # Get ID again after lock
+                logging.info(f"SCHED_TASK_POST_LOCK: Acquired scheduler_lock for task '{task_name}' (Thread: {current_thread_id_inner})")
+                job_id = task_name # Use task name as job ID
 
-        with self.scheduler_lock:
-            job_id = task_name # Use task name as job ID
+                # Check if job already exists
+                existing_job = self.scheduler.get_job(job_id)
+                if existing_job:
+                    if initial_run:
+                        logging.debug(f"Task '{job_id}' already scheduled. Skipping initial schedule.")
+                        return True
+                    logging.info(f"Task '{job_id}' already exists. Removing old job before rescheduling.")
+                    try:
+                        self.scheduler.remove_job(job_id)
+                    except Exception as e:
+                        logging.error(f"Error removing existing job '{job_id}': {e}")
+                        return False
 
-            # Check if job already exists
-            existing_job = self.scheduler.get_job(job_id)
-            if existing_job:
-                if initial_run:
-                    logging.debug(f"Task '{job_id}' already scheduled. Skipping initial schedule.")
-                    return True
-                logging.info(f"Task '{job_id}' already exists. Removing old job before rescheduling.")
-                try:
-                    self.scheduler.remove_job(job_id)
-                except Exception as e:
-                    logging.error(f"Error removing existing job '{job_id}': {e}")
-                    return False
+                # --- Resolve target function using helper ---
+                target_func, args, kwargs = self._get_task_target(task_name)
+                # ------------------------------------------
 
-            # --- Resolve target function using helper ---
-            target_func, args, kwargs = self._get_task_target(task_name)
-            # ------------------------------------------
+                if target_func:
+                    try:
+                        # Wrap the target function
+                        # --- START EDIT: Pass task_name to the wrapper ---
+                        wrapped_func = functools.partial(self._run_and_measure_task, task_name, target_func, args, kwargs)
+                        # --- END EDIT ---
 
-            if target_func:
-                try:
-                    # Wrap the target function
-                    # --- START EDIT: Pass task_name to the wrapper ---
-                    wrapped_func = functools.partial(self._run_and_measure_task, task_name, target_func, args, kwargs)
-                    # --- END EDIT ---
+                        trigger = IntervalTrigger(seconds=interval_seconds)
 
-                    trigger = IntervalTrigger(seconds=interval_seconds)
-
-                    # *** START EDIT: Explicitly pass scheduler's timezone to add_job ***
-                    # This should prevent the IntervalTrigger from calling tzlocal.get_localzone()
-                    resolved_timezone = self.scheduler.timezone
-                    logging.debug(f"Passing timezone '{resolved_timezone}' explicitly to add_job for task '{job_id}'")
-                    # *** END EDIT ***
-
-                    self.scheduler.add_job(
-                        func=wrapped_func,
-                        trigger=trigger,
-                        id=job_id,
-                        name=job_id,
-                        replace_existing=True,
-                        misfire_grace_time=max(60, interval_seconds // 4),
-                        # *** START EDIT: Allow 1 concurrent instance ***
-                        max_instances=1,
+                        # *** START EDIT: Explicitly pass scheduler's timezone to add_job ***
+                        # This should prevent the IntervalTrigger from calling tzlocal.get_localzone()
+                        resolved_timezone = self.scheduler.timezone
+                        logging.debug(f"Passing timezone '{resolved_timezone}' explicitly to add_job for task '{job_id}'")
                         # *** END EDIT ***
-                        # *** START EDIT: Add timezone argument ***
-                        timezone=resolved_timezone
+
+                        self.scheduler.add_job(
+                            func=wrapped_func,
+                            trigger=trigger,
+                            id=job_id,
+                            name=job_id,
+                            replace_existing=True,
+                            misfire_grace_time=max(60, interval_seconds // 4),
+                            # *** START EDIT: Allow 1 concurrent instance ***
+                            max_instances=1,
+                            # *** END EDIT ***
+                            # *** START EDIT: Add timezone argument ***
+                            timezone=resolved_timezone
+                            # *** END EDIT ***
+                        )
+                        # *** START EDIT: Updated log message ***
+                        logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=1, wrapped for duration measurement).") # Reverted max_instances to 1
                         # *** END EDIT ***
-                    )
-                    # *** START EDIT: Updated log message ***
-                    logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=1, wrapped for duration measurement).") # Reverted max_instances to 1
-                    # *** END EDIT ***
-                    return True
-                except Exception as e:
-                    logging.error(f"Error scheduling task '{job_id}': {e}", exc_info=True)
-                    return False
+                        return True
+                    except Exception as e:
+                        logging.error(f"Error scheduling task '{job_id}': {e}", exc_info=True)
+                        return False
+                else:
+                     logging.error(f"Failed to determine target function for task '{task_name}'. Cannot schedule.")
+                     return False
+        finally:
+            current_thread_id_finally = threading.get_ident()
+            if lock_acquired:
+                logging.info(f"SCHED_TASK_FINALLY: Releasing scheduler_lock implicitly for task '{task_name}' (Thread: {current_thread_id_finally}, Lock Acquired: True).")
             else:
-                 logging.error(f"Failed to determine target function for task '{task_name}'. Cannot schedule.")
-                 return False
+                logging.info(f"SCHED_TASK_FINALLY: Lock was not acquired or error for task '{task_name}' (Thread: {current_thread_id_finally}, Lock Acquired: False).")
     # *** END EDIT ***
 
 
@@ -2658,52 +2676,85 @@ class ProgramRunner:
             for item_dict in items: # Iterate over dicts
                 item_id = item_dict['id']
                 filled_by_title = item_dict['filled_by_title']
-                filled_by_file = item_dict['filled_by_file']
+                current_filename = item_dict['filled_by_file'] # Use current_filename for clarity
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
                 # --- END: Ensure new field is fetched ---
 
-                if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
-                    logging.debug(f"Item {item_id} missing filled_by_title or filled_by_file. Skipping Plex scan trigger check.")
+                if not filled_by_title or not current_filename: 
+                    logging.debug(f"Item {item_id} missing filled_by_title or current_filename. Skipping Plex scan trigger check.")
                     continue
 
-                # Generate cache key and potential file paths (remains the same)
-                cache_key = f"{filled_by_title}:{filled_by_file}"
-                file_path = os.path.join(plex_file_location, filled_by_title, filled_by_file)
-                title_without_ext = os.path.splitext(filled_by_title)[0]
-                file_path_no_ext = os.path.join(plex_file_location, title_without_ext, filled_by_file)
-                file_path_direct = os.path.join(plex_file_location, filled_by_file) # Direct path
+                cache_key = f"{filled_by_title}:{current_filename}"
 
-                # Check if the file exists on disk (remains the same)
+                # --- START: UNIFIED FILE SEARCH LOGIC (consistent with disabled checks mode) ---
+                paths_to_check_info = [] # Stores dicts: {'name': folder_name, 'path': full_path, 'type': log_type}
+                base_path = plex_file_location
+
+                # 1. Original Scraped Torrent Title (raw)
+                if original_scraped_torrent_title:
+                    path = os.path.join(base_path, original_scraped_torrent_title, current_filename)
+                    paths_to_check_info.append({'name': original_scraped_torrent_title, 'path': path, 'type': 'original_scraped_raw'})
+
+                # 2. Original Scraped Torrent Title (trimmed)
+                if original_scraped_torrent_title:
+                    trimmed_title = os.path.splitext(original_scraped_torrent_title)[0]
+                    if trimmed_title != original_scraped_torrent_title:
+                        path = os.path.join(base_path, trimmed_title, current_filename)
+                        paths_to_check_info.append({'name': trimmed_title, 'path': path, 'type': 'original_scraped_trimmed'})
+                
+                # 3. Real Debrid Original Title (raw)
+                if real_debrid_original_title:
+                    path = os.path.join(base_path, real_debrid_original_title, current_filename)
+                    paths_to_check_info.append({'name': real_debrid_original_title, 'path': path, 'type': 'real_debrid_raw'})
+
+                # 4. Real Debrid Original Title (trimmed)
+                if real_debrid_original_title:
+                    trimmed_title = os.path.splitext(real_debrid_original_title)[0]
+                    if trimmed_title != real_debrid_original_title:
+                        path = os.path.join(base_path, trimmed_title, current_filename)
+                        paths_to_check_info.append({'name': trimmed_title, 'path': path, 'type': 'real_debrid_trimmed'})
+
+                # 5. Filled By Title (raw)
+                if filled_by_title:
+                    path = os.path.join(base_path, filled_by_title, current_filename)
+                    paths_to_check_info.append({'name': filled_by_title, 'path': path, 'type': 'filled_by_title_raw'})
+
+                # 6. Filled By Title (trimmed)
+                if filled_by_title:
+                    trimmed_title = os.path.splitext(filled_by_title)[0]
+                    if trimmed_title != filled_by_title:
+                        path = os.path.join(base_path, trimmed_title, current_filename)
+                        paths_to_check_info.append({'name': trimmed_title, 'path': path, 'type': 'filled_by_title_trimmed'})
+
+                # 7. Direct path under base
+                direct_path = os.path.join(base_path, current_filename)
+                paths_to_check_info.append({'name': None, 'path': direct_path, 'type': 'direct_under_base'})
+
                 file_found_on_disk = False
                 actual_file_path = None
+                folder_name_for_plex_scan = None 
                 found_path_type_log = "None"
-                folder_name_for_plex_scan = filled_by_title # Default folder name for scan
+                log_checked_paths = [] # For detailed logging if not found
 
-                log_checked_paths = []
-                for p_info in [
-                    {'path': file_path, 'type': 'direct', 'source_title': None},
-                    {'path': file_path_no_ext, 'type': 'no_ext', 'source_title': title_without_ext},
-                    {'path': file_path_direct, 'type': 'direct', 'source_title': None}
-                ]:
-                    log_checked_paths.append(p_info['path'])
-                    if os.path.exists(p_info['path']):
+                for idx, p_info in enumerate(paths_to_check_info):
+                    potential_path = p_info['path']
+                    log_checked_paths.append(potential_path) 
+                    logging.debug(f"Plex Check (checks enabled) Attempt {idx+1}: Checking path: {potential_path} (using folder '{p_info['name']}', type: {p_info['type']})")
+                    if os.path.exists(potential_path):
                         file_found_on_disk = True
-                        actual_file_path = p_info['path']
+                        actual_file_path = potential_path
+                        folder_name_for_plex_scan = p_info['name'] 
                         found_path_type_log = p_info['type']
-                        if p_info['source_title']: # If found in a subfolder based on a title
-                            folder_name_for_plex_scan = p_info['source_title']
-                        else: # If found directly (e.g. type 'direct')
-                            folder_name_for_plex_scan = None # Indicates direct file, scan path will be section location itself
-                        logging.info(f"Plex Check (checks enabled): Found file for item {item_id} at: {actual_file_path} (Type: {found_path_type_log}, Folder for scan: '{folder_name_for_plex_scan}')")
-                        break
+                        item_title_for_log = item_dict.get('title', 'N/A')
+                        logging.info(f"Plex Check (checks enabled): Found file for item {item_id} ('{item_title_for_log}') at: {actual_file_path} (Type: {found_path_type_log}, Folder for scan: '{folder_name_for_plex_scan}')")
+                        break 
+                # --- END: UNIFIED FILE SEARCH LOGIC ---
                 
-                # --- END: Expand path checking for "checks enabled" mode ---
-
                 should_trigger_scan = False
                 if file_found_on_disk:
-                    # File exists, update cache and handle tick count (remains the same)
+                    # File exists, update cache and handle tick count
                     logging.debug(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}")
                     self.file_location_cache[cache_key] = 'exists'
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
@@ -2711,21 +2762,21 @@ class ProgramRunner:
                     if current_tick <= 5:
                         should_trigger_scan = True
                         updated_items += 1 # Count item here when scan is intended
-                        logging.info(f"File '{filled_by_file}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
+                        logging.info(f"File '{current_filename}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
                     else:
-                        logging.debug(f"File '{filled_by_file}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
+                        logging.debug(f"File '{current_filename}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
                 else:
-                    # File not found (remains the same)
+                    # File not found
                     not_found_items += 1
-                    logging.debug(f"File not found on disk for item {item_id} in primary locations:\n  {file_path}\n  {file_path_no_ext}\n  {file_path_direct}")
+                    logging.debug(f"File not found on disk for item {item_id}. Checked paths:\n  " + "\n  ".join(log_checked_paths))
                     if cache_key in self.plex_scan_tick_counts:
-                        logging.debug(f"Resetting Plex scan tick count for missing file '{filled_by_file}'.")
+                        logging.debug(f"Resetting Plex scan tick count for missing file '{current_filename}'.")
                         del self.plex_scan_tick_counts[cache_key]
-                    # --- START EDIT: Need to continue loop if file not found ---
+                    # --- START EDIT: Need to continue loop if file not found --- # This comment is from a previous edit, still relevant
                     continue 
                     # --- END EDIT ---
 
-                # --- START: Logic to identify scan paths (original location) ---
+                # --- START: Logic to identify scan paths (original location) 
                 if should_trigger_scan:
                     if not sections:
                          logging.error("Plex sections not available, cannot identify scan paths.")
@@ -2866,46 +2917,58 @@ class ProgramRunner:
 
     def enable_task(self, task_name):
         """Enable a task by adding/resuming its job in the scheduler."""
+        current_thread_id_outer = threading.get_ident()
         normalized_name = self._normalize_task_name(task_name)
         job_id = normalized_name
+        logging.info(f"ENABLE_TASK: Attempting to enable task '{normalized_name}' (Job ID: {job_id}) (Thread: {current_thread_id_outer}).")
 
         if normalized_name not in self.task_intervals:
-             logging.error(f"Cannot enable task '{normalized_name}': No interval defined.")
-             return False # Return False for failure
+             logging.error(f"ENABLE_TASK: Cannot enable task '{normalized_name}': No interval defined. (Thread: {current_thread_id_outer})")
+             return False
 
+        current_thread_id_before_lock = threading.get_ident()
+        logging.info(f"ENABLE_TASK: Preparing to acquire scheduler_lock for '{normalized_name}'. (Thread: {current_thread_id_before_lock})")
         with self.scheduler_lock:
+            current_thread_id_after_lock = threading.get_ident()
+            logging.info(f"ENABLE_TASK: Acquired scheduler_lock for '{normalized_name}'. (Thread: {current_thread_id_after_lock})")
             job = self.scheduler.get_job(job_id)
             if job:
+                 logging.debug(f"ENABLE_TASK: Job '{job_id}' exists. (Thread: {current_thread_id_after_lock})")
                  if job.next_run_time is not None: # Job exists and is scheduled (not paused indefinitely)
-                     logging.info(f"Task '{normalized_name}' is already scheduled and enabled.")
+                     logging.info(f"ENABLE_TASK: Task '{normalized_name}' is already scheduled and enabled. (Thread: {current_thread_id_after_lock})")
                      # Ensure it's in our enabled_tasks set
                      if normalized_name not in self.enabled_tasks: self.enabled_tasks.add(normalized_name)
                      return True
                  else: # Job exists but is paused
+                     logging.info(f"ENABLE_TASK: Job '{job_id}' exists but is paused. Resuming. (Thread: {current_thread_id_after_lock})")
                      try:
                          self.scheduler.resume_job(job_id)
                          self.enabled_tasks.add(normalized_name) # Add to set
                          # Remove from manual pause set if it was there
                          if job_id in self.paused_jobs_by_queue: self.paused_jobs_by_queue.remove(job_id)
-                         logging.info(f"Resumed existing paused job for task: {normalized_name}")
+                         logging.info(f"ENABLE_TASK: Resumed existing paused job for task: {normalized_name} (Thread: {current_thread_id_after_lock})")
                          return True
-                     except Exception as e:
-                         logging.error(f"Error resuming job '{job_id}': {e}")
+                     except Exception as e_resume:
+                         logging.error(f"ENABLE_TASK: Error resuming job '{job_id}': {e_resume} (Thread: {current_thread_id_after_lock})", exc_info=True)
                          return False
             else: # Job doesn't exist, need to add it
+                 logging.info(f"ENABLE_TASK: Job '{job_id}' does not exist. Scheduling new job. (Thread: {current_thread_id_after_lock})")
                  interval = self.task_intervals.get(normalized_name)
                  if interval:
+                     logging.debug(f"ENABLE_TASK: Interval for new job '{normalized_name}' is {interval}s. Calling _schedule_task. (Thread: {current_thread_id_after_lock})")
                      if self._schedule_task(normalized_name, interval): # Use the schedule method
                          self.enabled_tasks.add(normalized_name) # Add to set
-                         logging.info(f"Scheduled and enabled new task: {normalized_name}")
+                         logging.info(f"ENABLE_TASK: Scheduled and enabled new task: {normalized_name} (Thread: {current_thread_id_after_lock})")
                          return True
                      else:
-                         logging.error(f"Failed to schedule new job for task: {normalized_name}")
+                         logging.error(f"ENABLE_TASK: Failed to schedule new job for task: {normalized_name} (Thread: {current_thread_id_after_lock})")
                          return False
                  else:
-                     # This case should be caught by the initial check
-                     logging.error(f"Interval not found for task '{normalized_name}' during enable.")
+                     logging.error(f"ENABLE_TASK: Interval not found for task '{normalized_name}' during enable. (Thread: {current_thread_id_after_lock})")
                      return False
+        current_thread_id_finally = threading.get_ident()
+        logging.info(f"ENABLE_TASK: Finished attempt to enable task '{normalized_name}'. Lock released implicitly. (Thread: {current_thread_id_finally})")
+        return False # Should have returned earlier in most cases
 
     def disable_task(self, task_name):
         """Disable a task by pausing its job in the scheduler."""
@@ -3011,6 +3074,33 @@ class ProgramRunner:
         """Run library maintenance tasks."""
         from database.maintenance import run_library_maintenance
         run_library_maintenance()
+
+    def task_process_standalone_plex_removals(self):
+        """
+        Processes the Plex removal cache if the main library maintenance task is disabled.
+        This ensures that Plex removals are still handled.
+        """
+        # Check if the main library maintenance task is disabled
+        # The task name for library maintenance in enabled_tasks is 'task_run_library_maintenance'
+        if 'task_run_library_maintenance' not in self.enabled_tasks:
+            logging.info("Main library maintenance task is disabled. Running standalone Plex removal processing.")
+            try:
+                # Get the min_age_hours setting for cache processing
+                # Defaulting to 6 hours if not set, to match the default in process_removal_cache
+                min_age_hours_setting = get_setting('Debug', 'plex_removal_cache_min_age_hours', 6)
+                try:
+                    min_age_hours = int(min_age_hours_setting)
+                except ValueError:
+                    logging.warning(f"Invalid value for plex_removal_cache_min_age_hours: '{min_age_hours_setting}'. Defaulting to 6 hours.")
+                    min_age_hours = 6
+
+                process_removal_cache(min_age_hours=min_age_hours)
+                logging.info(f"Standalone Plex removal processing complete (min_age_hours: {min_age_hours}).")
+            except Exception as e:
+                logging.error(f"Error during standalone Plex removal processing: {e}", exc_info=True)
+        else:
+            logging.debug("Main library maintenance task is enabled. Skipping standalone Plex removal processing.")
+
 
     def task_update_statistics_summary(self):
         """Update the statistics summary table for faster statistics page loading"""

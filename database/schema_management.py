@@ -251,6 +251,13 @@ def migrate_schema():
             conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_ep_info ON media_items(tmdb_id, type, season_number, episode_number, version);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_ep_info.")
 
+        # New Suggested Index for get_distinct_library_shows
+        if 'idx_media_items_imdb_type_state_title' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_imdb_type_state_title...")
+            # This index helps with partitioning by imdb_id, filtering by type, and ordering by state and title.
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_imdb_type_state_title ON media_items(imdb_id, type, state, title COLLATE NOCASE);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_imdb_type_state_title.")
+
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
         if not cursor.fetchone():
@@ -631,21 +638,34 @@ def create_statistics_summary_table():
         ''')
         
         # Add optimized indexes for recently added items
+        # Dropping old indexes if they exist with the old structure, to ensure recreation with new structure.
+        # Note: This might be better handled in a dedicated migration script for existing complex deployments.
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_recent_movies')
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_media_items_recent_movies
-            ON media_items(collected_at DESC, type, state)
+            ON media_items(type, upgraded, state, collected_at DESC)
             WHERE collected_at IS NOT NULL
         ''')
         
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_recent_episodes')
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_media_items_recent_episodes
-            ON media_items(collected_at DESC, type, state)
+            ON media_items(type, upgraded, state, collected_at DESC)
+            WHERE collected_at IS NOT NULL
+        ''')
+
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_upgraded_collected_at')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_items_upgraded_collected_at
+            ON media_items(upgraded, collected_at DESC)
             WHERE collected_at IS NOT NULL
         ''')
         
         conn.commit()
     except Exception as e:
-        logging.error(f"Error creating statistics summary table: {str(e)}")
-        raise
+        logging.error(f"Error creating statistics summary table or its indexes: {str(e)}")
+        # Removed raise to allow application to potentially continue if this is a non-critical startup issue.
+        # Depending on application requirements, raising an error might be preferred.
     finally:
-        conn.close()
+        if conn:
+            conn.close()

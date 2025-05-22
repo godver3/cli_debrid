@@ -788,18 +788,27 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             console.log('Received data:', data);  // Log the entire response
     
-            if (!data || (!data.originalResults && !data.adjustedResults)) {
+            if (!data || ( (!data.originalResults && !data.adjustedResults) && (!data.originalFilteredOutResults && !data.adjustedFilteredOutResults) ) ) {
                 console.error('Invalid response structure:', data);
                 throw new Error('Invalid response structure');
             }
     
             const originalResults = data.originalResults || [];
             const adjustedResults = data.adjustedResults || [];
+            const originalFilteredOutResults = data.originalFilteredOutResults || [];
+            const adjustedFilteredOutResults = data.adjustedFilteredOutResults || [];
             
             console.log('Original results:', originalResults);
             console.log('Adjusted results:', adjustedResults);
+            console.log('Original filtered out results:', originalFilteredOutResults);
+            console.log('Adjusted filtered out results:', adjustedFilteredOutResults);
     
-            displayScrapeResults({originalResults, adjustedResults});
+            displayScrapeResults({
+                originalResults, 
+                adjustedResults, 
+                originalFilteredOutResults, 
+                adjustedFilteredOutResults
+            });
         })
         .catch(error => {
             console.error('Error:', error);
@@ -812,53 +821,140 @@ document.addEventListener('DOMContentLoaded', function() {
     }
    
     function displayScrapeResults(data) {
-        originalResults.innerHTML = '<h3>Original Results</h3>';
-        adjustedResults.innerHTML = '<h3>Adjusted Results</h3>';
+        const originalResultsDiv = document.getElementById('original-results');
+        const adjustedResultsDiv = document.getElementById('adjusted-results');
+
+        // Clear previous results and set main headings
+        if (originalResultsDiv) originalResultsDiv.innerHTML = '<h3>Original Results</h3>';
+        if (adjustedResultsDiv) adjustedResultsDiv.innerHTML = '<h3>Adjusted Results</h3>';
+
+        console.log("Original Results Div:", originalResultsDiv);
+        console.log("Adjusted Results Div:", adjustedResultsDiv);
         
-        if (data.originalResults && data.originalResults.length > 0) {
-            originalResults.appendChild(createResultsTable(data.originalResults));
-        } else {
-            originalResults.innerHTML += '<p>No original results found</p>';
+        // Combine passed and filtered out results for the "Original" column
+        // Add a marker to distinguish them
+        const passedOriginalResults = (data.originalResults || []).map(r => ({ ...r, __isActuallyFilteredOut: false }));
+        const filteredOriginalResults = (data.originalFilteredOutResults || []).map(r => ({ ...r, __isActuallyFilteredOut: true }));
+        const allOriginalDisplayItems = passedOriginalResults.concat(filteredOriginalResults);
+
+        if (originalResultsDiv) {
+            if (allOriginalDisplayItems.length > 0) {
+                originalResultsDiv.appendChild(createResultsTable(allOriginalDisplayItems, 'original'));
+            } else {
+                originalResultsDiv.innerHTML += '<p>No original results or filtered out items to display.</p>';
+            }
         }
     
-        if (data.adjustedResults && data.adjustedResults.length > 0) {
-            adjustedResults.appendChild(createResultsTable(data.adjustedResults));
-        } else {
-            adjustedResults.innerHTML += '<p>No adjusted results found</p>';
+        // Combine passed and filtered out results for the "Adjusted" column
+        // Add a marker to distinguish them
+        const passedAdjustedResults = (data.adjustedResults || []).map(r => ({ ...r, __isActuallyFilteredOut: false }));
+        const filteredAdjustedResults = (data.adjustedFilteredOutResults || []).map(r => ({ ...r, __isActuallyFilteredOut: true }));
+        const allAdjustedDisplayItems = passedAdjustedResults.concat(filteredAdjustedResults);
+
+        if (adjustedResultsDiv) {
+            if (allAdjustedDisplayItems.length > 0) {
+                adjustedResultsDiv.appendChild(createResultsTable(allAdjustedDisplayItems, 'adjusted'));
+            } else {
+                adjustedResultsDiv.innerHTML += '<p>No adjusted results or filtered out items to display.</p>';
+            }
         }
     
-        scrapeResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Ensure scrapeResults element exists before trying to scroll
+        const scrapeResultsElement = document.getElementById('scrape-results');
+        if (scrapeResultsElement) {
+            scrapeResultsElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     
-        // Add click event listeners to result items
-        document.querySelectorAll('.result-item').forEach(item => {
-            item.addEventListener('click', function() {
-                // Get all result items in the same table and find this item's index among them
-                const resultItems = this.parentNode.querySelectorAll('.result-item');
-                const resultIndex = Array.from(resultItems).indexOf(this);
-                const result = this.closest('table').parentNode.id === 'original-results' 
-                    ? data.originalResults[resultIndex] 
-                    : data.adjustedResults[resultIndex];
-                displayScoreBreakdown(result);
+        // Add click event listeners to result items (non-filtered out)
+        document.querySelectorAll('.result-item:not(.filtered-out-item)').forEach(item => {
+            const new_item = item.cloneNode(true); // Clone to remove old listeners
+            item.parentNode.replaceChild(new_item, item);
+
+            new_item.addEventListener('click', function() {
+                const tableElement = this.closest('table');
+                if (!tableElement) return;
+
+                const columnDiv = this.closest('.results-column');
+                if (!columnDiv) return;
+                
+                const tableId = columnDiv.id;
+                
+                // Find the original data object. This relies on the __isActuallyFilteredOut flag
+                // and the order of concatenation.
+                let resultData;
+                const displayedItems = (tableId === 'original-results') ? allOriginalDisplayItems : allAdjustedDisplayItems;
+                const originalPassedItems = (tableId === 'original-results') ? (data.originalResults || []) : (data.adjustedResults || []);
+                
+                const rowIndex = Array.from(this.parentNode.children).indexOf(this); // Index in the displayed table
+                const clickedItemData = displayedItems[rowIndex];
+
+                if (clickedItemData && !clickedItemData.__isActuallyFilteredOut) {
+                    // To find the correct item in the original non-filtered array,
+                    // we need to count how many non-filtered items appeared before this one.
+                    let originalIndex = -1;
+                    let nonFilteredCount = 0;
+                    for(let i=0; i <= rowIndex; i++) {
+                        if (displayedItems[i] && !displayedItems[i].__isActuallyFilteredOut) {
+                            if (i === rowIndex) {
+                                originalIndex = nonFilteredCount;
+                            }
+                            nonFilteredCount++;
+                        }
+                    }
+                    if (originalIndex !== -1 && originalIndex < originalPassedItems.length) {
+                         resultData = originalPassedItems[originalIndex];
+                    }
+                }
+                
+                if (resultData) {
+                    displayScoreBreakdown(resultData);
+                }
             });
         });
     }
     
-    function createResultsTable(results) {
+    function createResultsTable(results, type /* 'original' or 'adjusted' */) {
         const table = document.createElement('table');
         table.className = 'settings-table';
+        
+        // Header is always Title and Score
         table.innerHTML = `
-            <tr>
-                <th>Title</th>
-                <th>Score</th>
-            </tr>
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Source</th>
+                    <th>Score</th>
+                </tr>
+            </thead>
+            <tbody>
+            </tbody>
         `;
+
+        const tbody = table.querySelector('tbody');
         results.forEach((result, index) => {
-            const row = table.insertRow();
-            row.className = 'result-item';
-            row.innerHTML = `
-                <td>${result.title || 'N/A'}</td>
-                <td>${result.score_breakdown ? result.score_breakdown.total_score.toFixed(2) : 'N/A'}</td>
-            `;
+            // Use the marker to determine if the item was truly filtered out
+            const isFilteredOut = result.__isActuallyFilteredOut; 
+
+            const row = tbody.insertRow();
+            row.className = 'result-item' + (isFilteredOut ? ' filtered-out-item' : '');
+            // Update dataset for clarity, though not strictly used by click handler anymore
+            row.dataset.type = type + (isFilteredOut ? '-filtered-out-actual' : '-passed-actual');
+            row.dataset.index = index;
+
+            const titleCell = row.insertCell();
+            titleCell.textContent = result.title || result.original_title || 'N/A';
+
+            const sourceCell = row.insertCell();
+            sourceCell.textContent = result.source || 'N/A';
+
+            const scoreCell = row.insertCell();
+            if (isFilteredOut) {
+                scoreCell.textContent = 'N/A';
+            } else {
+                scoreCell.textContent = result.score_breakdown && result.score_breakdown.total_score !== undefined 
+                    ? result.score_breakdown.total_score.toFixed(2) 
+                    : (result.score !== undefined ? result.score.toFixed(2) : 'N/A');
+            }
         });
         return table;
     }

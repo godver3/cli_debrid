@@ -819,6 +819,125 @@ def check_item_exists_with_symlink_path_containing(path_segment: str) -> bool:
         if conn:
             conn.close()
 
+def get_distinct_library_shows(letter: Optional[str] = None) -> List[Dict[str, str]]:
+    """
+    Retrieves a list of distinct shows from the media_items table, optionally filtered by the starting letter of the title.
+    A show is identified by a unique IMDb ID. The representative title is chosen by prioritizing
+    'Collected' items first, then alphabetically.
+
+    Args:
+        letter: Optional. If provided, filters shows whose titles start with this letter.
+                If '#', filters for titles not starting with A-Z. Case-insensitive for letters.
+
+    Returns:
+        List of dictionaries, each with 'imdb_id' and 'title'.
+    """
+    conn = get_db_connection()
+    shows = []
+    params = []
+    try:
+        # CTE to select a single representative title for each imdb_id
+        # It prioritizes titles from 'Collected' episodes, then alphabetically.
+        base_query = """
+        WITH ShowRepresentativeTitles AS (
+            SELECT
+                imdb_id,
+                title,
+                ROW_NUMBER() OVER (PARTITION BY imdb_id ORDER BY CASE state WHEN 'Collected' THEN 0 ELSE 1 END, title COLLATE NOCASE ASC) as rn
+            FROM media_items
+            WHERE type = 'episode' AND imdb_id IS NOT NULL AND imdb_id != ''
+        ),
+        RankedShowTitles AS (
+            SELECT
+                imdb_id,
+                title
+            FROM ShowRepresentativeTitles
+            WHERE rn = 1
+        ),
+        ShowCollectionStatus AS (
+            SELECT
+                imdb_id,
+                MAX(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as has_collected_episode
+            FROM media_items
+            WHERE type = 'episode' AND imdb_id IS NOT NULL AND imdb_id != ''
+            GROUP BY imdb_id
+        )
+        SELECT
+            rst.imdb_id,
+            rst.title
+        FROM RankedShowTitles rst
+        LEFT JOIN ShowCollectionStatus scs ON rst.imdb_id = scs.imdb_id -- Use LEFT JOIN in case some shows have no status entries (though unlikely)
+        WHERE 1=1 
+        """
+        
+        filter_conditions = []
+        # Apply letter filter to the selected representative title (rst.title)
+        if letter:
+            letter_upper = letter.upper()
+            if letter_upper == '#':
+                filter_conditions.append("NOT (SUBSTR(UPPER(rst.title), 1, 1) BETWEEN 'A' AND 'Z')")
+            elif 'A' <= letter_upper <= 'Z':
+                filter_conditions.append("UPPER(rst.title) LIKE ?")
+                params.append(letter_upper + '%')
+            else:
+                logging.warning(f"Invalid letter '{letter}' provided for filtering shows. Returning all shows or based on other criteria.")
+        
+        if filter_conditions:
+            base_query += " AND " + " AND ".join(filter_conditions)
+        
+        # Order by collection status (shows with collected episodes first), then by title
+        base_query += " ORDER BY COALESCE(scs.has_collected_episode, 0) DESC, rst.title COLLATE NOCASE ASC;"
+
+        cursor = conn.execute(base_query, params)
+        for row in cursor:
+            if row['imdb_id'] and row['title']:
+                shows.append({'imdb_id': row['imdb_id'], 'title': row['title']})
+        
+        logging.debug(f"Found {len(shows)} distinct shows in the library (filter: '{letter}', new query).")
+        return shows
+    except Exception as e:
+        logging.error(f"Error retrieving distinct library shows (filter: '{letter}', new query): {str(e)}")
+        return [] 
+    finally:
+        if conn:
+            conn.close()
+
+def get_collected_episodes_count(imdb_id: str, version_name: str) -> int:
+    """
+    Counts the number of distinct collected episodes for a given show (IMDb ID) and version.
+    Args:
+        imdb_id: The IMDb ID of the show.
+        version_name: The specific version (e.g., '1080p', '2160p').
+    Returns:
+        The count of collected episodes.
+    """
+    conn = get_db_connection()
+    try:
+        # Count distinct episodes based on season and episode number for a given imdb_id and version
+        # Remove asterisks from the 'version' column before comparison.
+        query = """
+            SELECT COUNT(DISTINCT season_number || '-' || episode_number) as count
+            FROM media_items
+            WHERE imdb_id = ? 
+              AND LOWER(REPLACE(version, '*', '')) = LOWER(?) 
+              AND type = 'episode' 
+              AND state = 'Collected'
+              AND season_number IS NOT NULL
+              AND episode_number IS NOT NULL;
+        """
+        params = (imdb_id, version_name)
+        cursor = conn.execute(query, params)
+        result = cursor.fetchone()
+        count = result['count'] if result and result['count'] is not None else 0
+        logging.debug(f"DB Collected Count for IMDb: {imdb_id}, Version: {version_name} (after asterisk trim) -> {count}")
+        return count
+    except Exception as e:
+        logging.error(f"Error counting collected episodes for IMDb ID {imdb_id} (version: {version_name}): {str(e)}")
+        return 0
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -845,5 +964,7 @@ __all__ = [
     'get_item_count_by_state',
     'check_item_exists_by_directory_name',
     'check_item_exists_by_symlink_path',
-    'check_item_exists_with_symlink_path_containing'
+    'check_item_exists_with_symlink_path_containing',
+    'get_distinct_library_shows',
+    'get_collected_episodes_count'
 ]

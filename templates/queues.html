@@ -307,6 +307,32 @@
     let hasReceivedFirstResponse = false;
     let eventSource = null;
     
+    function formatDateTimeToYMD_HMS(dateString, isInputUtcString = false) {
+        if (!dateString) return 'N/A';
+        try {
+            // For 'YYYY-MM-DD HH:MM:SS' UTC strings, new Date() needs 'T' separator and 'Z' to correctly parse as UTC
+            // For other date strings (e.g., full ISO8601 from item.time_added), they are parsed as is.
+            const dateInput = isInputUtcString ? dateString.replace(' ', 'T') + "Z" : dateString;
+            const date = new Date(dateInput);
+
+            // Check if date is valid
+            if (isNaN(date.getTime())) {
+                throw new Error("Invalid date resulted from parsing.");
+            }
+
+            const year = date.getFullYear();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const day = date.getDate().toString().padStart(2, '0');
+            const hours = date.getHours().toString().padStart(2, '0');
+            const minutes = date.getMinutes().toString().padStart(2, '0');
+            const seconds = date.getSeconds().toString().padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        } catch (e) {
+            console.warn(`Could not parse date string '${dateString}' (isInputUtcString: ${isInputUtcString}):`, e.message);
+            return dateString; // Return original string if parsing fails
+        }
+    }
+
     function toggleQueue(element) {
         const queueItems = element.nextElementSibling;
         const isExpanded = queueItems.style.display !== 'none';
@@ -387,33 +413,7 @@
 
     function generateQueueContent(queueName, items) {
         if (queueName === 'Blacklisted' || queueName === 'Unreleased') {
-            return items.map(item => {
-                let releaseInfo = item.release_date;
-                if (releaseInfo === null || releaseInfo === 'null' || releaseInfo === '') {
-                    releaseInfo = 'Unknown';
-                }
-                
-                // Check if version requires physical release
-                const scraping_versions = item.scraping_versions || {};
-                const version_settings = scraping_versions[item.version] || {};
-                const require_physical = version_settings.require_physical_release || false;
-                
-                if (require_physical) {
-                    let physicalDate = item.physical_release_date;
-                    if (physicalDate === null || physicalDate === 'null' || physicalDate === '') {
-                        physicalDate = 'Unknown';
-                    }
-                    releaseInfo += ` <span class="physical-release">(Physical: ${physicalDate})</span>`;
-                }
-                
-                return `
-                    <div class="item">
-                        ${item.title} (${item.year}) - Version(s): ${item.versions.join(', ')}
-                        ${item.seasons.length > 0 ? ` - Season(s): ${item.seasons.join(', ')}` : ''}
-                        ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
-                    </div>
-                `;
-            }).join('');
+            return generateConsolidatedItems(items, queueName);
         } else {
             return generateRegularItems(queueName, items);
         }
@@ -523,7 +523,7 @@
             if (queueName === 'Upgrading') {
                 let formattedTime = 'N/A';
                 if (item.time_added) {
-                    formattedTime = new Date(item.time_added).toLocaleString();
+                    formattedTime = formatDateTimeToYMD_HMS(item.time_added);
                 }
                 itemContent += ` - Time Added: ${formattedTime}`;
             }
@@ -531,7 +531,7 @@
             if (queueName === 'Pending Uncached') {
                 let formattedTime = 'N/A';
                 if (item.time_added) {
-                    formattedTime = new Date(item.time_added).toLocaleString();
+                    formattedTime = formatDateTimeToYMD_HMS(item.time_added);
                 }
                 itemContent += ` - Time Added: ${formattedTime} - Magnet Link: ${item.filled_by_magnet || 'Unknown'}`;
             }
@@ -549,14 +549,9 @@
                 let enteredTime = 'Unknown';
                 // Use the pre-processed display time from the backend
                 if (item.final_check_display_time) {
-                    try {
-                        // Backend now sends a pre-formatted string 'YYYY-MM-DD HH:MM:SS'
-                        // Convert it to local time string for display
-                        enteredTime = new Date(item.final_check_display_time).toLocaleString(); // Assume UTC from DB
-                    } catch (e) {
-                        console.warn("Could not parse final_check_display_time:", item.final_check_display_time, e);
-                        enteredTime = item.final_check_display_time; // Display raw string if parsing fails
-                    }
+                    // Backend sends 'YYYY-MM-DD HH:MM:SS' (assumed UTC)
+                    // formatDateTimeToYMD_HMS will parse it as UTC and format to local YYYY-MM-DD HH:MM:SS
+                    enteredTime = formatDateTimeToYMD_HMS(item.final_check_display_time, true);
                 }
                 itemContent += ` - Time Added: ${enteredTime}`;
             }
@@ -707,39 +702,45 @@
                         document.getElementById('progress-container').style.display = 'none';
                         queueContents.style.display = 'flex';
                         
-                        // Full update of all queues
                         let hasContent = false;
+                        // Backend names; Order defines display sequence
                         let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Sleeping', 'Unreleased', 'Blacklisted'];
+                        // Mapping for display and tooltip IDs
+                        const queueDisplayMapping = {
+                            "Final_Check": "Final Scrape"
+                            // Add other mappings here if needed in the future
+                        };
                         
                         queueContents.innerHTML = ''; // Clear previous content
                         
-                        queueOrder.forEach(queueName => {
+                        queueOrder.forEach(backendQueueName => {
                             // Check if the queue exists in the data.contents object AND has items
-                            if (data.contents && data.contents[queueName] && data.contents[queueName].length > 0) {
+                            if (data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0) {
                                 hasContent = true;
                                 let queueDiv = document.createElement('div');
                                 queueDiv.className = 'queue';
-                                // Generate ID that matches tooltip_schema.json keys (e.g., "queue-box-wanted")
-                                const queueDivId = `queue-box-${queueName.toLowerCase().replace(/ /g, '_')}`;
-                                queueDiv.setAttribute('data-queue-name', queueName);
-                                queueDiv.id = queueDivId; // Set the ID for potential CSS/JS targeting
+
+                                const displayQueueName = queueDisplayMapping[backendQueueName] || backendQueueName;
+                                // Generate ID that matches tooltip_schema.json keys (e.g., "queue-box-final_scrape")
+                                const queueDivId = `queue-box-${displayQueueName.toLowerCase().replace(/ /g, '_')}`;
                                 
-                                // Add data-tooltip attribute for the tooltip system
+                                queueDiv.setAttribute('data-queue-name', backendQueueName); // Store backend name for localStorage and toggle logic
+                                queueDiv.id = queueDivId; // Set the ID for potential CSS/JS targeting and tooltips
+                                
                                 queueDiv.setAttribute('data-tooltip', `queues.${queueDivId}`);
                                 
-                                let isExpanded = localStorage.getItem('queue_' + queueName) === 'expanded';
+                                let isExpanded = localStorage.getItem('queue_' + backendQueueName) === 'expanded'; // Use backend name for storage key
                                 
-                                const totalItems = data.queue_counts[queueName];
-                                const hiddenItems = data.hidden_counts[queueName] || 0;
+                                const totalItems = data.queue_counts[backendQueueName]; // Use backend name for data fetching
                                 
                                 queueDiv.innerHTML = `
                                     <div class="queue-title" onclick="toggleQueue(this)">
-                                        <span>${queueName.replace(/_/g, ' ')}</span>
-                                        ${queueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                                        <span>${displayQueueName.replace(/_/g, ' ')}</span>
+                                        ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
                                         <span class="queue-count">${totalItems} items</span>
                                     </div>
                                     <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
-                                        ${generateQueueContent(queueName, data.contents[queueName])}
+                                        ${generateQueueContent(backendQueueName, data.contents[backendQueueName])}
                                     </div>
                                 `;
                                 queueContents.appendChild(queueDiv);
