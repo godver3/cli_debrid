@@ -82,7 +82,6 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError # Keep this if needed elsew
 from database.core import get_db_connection # Add DB connection import
 from database.database_reading import get_media_item_by_id
 from utilities.local_library_scan import check_local_file_for_item # Add local scan import
-from utilities.rclone_processing import handle_rclone_file # Add this import
 from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
 import json # Added for loading intervals
 # --- START EDIT: Add Debrid imports for library size task ---
@@ -124,9 +123,6 @@ class ProgramRunner:
         self.connectivity_failure_time = None
         self.connectivity_retry_count = 0 # This will now primarily be for logging/timing, actual count in pause_info
         self.queue_paused = False
-        
-        # Add a queue for pending rclone paths (using deque for efficiency)
-        self.pending_rclone_paths = deque() 
         
         # Configure scheduler timezone using the local timezone helper
         from metadata.metadata import _get_local_timezone
@@ -234,7 +230,6 @@ class ProgramRunner:
             'final_check_queue': 900, # Use lowercase key matching the task ID
             # Combined/High Frequency Tasks
             'task_update_queue_views': 30,     # Update queue views every 30 seconds
-            'task_process_pending_rclone_paths': 10, # Check pending rclone paths every 10 seconds
             'task_send_notifications': 15,       # Run every 15 seconds
             'task_check_plex_files': 60,         # Run every 60 seconds (if enabled)
             # Periodic Maintenance/Update Tasks
@@ -397,7 +392,7 @@ class ProgramRunner:
             'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
-            'task_precompute_airing_shows', 'task_process_pending_rclone_paths',
+            'task_precompute_airing_shows',
             'task_update_tv_show_status',
             # --- START EDIT: Add new task to dynamic intervals ---
             'task_refresh_library_size_cache',
@@ -435,7 +430,6 @@ class ProgramRunner:
             'final_check_queue', # Use lowercase key matching the task ID
             # Combined/High Frequency Tasks
             'task_update_queue_views',
-            #'task_process_pending_rclone_paths',
             'task_send_notifications',
             # Essential Periodic Tasks
             'task_check_service_connectivity',
@@ -1699,7 +1693,7 @@ class ProgramRunner:
             'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
-            'task_precompute_airing_shows', 'task_process_pending_rclone_paths',
+            'task_precompute_airing_shows',
             'task_update_tv_show_status'
         }
         for task, interval in self.original_task_intervals.items():
@@ -3391,136 +3385,6 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error precomputing airing shows: {e}")
 
-    # Method to add path received from webhook
-    def add_pending_rclone_path(self, path: str):
-        """Adds a path received from the rclone webhook to the pending queue."""
-        if path not in self.pending_rclone_paths:
-            self.pending_rclone_paths.append(path)
-            logging.info(f"Added '{path}' to pending rclone queue. Size: {len(self.pending_rclone_paths)}")
-        else:
-            logging.debug(f"Path '{path}' is already in the pending rclone queue.")
-
-    # New task to process paths from the pending queue
-    def task_process_pending_rclone_paths(self):
-        """
-        Processes relative file paths (e.g., 'Folder/file.mkv') added by the
-        rclone webhook. Checks for the file's existence and calls
-        handle_rclone_file to process it. Includes retry logic.
-        """
-        if not self.pending_rclone_paths:
-            return
-
-        relative_file_path = None # Initialize to handle potential errors before assignment
-        processing_result = {'success': False} # Default to failure
-
-        try:
-            # Peek at the path (e.g., 'Movie Title (Year)/Movie.Title.Year.mkv')
-            # This path includes folder and filename as queued by the webhook
-            relative_file_path = self.pending_rclone_paths[0]
-            logging.info(f"Processing pending rclone path: '{relative_file_path}'. Remaining: {len(self.pending_rclone_paths)}")
-        except IndexError:
-            logging.debug("Pending rclone path queue was empty when trying to peek.")
-            return # Should not happen if initial check passed, but safety first
-
-        original_files_path = None
-        target_full_path = None
-
-        try:
-            # Determine base path based on mode (handle_rclone_file uses its own settings)
-            file_management_mode = get_setting('File Management', 'file_collection_management', 'Symlinked/Local')
-            if file_management_mode == 'Plex':
-                 # Use Plex mount path for existence check if mode is Plex
-                original_files_path = get_setting('Plex', 'mounted_file_location')
-            else: # Symlinked/Local or other modes potentially
-                original_files_path = get_setting('File Management', 'original_files_path')
-
-            if not original_files_path:
-                logging.error(f"Source files path setting is missing for mode '{file_management_mode}'. Cannot process rclone path '{relative_file_path}'. Discarding.")
-                # Discard the path if config is bad
-                try: self.pending_rclone_paths.popleft()
-                except IndexError: pass
-                return
-
-            # Construct the full path to the target file
-            target_full_path = os.path.join(original_files_path, relative_file_path)
-            logging.debug(f"Checking for file existence: {target_full_path}")
-
-            # --- Retry Logic for File Existence ---
-            found = False
-            # Adjusted delays for slightly longer wait if needed
-            delays = [1, 2, 3] # Seconds - Total ~6s wait after initial check
-            attempt = 1
-
-            if os.path.exists(target_full_path):
-                found = True
-                logging.info(f"File found on initial check (attempt 1): {target_full_path}")
-            else:
-                logging.info(f"File '{target_full_path}' not found on initial check, starting retries...")
-                for delay in delays:
-                    attempt += 1
-                    logging.info(f"Retrying attempt {attempt} for file '{target_full_path}' in {delay} seconds...")
-                    time.sleep(delay)
-                    if os.path.exists(target_full_path):
-                        found = True
-                        logging.info(f"File found on attempt {attempt}: {target_full_path}")
-                        break
-                    else:
-                        logging.info(f"File still not found after attempt {attempt}.")
-
-            if not found:
-                logging.error(f"File '{target_full_path}' not found or not accessible after {attempt} attempts for relative path '{relative_file_path}'. Path will be retried later.")
-                # --- START EDIT: Add logic to potentially discard after N attempts ---
-                # Track retry attempts per path (requires storing attempts with the path)
-                # For simplicity now, keep infinite retries. If this becomes problematic,
-                # a dictionary could store {'path': attempt_count} in the class.
-                # --- END EDIT ---
-                return # Keep in queue
-
-            # --- Call handle_rclone_file ---
-            logging.info(f"File '{target_full_path}' found. Calling handle_rclone_file with relative path: '{relative_file_path}'")
-            try:
-                # Call the handler function and store its result
-                processing_result = handle_rclone_file(relative_file_path)
-                log_level = logging.INFO if processing_result.get('success') else logging.WARNING
-                logging.log(log_level, f"Result of handle_rclone_file for '{relative_file_path}': {processing_result}")
-                # The 'success' key in processing_result now determines if the path should be removed
-
-            except Exception as handle_err:
-                logging.error(f"Error calling handle_rclone_file for path '{relative_file_path}': {handle_err}", exc_info=True)
-                processing_result['success'] = False # Ensure success is false on exception
-                processing_result['message'] = f"Error in handle_rclone_file: {handle_err}"
-                # Keep path in queue if the handler itself fails
-
-        except Exception as e:
-            logging.error(f"Unexpected error processing pending rclone path '{relative_file_path}': {str(e)}", exc_info=True)
-            processing_result['success'] = False # Ensure success is false on general error
-            processing_result['message'] = f"Unexpected error: {e}"
-            # Keep path in queue on general error
-
-        finally:
-            # --- Remove from queue ONLY if handle_rclone_file indicated success ---
-            if processing_result.get('success'): # Check the success flag from the result dict
-                try:
-                    removed_path = self.pending_rclone_paths.popleft()
-                    # Verify the removed path is the one we intended to process
-                    if removed_path != relative_file_path:
-                        logging.warning(f"Removed path '{removed_path}' from queue, but expected '{relative_file_path}'. Queue state might be inconsistent.")
-                        # Potential issue: If another thread modified the queue between peek and pop.
-                        # Consider using locks if multi-threading is a concern here.
-                    else:
-                        logging.info(f"Successfully processed path '{relative_file_path}' (Result: {processing_result.get('message', 'OK')}) and removed it from queue.")
-                except IndexError:
-                    logging.error(f"Tried to remove path '{relative_file_path}' from queue after successful processing, but queue was empty.")
-            else:
-                 # Log why it's being kept (using message from processing_result)
-                logging.info(f"Processing failed or incomplete for '{relative_file_path}' (Reason: {processing_result.get('message', 'Unknown')}). Leaving it in queue for retry.")
-
-
-    # --- REMOVE apply_dynamic_interval_adjustment method ---
-    # def apply_dynamic_interval_adjustment(self, task_name: str, duration: float):
-    # ... remove this method ...
-
-
     # --- START: New Task Implementation ---
     def task_update_tv_show_status(self):
         """
@@ -4427,38 +4291,96 @@ def run_recent_local_library_scan():
 
 # *** START EDIT: Add Listener Setup Method ***
 def _setup_scheduler_listeners(runner_instance):
-    """Adds necessary event listeners to the scheduler."""
-    # --- START EDIT: Add logging to confirm setup ---
-    logging.info("Attempting to setup APScheduler listeners...")
-    # --- END EDIT ---
-    if runner_instance and runner_instance.scheduler:
+    """
+    Ensures the scheduler is initialized and adds necessary event listeners.
+    If runner_instance.scheduler is None, a new scheduler will be created.
+    """
+    logging.info(f"[_setup_scheduler_listeners] Entered for runner (ID: {id(runner_instance)}).")
+    current_scheduler_id = id(runner_instance.scheduler) if runner_instance.scheduler else "None"
+    logging.info(f"[_setup_scheduler_listeners] Initial runner_instance.scheduler is {current_scheduler_id}. initial_listeners_setup_complete: {getattr(runner_instance, 'initial_listeners_setup_complete', 'N/A')}")
+
+    scheduler_recreated = False
+    if runner_instance.scheduler is None:
+        logging.info(f"[_setup_scheduler_listeners] runner_instance.scheduler is None. Creating new BackgroundScheduler.")
+        
         try:
-            logging.info("Setting up APScheduler job execution listener...")
-            # --- START EDIT: Add EVENT_JOB_SUBMITTED and EVENT_JOB_MISSED ---
-            runner_instance.scheduler.add_listener(
-                runner_instance._job_listener, # Ensure this uses the correct method name
-                apscheduler.events.EVENT_JOB_SUBMITTED | # Listen for job submission (start)
-                apscheduler.events.EVENT_JOB_EXECUTED | # Listen for successful execution (end)
-                apscheduler.events.EVENT_JOB_ERROR |    # Listen for errors (end)
-                apscheduler.events.EVENT_JOB_MISSED     # Listen for missed jobs (end)
+            from metadata.metadata import _get_local_timezone # Local import for safety
+            tz_setting = get_setting('UI Settings', 'timezone', 'UTC')
+            try:
+                tz = pytz.timezone(tz_setting)
+            except pytz.exceptions.UnknownTimeZoneError:
+                logging.warning(f"[_setup_scheduler_listeners] Unknown timezone '{tz_setting}' in settings. Defaulting to UTC.")
+                tz = pytz.utc
+            logging.info(f"[_setup_scheduler_listeners] Initializing new APScheduler with timezone: {tz.key if hasattr(tz, 'key') else tz}")
+        except Exception as e_tz:
+            logging.error(f"[_setup_scheduler_listeners] Failed to get local timezone for scheduler, using UTC fallback: {e_tz}")
+            tz = pytz.utc
+
+        executors = {'default': ThreadPoolExecutor(max_workers=1)}
+        job_defaults = {'coalesce': True, 'max_instances': 1}
+        
+        try:
+            new_scheduler = BackgroundScheduler(
+                executors=executors,
+                job_defaults=job_defaults,
+                timezone=tz
             )
-            # --- END EDIT ---
-            # --- START EDIT: Change log level to INFO ---
-            logging.info("APScheduler job listener added successfully for submit, execution, error, and missed events.")
-            # --- END EDIT ---
-        except Exception as e:
-            # --- START EDIT: Log error during setup ---
-            logging.error(f"Failed to add APScheduler listener: {e}", exc_info=True)
-            # --- END EDIT ---
-    else:
-        # --- START EDIT: Change log level to INFO and add more detail ---
-        logging.error("Cannot setup scheduler listeners: ProgramRunner instance or scheduler not found.")
-        if not runner_instance: logging.error("Reason: ProgramRunner instance is None.")
-        elif not runner_instance.scheduler: logging.error("Reason: ProgramRunner scheduler attribute is None or invalid.")
-        # --- END EDIT ---
-    # --- START EDIT: Add confirmation log ---
-    logging.info("Finished attempting APScheduler listener setup.")
-    # --- END EDIT ---
+            runner_instance.scheduler = new_scheduler
+            scheduler_recreated = True
+            # Mark listeners as NOT setup for this new scheduler instance
+            runner_instance.initial_listeners_setup_complete = False 
+            logging.info(f"[_setup_scheduler_listeners] New BackgroundScheduler CREATED and ASSIGNED. New scheduler ID: {id(runner_instance.scheduler)}.")
+        except Exception as e_create_scheduler:
+            logging.error(f"[_setup_scheduler_listeners] FAILED to create new BackgroundScheduler: {e_create_scheduler}", exc_info=True)
+            runner_instance.scheduler = None # Ensure it's None if creation failed
+            runner_instance.initial_listeners_setup_complete = False
+            raise # Re-raise the exception to signal failure to the caller
+    
+    # Add listeners if scheduler exists and listeners are not yet marked complete for this instance
+    # The initial_listeners_setup_complete flag is now specific to a scheduler instance.
+    if runner_instance.scheduler and not getattr(runner_instance, 'initial_listeners_setup_complete', False):
+        try:
+            logging.info(f"[_setup_scheduler_listeners] Setting up APScheduler job listeners for scheduler (ID: {id(runner_instance.scheduler)}).")
+            runner_instance.scheduler.add_listener(
+                runner_instance._job_listener,
+                apscheduler.events.EVENT_JOB_SUBMITTED |
+                apscheduler.events.EVENT_JOB_EXECUTED |
+                apscheduler.events.EVENT_JOB_ERROR |
+                apscheduler.events.EVENT_JOB_MISSED
+            )
+            runner_instance.initial_listeners_setup_complete = True # Mark listeners as setup
+            logging.info(f"[_setup_scheduler_listeners] APScheduler job listeners added successfully for scheduler (ID: {id(runner_instance.scheduler)}).")
+        except Exception as e_add_listener:
+            logging.error(f"[_setup_scheduler_listeners] Failed to add APScheduler listener: {e_add_listener}", exc_info=True)
+            runner_instance.initial_listeners_setup_complete = False # Failed to setup
+            # If listener setup fails, the scheduler might still run but without our custom listener logic.
+            # Depending on how critical _job_listener is, might need to raise here.
+    elif runner_instance.scheduler:
+         logging.info(f"[_setup_scheduler_listeners] Listeners already marked as setup for scheduler (ID: {id(runner_instance.scheduler)}).")
+    else: # Should not happen if creation logic is correct
+        logging.error(f"[_setup_scheduler_listeners] Cannot setup listeners as runner_instance.scheduler is still None after creation attempt.")
+
+
+    # If scheduler was recreated, or if initial tasks need to be (re)scheduled for any other reason
+    # For instance, if task definitions changed and we need a full reschedule.
+    # For now, only do this if scheduler was just recreated.
+    if scheduler_recreated and runner_instance.scheduler:
+        try:
+            logging.info(f"[_setup_scheduler_listeners] Scheduler was recreated. Re-scheduling initial tasks for scheduler (ID: {id(runner_instance.scheduler)}).")
+            runner_instance._schedule_initial_tasks() # Populate the new scheduler with tasks
+            logging.info(f"[_setup_scheduler_listeners] Initial tasks (re)scheduled successfully for new scheduler (ID: {id(runner_instance.scheduler)}).")
+        except Exception as e_schedule_tasks:
+            logging.error(f"[_setup_scheduler_listeners] Error (re)scheduling initial tasks for new scheduler: {e_schedule_tasks}", exc_info=True)
+            # This is critical. If tasks can't be added, the new scheduler is useless.
+            # Consider shutting down the new scheduler and setting runner_instance.scheduler back to None.
+            try:
+                runner_instance.scheduler.shutdown(wait=False)
+            except: pass
+            runner_instance.scheduler = None
+            runner_instance.initial_listeners_setup_complete = False
+            raise RuntimeError(f"Failed to schedule tasks on newly created scheduler: {e_schedule_tasks}")
+
+    logging.info(f"[_setup_scheduler_listeners] Completed. Final runner_instance.scheduler ID: {id(runner_instance.scheduler) if runner_instance.scheduler else 'None'}. initial_listeners_setup_complete: {getattr(runner_instance, 'initial_listeners_setup_complete', 'N/A')}")
 # *** END EDIT ***
 
 def run_program():

@@ -39,7 +39,7 @@ _phalanx_cache_manager = PhalanxDBClassManager() if get_setting('UI Settings', '
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
     from metadata.metadata import get_imdb_id_if_missing
-    max_retries = 0
+    max_retries = 1
     base_delay = 0.1  # Base delay in seconds
     
     for attempt in range(max_retries):

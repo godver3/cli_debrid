@@ -918,10 +918,15 @@ def migrate_task_toggles():
 
 def main():
     # Remove global program_runner from here as well
-    global metadata_process # Keep this if metadata_process is modified within main()
-    metadata_process = None # Example assignment if needed
+    global metadata_process 
+    metadata_process = None 
 
     logging.info("Starting the program...")
+
+    # --- START EDIT: Import flask_app and _execute_start_program here ---
+    from routes.extensions import app as flask_app 
+    from routes.program_operation_routes import _execute_start_program
+    # --- END EDIT ---
 
     setup_directories()
     backup_config()
@@ -1459,19 +1464,39 @@ def main():
     print("Running in console mode.")
 
     if get_setting('Debug', 'auto_run_program'):
-        # Add delay to ensure server is ready
-        time.sleep(2)  # Wait for server to initialize
-        # Call the start_program route
+        # Add delay to ensure server is ready for app_context usage
+        time.sleep(3)  # Increased delay slightly to ensure Flask app is fully up for app_context
+        
+        # --- START EDIT: Directly call _execute_start_program ---
+        # The readiness check via HTTP is less critical if we call the Python function directly,
+        # but ensuring flask_app.program_runner is ready is vital.
+        # The __main__ block should have set up flask_app.program_runner and its listeners.
+
+        logging.info("Auto-start: Attempting to start program by directly calling _execute_start_program...")
         try:
-            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-            response = requests.post(f'http://localhost:{port}/program_operation/api/start_program')
-            if response.status_code == 200:
-                print("Program started successfully")
-            else:
-                print(f"Failed to start program. Status code: {response.status_code}")
-                print(f"Response: {response.text}")
-        except requests.RequestException as e:
-            print(f"Error calling start_program route: {e}")
+            # Run the internal start function within the Flask app context
+            with flask_app.app_context():
+                # Ensure current_app.program_runner (via flask_app.program_runner) is available
+                if not getattr(flask_app, 'program_runner', None):
+                    logging.error("CRITICAL [main.py auto-start]: flask_app.program_runner not set before calling _execute_start_program. Aborting.")
+                    print("Failed to auto-start program: Internal setup error (runner not found on app).")
+                elif not getattr(flask_app.program_runner, 'initial_listeners_setup_complete', False):
+                    logging.error("CRITICAL [main.py auto-start]: flask_app.program_runner listeners not confirmed setup. Aborting direct start.")
+                    print("Failed to auto-start program: Internal setup error (runner listeners not ready).")
+                else:
+                    start_result = _execute_start_program() # Direct call
+
+                    if start_result.get("status") == "success":
+                        print("Program started successfully via auto-start (direct call).")
+                        logging.info("Program started successfully via auto-start (direct call).")
+                    else:
+                        message = start_result.get("message", "Unknown error from _execute_start_program.")
+                        print(f"Failed to auto-start program (direct call): {message}")
+                        logging.error(f"Failed to auto-start program (direct call): {message}. Details: {start_result.get('failed_services_details')}")
+        except Exception as e_direct_call:
+            print(f"Critical error during direct call to _execute_start_program for auto-start: {e_direct_call}")
+            logging.error(f"Critical error during direct call to _execute_start_program for auto-start: {e_direct_call}", exc_info=True)
+        # --- END EDIT ---
 
     # Set up signal handling
     signal.signal(signal.SIGINT, signal_handler)
@@ -1586,7 +1611,6 @@ def print_version():
 
 if __name__ == "__main__":
     try:
-        # Choose whether to run the normal app or package it
         if len(sys.argv) > 1 and sys.argv[1] == "--package":
             package_main()
         else:
@@ -1596,38 +1620,40 @@ if __name__ == "__main__":
             from routes.api_tracker import setup_api_logging
             setup_api_logging()
             from routes.web_server import start_server
-            from routes.extensions import app # Import the Flask app instance
-            from queues.run_program import ProgramRunner, _setup_scheduler_listeners # Ensure _setup_scheduler_listeners is imported
+            from routes.extensions import app as flask_app
+            from queues.run_program import ProgramRunner, _setup_scheduler_listeners
 
             print_version()
-            print("\ncli_debrid is initialized.")
 
-            # --- START EDIT: Assign to the module-level global variable ---
-            # No 'global' keyword declaration needed here because it's defined at the module level.
-            
             program_runner_instance = ProgramRunner()
-            app.program_runner = program_runner_instance # For Flask app access
-            global_program_runner_instance = program_runner_instance # Assign to the module-level variable for main() supervisor
+            program_runner_instance.initial_listeners_setup_complete = False 
+            flask_app.program_runner = program_runner_instance # flask_app is now defined
+            global_program_runner_instance = program_runner_instance
             
-            # Setup scheduler listeners for the instance
             try:
-                _setup_scheduler_listeners(global_program_runner_instance) # Pass the instance
+                _setup_scheduler_listeners(global_program_runner_instance)
+                global_program_runner_instance.initial_listeners_setup_complete = True
+                logging.info("Initial scheduler listeners set up successfully in __main__ for flask_app.program_runner.")
             except Exception as e_listeners:
-                logging.error(f"Failed to set up scheduler listeners on initial startup: {e_listeners}", exc_info=True)
-            # --- END EDIT ---
+                logging.error(f"Failed to set up initial scheduler listeners in __main__: {e_listeners}", exc_info=True)
             
+            print("\ncli_debrid Python environment initialized.")
+
             def run_flask():
                 if not start_server(): 
                     return False
                 return True
 
             if not run_flask():
-                stop_program()
+                logging.critical("Flask server failed to start. Exiting.")
                 sys.exit(1)
                 
             port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
             print(f"The web UI is available at http://localhost:{port}")
-            main() # Call the main function which now handles DB setup correctly
+            main() 
     except KeyboardInterrupt:
         stop_global_profiling()
-        print("Program stopped.")
+        print("Program stopped by KeyboardInterrupt in __main__.")
+    except Exception as e_main_startup:
+        logging.critical(f"Unhandled exception during __main__ startup: {e_main_startup}", exc_info=True)
+        print(f"Critical startup error: {e_main_startup}")

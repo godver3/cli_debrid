@@ -3430,6 +3430,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     elif raw_episode_release_date:
                          logging.warning(f"[RcloneScan {task_id}] Episode release date key ('release_date' or 'air_date') was not a string: {raw_episode_release_date} for {item_path.name}")
 
+            item_content_source = 'external_webhook' if trigger_plex_update_on_success else 'scanned_item' # Determine content_source
+
             item_for_db = {
                 'imdb_id': final_imdb_id, 
                 'tmdb_id': final_tmdb_id,
@@ -3448,6 +3450,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 'filled_by_file': item_path.name,
                 'metadata_updated': current_time, # Use datetime object
                 'genres': json.dumps(metadata.get('genres', [])) if metadata else json.dumps([]),
+                'content_source': item_content_source, # Use the determined content_source
             }
             item_for_db_filtered = {k: v for k, v in item_for_db.items() if v is not None}
 

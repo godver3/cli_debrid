@@ -447,93 +447,173 @@ def check_service_connectivity():
 
     return services_reachable, failed_services_details
 
-@program_operation_bp.route('/api/start_program', methods=['POST'])
-@admin_required
-def start_program():
-    global program_runner
-    config = load_config()
+# --- START EDIT: New internal function for program start logic ---
+def _execute_start_program():
+    """
+    Core logic to start the program.
+    This is intended to be called internally by main.py or by the Flask route.
+    It relies on current_app.program_runner being the target instance.
+    Returns:
+        dict: {'status': 'success'/'error', 'message': str, 'failed_services_details': list (optional)}
+    """
+    logging.info("--- Entered _execute_start_program logic ---")
+
+    # The ProgramRunner instance is expected to be on current_app, set by main.py's __main__
+    runner_instance = getattr(current_app, 'program_runner', None)
+
+    if not runner_instance:
+        logging.error("[_execute_start_program] CRITICAL: current_app.program_runner is NOT SET. Cannot start.")
+        return {"status": "error", "message": "Program runner not initialized in application context."}
+
+    logging.info(f"[_execute_start_program] Found runner_instance (ID: {id(runner_instance)}) on current_app. Is_running: {runner_instance.is_running()}, Listeners_Setup_Flag: {getattr(runner_instance, 'initial_listeners_setup_complete', 'N/A')}, Scheduler_Exists: {hasattr(runner_instance, 'scheduler')}, Scheduler_Is_None: {getattr(runner_instance, 'scheduler', 'AttrMissing') is None}")
+
+    # Service connectivity check
     check_result, failed_services_info = check_service_connectivity()
     if not check_result:
-        # Construct a more informative error message using the structured details
-        # For now, let's just join the 'message' fields for simplicity,
-        # but ProgramRunner will use the full structure.
         error_messages = [fs_info.get('message', fs_info.get('service', 'Unknown service error')) for fs_info in failed_services_info]
-        error_summary = "Cannot start program: Failed to connect to required services. Failures: " + "; ".join(error_messages) + ". Check logs for details."
-        logging.error(error_summary)
-        return jsonify({"status": "error", "message": error_summary, "failed_services_details": failed_services_info})
+        error_summary = "Cannot start program: Failed to connect to required services. Failures: " + "; ".join(error_messages)
+        logging.error(f"[_execute_start_program] Service connectivity check FAILED: {error_summary}")
+        return {"status": "error", "message": error_summary, "failed_services_details": failed_services_info}
+    logging.info("[_execute_start_program] Service connectivity check PASSED.")
 
-    # --- START EDIT: Check if already running ---
-    if program_runner is not None and program_runner.is_running():
-        logging.info("Start program request received, but program is already running.")
-        return jsonify({"status": "success", "message": "Program is already running"})
-    # --- END EDIT ---
+    if runner_instance.is_running():
+        logging.info(f"[_execute_start_program] Program (runner_instance ID: {id(runner_instance)}) is already running.")
+        return {"status": "success", "message": "Program is already running"}
 
-    if program_runner is not None:
-        # Runner exists but is not running (e.g., stopped previously or failed start)
-        logging.warning("Existing non-running program runner found during start request. Stopping and clearing it before creating a new one.")
-        program_runner.stop()
-        program_runner.invalidate_content_sources_cache()
-        program_runner = None
-        ProgramRunner._instance = None # Reset the class-level instance tracker
-        logging.info("Old ProgramRunner instance cleared and singleton reset before creating new one.")
-        time.sleep(1) # Add a small delay to ensure resources are released
-
-    # Add delay if auto-start is enabled (Keep this behavior if desired)
-    if get_setting('Debug', 'auto_run_program', default=False):
-        time.sleep(1)  # 1 second delay for auto-start
-
-    logging.info("Creating and starting new ProgramRunner instance...") # Added log
-    program_runner = ProgramRunner()
     try:
-        _setup_scheduler_listeners(program_runner)
+        needs_listener_setup = False
+        if not getattr(runner_instance, 'initial_listeners_setup_complete', False):
+            needs_listener_setup = True
+            logging.info(f"[_execute_start_program] Reason for listener setup: initial_listeners_setup_complete is False for runner (ID: {id(runner_instance)}).")
+        elif not hasattr(runner_instance, 'scheduler') or runner_instance.scheduler is None: # Explicitly set to None by stop_program
+            needs_listener_setup = True
+            logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler is missing or None for runner (ID: {id(runner_instance)}).")
+        # If scheduler exists but isn't running (shouldn't happen if set to None on stop, but good check)
+        elif hasattr(runner_instance, 'scheduler') and runner_instance.scheduler is not None and not runner_instance.scheduler.running:
+             needs_listener_setup = True
+             logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler exists but is not running for runner (ID: {id(runner_instance)}). Attempting to clear it.")
+             # Attempt to shut down and nullify this zombie scheduler
+             try:
+                 runner_instance.scheduler.shutdown(wait=False)
+             except Exception as e_shutdown_zombie:
+                 logging.warning(f"Error shutting down existing non-running scheduler: {e_shutdown_zombie}")
+             runner_instance.scheduler = None
+
+
+        if needs_listener_setup:
+            logging.info(f"[_execute_start_program] Attempting to set up/re-setup scheduler listeners for runner_instance (ID: {id(runner_instance)}).")
+            _setup_scheduler_listeners(runner_instance) # This function MUST handle runner.scheduler being None by creating a new one
+            runner_instance.initial_listeners_setup_complete = True
+            logging.info(f"[_execute_start_program] Scheduler listeners setup successful for runner_instance (ID: {id(runner_instance)}).")
+        else:
+            logging.info(f"[_execute_start_program] Scheduler listeners for runner_instance (ID: {id(runner_instance)}) appear to be correctly set up and scheduler is running.")
+    
     except Exception as e:
-        logging.error(f"Failed to set up scheduler listeners during API start: {e}", exc_info=True)
-        # Decide if we should abort startup? For now, log and continue.
+        logging.error(f"[_execute_start_program] CRITICAL: Failed to set up scheduler listeners for runner_instance (ID: {id(runner_instance)}): {e}", exc_info=True)
+        return {
+            "status": "error",
+            "message": "Failed to set up critical scheduler listeners. Program cannot start.",
+            "failed_services_details": [{"service": "SchedulerSetup", "type": "INITIALIZATION_ERROR", "message": f"Error setting up listeners: {str(e)}"}]
+        }
 
-    # Start the program runner in a separate thread to avoid blocking the Flask server
-    threading.Thread(target=program_runner.start).start()
+    if get_setting('Debug', 'auto_run_program', default=False) and not current_app.config.get('PROGRAM_AUTO_STARTED_THIS_SESSION', False):
+        logging.info("[_execute_start_program] auto_run_program setting is true for direct call, adding 1s delay.")
+        time.sleep(1)
+
+    logging.info(f"[_execute_start_program] Proceeding to start runner_instance (ID: {id(runner_instance)}).")
+    threading.Thread(target=runner_instance.start).start()
     current_app.config['PROGRAM_RUNNING'] = True
+    
+    global program_runner # module-level global in this file
+    program_runner = runner_instance
 
-    # Send program start notification
-    send_queue_start_notification("Queue processing started via web interface")
+    logging.info(f"[_execute_start_program] runner_instance (ID: {id(runner_instance)}) start initiated. Set app.config['PROGRAM_RUNNING']=True.")
+    send_queue_start_notification("Queue processing started") # Consider context: "via UI" or "automatically"
+    logging.info("[_execute_start_program] Sent queue start notification.")
+    logging.info("--- _execute_start_program completing successfully ---")
+    return {"status": "success", "message": "Program started successfully"}
+# --- END EDIT ---
 
-    return jsonify({"status": "success", "message": "Program started successfully"}) # Updated success message
+@program_operation_bp.route('/api/start_program', methods=['POST'])
+@admin_required # This decorator remains for HTTP API calls
+def start_program():
+    # --- START EDIT: Delegate to the new internal function ---
+    logging.info("--- /api/start_program HTTP endpoint called, delegating to _execute_start_program ---")
+    # _execute_start_program uses current_app.program_runner which is set up in main.py
+    # The Flask app context is active here.
+    result = _execute_start_program()
+    
+    # Determine HTTP status code based on result
+    # e.g., 500 for critical setup errors, 200 for logical errors like "already running" or success
+    http_status_code = 200
+    if result.get("status") == "error":
+        if "scheduler listeners" in result.get("message", "").lower() or "not initialized in application context" in result.get("message","").lower() :
+            http_status_code = 500 # Internal Server Error for critical issues
+
+    logging.info(f"--- /api/start_program HTTP endpoint returning jsonify(result) with status {http_status_code} ---")
+    return jsonify(result), http_status_code
+    # --- END EDIT ---
 
 def stop_program():
-    global program_runner, server_thread
-    # --- START EDIT: Log whether runner exists before stopping ---
-    if program_runner:
-        logging.info("Stop requested. ProgramRunner instance exists.")
+    logging.info("--- Entered internal stop_program function ---")
+    
+    app_runner_instance = getattr(current_app, 'program_runner', None)
+    global program_runner # module-level global in this file
+    
+    if app_runner_instance is not None:
+        logging.info(f"[stop_program] Found app_runner_instance (ID: {id(app_runner_instance)}). Is_running: {app_runner_instance.is_running()}")
+        if app_runner_instance.is_running():
+            logging.info(f"[stop_program] Stopping app_runner_instance (ID: {id(app_runner_instance)}).")
+            send_queue_stop_notification("Queue processing stopped.")
+            app_runner_instance.stop() # This should call scheduler.shutdown()
+            logging.info(f"[stop_program] app_runner_instance (ID: {id(app_runner_instance)}) stop() method called.")
+        
+        # Mark for re-initialization and clear scheduler
+        app_runner_instance.initial_listeners_setup_complete = False
+        logging.info(f"[stop_program] Set initial_listeners_setup_complete=False for app_runner_instance (ID: {id(app_runner_instance)}).")
+        
+        # Ensure the scheduler is None so a new one is created on restart
+        if hasattr(app_runner_instance, 'scheduler'):
+            # Ensure it's shut down if stop() didn't (though it should)
+            if app_runner_instance.scheduler is not None and app_runner_instance.scheduler.running:
+                logging.warning(f"[stop_program] app_runner_instance scheduler was still running after stop(). Shutting down now.")
+                app_runner_instance.scheduler.shutdown(wait=False)
+            app_runner_instance.scheduler = None 
+            logging.info(f"[stop_program] Set app_runner_instance.scheduler=None (ID: {id(app_runner_instance)}).")
     else:
-        logging.info("Stop requested. No active ProgramRunner instance found.")
-    # --- END EDIT ---
-    try:
-        if program_runner is not None and program_runner.is_running():
-            logging.info("Program is running, proceeding with stop...") # Added log
-            # Send stop notification before stopping
-            send_queue_stop_notification("Queue processing stopped via web interface")
+        logging.info("[stop_program] current_app.program_runner was None.")
 
-            program_runner.stop()
-            # Invalidate content sources cache before nulling the instance
-            program_runner.invalidate_content_sources_cache()
-            program_runner = None
-            ProgramRunner._instance = None # Reset the class-level instance tracker
-            logging.info("ProgramRunner stopped, instance cleared, and singleton reset.") # Updated log
+    # Nullify the module-level 'program_runner' in this file
+    if program_runner is not None:
+        if program_runner is app_runner_instance:
+            logging.info("[stop_program] Module-level program_runner was same as app_runner_instance.")
+        else: # Different instance, attempt to stop it too if it's a ProgramRunner
+            logging.info(f"[stop_program] Module-level program_runner (ID: {id(program_runner)}) is different. Stopping it if it's a ProgramRunner and running.")
+            if isinstance(program_runner, ProgramRunner) and program_runner.is_running():
+                 program_runner.stop()
+            if isinstance(program_runner, ProgramRunner): # Check type before setting attribute
+                 program_runner.initial_listeners_setup_complete = False
+                 if hasattr(program_runner, 'scheduler'):
+                      program_runner.scheduler = None
 
-        current_app.config['PROGRAM_RUNNING'] = False
-        return {"status": "success", "message": "Program stopped"}
-    except Exception as e:
-        logging.error(f"Error stopping program: {str(e)}", exc_info=True) # Added exc_info
-        # Ensure runner is cleared even on error during stop
         program_runner = None
-        ProgramRunner._instance = None # Also reset on error
-        current_app.config['PROGRAM_RUNNING'] = False
-        return {"status": "error", "message": f"Error stopping program: {str(e)}"}
+        logging.info("[stop_program] Set module-level program_runner to None.")
+
+    if hasattr(ProgramRunner, '_instance'):
+        ProgramRunner._instance = None
+        logging.info("[stop_program] Reset ProgramRunner._instance singleton to None.")
+
+    current_app.config['PROGRAM_RUNNING'] = False
+    logging.info("[stop_program] Set current_app.config['PROGRAM_RUNNING'] = False.")
+    logging.info("--- internal stop_program function completed ---")
+    return {"status": "success", "message": "Program stopped successfully."}
 
 @program_operation_bp.route('/api/stop_program', methods=['POST'])
 @admin_required
 def stop_program_route():
+    logging.info("--- /api/stop_program HTTP endpoint called ---")
     result = stop_program()
+    logging.info(f"--- /api/stop_program HTTP endpoint returning: {result} ---")
     return jsonify(result)
 
 @program_operation_bp.route('/api/update_program_state', methods=['POST'])

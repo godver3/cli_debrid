@@ -180,19 +180,39 @@ def rank_result_key(
         parsed_seasons_list = parsed_sei.get('seasons', [])
         season_pack_type = parsed_sei.get('season_pack', 'Unknown') # This will be 'Complete'
 
-        # --- NEW LOGIC FOR ACCURATE NUM_ITEMS ---
-        if season_pack_type == 'Complete' and show_season_episode_counts:
-            # If detect_season_episode_info identified it as a 'Complete' pack,
-            # use the comprehensive show_season_episode_counts for num_items.
+        # --- REVISED LOGIC FOR ACCURATE NUM_ITEMS ---
+        # Priority 1: Explicit single episode identified by parser (e.g., S01E01)
+        if parsed_episodes_list and len(parsed_episodes_list) == 1:
+            num_items = 1
+            is_multi_pack = False
+            # logging.debug(f"[RRK] Identified as single episode (parsed_episodes_list has 1 item): {torrent_title}")
+
+        # Priority 2: Check basic torrent_season and torrent_episode fields if not already confirmed single.
+        # This can catch single episodes where detect_season_episode_info might not populate parsed_episodes_list
+        # but season/episode numbers are directly available from parsed_info.
+        elif not is_multi_pack and isinstance(torrent_season, int) and isinstance(torrent_episode, int) and not parsed_episodes_list and not parsed_seasons_list:
+            num_items = 1
+            is_multi_pack = False
+            # logging.debug(f"[RRK] Identified as single episode (torrent_season/episode present, no lists): {torrent_title}")
+            
+        # Priority 3: 'Complete' season pack (likely whole show or multiple seasons)
+        elif season_pack_type == 'Complete' and show_season_episode_counts:
             num_items = sum(count for s_num, count in show_season_episode_counts.items() if isinstance(s_num, int) and s_num > 0)
             is_multi_pack = num_items > 1
+            # if is_multi_pack:
+                # logging.debug(f"[RRK] Identified as 'Complete' pack with {num_items} items: {torrent_title}")
+            # else:
+                # logging.debug(f"[RRK] 'Complete' pack, but num_items is {num_items}, treating as single/error: {torrent_title}")
+
+
+        # Priority 4: Multi-episode range (e.g., S01E01-E10)
         elif parsed_episodes_list and len(parsed_episodes_list) > 1:
-            # This typically means a range like S02E01-E10 identified by detect_season_episode_info
-            # or a non-'Complete' pack where detect_season_episode_info did populate episodes.
             num_items = len(parsed_episodes_list)
             is_multi_pack = True
+            # logging.debug(f"[RRK] Identified as multi-episode range with {num_items} items: {torrent_title}")
+
+        # Priority 5: Specific season(s) pack (e.g., S01, S02 or S01-S03)
         elif parsed_seasons_list and show_season_episode_counts:
-            # Covers one or more specific seasons (not marked 'Complete')
             current_total_episodes = 0
             for s_num_str in parsed_seasons_list:
                 try:
@@ -204,13 +224,31 @@ def rank_result_key(
             if current_total_episodes > 0:
                 num_items = current_total_episodes
                 is_multi_pack = True
-        elif parsed_episodes_list and len(parsed_episodes_list) == 1:
-             num_items = 1
-             is_multi_pack = False
+                # logging.debug(f"[RRK] Identified as specific season(s) pack with {num_items} items: {torrent_title}")
+            # If current_total_episodes is 0 (e.g., season not in show_season_episode_counts),
+            # it might still be a pack, this is handled by the fallback below if season_pack_type indicates it.
 
-        # Fallback for is_multi_pack if num_items is still 1 but parsed_sei indicates a pack
-        if num_items <= 1 and season_pack_type not in ['N/A', 'Unknown', 'Complete'] and season_pack_type: # Avoid 'Complete' here as num_items handles it
-            is_multi_pack = True # e.g. "S01" but no episodes were found/counted in show_season_episode_counts
+        # Fallback: If still num_items <= 1, but season_pack_type indicates a pack (e.g., "S01", "S01,S02")
+        # This avoids 'Complete' here because if 'Complete' didn't yield num_items > 1 with show_season_episode_counts,
+        # it's likely a misidentified single or an empty/invalid 'Complete' pack.
+        if num_items <= 1 and season_pack_type not in ['N/A', 'Unknown', 'Complete'] and season_pack_type:
+            # This implies it *should* be a pack (e.g., "S01") but episode counts might be missing or it's a single.
+            # We will mark is_multi_pack = True for scoring purposes, but num_items might remain 1
+            # if no episode count data is available. The multi_pack_score logic will handle this.
+            is_multi_pack = True
+            # logging.debug(f"[RRK] Fallback: Marked as multi-pack due to season_pack_type '{season_pack_type}', num_items is {num_items}: {torrent_title}")
+        
+        # Final safety check: if after all this, it's not a multi-pack but num_items > 1, log warning and fix.
+        # Or, if it IS a multi-pack but num_items is 1 (and not due to fallback where counts are unknown), also suspicious.
+        if not is_multi_pack and num_items > 1:
+            logging.warning(f"[RRK] Contradiction: Not a multi-pack but num_items = {num_items} for '{torrent_title}'. Resetting num_items to 1.")
+            num_items = 1
+        elif is_multi_pack and num_items <= 1 and not (season_pack_type not in ['N/A', 'Unknown', 'Complete'] and season_pack_type):
+             # This condition means it was marked is_multi_pack (e.g. by 'Complete' or episode range) but num_items is still 1
+             # and it wasn't due to the specific fallback for season_pack_type (like "S01").
+             # This could happen if a 'Complete' pack somehow has 0 or 1 episodes in show_season_episode_counts.
+             # logging.debug(f"[RRK] Minor Contradiction: is_multi_pack is True but num_items = {num_items} for '{torrent_title}'. Retaining is_multi_pack for scoring.")
+             pass # Allow is_multi_pack to be true even if num_items is 1, if it's a pack type.
 
     # Get the appropriate size for comparison based on 'multi' flag
     def get_comparison_size(r, is_multi_search):
