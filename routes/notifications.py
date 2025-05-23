@@ -1339,8 +1339,20 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
         response.raise_for_status()
         jobs = response.json()
         
+        # Prioritize "plex-recently-added-scan"
+        preferred_job_id = "plex-recently-added-scan"
+        
+        for job in jobs:
+            if job.get("id") == preferred_job_id:
+                logging.info(f"Overseerr: Found preferred Plex scan job '{job.get('name')}' (ID: {preferred_job_id}) for instance '{overseerr_instance_id}'.")
+                overseerr_job_id_cache[overseerr_instance_id] = preferred_job_id
+                return preferred_job_id
+
+        # If preferred ID is not found, fall back to keyword search
+        logging.warning(f"Overseerr: Preferred job ID '{preferred_job_id}' not found. Falling back to keyword search for instance '{overseerr_instance_id}'.")
+        
         # Prioritized keywords for Plex-specific scans
-        plex_keywords = ["plex sync", "plex scan"]
+        plex_keywords = ["plex sync", "plex scan", "recently added"] # Added "recently added"
         # Fallback keywords for general library scans
         general_scan_keywords = ["full scan", "library scan", "media scan", "scan disk", "scan files"]
 
@@ -1349,25 +1361,31 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
         # First pass: Plex-specific keywords
         for job in jobs:
             job_name_lower = job.get("name", "").lower()
-            if any(keyword in job_name_lower for keyword in plex_keywords):
+            # Check ID as well for plex_keywords
+            job_id_lower = job.get("id", "").lower()
+            if any(keyword in job_name_lower for keyword in plex_keywords) or \
+               any(keyword.replace(" ", "-") in job_id_lower for keyword in plex_keywords):
                 found_job_id = job.get("id")
-                logging.info(f"Overseerr: Found Plex scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}'.")
+                logging.info(f"Overseerr: Found Plex scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}' by keyword.")
                 break
         
         # Second pass: General scan keywords if no Plex-specific one was found
         if not found_job_id:
             for job in jobs:
                 job_name_lower = job.get("name", "").lower()
-                if any(keyword in job_name_lower for keyword in general_scan_keywords):
+                # Check ID as well for general_scan_keywords
+                job_id_lower = job.get("id", "").lower()
+                if any(keyword in job_name_lower for keyword in general_scan_keywords) or \
+                   any(keyword.replace(" ", "-") in job_id_lower for keyword in general_scan_keywords):
                     found_job_id = job.get("id")
-                    logging.info(f"Overseerr: Found general scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}' as fallback.")
+                    logging.info(f"Overseerr: Found general scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}' as fallback by keyword.")
                     break
 
         if found_job_id:
             overseerr_job_id_cache[overseerr_instance_id] = found_job_id
             return found_job_id
         else:
-            logging.warning(f"Overseerr: Could not find a suitable Plex or general scan job for instance '{overseerr_instance_id}' at {overseerr_url}. Searched for jobs containing keywords like {plex_keywords + general_scan_keywords}.")
+            logging.warning(f"Overseerr: Could not find a suitable Plex or general scan job for instance '{overseerr_instance_id}' at {overseerr_url} even after keyword search.")
             return None
 
     except requests.exceptions.RequestException as e:
