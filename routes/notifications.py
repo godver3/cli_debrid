@@ -17,6 +17,7 @@ from database.core import (
     mark_all_db_notifications_read
 )
 import math # Add math import for ceiling division
+from queues.config_manager import get_overseerr_instances # Added import
 
 # Global notification buffer
 notification_buffer = []
@@ -25,6 +26,12 @@ safety_valve_timer = None
 buffer_lock = Lock()
 BUFFER_TIMEOUT = 10  # seconds to wait before sending notifications
 SAFETY_VALVE_TIMEOUT = 60  # seconds maximum to wait before forcing send
+
+# --- Overseerr Scan Scheduling ---
+OVERSEERR_SCAN_DELAY = 30  # seconds
+overseerr_scan_schedulers = {} # Stores { 'overseerr_instance_id': threading.Timer }
+overseerr_job_id_cache = {} # Stores { 'overseerr_instance_id': 'job_id_for_scan' }
+# --- End Overseerr Scan Scheduling ---
 
 def safe_format_date(date_value):
     if not date_value:
@@ -328,18 +335,42 @@ def format_notification_content(notifications, notification_type, notification_c
                 safe_convert_to_int(x.get('season_number', 0)), 
                 safe_convert_to_int(x.get('episode_number', 0))
             ))
-            for item in sorted_items:
-                # --- EDIT: Use the effective state for episode suffix ---
-                effective_episode_state = item.get('new_state', '')
-                if effective_episode_state == 'Checking' and item.get('upgrading_from'):
+
+            # --- START: Truncate episode notifications ---
+            from utilities.settings import get_setting # Import for the new setting
+            truncate_episodes = get_setting('Debug', 'truncate_episode_notifications', False)
+            
+            if truncate_episodes and len(sorted_items) > 1:
+                # Show the first episode
+                first_item = sorted_items[0]
+                effective_episode_state = first_item.get('new_state', '')
+                if effective_episode_state == 'Checking' and first_item.get('upgrading_from'):
                     effective_episode_state = 'Upgrading'
                 
-                episode_line = format_episode(item)
+                episode_line = format_episode(first_item)
                 if episode_line:
-                    # Pass the effective state to format_state_suffix
-                    content.append(f"{episode_line} {format_state_suffix(effective_episode_state, item.get('is_upgrade', False))}")
-                # --- END EDIT ---
-                logging.debug(f"Notifications: Added episode line for group {group_key_for_log}: '{content[-1]}'") # Log episode line addition
+                    content.append(f"{episode_line} {format_state_suffix(effective_episode_state, first_item.get('is_upgrade', False))}")
+                    logging.debug(f"Notifications: Added first episode line for group {group_key_for_log}: '{content[-1]}'")
+
+                # Add a summary for the rest
+                num_other_episodes = len(sorted_items) - 1
+                content.append(f"    ...and {num_other_episodes} other episode(s).")
+                logging.debug(f"Notifications: Added truncated summary for group {group_key_for_log}: '{content[-1]}'")
+            else:
+                # Original behavior if not truncating or only one episode
+                for item in sorted_items:
+                    # --- EDIT: Use the effective state for episode suffix ---
+                    effective_episode_state = item.get('new_state', '')
+                    if effective_episode_state == 'Checking' and item.get('upgrading_from'):
+                        effective_episode_state = 'Upgrading'
+                    
+                    episode_line = format_episode(item)
+                    if episode_line:
+                        # Pass the effective state to format_state_suffix
+                        content.append(f"{episode_line} {format_state_suffix(effective_episode_state, item.get('is_upgrade', False))}")
+                    # --- END EDIT ---
+                    logging.debug(f"Notifications: Added episode line for group {group_key_for_log}: '{content[-1]}'") # Log episode line addition
+            # --- END: Truncate episode notifications ---
         else:
             # For movies, just add the state suffix (using the effective state) to the title line
             state_suffix = format_state_suffix(state, is_upgrade) # Get suffix
@@ -651,6 +682,25 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
     processed_discord = False # Flag to check if we even attempted Discord
     processed_email = False # Flag to check if we even attempted Email
     # Add flags for other types if needed
+
+    # --- START: Overseerr Scan Scheduling Trigger ---
+    trigger_scan_check = False
+    if notification_category in ['collected', 'upgrading']:
+        if notifications: # Ensure there's at least one notification
+            trigger_scan_check = True
+            logging.debug(f"Overseerr: Category '{notification_category}' will trigger scan check.")
+    elif notification_category == 'state_change' and isinstance(notifications, list):
+        for item_data in notifications:
+            if isinstance(item_data, dict):
+                current_state = item_data.get('new_state')
+                if current_state == 'Collected' or current_state == 'Upgraded':
+                    trigger_scan_check = True
+                    logging.debug(f"Overseerr: Item '{item_data.get('title')}' reached '{current_state}' via state_change, will trigger scan check.")
+                    break # One item is enough to trigger the scan check for all instances
+    
+    if trigger_scan_check:
+        handle_overseerr_scan_scheduling()
+    # --- END: Overseerr Scan Scheduling Trigger ---
 
     # --- START: MODIFICATION TO PREVENT DUPLICATE 'Collected'/'Upgraded' IN 'state_change' BATCH ---
     if notification_category == 'state_change' and isinstance(notifications, list):
@@ -1269,3 +1319,142 @@ def register_shutdown_handler():
 def register_startup_handler():
     """Register handler for program startup notifications."""
     send_program_start_notification("Program starting up")
+
+def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instance_id):
+    """
+    Retrieves the Job ID for a Plex scan task from Overseerr.
+    Caches the Job ID to avoid repeated API calls.
+    """
+    if overseerr_instance_id in overseerr_job_id_cache:
+        cached_job_id = overseerr_job_id_cache[overseerr_instance_id]
+        logging.debug(f"Overseerr: Using cached Job ID '{cached_job_id}' for scan on instance '{overseerr_instance_id}'.")
+        return cached_job_id
+
+    api_endpoint = f"{overseerr_url}/api/v1/settings/jobs"
+    headers = {"X-Api-Key": overseerr_api_key, "Accept": "application/json"}
+    
+    logging.debug(f"Overseerr: Attempting to get job list from {overseerr_url} for instance '{overseerr_instance_id}'")
+    try:
+        response = requests.get(api_endpoint, headers=headers, timeout=15)
+        response.raise_for_status()
+        jobs = response.json()
+        
+        # Prioritized keywords for Plex-specific scans
+        plex_keywords = ["plex sync", "plex scan"]
+        # Fallback keywords for general library scans
+        general_scan_keywords = ["full scan", "library scan", "media scan", "scan disk", "scan files"]
+
+        found_job_id = None
+
+        # First pass: Plex-specific keywords
+        for job in jobs:
+            job_name_lower = job.get("name", "").lower()
+            if any(keyword in job_name_lower for keyword in plex_keywords):
+                found_job_id = job.get("id")
+                logging.info(f"Overseerr: Found Plex scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}'.")
+                break
+        
+        # Second pass: General scan keywords if no Plex-specific one was found
+        if not found_job_id:
+            for job in jobs:
+                job_name_lower = job.get("name", "").lower()
+                if any(keyword in job_name_lower for keyword in general_scan_keywords):
+                    found_job_id = job.get("id")
+                    logging.info(f"Overseerr: Found general scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}' as fallback.")
+                    break
+
+        if found_job_id:
+            overseerr_job_id_cache[overseerr_instance_id] = found_job_id
+            return found_job_id
+        else:
+            logging.warning(f"Overseerr: Could not find a suitable Plex or general scan job for instance '{overseerr_instance_id}' at {overseerr_url}. Searched for jobs containing keywords like {plex_keywords + general_scan_keywords}.")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Overseerr: Error getting job list from instance '{overseerr_instance_id}': {e}")
+        return None
+    except ValueError as e: # Handles JSON decoding errors
+        logging.error(f"Overseerr: Error decoding JSON response for job list from instance '{overseerr_instance_id}': {e}")
+        return None
+
+def trigger_overseerr_scan(overseerr_url, overseerr_api_key, overseerr_instance_id, overseerr_display_name):
+    """
+    Triggers a library scan job in the specified Overseerr instance.
+    """
+    global overseerr_scan_schedulers # Ensure we can modify this global
+    
+    logging.info(f"Overseerr: Timer elapsed. Attempting to trigger scan for instance '{overseerr_display_name}' ({overseerr_instance_id}).")
+
+    job_id = get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instance_id)
+
+    if not job_id:
+        logging.warning(f"Overseerr: Cannot trigger scan for instance '{overseerr_display_name}', no suitable job ID found.")
+        if overseerr_instance_id in overseerr_scan_schedulers: # Clean up timer if job ID couldn't be found
+            del overseerr_scan_schedulers[overseerr_instance_id]
+        return
+
+    api_endpoint = f"{overseerr_url}/api/v1/settings/jobs/{job_id}/run"
+    headers = {"X-Api-Key": overseerr_api_key, "Accept": "application/json"}
+
+    try:
+        logging.info(f"Overseerr: Triggering job ID '{job_id}' (Plex/Library Scan) for instance '{overseerr_display_name}' at {api_endpoint}")
+        response = requests.post(api_endpoint, headers=headers, timeout=10)
+        response.raise_for_status()
+        logging.info(f"Overseerr: Successfully triggered scan (Job ID: {job_id}) for instance '{overseerr_display_name}'. Response: {response.status_code}")
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"Overseerr: HTTP error triggering scan (Job ID: {job_id}) for instance '{overseerr_display_name}': {e}. Response: {e.response.text}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Overseerr: Request exception triggering scan (Job ID: {job_id}) for instance '{overseerr_display_name}': {e}")
+    finally:
+        # Remove the timer from the dict after attempting to trigger the scan
+        if overseerr_instance_id in overseerr_scan_schedulers:
+            try:
+                # If the timer object is still there and is the one we are finishing
+                # it's good practice to ensure it's cancelled, though it should have finished.
+                # For simplicity, just deleting the key is often enough if the timer function only runs once.
+                del overseerr_scan_schedulers[overseerr_instance_id]
+                logging.debug(f"Overseerr: Removed scan scheduler for instance '{overseerr_instance_id}'.")
+            except KeyError:
+                logging.debug(f"Overseerr: Scan scheduler for instance '{overseerr_instance_id}' already removed.")
+
+
+def handle_overseerr_scan_scheduling():
+    """
+    Checks for configured Overseerr instances and schedules a delayed Plex scan if one isn't already pending.
+    """
+    global overseerr_scan_schedulers # Ensure we can modify this global
+    
+    overseerr_instances = get_overseerr_instances()
+    if not overseerr_instances:
+        logging.debug("Overseerr: No enabled Overseerr instances found for scan scheduling.")
+        return
+
+    logging.debug(f"Overseerr: Found {len(overseerr_instances)} instance(s) for potential scan scheduling.")
+
+    for instance in overseerr_instances:
+        instance_id = instance['id']
+        instance_url = instance['url']
+        instance_api_key = instance['api_key']
+        instance_display_name = instance.get('display_name', instance_id)
+
+        if instance_id in overseerr_scan_schedulers:
+            # Check if the existing timer is still alive; if not, we can schedule a new one.
+            # This handles cases where a timer might have been created but the trigger function failed before removing it.
+            timer = overseerr_scan_schedulers[instance_id]
+            if timer.is_alive():
+                logging.debug(f"Overseerr: Scan timer already active/pending for instance '{instance_display_name}' ({instance_id}). Skipping new schedule.")
+                continue
+            else:
+                logging.debug(f"Overseerr: Found a finished/dead timer for instance '{instance_display_name}' ({instance_id}). Allowing new schedule.")
+                # The timer will be replaced below.
+
+        logging.info(f"Overseerr: Scheduling a Plex/Library scan for instance '{instance_display_name}' ({instance_id}) in {OVERSEERR_SCAN_DELAY} seconds.")
+        
+        new_timer = Timer(
+            OVERSEERR_SCAN_DELAY,
+            trigger_overseerr_scan,
+            args=[instance_url, instance_api_key, instance_id, instance_display_name]
+        )
+        new_timer.daemon = True # Ensure timer doesn't block program exit
+        overseerr_scan_schedulers[instance_id] = new_timer
+        new_timer.start()

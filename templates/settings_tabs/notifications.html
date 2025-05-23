@@ -3,6 +3,7 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
+
 <button id="add-notification-btn" class="add-source-link">Add New Notification</button>
 
 {% if notification_settings %}
@@ -79,6 +80,28 @@
 {% else %}
     <p>No Notifications configured.</p>
 {% endif %}
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <span class="settings-toggle-icon">+</span>
+        <h4>General Notification Options</h4>
+    </div>
+    <div class="settings-section-content" style="display: none;">
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox"
+                       name="Debug.truncate_episode_notifications"
+                       data-section="Debug"
+                       data-key="truncate_episode_notifications"
+                       {% if settings.Debug.truncate_episode_notifications %}checked{% endif %}>
+                Truncate Episode Notifications
+            </label>
+            {% if settings_schema['Debug'] and settings_schema['Debug']['truncate_episode_notifications'] and settings_schema['Debug']['truncate_episode_notifications'].description %}
+            <p class="settings-description">{{ settings_schema['Debug']['truncate_episode_notifications'].description }}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
 
 <style>
 .notification-categories {

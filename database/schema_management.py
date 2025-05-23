@@ -219,6 +219,9 @@ def migrate_schema():
         if 'real_debrid_original_title' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN real_debrid_original_title TEXT')
             logging.info("Successfully added real_debrid_original_title column to media_items table.")
+        if 'rescrape_original_torrent_title' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN rescrape_original_torrent_title TEXT')
+            logging.info("Successfully added rescrape_original_torrent_title column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -452,7 +455,8 @@ def create_tables():
                 no_early_release BOOLEAN DEFAULT FALSE,
                 current_score REAL DEFAULT 0,
                 final_check_add_timestamp TIMESTAMP,
-                real_debrid_original_title TEXT
+                real_debrid_original_title TEXT,
+                rescrape_original_torrent_title TEXT
             )
         ''')
 

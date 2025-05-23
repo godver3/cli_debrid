@@ -760,7 +760,7 @@ def run_plex_library_maintenance():
                             # No other items with this version, move to rescrape
                             logging.info(f"  No other items with version {clean_version}, moving to rescrape")
                             try:
-                                move_item_to_wanted(missing['id'])
+                                move_item_to_wanted(missing['id'], None)
                                 logging.info(f"  Successfully moved item to Wanted state for rescraping")
                             except Exception as e:
                                 logging.error(f"  Error moving item to Wanted state: {str(e)}")
@@ -1073,7 +1073,7 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                     logging.info(f"  No other items with version {clean_version}, moving to rescrape")
                     try:
                         from routes.debug_routes import move_item_to_wanted
-                        move_item_to_wanted(item_id)
+                        move_item_to_wanted(item_id, None)
                         logging.info(f"  Successfully moved item to Wanted state for rescraping")
                     except Exception as e:
                         logging.error(f"  Error moving item to Wanted state: {str(e)}")

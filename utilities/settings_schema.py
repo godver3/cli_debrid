@@ -740,6 +740,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Emphasize the number of items over quality when ranking results",
             "default": True
+        },
+        "truncate_episode_notifications": {
+            "type": "boolean",
+            "description": "Truncate episode notifications to show only the first episode and a summary of the rest.",
+            "default": False
         }
     },
     "Scrapers": {

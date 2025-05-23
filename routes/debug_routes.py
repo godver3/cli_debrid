@@ -1192,14 +1192,14 @@ def rescrape_item():
 
 
         # Move the item to Wanted queue
-        move_item_to_wanted(item_id) # This function should handle DB updates (state to 'Wanted', clear file paths)
+        move_item_to_wanted(item_id, item.get('original_scraped_torrent_title')) # Pass the original_scraped_torrent_title
         logging.info(f"Rescrape: Moved item {item_id} to Wanted queue.")
         return jsonify({'success': True, 'message': 'Item files processed, Plex removal cached (if applicable), and item moved to Wanted queue for rescraping'}), 200
     except Exception as e:
         logging.error(f"Error rescraping item {data.get('item_id', 'N/A')}: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
-def move_item_to_wanted(item_id):
+def move_item_to_wanted(item_id, current_original_scraped_title=None):
     from database import get_db_connection
     conn = get_db_connection()
     try:
@@ -1215,12 +1215,13 @@ def move_item_to_wanted(item_id):
                 last_updated = ?,
                 location_on_disk = NULL,
                 original_path_for_symlink = NULL,
+                rescrape_original_torrent_title = ?,
                 original_scraped_torrent_title = NULL,
                 upgrading_from = NULL,
                 version = TRIM(version, '*'),
                 upgrading = NULL
             WHERE id = ?
-        ''', (datetime.now(), item_id))
+        ''', (datetime.now(), current_original_scraped_title, item_id))
         conn.commit()
     except Exception as e:
         conn.rollback()
