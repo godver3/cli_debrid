@@ -78,6 +78,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
     if not imdb_id and not tmdb_id:
         raise ValueError("Either imdb_id or tmdb_id must be provided")
 
+    # Enhanced logging for input parameters
+    logging.debug(f"get_metadata called with: imdb_id='{imdb_id}', tmdb_id='{tmdb_id}', item_media_type='{item_media_type}'")
+    if original_item:
+        logging.debug(f"Original item details for call: title='{original_item.get('title')}', source='{original_item.get('content_source_detail')}'")
+
     # Try to get TMDB metadata first if we have a TMDB ID
     tmdb_metadata = None
     if tmdb_id:
@@ -144,18 +149,22 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
                 }
         logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id}")
 
+    # Log the decision point for media_type
+    media_type_decision_input = item_media_type.lower() if item_media_type else '<<<MISSING_OR_EMPTY>>>'
+    logging.debug(f"For imdb_id='{imdb_id}', tmdb_id='{tmdb_id}', raw item_media_type was '{item_media_type}'. Effective input for type decision: '{media_type_decision_input}'")
+
     media_type = item_media_type.lower() if item_media_type else 'movie'
     
     try:
         if media_type == 'movie':
-            logging.info(f"Fetching movie metadata for IMDb ID: {imdb_id}")
+            logging.info(f"Fetching movie metadata for IMDb ID: {imdb_id} (Determined type: movie)")
             result = DirectAPI.get_movie_metadata(imdb_id)
             if result is None:
                 logging.error(f"Failed to get movie metadata for IMDb ID: {imdb_id}")
                 return {}
             metadata, _ = result
         else:
-            logging.info(f"Fetching TV show metadata for IMDb ID: {imdb_id}")
+            logging.info(f"Fetching TV show metadata for IMDb ID: {imdb_id} (Determined type: {media_type})")
             result = DirectAPI.get_show_metadata(imdb_id)
             if result is None:
                 logging.error(f"Failed to get show metadata for IMDb ID: {imdb_id}")

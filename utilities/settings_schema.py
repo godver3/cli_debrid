@@ -919,6 +919,37 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 }
+            },
+            "Special Trakt Lists": {
+                "enabled": {"type": "boolean", "default": False},
+                "special_list_type": {
+                    "type": "list",
+                    "default": [],
+                    "choices": [
+                        "Trending", 
+                        "Popular", 
+                        "Favorited", 
+                        "Played", 
+                        "Watched", 
+                        "Collected", 
+                        "Anticipated", 
+                        "Box Office"
+                    ],
+                    "description": "Select the type(s) of special Trakt list. 'Box Office' applies to Movies only."
+                },
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {
+                    "type": "string", 
+                    "default": "All", 
+                    "choices": ["All", "Movies", "Shows"],
+                    "description": "Select media type. Note: 'Box Office' special list type is only applicable to Movies."
+                },
+                "display_name": {"type": "string", "default": "Special Trakt Lists"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                }
             }
         }
     },

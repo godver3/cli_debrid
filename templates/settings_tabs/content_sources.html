@@ -818,6 +818,32 @@
                                                  style="margin-top: 5px;">
                                              Import Liked Lists to this Source
                                          </button>
+                                    {% elif key == 'allow_specials' %}
+                                        {# This key is handled by a dedicated block later (around lines 735-751) for non-'Other Plex Watchlist' types. #}
+                                        {# Doing nothing here prevents it from being rendered as a text input by the 'else' block below. #}
+                                    {% elif settings_schema['Content Sources'].schema is defined and
+                                           config.type in settings_schema['Content Sources'].schema and
+                                           key in settings_schema['Content Sources'].schema[config.type] and
+                                           'choices' in settings_schema['Content Sources'].schema[config.type][key] and
+                                           settings_schema['Content Sources'].schema[config.type][key].choices is iterable and
+                                           not settings_schema['Content Sources'].schema[config.type][key].choices is string %}
+                                         {% set field_schema = settings_schema['Content Sources'].schema[config.type][key] %}
+                                         <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                                         <select id="content-sources-{{ source_id }}-{{ key }}"
+                                                 name="Content Sources.{{ source_id }}.{{ key }}"
+                                                 class="settings-input"
+                                                 data-section="Content Sources"
+                                                 data-key="{{ source_id }}.{{ key }}"
+                                                 {% if field_schema.type == 'list' %}multiple{% endif %}>
+                                             {% for option in field_schema.choices %}
+                                                 {# For multi-select, 'value' (which is a list) needs to contain the option #}
+                                                 {% if field_schema.type == 'list' %}
+                                                     <option value="{{ option }}" {% if option in value %}selected{% endif %}>{{ option }}</option>
+                                                 {% else %}
+                                                     <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                                                 {% endif %}
+                                             {% endfor %}
+                                         </select>
                                     {% else %}
                                          {# ... default text/select rendering ... #}
                                          <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -844,6 +870,7 @@
                                      {% if settings_schema['Content Sources'].schema is defined and
                                            config.type in settings_schema['Content Sources'].schema and
                                            key in settings_schema['Content Sources'].schema[config.type] and
+                                           key != 'allow_specials' and
                                            settings_schema['Content Sources'].schema[config.type][key].description is defined %}
                                          <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                                      {% endif %}

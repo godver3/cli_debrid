@@ -636,6 +636,93 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         logging.error(f"Error fetching friend's Trakt watchlist: {str(e)}")
         return []
 
+def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_profile: Dict[str, Any]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """
+    Fetches and processes items from configured Special Trakt Lists.
+    """
+    logging.debug(f"Fetching from Special Trakt Lists: {source_config.get('display_name', 'N/A')}")
+    access_token = ensure_trakt_auth()
+    if access_token is None:
+        logging.error("Failed to obtain a valid Trakt access token for Special Trakt Lists.")
+        return []
+
+    selected_list_types = source_config.get('special_list_type', [])
+    media_type_filter = source_config.get('media_type', 'All').lower()  # movies, shows, all
+
+    if not selected_list_types:
+        logging.warning(f"No special list types selected for source: {source_config.get('display_name')}")
+        return []
+
+    all_items_for_this_source = []
+    seen_imdb_ids_for_this_source = set()
+
+    special_list_api_details = {
+        "Trending": {"movies": "/movies/trending", "shows": "/shows/trending"},
+        "Popular": {"movies": "/movies/popular", "shows": "/shows/popular"},
+        "Anticipated": {"movies": "/movies/anticipated", "shows": "/shows/anticipated"},
+        "Box Office": {"movies": "/movies/boxoffice", "shows": None}, # Movies only
+        "Played": {"movies": "/movies/played/weekly", "shows": "/shows/played/weekly"},
+        "Watched": {"movies": "/movies/watched/weekly", "shows": "/shows/watched/weekly"},
+        "Collected": {"movies": "/movies/collected/weekly", "shows": "/shows/collected/weekly"},
+        "Favorited": {"movies": "/movies/favorited/weekly", "shows": "/shows/favorited/weekly"}
+    }
+    fetch_params_str = "limit=100&extended=full" # Common parameters
+
+    for list_type in selected_list_types:
+        if list_type not in special_list_api_details:
+            logging.warning(f"Unknown special list type '{list_type}' in source config. Skipping.")
+            continue
+
+        api_paths_for_type = special_list_api_details[list_type]
+        endpoints_to_call = []
+
+        if media_type_filter == 'movies' or media_type_filter == 'all':
+            if api_paths_for_type.get("movies"):
+                endpoints_to_call.append(api_paths_for_type["movies"])
+        if media_type_filter == 'shows' or media_type_filter == 'all':
+            if api_paths_for_type.get("shows"):
+                endpoints_to_call.append(api_paths_for_type["shows"])
+        
+        if list_type == "Box Office" and media_type_filter == 'shows':
+            logging.info("Box Office list type is only for movies. Skipping for 'shows' filter.")
+            continue # Box office is movies only
+
+        for endpoint_path in endpoints_to_call:
+            if not endpoint_path: continue # Skip if None (e.g. Box Office for shows)
+
+            full_api_path = f"{endpoint_path}?{fetch_params_str}"
+            logging.info(f"Fetching from Special Trakt List '{list_type}', endpoint: {full_api_path}")
+            
+            response = make_trakt_request('get', full_api_path)
+            if response:
+                try:
+                    raw_items = response.json()
+                    if not isinstance(raw_items, list):
+                        # Some endpoints might return a dict with items inside, e.g. list items
+                        # For simplicity, this example assumes endpoints return a direct list of media items.
+                        # If structure varies (e.g. item['movie'] or item['show']), process_trakt_items handles it.
+                        logging.warning(f"Expected a list from {full_api_path}, got {type(raw_items)}. Skipping this response.")
+                        continue
+                    
+                    processed_batch = process_trakt_items(raw_items)
+                    for item_detail in processed_batch:
+                        if item_detail['imdb_id'] and item_detail['imdb_id'] not in seen_imdb_ids_for_this_source:
+                            all_items_for_this_source.append(item_detail)
+                            seen_imdb_ids_for_this_source.add(item_detail['imdb_id'])
+                except json.JSONDecodeError:
+                    logging.error(f"Failed to decode JSON from {full_api_path}")
+                except Exception as e:
+                    logging.error(f"Error processing items from {full_api_path}: {e}")
+            else:
+                logging.error(f"Failed to fetch data from {full_api_path} for list type {list_type}")
+
+    if not all_items_for_this_source:
+        logging.info(f"No items found for Special Trakt List source: {source_config.get('display_name')}")
+        return []
+    
+    logging.info(f"Found {len(all_items_for_this_source)} unique items from Special Trakt List source: {source_config.get('display_name')}")
+    return [(all_items_for_this_source, versions_profile)]
+
 def check_trakt_early_releases():
     logging.debug("Checking Trakt for early releases")
     

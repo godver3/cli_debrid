@@ -20,7 +20,7 @@ import glob
 from routes.api_tracker import api 
 import time
 from datetime import datetime
-from routes.notifications import send_notifications
+from routes.notifications import send_notifications, get_enabled_notifications
 import requests
 from datetime import datetime, timedelta
 from queues.queue_manager import QueueManager
@@ -60,8 +60,8 @@ import sqlite3
 from utilities.local_library_scan import convert_item_to_symlink, get_symlink_path, create_symlink, resync_symlinks_with_new_settings
 from scraper.functions.ptt_parser import parse_with_ptt
 from database.database_writing import add_media_item
-from routes.program_operation_routes import get_program_runner # <-- ADD THIS IMPORT
-from utilities.plex_removal_cache import cache_plex_removal # Added import
+from routes.program_operation_routes import get_program_runner
+from utilities.plex_removal_cache import cache_plex_removal
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -830,7 +830,7 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.collected import get_wanted_from_collected
     from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist, get_wanted_from_other_plex_watchlist
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-    from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
+    from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
     from content_checkers.mdb_list import get_wanted_from_mdblists
     from content_checkers.content_source_detail import append_content_source_detail
     from metadata.metadata import process_metadata
@@ -885,6 +885,9 @@ def get_and_add_wanted_content(source_id):
                 mdblist_url = mdblist_url.strip()
                 if mdblist_url: # Check if url is not empty
                     wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
+        elif source_type == 'Special Trakt Lists':
+            update_trakt_settings(content_sources)
+            wanted_content = get_wanted_from_special_trakt_lists(source_data, versions_from_config)
         elif source_type == 'Trakt Watchlist':
             update_trakt_settings(content_sources)
             wanted_content = get_wanted_from_trakt_watchlist(versions_from_config)
@@ -3562,6 +3565,37 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         else:
                             logging.debug(f"[RcloneScan {task_id}] Plex update not triggered for this task run.")
                         # --- End Plex Update Call ---
+                        
+                        # --- Send Notification if from external_webhook ---
+                        if item_for_db_filtered.get('content_source') == 'external_webhook':
+                            try:
+                                notification_item = {
+                                    'type': item_for_db_filtered.get('type'), # 'movie' or 'episode'
+                                    'title': item_for_db_filtered.get('title'),
+                                    'year': item_for_db_filtered.get('year'),
+                                    'tmdb_id': str(item_for_db_filtered.get('tmdb_id')) if item_for_db_filtered.get('tmdb_id') else None,
+                                    'imdb_id': item_for_db_filtered.get('imdb_id'),
+                                    'original_collected_at': item_for_db_filtered.get('collected_at').isoformat() if item_for_db_filtered.get('collected_at') else datetime.now().isoformat(),
+                                    'version': item_for_db_filtered.get('version'),
+                                    'is_upgrade': False, # New items from rclone webhook are not considered upgrades here
+                                    'media_type': 'tv' if item_for_db_filtered.get('type') == 'episode' else 'movie',
+                                    'new_state': 'Collected',
+                                    'content_source': item_for_db_filtered.get('content_source'), # Should be 'external_webhook'
+                                    'filled_by_file': item_for_db_filtered.get('filled_by_file') # ADDED this line
+                                    # 'content_source_detail': os.path.basename(original_file_path_str) # REMOVED this line
+                                }
+                                if item_for_db_filtered.get('type') == 'episode':
+                                    notification_item.update({
+                                        'season_number': item_for_db_filtered.get('season_number'),
+                                        'episode_number': item_for_db_filtered.get('episode_number'),
+                                        'episode_title': item_for_db_filtered.get('episode_title')
+                                    })
+                                
+                                logging.info(f"[RcloneScan {task_id}] Sending 'collected' notification for item: {notification_item.get('title')}")
+                                send_notifications([notification_item], get_enabled_notifications(), notification_category='collected')
+                            except Exception as notify_err:
+                                logging.error(f"[RcloneScan {task_id}] Failed to send notification for {item_for_db_filtered.get('title')}: {notify_err}", exc_info=True)
+                        # --- End Notification ---
                         
                     except Exception as e:
                         logging.error(f"[RcloneScan {task_id}] Symlink creation error for {symlink_dest_path} (DB ID {item_id_from_db}): {e}", exc_info=True)
