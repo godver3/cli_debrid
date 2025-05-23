@@ -615,3 +615,29 @@ def get_enabled_content_sources():
             })
     
     return enabled_sources
+
+def get_overseerr_instances():
+    """
+    Retrieves all configured and enabled Overseerr instances with their URL and API key.
+    """
+    config = load_config()
+    overseerr_instances = []
+    content_sources = config.get('Content Sources', {})
+    
+    for source_id, source_config in content_sources.items():
+        if source_config.get('type') == 'Overseerr' and source_config.get('enabled', False):
+            url = source_config.get('url')
+            api_key = source_config.get('api_key') # Assuming 'api_key' is the field name in your config
+            
+            if url and api_key:
+                overseerr_instances.append({
+                    'id': source_id,
+                    'url': url.rstrip('/'), # Ensure no trailing slash
+                    'api_key': api_key,
+                    'display_name': source_config.get('display_name', source_id)
+                })
+            else:
+                logging.warning(f"Overseerr instance '{source_id}' is missing URL or API key and will be skipped.")
+                
+    logging.debug(f"Found {len(overseerr_instances)} enabled Overseerr instances: {overseerr_instances}")
+    return overseerr_instances

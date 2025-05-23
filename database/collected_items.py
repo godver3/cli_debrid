@@ -13,7 +13,6 @@ import sqlite3
 import time
 
 def add_collected_items(media_items_batch, recent=False):
-    from routes.debug_routes import move_item_to_wanted
     from datetime import datetime, timedelta
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade

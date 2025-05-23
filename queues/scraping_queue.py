@@ -514,6 +514,9 @@ class ScrapingQueue:
         original_season = item.get('season_number')
         original_episode = item.get('episode_number')
 
+        # Get the stored original torrent title for comparison if this is a rescrape
+        stored_rescrape_title = item.get('rescrape_original_torrent_title')
+
         from database import get_media_item_by_id
         if get_media_item_by_id(item['id']).get('fall_back_to_single_scraper'):
             is_multi_pack = False
@@ -536,9 +539,26 @@ class ScrapingQueue:
         results = results if results is not None else []
         filtered_out = filtered_out if filtered_out is not None else []
 
-        if not skip_filter and not item.get('disable_not_wanted_check'):
+        if not skip_filter: # Apply existing filters
             # Filter out unwanted magnets and URLs
-            results = [r for r in results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+            results = [
+                r for r in results 
+                if not (
+                    not item.get('disable_not_wanted_check') and 
+                    (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))
+                )
+            ]
+            
+            # New filter: if stored_rescrape_title exists, filter out results matching it
+            if stored_rescrape_title:
+                original_results_count = len(results)
+                results = [
+                    r for r in results
+                    if not (r.get('original_title') and r.get('original_title') == stored_rescrape_title)
+                ]
+                if len(results) < original_results_count:
+                    logging.info(f"Filtered out {original_results_count - len(results)} results matching stored rescrape title: '{stored_rescrape_title}' for {item_identifier}")
+
 
         is_anime = True if item.get('genres') and 'anime' in item['genres'] else False
         
@@ -603,8 +623,24 @@ class ScrapingQueue:
         individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
 
         # Filter out unwanted magnets and URLs for individual results
-        if not skip_filter and not item.get('disable_not_wanted_check'):
-            individual_results = [r for r in individual_results if not (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))]
+        if not skip_filter: # Apply existing filters
+            individual_results = [
+                r for r in individual_results 
+                if not (
+                    not item.get('disable_not_wanted_check') and 
+                    (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))
+                )
+            ]
+            # New filter for individual results
+            if stored_rescrape_title:
+                original_individual_results_count = len(individual_results)
+                individual_results = [
+                    r for r in individual_results
+                    if not (r.get('original_title') and r.get('original_title') == stored_rescrape_title)
+                ]
+                if len(individual_results) < original_individual_results_count:
+                    logging.info(f"Filtered out {original_individual_results_count - len(individual_results)} individual results matching stored rescrape title: '{stored_rescrape_title}' for {item_identifier}")
+
 
         # For episodes, use the original season/episode numbers from the item for the fallback filtering logic as well
         # The logic below compares against these original numbers unless overridden by scene_mapping in the result
