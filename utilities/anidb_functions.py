@@ -245,7 +245,7 @@ def _find_correct_season_mal_id(base_anime_data: Dict[str, Any], target_season: 
 
     if target_season == 1:
         # If target is S1, assume the base MAL ID is correct unless it explicitly says otherwise
-        if not any(re.search(rf'\bseason\s+([2-9])\b|\b([2-9])(st|nd|rd|th)\s+season\b|\bs([2-9])\b', base_title_lower)):
+        if not re.search(rf'\bseason\s+([2-9])\b|\b([2-9])(st|nd|rd|th)\s+season\b|\bs([2-9])\b', base_title_lower):
              logging.debug(f"[_find_correct_season_mal_id] Target is Season 1, and base title '{base_title}' doesn't indicate a later season. Assuming base MAL ID {base_mal_id} is correct.")
              return base_mal_id
         else:

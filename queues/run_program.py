@@ -37,7 +37,13 @@ from utilities.settings import get_setting, get_all_settings
 from content_checkers.overseerr import get_wanted_from_overseerr 
 from content_checkers.collected import get_wanted_from_collected
 from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
-from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist
+from content_checkers.trakt import (
+    get_wanted_from_trakt_lists, 
+    get_wanted_from_trakt_watchlist, 
+    get_wanted_from_trakt_collection, 
+    get_wanted_from_friend_trakt_watchlist,
+    get_wanted_from_special_trakt_lists # New import
+)
 from content_checkers.mdb_list import get_wanted_from_mdblists
 from content_checkers.content_source_detail import append_content_source_detail
 from database.not_wanted_magnets import purge_not_wanted_magnets_file
@@ -964,7 +970,8 @@ class ProgramRunner:
                 'Other Plex Watchlist': 900,
                 'My Plex RSS Watchlist': 900,
                 'My Friends Plex RSS Watchlist': 900,
-                'My Friends Trakt Watchlist': 900
+                'My Friends Trakt Watchlist': 900,
+                'Special Trakt Lists': 900 # Added new source type with default interval
             }
             
             log_intervals_message = ["Content source intervals being applied to effective set:"] # Prepare log message
@@ -1315,6 +1322,9 @@ class ProgramRunner:
             elif source_type == 'Friends Trakt Watchlist':
                 # This function takes data (source_config) and versions
                 wanted_content = get_wanted_from_friend_trakt_watchlist(data, versions_from_config)
+            elif source_type == 'Special Trakt Lists': # New elif block
+                # 'data' is the source_config, 'versions_dict' is the resolved simple versions map
+                wanted_content = get_wanted_from_special_trakt_lists(data, versions_from_config)
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':
@@ -2749,6 +2759,8 @@ class ProgramRunner:
                 should_trigger_scan = False
                 if file_found_on_disk:
                     # File exists, update cache and handle tick count
+                    item_title_for_log = item_dict['title'] if item_dict['title'] else 'N/A'
+                    logging.info(f"Plex Check (checks enabled): Found file for item {item_id} ('{item_title_for_log}') at: {actual_file_path} (Type: {found_path_type_log}, Folder for scan: '{folder_name_for_plex_scan}')")
                     logging.debug(f"Confirmed file exists on disk: {actual_file_path} for item {item_id}")
                     self.file_location_cache[cache_key] = 'exists'
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1

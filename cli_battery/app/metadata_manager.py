@@ -1224,7 +1224,22 @@ class MetadataManager:
         try:
             metadata = None
             source = None
+
+            # Helper to check if the item is a known show
+            def is_known_show(sess, current_imdb_id):
+                show_item = sess.query(Item.id).filter_by(imdb_id=current_imdb_id, type='show').first()
+                if show_item:
+                    logger.warning(
+                        f"get_movie_metadata called for IMDb ID {current_imdb_id}, which is already recorded as a 'show'. "
+                        f"Skipping movie metadata fetch."
+                    )
+                    return True
+                return False
+
             if session: # Use provided session
+                 if is_known_show(session_context, imdb_id):
+                     return None, "skipped_is_show"
+
                  item = session_context.query(Item).options(selectinload(Item.item_metadata)).filter_by(imdb_id=imdb_id, type='movie').first()
                  if item:
                      # ... format metadata ...
@@ -1245,12 +1260,15 @@ class MetadataManager:
                      return metadata, "battery"
 
                  # If not in database, fetch (pass session)
-                 logger.info(f"Movie {imdb_id} not found in database, fetching from Trakt (passing session)")
+                 logger.info(f"Movie {imdb_id} not found in database (as type 'movie'), fetching from Trakt (passing session)")
                  new_data, source = MetadataManager.refresh_movie_metadata(imdb_id, session=session_context)
                  return new_data, source
 
             else: # Create local session
                  with session_context as local_session:
+                     if is_known_show(local_session, imdb_id):
+                         return None, "skipped_is_show"
+
                      item = local_session.query(Item).options(selectinload(Item.item_metadata)).filter_by(imdb_id=imdb_id, type='movie').first()
                      if item:
                          # ... format metadata ...
@@ -1269,7 +1287,7 @@ class MetadataManager:
                              return refreshed_data if refreshed_data else metadata, source if refreshed_data else "battery (stale, refresh failed)"
                          return metadata, "battery"
 
-                     logger.info(f"Movie {imdb_id} not found in database, fetching from Trakt (local session)")
+                     logger.info(f"Movie {imdb_id} not found in database (as type 'movie'), fetching from Trakt (local session)")
                      new_data, source = MetadataManager.refresh_movie_metadata(imdb_id, session=local_session) # Pass session
                      return new_data, source
 

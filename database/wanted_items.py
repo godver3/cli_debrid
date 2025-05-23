@@ -433,6 +433,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 else:
                     logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
 
+            versions_added_for_this_item = False
+
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
 
@@ -526,6 +528,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         item.get('physical_release_date'), early_release_flag # Pass the flag here
                     ))
                     items_added += 1
+                    versions_added_for_this_item = True
                 else:
                     # Check if we need to update the show title for all related records
                     update_show_title(conn, item.get('imdb_id'), item.get('tmdb_id'), item.get('title'))
@@ -554,6 +557,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail')
                     ))
                     items_added += 1
+                    versions_added_for_this_item = True
+            
+            if versions_added_for_this_item:
+                conn.commit()
 
         conn.commit()
         
