@@ -131,8 +131,8 @@ class WantedQueue:
 
             # Add sorting by show, season, and episode for deterministic episode processing order
             order_by_clauses.append("imdb_id ASC") # Group by show
-            order_by_clauses.append("CASE WHEN type = 'episode' THEN season_number ELSE NULL END ASC") # Sort episodes by season (NULLS FIRST/LAST depends on DB)
-            order_by_clauses.append("CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC") # Then by episode
+            order_by_clauses.append("CASE WHEN type = 'episode' THEN season_number ELSE NULL END ASC NULLS FIRST") # Sort episodes by season (NULLS FIRST for SQLite)
+            order_by_clauses.append("CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC NULLS FIRST") # Then by episode
 
             # Content Source Priority (harder in pure SQL, apply *after* fetching batch)
             content_source_priority = get_setting("Queue", "content_source_priority", "")
@@ -186,7 +186,7 @@ class WantedQueue:
                         season_num_val = item.get('season_number')
                         safe_season_num = season_num_val if season_num_val is not None else float('-inf')
                     else:
-                        safe_season_num = float('inf')
+                        safe_season_num = float('inf') # Treat non-episodes as having a high season number for sorting
 
                     # Safely get episode_number
                     # Similar logic as season_number.
@@ -194,7 +194,7 @@ class WantedQueue:
                         episode_num_val = item.get('episode_number')
                         safe_episode_num = episode_num_val if episode_num_val is not None else float('-inf')
                     else:
-                        safe_episode_num = float('inf')
+                        safe_episode_num = float('inf') # Treat non-episodes as having a high episode number
 
                     return (
                         priority_index,
