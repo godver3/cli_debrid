@@ -505,11 +505,9 @@
                 releaseInfo = ` - Release Date: ${releaseDate}`;
             }
 
-            // --- START EDIT: Check for processing flag ---
             const isProcessing = item.is_processing || false;
             const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
             const processingClass = isProcessing ? 'is-processing' : '';
-            // --- END EDIT ---
 
             let itemContent = `
                 <div class="item ${processingClass}" onclick="copyItemToClipboard(this, event)">
@@ -544,22 +542,21 @@
                 itemContent += ` - Scrape Time: ${item.formatted_scrape_time}`;
             }
 
-            // --- START EDIT: Use final_check_display_time ---
             if (queueName === 'Final_Check') {
                 let enteredTime = 'Unknown';
-                // Use the pre-processed display time from the backend
                 if (item.final_check_display_time) {
-                    // Backend sends 'YYYY-MM-DD HH:MM:SS' (assumed UTC)
-                    // formatDateTimeToYMD_HMS will parse it as UTC and format to local YYYY-MM-DD HH:MM:SS
                     enteredTime = formatDateTimeToYMD_HMS(item.final_check_display_time, true);
                 }
                 itemContent += ` - Time Added: ${enteredTime}`;
             }
+            
+            // --- START EDIT: Add Content Source inline for Wanted, Scraping, Adding ---
+            if (['Wanted', 'Scraping', 'Adding'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
+                itemContent += ` <span style="font-size: smaller; font-style: italic;">- Content Source: ${item.content_source}</span>`;
+            }
             // --- END EDIT ---
 
-            // --- START EDIT: Add indicator ---
             itemContent += processingIndicator;
-            // --- END EDIT ---
 
             itemContent += `</div>`;
             return itemContent;
@@ -567,11 +564,9 @@
     }
 
     function generateCheckingItem(item, showProgress = true) {
-        // --- START EDIT: Declare variables at the top ---
-        const isProcessing = item.is_processing || false; // Should always be false for Checking queue, but check anyway
+        const isProcessing = item.is_processing || false; 
         const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
         const processingClass = isProcessing ? 'is-processing' : '';
-        // --- END EDIT ---
 
         let seasonEpisode = '';
         if (item.type === 'episode' && item.season_number && item.episode_number) {
@@ -588,6 +583,12 @@
         if (item.filled_by_file) {
             itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- File: ${item.filled_by_file}</span>`;
         }
+
+        // --- START EDIT: Add Content Source inline for Checking queue items ---
+        if (item.content_source && item.content_source !== 'Unknown') {
+            itemContent += ` <span style="font-size: smaller; font-style: italic;">- Content Source: ${item.content_source}</span>`;
+        }
+        // --- END EDIT ---
 
         // Show progress bar for items that are downloading, unknown, or don't have a state set
         if (showProgress && (!item.state || item.state === 'downloading' || item.state === 'unknown')) {
@@ -607,14 +608,6 @@
                 </div>
             `;
         }
-
-        // --- START EDIT: Check for processing flag (unlikely needed here, but for consistency) ---
-        // Moved declaration to the top
-        // const isProcessing = item.is_processing || false; // Should always be false for Checking queue
-        // const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
-        // const processingClass = isProcessing ? 'is-processing' : '';
-        // --- END EDIT ---
-
         itemContent += processingIndicator;
         itemContent += `</div>`;
         return itemContent;

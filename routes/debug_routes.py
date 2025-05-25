@@ -1219,7 +1219,8 @@ def move_item_to_wanted(item_id, current_original_scraped_title=None):
                 original_scraped_torrent_title = NULL,
                 upgrading_from = NULL,
                 version = TRIM(version, '*'),
-                upgrading = NULL
+                upgrading = NULL,
+                fall_back_to_single_scraper = 0
             WHERE id = ?
         ''', (datetime.now(), current_original_scraped_title, item_id))
         conn.commit()

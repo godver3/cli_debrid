@@ -205,7 +205,7 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
         if is_torrent_url:
             result_dict['torrent_url'] = primary_link
             if info_hash:
-                constructed_magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={urlencode(title)}"
+                constructed_magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={urlencode(str(title))}"
                 result_dict['magnet_link'] = constructed_magnet
         else:
             result_dict['magnet_link'] = primary_link

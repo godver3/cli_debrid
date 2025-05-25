@@ -822,8 +822,8 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                                 break
                         if not all_metadata_episodes_found_in_db: break
                     
-                    if all_metadata_episodes_found_in_db and total_metadata_episodes > 0:
-                        logging.debug(f"Skipping ended show '{metadata.get('title')}' (IMDb: {imdb_id}) as all {total_metadata_episodes} known episodes are already present.")
+                    if all_metadata_episodes_found_in_db and total_metadata_episodes > 0 and not enable_granular_version_additions:
+                        logging.debug(f"Skipping ended show '{metadata.get('title')}' (IMDb: {imdb_id}) as all {total_metadata_episodes} known episodes are present and granular additions are disabled.")
                         skipped_ended_show += len(original_items_list)
                         should_skip_this_entire_imdb_id = True
                     else:

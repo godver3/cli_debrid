@@ -30,6 +30,7 @@ import json
 from utilities.web_scraper import get_media_meta
 from typing import List, Dict, Any, Optional
 import iso8601
+from utilities.reverse_parser import parse_filename_for_version # Added import
 
 scraper_bp = Blueprint('scraper', __name__)
 
@@ -171,7 +172,7 @@ def add_torrent_to_debrid():
         media_type = request.form.get('media_type')
         season = request.form.get('season')
         episode = request.form.get('episode')
-        version = request.form.get('version')
+        version_from_form = request.form.get('version') # Renamed to avoid conflict
         tmdb_id = request.form.get('tmdb_id')
         original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
         # --- START EDIT: Get current_score from form data ---
@@ -184,6 +185,17 @@ def add_torrent_to_debrid():
         # --- END EDIT ---
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
+
+        # Determine the final version for the item
+        final_version_for_item = version_from_form
+        if version_from_form == "No Version":
+            if original_scraped_torrent_title:
+                logging.info(f"Attempting to reverse parse version for torrent '{original_scraped_torrent_title}' as 'No Version' was selected.")
+                final_version_for_item = parse_filename_for_version(original_scraped_torrent_title)
+            else:
+                logging.warning("'No Version' selected, but original_scraped_torrent_title is missing. Attempting reverse parse with empty string.")
+                final_version_for_item = parse_filename_for_version("") # reverse_parser will use its default
+            logging.info(f"Version to be assigned: {final_version_for_item}")
 
         # Get metadata to determine genres
         metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type) if tmdb_id else {}
@@ -304,7 +316,7 @@ def add_torrent_to_debrid():
                     'media_type': media_type,
                     'season': season_number,
                     'episode': episode_number,
-                    'version': version,
+                    'version': final_version_for_item, # Use the determined version
                     'tmdb_id': tmdb_id,
                     'genres': genres
                 }
@@ -471,7 +483,7 @@ def add_torrent_to_debrid():
                     'title': title,
                     'year': year,
                     'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
-                    'version': version,
+                    'version': final_version_for_item, # Use the determined version
                     'tmdb_id': tmdb_id,
                     'imdb_id': imdb_id,
                     'state': 'Checking',
@@ -1053,6 +1065,58 @@ def get_item_details():
         return jsonify(response_data)
     else:
         return jsonify({'error': 'Could not fetch details'}), 400
+
+@scraper_bp.route('/get_media_meta', methods=['POST'])
+@user_required
+def get_media_meta_endpoint():
+    from metadata.metadata import get_metadata
+    from utilities.web_scraper import get_media_meta
+    data = request.json
+    tmdb_id = data.get('tmdb_id')
+    media_type = data.get('media_type')
+    
+    if not tmdb_id or not media_type:
+        return jsonify({'error': 'Missing tmdb_id or media_type'}), 400
+    
+    try:
+        # Get raw TMDB metadata first
+        media_meta = get_media_meta(str(tmdb_id), media_type)
+        if not media_meta:
+            return jsonify({'error': 'Could not fetch media metadata from TMDB'}), 400
+            
+        poster_url, overview, raw_tmdb_genres, vote_average, backdrop_path = media_meta
+        
+        # Start with raw TMDB genres (like the main scraper does)
+        final_genres = raw_tmdb_genres.copy() if raw_tmdb_genres else []
+        logging.info(f"get_media_meta_endpoint: Raw TMDB genres: {final_genres}")
+        
+        # Check for anime detection using get_metadata (same as main scraper)
+        try:
+            metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+            if metadata and metadata.get('genres'):
+                processed_genres = metadata.get('genres', [])
+                logging.info(f"get_media_meta_endpoint: Processed metadata genres: {processed_genres}")
+                
+                # Check if anime was detected in processed metadata
+                if 'anime' in processed_genres and 'anime' not in final_genres:
+                    final_genres.append('anime')
+                    logging.info(f"get_media_meta_endpoint: Added anime to genres: {final_genres}")
+        except Exception as e:
+            logging.warning(f"Could not get processed metadata for anime detection: {e}")
+        
+        logging.info(f"get_media_meta_endpoint: Final combined genres: {final_genres}")
+        
+        return jsonify({
+            'poster_url': poster_url,
+            'overview': overview,
+            'genres': final_genres,  # Combined raw + anime detection
+            'vote_average': vote_average,
+            'backdrop_path': backdrop_path
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in get_media_meta_endpoint: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
     
 @scraper_bp.route('/run_scrape', methods=['POST'])
 @user_required

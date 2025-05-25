@@ -241,70 +241,41 @@ def scrape_nyaa(title: str, year: int, content_type: str = 'movie', season: Opti
 
 def scrape_nyaa_anime_season(title: str, year: int, season: int, tmdb_id: str, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     """Scrape Nyaa for anime season packs."""
+    
+    # Instead of using specific season pack patterns, use episode format 1
+    # This will catch season packs that contain episode 1, and filtering will sort it out
+    episode_formats = {
+        'no_zeros': "1",
+        'regular': f"S{season:02d}E01",
+        'absolute_with_e': "E001",
+        'absolute': "001",
+        'combined': f"S{season:02d}E001"
+    }
+    
+    # Reuse the episode search logic but mark results as potential season packs
     all_results = []
     
-    # Define search patterns for season packs
-    season_patterns = [
-        f"Season {season}",
-        f"S{season:01d}",
-        f"S{season:02d}",
-        "batch",
-        "complete"
-    ]
-    
-    # Define a function to scrape with a specific season pattern
-    def scrape_with_pattern(pattern):
-        logging.info(f"Searching for anime season pack with pattern: {pattern}")
-        search_query = f"{title} {pattern}"
-        logging.debug(f"Searching Nyaa with query: {search_query}")
+    def scrape_with_format(format_type, format_pattern):
+        results = _scrape_nyaa_with_format(title, year, format_pattern, is_translated_search)
         
-        # Set up default settings
-        settings = {
-            "categories": "1_2",  # Use anime category
-            "filter": "0",
-            "sort": "seeders",
-            "order": "desc"
-        }
-        
-        try:
-            # Pass the is_translated_search flag
-            results = scrape_nyaa_instance(settings, search_query, year, "episode", season, None, True, is_translated_search)
+        # Mark results as potential season packs - filtering will determine actual type
+        for result in results:
+            result['is_anime'] = True
+            result['anime_format'] = 'season_pack'  # Will be corrected by filtering if needed
             
-            # Mark results as season packs
-            for result in results:
-                result['is_anime'] = True
-                result['anime_format'] = 'season_pack'
-                
-                # Add season pack info to parsed_info if it doesn't exist
-                if 'parsed_info' not in result:
-                    result['parsed_info'] = {}
-                
-                if 'season_episode_info' not in result['parsed_info']:
-                    result['parsed_info']['season_episode_info'] = {
-                        'season_pack': 'Complete',
-                        'seasons': [season],
-                        'episodes': []  # Will be filled in by filter_results
-                    }
-            
-            return results
-        except Exception as e:
-            logging.error(f"Error scraping Nyaa with pattern {pattern}: {str(e)}")
-            return []
+        return results
     
-    # Use ThreadPoolExecutor to scrape all patterns simultaneously
+    # Use ThreadPoolExecutor to scrape all formats simultaneously
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Submit all scraping tasks
-        future_to_pattern = {
-            executor.submit(scrape_with_pattern, pattern): pattern
-            for pattern in season_patterns
+        future_to_format = {
+            executor.submit(scrape_with_format, format_type, format_pattern): format_type
+            for format_type, format_pattern in episode_formats.items()
         }
         
         # Collect results as they complete
-        for future in concurrent.futures.as_completed(future_to_pattern):
-            pattern = future_to_pattern[future]
+        for future in concurrent.futures.as_completed(future_to_format):
             results = future.result()
             all_results.extend(results)
-            logging.info(f"Found {len(results)} results using pattern {pattern}")
     
     return all_results
 
