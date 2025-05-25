@@ -2603,7 +2603,7 @@ class ProgramRunner:
 
                              if cursor_update.rowcount > 0:
                                  conn_update.commit()
-                                 item_title_log = item_dict['title'] if item_dict['title'] else 'N/A'
+                                 item_title_log = (item_dict['title'] or 'N/A')
                                  logging.info(f"Updated item {item_id} ({item_title_log}) to Collected state (Plex checks disabled).")
                                  # Post-processing and notification logic... (omitted for brevity, should be similar to existing code)
                                  updated_item_details = get_media_item_by_id(item_id)
@@ -2751,7 +2751,7 @@ class ProgramRunner:
                         actual_file_path = potential_path
                         folder_name_for_plex_scan = p_info['name'] 
                         found_path_type_log = p_info['type']
-                        item_title_for_log = item_dict.get('title', 'N/A')
+                        item_title_for_log = (item_dict['title'] or 'N/A')
                         logging.info(f"Plex Check (checks enabled): Found file for item {item_id} ('{item_title_for_log}') at: {actual_file_path} (Type: {found_path_type_log}, Folder for scan: '{folder_name_for_plex_scan}')")
                         break 
                 # --- END: UNIFIED FILE SEARCH LOGIC ---

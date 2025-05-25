@@ -472,7 +472,7 @@ export function updateSettings() {
         const movieTemplate = movieTemplateInput.value;
         const episodeTemplate = episodeTemplateInput.value;
 
-        if (!movieTemplate.includes('{imdb_id}')) {
+        if (movieTemplate.trim() !== '' && !movieTemplate.includes('{imdb_id}')) {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Validation Error',
@@ -481,7 +481,7 @@ export function updateSettings() {
             return; // Stop processing and do not save
         }
 
-        if (!episodeTemplate.includes('{imdb_id}')) {
+        if (episodeTemplate.trim() !== '' && !episodeTemplate.includes('{imdb_id}')) {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Validation Error',

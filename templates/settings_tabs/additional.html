@@ -500,7 +500,10 @@
             <input type="checkbox" id="phalanx-enable_phalanx_db" name="UI Settings.enable_phalanx_db"
                    data-section="UI Settings" data-key="enable_phalanx_db"
                    {% if settings.get('UI Settings', {}).get('enable_phalanx_db') %}checked{% endif %}>
-            <p class="settings-description">Enable the Phalanx database feature for enhanced content matching.</p>
+            <p class="settings-description">Enable the Phalanx database feature. This is a shared database that tracks cache status by hash.</p>
+            <p class="settings-info-text" style="margin-top: 10px;">
+                <i class="fas fa-info-circle"></i> Enabling or disabling the Phalanx DB requires a program restart for the changes to take full effect and for the Phalanx DB service to start/stop accordingly.
+            </p>
         </div>
     </div>
 </div>
@@ -1495,7 +1498,7 @@ document.addEventListener('DOMContentLoaded', function() {
             warningDiv.style.display = 'none';
 
             if (fcmType === 'Symlinked/Local') {
-                if (!templateInput.value.includes('{imdb_id}')) {
+                if (templateInput.value.trim() !== '' && !templateInput.value.includes('{imdb_id}')) {
                     warningDiv.textContent = 'Warning: {imdb_id} is required in the template for symlink recovery.';
                     warningDiv.style.display = 'block';
                 }

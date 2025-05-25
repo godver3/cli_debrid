@@ -284,9 +284,51 @@ def filter_results(
                         pass
                     elif season_pack == 'Unknown':
                         if len(episodes) < 2:
-                            result['filter_reason'] = "Non-multi result when searching for multi"
-                            logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}'")
-                            continue
+                            # For anime, add heuristic detection of season packs that PTT missed
+                            is_likely_anime_pack = False
+                            
+                            logging.info(f"ANIME PACK DEBUG: Processing '{original_title}' - is_anime={is_anime}, genres={genres}")
+                            
+                            if is_anime:
+                                # Check for anime pack indicators in the title
+                                anime_pack_indicators = [
+                                    'batch', 'complete', 'collection', 'fin', 'finished',
+                                    'bdrip', 'bluray', 'bd', 'series', 'season', 'vol',
+                                    'dual audio', 'dual-audio', 'multi-sub', 'multi sub'
+                                ]
+                                
+                                title_lower = original_title.lower()
+                                has_pack_keywords = any(indicator in title_lower for indicator in anime_pack_indicators)
+                                
+                                # Debug which indicators matched
+                                matched_indicators = [indicator for indicator in anime_pack_indicators if indicator in title_lower]
+                                logging.info(f"ANIME PACK DEBUG: title_lower='{title_lower}', matched_indicators={matched_indicators}, has_pack_keywords={has_pack_keywords}")
+                                
+                                # Check file size - anime season packs are typically larger
+                                result_size = parse_size(result.get('size', 0))
+                                large_size = result_size > 5.0  # 5GB+ suggests multiple episodes
+                                
+                                # Check if no explicit episode numbers were found
+                                no_explicit_episodes = not bool(re.search(r'\b(?:e|ep|episode)\s*\d+\b', title_lower))
+                                
+                                is_likely_anime_pack = has_pack_keywords or (large_size and no_explicit_episodes)
+                                
+                                if is_likely_anime_pack:
+                                    logging.info(f"Anime pack heuristic: Treating '{original_title}' as season pack (keywords={has_pack_keywords}, large_size={large_size}GB, no_episodes={no_explicit_episodes})")
+                                    # Override the season_episode_info to mark as season pack
+                                    season_episode_info['season_pack'] = f'S{season}' if season else 'S1'
+                                    season_episode_info['seasons'] = [season] if season else [1]
+                                    result['parsed_info']['season_episode_info'] = season_episode_info
+                                    # Don't continue - let it pass through as a valid pack
+                                else:
+                                    logging.info(f"PTT Parse Debug for '{original_title}' (Size: {result_size:.1f}GB):")
+                                    logging.info(f"  - season_episode_info: {season_episode_info}")
+                                    logging.info(f"  - Anime pack heuristic failed: keywords={has_pack_keywords}, large_size={large_size}, no_episodes={no_explicit_episodes}")
+                            
+                            if not is_likely_anime_pack:
+                                result['filter_reason'] = "Non-multi result when searching for multi"
+                                logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack})")
+                                continue
                     else:
                         if season not in season_episode_info.get('seasons', []):
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"

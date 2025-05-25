@@ -97,14 +97,16 @@ def rclone_webhook():
                 "message": "Rclone webhook ignored; file management mode is 'Plex'."
             }), 200
 
-        full_relative_path_str = request.args.get('file')
+        full_relative_path_str_raw = request.args.get('file') # Keep raw for logging
         
-        if not full_relative_path_str:
+        if not full_relative_path_str_raw:
             logging.error("Rclone webhook received request without 'file' argument for the relative media path.")
             return jsonify({"status": "error", "message": "No relative media path provided via 'file' argument"}), 400
+        
+        logging.info(f"Received rclone webhook with raw 'file' argument: '{full_relative_path_str_raw}'")
 
-        full_relative_path_str = unquote(full_relative_path_str)
-        logging.info(f"Received rclone webhook for relative path: {full_relative_path_str}")
+        full_relative_path_str = unquote(full_relative_path_str_raw)
+        logging.info(f"Unquoted relative path from rclone: {full_relative_path_str}")
 
         # This component is assumed to be the item's directory name (e.g., "Movie Title (Year)")
         # or filename, relative to the original_files_base_path categories.
@@ -115,6 +117,7 @@ def rclone_webhook():
         logging.info(f"Extracted final directory component (assumed item folder name or filename): {final_dir_component}")
 
         original_files_base_path = get_setting('File Management', 'original_files_path')
+        logging.info(f"Retrieved 'original_files_path' setting: '{original_files_base_path}'")
         if not original_files_base_path:
              logging.error("The 'original_files_path' setting under [File Management] is not configured. Cannot determine the full path.")
              return jsonify({"status": "error", "message": "Original files base path setting is missing."}), 500
@@ -125,11 +128,15 @@ def rclone_webhook():
 
         # --- Check database for existing item ---
         # Check 1: Match directory name against title fields
+        logging.info(f"DB Check 1: Calling check_item_exists_by_directory_name with argument: '{final_dir_component}'")
         exists_by_dir_name = check_item_exists_by_directory_name(final_dir_component)
+        logging.info(f"DB Check 1 Result (exists_by_dir_name): {exists_by_dir_name}")
         
         # Check 2: Match final_dir_component against original_path_for_symlink (contains check)
         # This replaces the previous check_item_exists_by_symlink_path(absolute_item_dir_or_file_path)
+        logging.info(f"DB Check 2: Calling check_item_exists_with_symlink_path_containing with argument: '{final_dir_component}'")
         exists_by_symlink_path_contains_component = check_item_exists_with_symlink_path_containing(final_dir_component)
+        logging.info(f"DB Check 2 Result (exists_by_symlink_path_contains_component): {exists_by_symlink_path_contains_component}")
 
         if exists_by_dir_name or exists_by_symlink_path_contains_component:
             ignore_reason = []

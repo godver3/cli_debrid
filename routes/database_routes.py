@@ -9,6 +9,7 @@ import json
 from utilities.reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
 from .models import admin_required
 from utilities.plex_removal_cache import cache_plex_removal
+from utilities.plex_functions import remove_file_from_plex
 from database.database_reading import get_media_item_by_id
 import os
 from datetime import datetime
@@ -668,7 +669,7 @@ def bulk_queue_action():
                     placeholders_select = ','.join('?' * len(batch)) # 'batch' here is the current chunk of item IDs
                     query_select = f"""
                         SELECT id, state, location_on_disk, original_path_for_symlink, 
-                               filled_by_file, title, type, episode_title, version  -- Added version
+                               filled_by_file, title, type, episode_title, version, original_scraped_torrent_title
                         FROM media_items 
                         WHERE id IN ({placeholders_select})
                     """
@@ -734,7 +735,11 @@ def bulk_queue_action():
                             cleaned_version_val = current_version_val.replace('*', '')
                             logging.info(f"Rescrape: Item {item_id}, original version '{current_version_val}', will be updated to cleaned version '{cleaned_version_val}'.")
                         
-                        prepared_items_for_db_update.append({'id': item_id, 'cleaned_version': cleaned_version_val})
+                        prepared_items_for_db_update.append({
+                            'id': item_id, 
+                            'cleaned_version': cleaned_version_val,
+                            'current_original_scraped_title': item_db_data.get('original_scraped_torrent_title') # Store for rescrape_original_torrent_title
+                        })
 
                     except Exception as e_indiv_item_proc: 
                         error_count += 1
@@ -757,6 +762,17 @@ def bulk_queue_action():
                         if version_case_sql_parts:
                              version_case_final_sql = "CASE id " + " ".join(version_case_sql_parts) + " ELSE version END"
 
+                        rescrape_title_case_sql_parts = []
+                        params_for_rescrape_title_case_values = []
+                        for item_update_payload in prepared_items_for_db_update:
+                            rescrape_title_case_sql_parts.append("WHEN ? THEN ?")
+                            params_for_rescrape_title_case_values.extend([item_update_payload['id'], item_update_payload.get('current_original_scraped_title')])
+                        
+                        rescrape_title_case_final_sql = "rescrape_original_torrent_title" # Default to existing if no specific update
+                        if rescrape_title_case_sql_parts:
+                            rescrape_title_case_final_sql = "CASE id " + " ".join(rescrape_title_case_sql_parts) + " ELSE rescrape_original_torrent_title END"
+
+
                         logging.info(f"Rescrape: Attempting to batch update {len(item_ids_for_update_clause)} items in DB: set to 'Wanted' and update versions for batch {i//BATCH_SIZE + 1}.")
                         
                         final_db_update_query = f"""UPDATE media_items 
@@ -764,11 +780,20 @@ def bulk_queue_action():
                                    location_on_disk = NULL, 
                                    original_path_for_symlink = NULL, 
                                    filled_by_file = NULL,
+                                   filled_by_title = NULL,
+                                   filled_by_magnet = NULL,
+                                   filled_by_torrent_id = NULL,
+                                   collected_at = NULL,
+                                   rescrape_original_torrent_title = {rescrape_title_case_final_sql},
+                                   original_scraped_torrent_title = NULL,
+                                   upgrading_from = NULL,
+                                   upgrading = NULL,
                                    version = {version_case_final_sql},
+                                   fall_back_to_single_scraper = 0,
                                    last_updated = ? 
                                WHERE id IN ({placeholders_for_in_clause})"""
                         
-                        sql_params_for_final_db_update = params_for_version_case_values + [datetime.now()] + item_ids_for_update_clause
+                        sql_params_for_final_db_update = params_for_version_case_values + params_for_rescrape_title_case_values + [datetime.now()] + item_ids_for_update_clause
                         
                         cursor_rescape_batch.execute(final_db_update_query, sql_params_for_final_db_update)
                         rows_affected_by_update = cursor_rescape_batch.rowcount
@@ -880,60 +905,69 @@ def delete_item():
         original_files_path = get_setting('File Management', 'original_files_path', '')
         symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
 
-        # Handle file deletion based on management type
-        if file_management == 'Plex' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
-            if mounted_location and item.get('location_on_disk'):
-                try:
-                    if os.path.exists(item['location_on_disk']):
-                        os.remove(item['location_on_disk'])
-                except Exception as e:
-                    logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
+        if item['state'] == 'Collected' or item['state'] == 'Upgrading':
+            if file_management == 'Plex':
+                if mounted_location and item.get('location_on_disk'):
+                    try:
+                        if os.path.exists(item['location_on_disk']):
+                            os.remove(item['location_on_disk'])
+                            logging.info(f"Delete item: Removed file from disk {item['location_on_disk']} (Plex mode).")
+                    except Exception as e:
+                        logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
 
-            # Allow time for file system operations to complete before Plex scan might occur
-            sleep(1)
+                # Allow time for file system operations to complete
+                sleep(1)
 
-            # Use cache_plex_removal
-            if item.get('filled_by_file'): # Ensure filled_by_file exists
-                if item['type'] == 'movie':
-                    cache_plex_removal(item['title'], item['filled_by_file'])
-                elif item['type'] == 'episode':
-                    cache_plex_removal(item['title'], item['filled_by_file'], item.get('episode_title'))
-                logging.info(f"Delete item: Queued Plex removal for item {item_id} (Plex mode). Path: {item['filled_by_file']}")
+                # Immediate Plex removal
+                path_to_remove_from_plex = item.get('filled_by_file')
+                if path_to_remove_from_plex:
+                    try:
+                        logging.info(f"Delete item: Attempting immediate Plex removal for {item['title']} ({path_to_remove_from_plex}).")
+                        remove_file_from_plex(item['title'], path_to_remove_from_plex, item.get('episode_title'))
+                        logging.info(f"Delete item: Successfully processed immediate Plex removal for {item['title']} ({path_to_remove_from_plex}).")
+                    except Exception as e:
+                        logging.error(f"Delete item: Error during immediate Plex removal for {item['title']} ({path_to_remove_from_plex}): {str(e)}.")
+                else:
+                    logging.warning(f"Delete item: No 'filled_by_file' path for item {item_id} ({item['title']}). Skipping Plex removal.")
 
+            elif file_management == 'Symlinked/Local':
+                symlink_path_to_remove_disk = item.get('location_on_disk')
+                original_file_path_to_remove_disk = item.get('original_path_for_symlink')
+                
+                # Determine the path Plex uses, prioritizing the symlink path
+                path_for_plex_api_call = None
+                if symlink_path_to_remove_disk:
+                    path_for_plex_api_call = symlink_path_to_remove_disk
+                    try:
+                        if os.path.exists(symlink_path_to_remove_disk) and os.path.islink(symlink_path_to_remove_disk):
+                            os.unlink(symlink_path_to_remove_disk)
+                            logging.info(f"Delete item: Removed symlink {symlink_path_to_remove_disk} (Symlinked/Local mode).")
+                    except Exception as e:
+                        logging.error(f"Error removing symlink at {symlink_path_to_remove_disk}: {str(e)}")
+                
+                if original_file_path_to_remove_disk:
+                    if not path_for_plex_api_call: # Fallback if symlink path wasn't set
+                        path_for_plex_api_call = original_file_path_to_remove_disk
+                    try:
+                        if os.path.exists(original_file_path_to_remove_disk):
+                            os.remove(original_file_path_to_remove_disk)
+                            logging.info(f"Delete item: Removed original file {original_file_path_to_remove_disk} (Symlinked/Local mode).")
+                    except Exception as e:
+                        logging.error(f"Error deleting original file at {original_file_path_to_remove_disk}: {str(e)}")
 
-        elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
-            # Handle symlink removal
-            symlink_path_to_use_for_plex = None
-            if item.get('location_on_disk'):
-                symlink_path_to_use_for_plex = item['location_on_disk'] # Store for Plex removal
-                try:
-                    if os.path.exists(item['location_on_disk']) and os.path.islink(item['location_on_disk']):
-                        os.unlink(item['location_on_disk'])
-                except Exception as e:
-                    logging.error(f"Error removing symlink at {item['location_on_disk']}: {str(e)}")
+                # Allow time for file system operations to complete
+                sleep(1)
 
-            # Handle original file removal
-            if item.get('original_path_for_symlink'):
-                try:
-                    if os.path.exists(item['original_path_for_symlink']):
-                        os.remove(item['original_path_for_symlink'])
-                except Exception as e:
-                    logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
-
-            # Allow time for file system operations to complete
-            sleep(1)
-
-            # Use cache_plex_removal, preferring the symlink path for Plex if it existed
-            # The path given to Plex should be what Plex sees, which is usually the symlink path.
-            path_for_plex_removal = symlink_path_to_use_for_plex if symlink_path_to_use_for_plex else item.get('original_path_for_symlink')
-            
-            if path_for_plex_removal: # Check if we have a path to give to Plex
-                if item['type'] == 'movie':
-                    cache_plex_removal(item['title'], path_for_plex_removal)
-                elif item['type'] == 'episode':
-                    cache_plex_removal(item['title'], path_for_plex_removal, item.get('episode_title'))
-                logging.info(f"Delete item: Queued Plex removal for item {item_id} (Symlinked/Local mode). Path: {path_for_plex_removal}")
-
+                # Immediate Plex removal using the determined path
+                if path_for_plex_api_call:
+                    try:
+                        logging.info(f"Delete item: Attempting immediate Plex removal for {item['title']} using path {path_for_plex_api_call} (Symlinked/Local mode).")
+                        remove_file_from_plex(item['title'], path_for_plex_api_call, item.get('episode_title'))
+                        logging.info(f"Delete item: Successfully processed immediate Plex removal for {item['title']} ({path_for_plex_api_call}).")
+                    except Exception as e:
+                        logging.error(f"Delete item: Error during immediate Plex removal for {item['title']} ({path_for_plex_api_call}): {str(e)}.")
+                else:
+                    logging.warning(f"Delete item: No suitable path found for Plex removal for item {item_id} ({item['title']}) (Symlinked/Local mode). Skipping Plex removal.")
 
         # Handle database operation based on blacklist flag
         if blacklist:

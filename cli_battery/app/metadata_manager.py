@@ -1307,13 +1307,35 @@ class MetadataManager:
                 return None, None
 
             item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+            
             if not item:
-                item = Item(imdb_id=imdb_id, title=new_metadata.get('title'), year=new_metadata.get('year'), type='movie')
-                session.add(item)
-                session.flush()
+                try:
+                    logger.debug(f"Item {imdb_id} not found. Attempting to create.")
+                    item = Item(imdb_id=imdb_id, title=new_metadata.get('title'), year=new_metadata.get('year'), type='movie')
+                    session.add(item)
+                    session.flush() # Attempt to insert and get ID
+                    logger.debug(f"Successfully created item {imdb_id} with new ID {item.id}")
+                except IntegrityError: # Handle race condition where item was created by another process/thread
+                    logger.warning(f"IntegrityError on creating item {imdb_id}. Item likely created concurrently. Re-querying.")
+                    session.rollback() # Rollback the failed flush
+                    item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                    if not item:
+                        logger.error(f"Failed to re-query item {imdb_id} after IntegrityError. This should not happen.")
+                        raise # Re-raise if item is still not found, something is seriously wrong
+                    logger.debug(f"Successfully re-queried item {imdb_id} after IntegrityError. Item ID: {item.id}")
+            else:
+                logger.debug(f"Item {imdb_id} found with ID {item.id}. Proceeding with metadata update.")
+
 
             # Clear old metadata within the transaction
-            session.query(Metadata).filter_by(item_id=item.id).delete(synchronize_session=False)
+            # Ensure item is not None before proceeding
+            if not item:
+                logger.error(f"Item {imdb_id} is None after create/query logic. Aborting metadata update.")
+                # This case should ideally be prevented by the checks above.
+                # Depending on desired behavior, could return None, None or raise an error.
+                return None, None
+
+            session.query(Metadata).filter_by(item_id=item.id).delete(synchronize_session=False) # Changed from 'fetch' to False as we handle the session state
 
             # Add new metadata
             for key, value in new_metadata.items():
@@ -1324,14 +1346,17 @@ class MetadataManager:
                          value = str(value)
                 else:
                     value = str(value)
-                metadata = Metadata(item_id=item.id, key=key, value=value, provider='Trakt')
-                session.add(metadata)
+                metadata_entry = Metadata(item_id=item.id, key=key, value=value, provider='Trakt') # Renamed to avoid conflict
+                session.add(metadata_entry)
 
-            from metadata.metadata import _get_local_timezone
+            from metadata.metadata import _get_local_timezone # Assuming this import exists or is valid
             item.updated_at = datetime.now(_get_local_timezone())
 
-            # ** DO NOT COMMIT HERE **
+            # ** DO NOT COMMIT HERE ** Caller handles commit/rollback
             return new_metadata, "trakt"
+        except IntegrityError as ie: # Catching IntegrityError specifically here again if it happens outside the item creation block
+            logger.error(f"Unhandled IntegrityError during movie metadata refresh for {imdb_id}: {str(ie)}", exc_info=True)
+            raise # Re-raise to be handled by the caller's transaction management
         except Exception as e:
             logger.error(f"Error refreshing movie metadata for {imdb_id}: {str(e)}", exc_info=True)
             # Let caller handle rollback via exception

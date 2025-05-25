@@ -578,7 +578,7 @@ SETTINGS_SCHEMA = {
         },
         "plex_watchlist_removal": {
             "type": "boolean",
-            "description": "Remove items from Plex Watchlist when they have been collected",
+            "description": "Remove items from Plex Watchlist when they have been collected (only works with My Plex Watchlist and Other Plex Watchlist sources)",
             "default": False
         },
         "plex_watchlist_keep_series": {

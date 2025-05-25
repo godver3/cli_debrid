@@ -5,6 +5,24 @@ from datetime import datetime, timedelta
 from utilities.settings import get_setting
 from queues.config_manager import load_config
 
+def _get_int_setting(section: str, key: str, default: int) -> int:
+    """Helper function to safely get an integer setting."""
+    value = get_setting(section, key, default=default)
+    if isinstance(value, str) and not value.strip(): # Handle empty string
+        logging.warning(
+            f"Setting '{key}' in section '{section}' is empty. "
+            f"Using default value: {default}."
+        )
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError): # Added TypeError for good measure
+        logging.warning(
+            f"Invalid value '{value}' for setting '{key}' in section '{section}'. "
+            f"Expected an integer. Using default value: {default}."
+        )
+        return default
+
 class SleepingQueue:
     def __init__(self):
         self.items = []
@@ -67,9 +85,9 @@ class SleepingQueue:
     def process(self, queue_manager):
         #logging.debug("Processing sleeping queue")
         current_time = datetime.now()
-        default_wake_limit = int(get_setting("Queue", "wake_limit", default=24))
+        default_wake_limit = _get_int_setting("Queue", "wake_limit", default=24)
         # Read sleep duration from settings, default to 30 minutes
-        sleep_duration_minutes = int(get_setting("Queue", "sleep_duration_minutes", default=30))
+        sleep_duration_minutes = _get_int_setting("Queue", "sleep_duration_minutes", default=30)
         # Ensure a minimum duration to prevent potential issues with very small values
         if sleep_duration_minutes < 10:
             sleep_duration_minutes = 10

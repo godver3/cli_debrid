@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import logging
 from typing import Dict, List, Optional, Tuple
 from utilities.settings import get_setting
+from database.database_reading import get_media_item_by_filename
 
 # Cache file path
 CACHE_FILE = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'plex_removal_cache.pkl')
@@ -39,6 +40,10 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
         item_path: Path of the item to remove
         episode_title: Optional episode title for TV shows
     """
+    if item_path is None:
+        logging.error(f"Attempted to cache Plex removal for title '{item_title}' with a None item_path. Skipping.")
+        return
+
     # Check if caching is enabled
     if not get_setting('Debug', 'enable_plex_removal_caching', default=True):
         logging.info(f"Plex removal caching is disabled. Processing immediate removal for {item_title} ({item_path}).")
@@ -90,6 +95,7 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
 def process_removal_cache(min_age_hours: int = 6) -> None:
     """
     Process cached removal operations that are older than the specified age.
+    Checks if the item is back in the local database before attempting removal.
     If an item_path is a symlink and exists on disk, it will be deleted from disk first.
     Then, the item will be removed from Plex.
     
@@ -105,21 +111,40 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
         
     current_time = time.time()
     min_age_seconds = min_age_hours * 3600
+
+    # min_age_seconds = 0 # For testing, set to 0 to process all items immediately
     
     # Build a new cache dictionary with only the entries that need to be kept for the next run.
     next_run_cache = {} 
+    # Define states that indicate an item is actively managed and should not be removed by cache
+    active_db_states = ['Collected', 'Upgrading', 'Checking']
 
     for key, entries in cache.items():
         remaining_entries_for_key = []
         for entry in entries:
             item_title, item_path, episode_title, timestamp = entry
             
-            # Default assumption: keep the entry in the cache unless successfully processed.
+            # Default assumption: keep the entry in the cache unless successfully processed or cancelled.
             entry_should_be_kept_in_cache = True 
 
             if current_time - timestamp >= min_age_seconds:
                 logging.debug(f"Processing entry for {item_title} ({item_path}), age {current_time - timestamp:.0f}s / {min_age_seconds}s required")
                 
+                # --- New check: Is the item back in our local database? ---
+                try:
+                    db_item_filename = os.path.basename(item_path)
+                    db_item = get_media_item_by_filename(db_item_filename)
+                    if db_item and db_item.get('state') in active_db_states:
+                        logging.info(f"Item '{item_title}' ({item_path}) found back in the database with state '{db_item.get('state')}'. Cancelling Plex removal from cache.")
+                        entry_should_be_kept_in_cache = False # Remove from cache as it's "handled" (cancelled)
+                        # Continue to the next entry in this key's list
+                        if entry_should_be_kept_in_cache: # Should be False here due to above line
+                             remaining_entries_for_key.append(entry)
+                        continue 
+                except Exception as e_db_check:
+                    logging.error(f"Error checking database for item {item_path}: {str(e_db_check)}. Proceeding with removal logic.")
+                # --- End of new check ---
+
                 can_attempt_plex_removal = True # Assume true, may be set to false if symlink disk removal fails
 
                 # Step 1: If item_path is a symlink and exists on disk, try to remove it from disk.

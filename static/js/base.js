@@ -424,7 +424,7 @@ window.updateBodyPaddingForTopOverlays = updateBodyPaddingForTopOverlays;
 // Initialize everything when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Add this line near the beginning of the DOMContentLoaded handler
-    checkAndShowPhalanxDisclaimer();
+    // checkAndShowPhalanxDisclaimer(); // Disabled per user request
     
     // Auto-mark notifications as read if they're disabled
     if (localStorage.getItem('notificationsDisabled') === 'true') {

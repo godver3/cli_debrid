@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentVersion = null;
     let originalVersionSettings = {};
     let modifiedVersionSettings = {};
+    let currentItemGenres = [];
 
     // Check for URL parameters
     function checkForUrlParameters() {
@@ -306,7 +307,43 @@ document.addEventListener('DOMContentLoaded', function() {
     
         // Load versions for the selected item
         loadVersions();
+        
+        // Fetch genre information for the selected item
+        fetchItemGenres(item);
     }
+
+    function fetchItemGenres(item) {
+        console.log('Fetching genres for item:', item);
+        
+        // Use the same approach as the main scraper - fetch genre info from TMDB via the get_media_meta endpoint
+        fetch('/scraper/get_media_meta', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                tmdb_id: item.id,
+                media_type: item.mediaType === 'tv' || item.mediaType === 'show' ? 'tv' : 'movie'
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.warn('Could not fetch genre information:', data.error);
+                currentItemGenres = [];
+            } else {
+                // The get_media_meta returns genres as an array of genre names
+                currentItemGenres = data.genres || [];
+                console.log('Fetched genres for item:', currentItemGenres);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching genres:', error);
+            currentItemGenres = [];
+        });
+    }
+
+
 
     function populateSeasonEpisodeSelects(data) {
         const seasonSelect = document.getElementById('season-select');
@@ -751,6 +788,11 @@ document.addEventListener('DOMContentLoaded', function() {
     
         const isTV = currentItem.mediaType === 'tv' || currentItem.mediaType === 'show';
         
+        // Use the fetched genres from TMDB instead of keyword-based detection
+        const genres = currentItemGenres || [];
+        
+        console.log(`Using fetched genres for "${currentItem.title || currentItem.name}":`, genres);
+
         const scrapeData = {
             imdb_id: document.getElementById('imdbId').value || '',
             tmdb_id: currentItem.id,
@@ -759,6 +801,7 @@ document.addEventListener('DOMContentLoaded', function() {
             movie_or_episode: isTV ? 'episode' : 'movie',
             version: version,
             modifiedSettings: modifiedSettings,
+            genres: genres,  // Add genres to the scrape data
             skip_cache_check: true  // Always skip cache check in scraper tester
         };
     
