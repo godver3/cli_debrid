@@ -28,28 +28,32 @@ class MediaMatcher:
             A dictionary with 'path', 'bytes', and 'parsed_info' if valid, otherwise None.
         """
         file_path = file_dict['path']
-        if not self.is_video_file(file_path):
+        file_basename = os.path.basename(file_path)
+
+        if not self.is_video_file(file_basename): # Check basename for extension
             return None
-        if 'sample' in file_path.lower():
+        if 'sample' in file_basename.lower(): # Check basename for 'sample'
             return None
-        if 'specials' in file_path.lower(): # Keep filtering specials here
+        if 'specials' in file_basename.lower(): # Check basename for 'specials'
              return None
 
-        ptt_result = parse_title(file_path)
-        # Use PTT result directly as parsed_info for now
-        # Potentially add more structured fields later if needed
-        parsed_info = ptt_result
-        parsed_info['original_filename'] = os.path.basename(file_path) # Store basename for potential fallback use
+        ptt_result = parse_title(file_basename) # Parse only the basename
+        
+        # Ensure ptt_result is a dict, even if parse_title returns None or an unexpected type
+        parsed_info = ptt_result if isinstance(ptt_result, dict) else {}
+
+        parsed_info['original_filename'] = file_basename # Store basename
 
         # Attempt fallback episode extraction if PTT fails for episodes
-        if not parsed_info.get('episodes'):
-             fallback_episode = self._extract_episode_from_filename(file_path)
+        # PTT might return 'episodes': [] or no 'episodes' key at all.
+        # We should trigger fallback if 'episodes' is empty or not present.
+        if not parsed_info.get('episodes'): # This covers None or an empty list
+             fallback_episode = self._extract_episode_from_filename(file_basename) # Use basename for fallback
              if fallback_episode is not None:
-                  # Store this separately to avoid overriding PTT potentially empty list
                   parsed_info['fallback_episode'] = fallback_episode
-
+        
         return {
-            'path': file_path,
+            'path': file_path, # Store original full path
             'bytes': file_dict.get('bytes', 0),
             'parsed_info': parsed_info
         }
