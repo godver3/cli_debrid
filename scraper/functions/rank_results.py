@@ -292,10 +292,10 @@ def rank_result_key(
 
     # Normalize scores (most to 0-10 range, resolution uses its own scale)
     normalized_similarity = title_similarity * 10
-    normalized_resolution = resolution_score * 5 # Higher multiplier emphasizes resolution
+    normalized_resolution = resolution_score * 50 # Higher multiplier emphasizes resolution
     normalized_hdr = hdr_score * 10
-    normalized_size = size_percentile * 10
-    normalized_bitrate = bitrate_percentile * 10
+    normalized_size = (size_percentile ** 2) * 20  # Squaring and using a larger multiplier
+    normalized_bitrate = (bitrate_percentile ** 2) * 20 # Squaring and using a larger multiplier
     normalized_country = country_score  # Already in +/-10 range
 
     # Calculate language score based on preferred language

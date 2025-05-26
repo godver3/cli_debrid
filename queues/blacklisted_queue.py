@@ -169,92 +169,131 @@ class BlacklistedQueue:
             all_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
 
             if fallback_version and fallback_version != 'None' and fallback_version in all_versions:
-                # Check if item exists in any state with the fallback version
-                item['version'] = fallback_version  # Temporarily set version for the check
-                presence = get_media_item_presence(item.get('imdb_id'), item.get('tmdb_id'))
-                item['version'] = current_version  # Reset version back
+                # Prepare item_details for the check
+                item_details_for_check = {
+                    'type': item.get('type'),
+                    'imdb_id': item.get('imdb_id'),
+                    'tmdb_id': item.get('tmdb_id'),
+                    'season_number': item.get('season_number') if item.get('type') == 'episode' else None,
+                    'episode_number': item.get('episode_number') if item.get('type') == 'episode' else None
+                }
                 
-                if presence != "Missing":
-                    logging.info(f"Item {item_identifier} failed for version '{current_version}'. Fallback version '{fallback_version}' already exists in state '{presence}'. Proceeding with blacklisting original.")
-                    pass
+                # Define states that indicate the fallback version is already actively managed or collected
+                target_states_for_fallback_check = [
+                    'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
+                    'Unreleased', 'Pending Uncached', 'Upgrading', 'Collected', 'Final_Check'
+                ]
+
+                logging.debug(
+                    f"Checking for existing specific fallback item: "
+                    f"Details='{item_details_for_check}', "
+                    f"Target Version='{fallback_version}', "
+                    f"Target States='{target_states_for_fallback_check}'"
+                )
+                
+                # Call with correct arguments
+                fallback_item_exists = check_existing_media_item(
+                    item_details=item_details_for_check,
+                    target_version=fallback_version,
+                    target_states=target_states_for_fallback_check
+                )
+                
+                if fallback_item_exists:
+                    logging.info(f"Item {item_identifier} (version '{current_version}') failed. Specific fallback version '{fallback_version}' already exists in one of the states: {target_states_for_fallback_check}. Proceeding with blacklisting original item ({current_version}) with notification.")
+                    # Let execution continue to the standard blacklisting section at the end of the function.
                 else:
-                    logging.info(f"Item {item_identifier} failed for version '{current_version}'. Attempting fallback to version '{fallback_version}'.")
+                    # Fallback version does not exist in the specified states, attempt to blacklist original silently and create new fallback item.
+                    logging.info(f"Item {item_identifier} (version '{current_version}') failed. Specific fallback version '{fallback_version}' not found in states {target_states_for_fallback_check}. Blacklisting original item silently and attempting to create a new item with fallback version.")
+
+                    # Step 1: Silently blacklist the original item
+                    logging.info(f"Silently blacklisting original item {item_identifier} (ID: {item_id}, version: {current_version}).")
+                    update_media_item_state(item_id, 'Blacklisted') # We get details back but won't use for notification here
+                    update_blacklisted_date(item_id, datetime.now())
+                    if hasattr(queue_manager, 'queue_timer'):
+                        queue_manager.queue_timer.item_entered_queue(item_id, 'Blacklisted', item_identifier)
+                    logging.info(f"Original item {item_identifier} (ID: {item_id}) state set to Blacklisted and blacklisted_date updated. Notification for this specific blacklisting is skipped due to fallback attempt.")
+
+                    # Step 2: Prepare data for the new fallback item
+                    new_item_data = {
+                        'title': item.get('title'),
+                        'type': item.get('type'),
+                        'imdb_id': item.get('imdb_id'),
+                        'tmdb_id': item.get('tmdb_id'),
+                        'year': item.get('year'),
+                        'version': fallback_version,
+                        'state': 'Wanted',
+                        'release_date': item.get('release_date'),
+                        'airtime': item.get('airtime'),
+                        'season_number': item.get('season_number') if item.get('type') == 'episode' else None,
+                        'episode_number': item.get('episode_number') if item.get('type') == 'episode' else None,
+                    }
+                    new_item_identifier = queue_manager.generate_identifier(new_item_data)
+                    logging.debug(f"Prepared new item data for fallback: {new_item_identifier}")
+
+                    # Step 3: Attempt to create and queue the new fallback item via QueueManager
+                    try:
+                        # This assumes QueueManager has a method to handle DB creation and queuing.
+                        # This method should internally call database_writing to create the item,
+                        # then add it to the Wanted logic (e.g., WantedQueue), and handle its own notifications.
+                        logging.info(f"Requesting QueueManager to create and queue new item: {new_item_identifier} from original {item_identifier}")
+                        fallback_creation_successful = queue_manager.create_and_add_item_to_wanted_queue(
+                            new_item_data, 
+                            reason=f"Fallback from {current_version}"
+                        )
+
+                        if fallback_creation_successful:
+                            logging.info(f"Successfully created and queued new fallback item {new_item_identifier}.")
+                        else:
+                            logging.error(f"QueueManager reported failure in creating/queuing fallback item {new_item_identifier}. Original item {item_identifier} remains blacklisted (silently).")
+                    except AttributeError:
+                        logging.error(f"QueueManager does not have 'create_and_add_item_to_wanted_queue' method. Fallback for {item_identifier} cannot be created as a new item. Original item remains blacklisted (silently). This requires a feature addition to QueueManager.")
+                    except Exception as e_create_fallback:
+                        logging.error(f"Error during QueueManager's creation/queuing of fallback item {new_item_identifier}: {e_create_fallback}", exc_info=True)
                     
-                    current_queue_name = queue_manager.get_item_queue(item)
-                    if current_queue_name and current_queue_name != 'Blacklisted':
-                        try:
-                            queue_manager.queues[current_queue_name].remove_item(item)
-                            logging.debug(f"Removed {item_identifier} from {current_queue_name} queue for fallback.")
-                        except KeyError:
-                             logging.warning(f"Could not find queue '{current_queue_name}' to remove item {item_identifier} during fallback.")
-                        except Exception as e:
-                             logging.error(f"Error removing item {item_identifier} from {current_queue_name} queue during fallback: {e}")
-                    
-                    item['version'] = fallback_version
-                    item_identifier_new_version = queue_manager.generate_identifier(item)
-                    
-                    logging.debug(f"Calling move_to_wanted for {item_identifier_new_version} with new_version={fallback_version}")
-                    queue_manager.move_to_wanted(item, f"Fallback from {current_version}", new_version=fallback_version)
-                    logging.info(f"Moved item {item_identifier_new_version} back to Wanted queue with fallback version '{fallback_version}'.")
-                    return
-                if fallback_version and fallback_version != 'None' and fallback_version not in all_versions:
-                     logging.warning(f"Configured fallback version '{fallback_version}' for version '{current_version}' does not exist. Proceeding with blacklisting {item_identifier}.")
-                pass
-            else:
-                logging.debug(f"Item {item_identifier} does not have a fallback version associated. Blacklisting.")
+                    return # This path is complete: original blacklisted (silently), new fallback item creation attempted.
+
+            elif fallback_version and fallback_version != 'None' and fallback_version not in all_versions:
+                 logging.warning(f"Configured fallback version '{fallback_version}' for version '{current_version}' does not exist or is invalid (not in scraping versions list). Proceeding with standard blacklisting of {item_identifier}.")
+            else: # This covers cases where fallback_version is None, 'None'.
+                logging.debug(f"Item {item_identifier} does not have a fallback version configured or the configured one is 'None'. Proceeding with standard blacklisting.")
         else:
-            logging.warning(f"Item {item_identifier} does not have a version associated. Cannot perform fallback check. Proceeding with blacklisting.")
+            logging.warning(f"Item {item_identifier} does not have a version associated. Cannot perform fallback check. Proceeding with standard blacklisting.")
 
-        logging.info(f"Blacklisting item {item_identifier} (version: {current_version or 'N/A'}). No fallback applied.")
+        # Standard Blacklisting Logic (reached if not returned by early_release or successful fallback creation)
+        logging.info(f"Blacklisting item {item_identifier} (version: {current_version or 'N/A'}). Fallback not applied, or fallback version already existed, or no valid fallback path configured.")
 
-        updated_db_item_state = update_media_item_state(item_id, 'Blacklisted')
+        updated_db_item_details = update_media_item_state(item_id, 'Blacklisted')
         
         update_blacklisted_date(item_id, datetime.now())
 
         if hasattr(queue_manager, 'queue_timer'):
              queue_manager.queue_timer.item_entered_queue(item_id, 'Blacklisted', item_identifier)
 
-        logging.info(f"Moved item {item_identifier} to Blacklisted state and updated blacklisted_date")
+        logging.info(f"Moved item {item_identifier} to Blacklisted state and updated blacklisted_date.")
 
-        # --- Add Notification Trigger ---
-        if updated_db_item_state: # Ensure state update was successful and we have item details
+        # --- Add Notification Trigger for Standard Blacklisting ---
+        if updated_db_item_details: 
             try:
-                # Fetch the most up-to-date item details for the notification
-                # The 'updated_db_item_state' dict from update_media_item_state should be sufficient
-                # if it contains all necessary fields. If not, uncomment get_media_item_by_id.
-                # fresh_item_details = get_media_item_by_id(item_id)
-                # if fresh_item_details:
-                #    notification_data = dict(fresh_item_details)
-                # else:
-                #    logging.warning(f"Could not fetch full item details for {item_identifier} (ID: {item_id}) for notification. Using initial data.")
-                #    notification_data = dict(item) # Fallback to original item dict
-
-                notification_data = dict(updated_db_item_state) # Use the returned dict from update_media_item_state
-
-                # Ensure 'new_state' is correctly set for the notification processing
+                notification_data = dict(updated_db_item_details) 
                 notification_data['new_state'] = 'Blacklisted' 
                 
-                # Ensure all potentially required fields by notification formatter are present, even if None
-                # This depends on what format_notification_content and store_notification expect.
-                # Common fields: title, year, type, version, season_number, episode_number, content_source, content_source_detail
-                # Ensure these are present in `updated_db_item_state` or add them with defaults if necessary.
-                # For example:
+                # Ensure common fields for notification formatter are present
                 if 'title' not in notification_data: notification_data['title'] = item.get('title', 'Unknown Title')
                 if 'year' not in notification_data: notification_data['year'] = item.get('year', '')
-                if 'type' not in notification_data: notification_data['type'] = item.get('type', 'movie') # Sensible default
-                if 'version' not in notification_data: notification_data['version'] = current_version # Use version from earlier in function
+                if 'type' not in notification_data: notification_data['type'] = item.get('type', 'movie')
+                if 'version' not in notification_data: notification_data['version'] = current_version 
                 if notification_data['type'] == 'episode':
                     if 'season_number' not in notification_data: notification_data['season_number'] = item.get('season_number')
                     if 'episode_number' not in notification_data: notification_data['episode_number'] = item.get('episode_number')
 
-
                 add_to_collected_notifications(notification_data)
-                logging.info(f"Queued notification for blacklisted item: {item_identifier} (ID: {item_id})")
+                logging.info(f"Queued notification for standard blacklisted item: {item_identifier} (ID: {item_id})")
             except Exception as e_notif:
-                logging.error(f"Error queueing blacklist notification for {item_identifier} (ID: {item_id}): {e_notif}", exc_info=True)
+                logging.error(f"Error queueing standard blacklist notification for {item_identifier} (ID: {item_id}): {e_notif}", exc_info=True)
         else:
-            logging.warning(f"Skipped blacklist notification for {item_identifier} (ID: {item_id}) because item details after state update were not available.")
+            logging.warning(f"Skipped standard blacklist notification for {item_identifier} (ID: {item_id}) because item details after state update were not available.")
         # --- End Notification Trigger ---
+        return # End of standard blacklisting path
 
     def blacklist_old_season_items(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)

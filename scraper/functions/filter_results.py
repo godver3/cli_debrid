@@ -690,23 +690,37 @@ def filter_results(
 
             result['size'] = size_gb_for_filter 
             
-            bitrate = 0
-            effective_runtime_for_bitrate = runtime 
-            
-            if is_episode:
-                # For bitrate, we need total runtime of what the torrent contains
-                if is_identified_as_pack:
-                    if num_episodes_in_pack > 0: # Use calculated/fallback num_episodes_in_pack
-                        effective_runtime_for_bitrate = runtime * num_episodes_in_pack
-                    # If num_episodes_in_pack is still 0 here, bitrate will be high but based on single episode runtime
-                # else (single episode): effective_runtime_for_bitrate is already 'runtime'
-            
-            if effective_runtime_for_bitrate > 0: 
-                 bitrate = calculate_bitrate(total_size_gb, effective_runtime_for_bitrate) # Bitrate base is always total_size_gb
+            # --- Bitrate Calculation Prep ---
+            # 'num_episodes_in_pack' at this point has its final value after considering pack type, API fallbacks, 
+            # and 'provides_per_item_size' adjustments. This is the number of conceptual episodes 
+            # the 'total_size_gb' is considered to contain for bitrate purposes.
 
+            bitrate = 0
+            # runtime is the base runtime for one item (episode or movie) passed into filter_results
+            effective_runtime_for_bitrate = runtime 
+            actual_ep_count_used_for_runtime_calc = 1 # Default for movies or single episodes not identified as packs
+
+            if is_episode:
+                if is_identified_as_pack:
+                    # For packs, use the calculated number of episodes. Fallback to 1 if count is bad.
+                    actual_ep_count_used_for_runtime_calc = num_episodes_in_pack if num_episodes_in_pack > 0 else 1
+                    if num_episodes_in_pack <= 0: # Log if we had to fallback
+                        logging.warning(f"Pack '{original_title}': num_episodes_in_pack is {num_episodes_in_pack}. Using 1 for runtime calculation. Bitrate may be inaccurate.")
+                    effective_runtime_for_bitrate = runtime * actual_ep_count_used_for_runtime_calc
+                # else (single episode not a pack): effective_runtime_for_bitrate is 'runtime', actual_ep_count_used_for_runtime_calc is 1. This is correct.
+            # else (movie): effective_runtime_for_bitrate is 'runtime', actual_ep_count_used_for_runtime_calc is 1. This is correct.
+
+            if effective_runtime_for_bitrate > 0 and total_size_gb > 0:
+                bitrate = calculate_bitrate(total_size_gb, effective_runtime_for_bitrate) # total_size_gb is the key size input
+            else:
+                logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive effective_runtime ({effective_runtime_for_bitrate}min) or total_size_gb ({total_size_gb:.3f}GB). Bitrate set to 0.")
+                bitrate = 0 # Ensure it's 0 if skipped
+            
             result['bitrate'] = bitrate
+            # Store the count that reflects the content of total_size_gb
             result['num_episodes_in_pack_calculated'] = num_episodes_in_pack 
 
+            
             #logging.debug(f"Filtering '{original_title}': Effective Size for Filter: {result['size']:.2f}GB (Total: {result['total_size_gb']:.2f}GB, Calc'd Episodes in Pack: {num_episodes_in_pack}), Bitrate: {bitrate:.2f}Mbps")
             
             # Add to pre-size filtered results

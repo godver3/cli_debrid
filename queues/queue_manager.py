@@ -6,7 +6,7 @@ import json
 import os
 import time
 
-from database.database_writing import update_media_item_state
+from database.database_writing import update_media_item_state, add_media_item
 from database.database_reading import get_media_item_by_id, get_item_count_by_state
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
@@ -946,3 +946,80 @@ class QueueManager:
                 logging.error(f"Error getting contents for queue {state}: {e}")
                 contents[state] = [] # Return empty list on error for this queue
         return contents
+
+    def create_and_add_item_to_wanted_queue(self, new_item_data: Dict[str, Any], reason: str = "New item") -> bool:
+        """
+        Creates a new media item in the database and adds it to the Wanted queue.
+
+        Args:
+            new_item_data: A dictionary containing the data for the new media item.
+                           Must include all necessary fields for database insertion.
+                           The 'state' will be overridden to 'Wanted'.
+            reason: A string describing why this item is being added.
+
+        Returns:
+            True if the item was successfully created and added, False otherwise.
+        """
+        item_identifier_for_log = self.generate_identifier(new_item_data) # Generate identifier before ID exists
+        logging.info(f"Attempting to create and add new item to Wanted: {item_identifier_for_log} ({reason})")
+
+        # Ensure the state is 'Wanted'
+        new_item_data_for_db = new_item_data.copy() # Work with a copy
+        new_item_data_for_db['state'] = 'Wanted'
+        if 'id' in new_item_data_for_db: 
+            del new_item_data_for_db['id']
+
+        try:
+            # Add the new media item to the database, returns the new item's ID
+            new_item_id = add_media_item(new_item_data_for_db)
+
+            if new_item_id is not None:
+                logging.info(f"Successfully inserted new media item with ID: {new_item_id}. Fetching full item details.")
+                
+                # Fetch the newly created item as a dictionary using its ID
+                created_item_dict = get_media_item_by_id(new_item_id)
+
+                if created_item_dict:
+                    final_item_identifier = self.generate_identifier(created_item_dict)
+                    logging.info(f"Successfully fetched new media item: {final_item_identifier} (ID: {new_item_id}) with state 'Wanted'.")
+
+                    self.queues["Wanted"].add_item(created_item_dict)
+                    self.queue_timer.item_entered_queue(new_item_id, "Wanted", final_item_identifier)
+                    
+                    self.item_tracker.info({
+                        'event': 'ITEM_CREATED_AND_WANTED',
+                        'item_id': new_item_id,
+                        'item_identifier': final_item_identifier,
+                        'reason': reason,
+                        'initial_data': new_item_data_for_db 
+                    })
+                    logging.debug(f"Placeholder: Notification for new Wanted item {final_item_identifier} (ID: {new_item_id}) would be triggered here.")
+                    return True
+                else:
+                    logging.error(f"Successfully inserted item ID {new_item_id} but failed to fetch it back from DB for {item_identifier_for_log}.")
+                    self.item_tracker.error({
+                        'event': 'ITEM_CREATION_FETCH_FAILED',
+                        'item_id': new_item_id,
+                        'item_identifier': item_identifier_for_log,
+                        'reason': 'Item inserted but get_media_item_by_id returned None.',
+                        'initial_data': new_item_data_for_db
+                    })
+                    return False
+            else:
+                logging.error(f"Failed to create new media item in DB for {item_identifier_for_log}. `add_media_item` returned None.")
+                self.item_tracker.error({
+                    'event': 'ITEM_INSERTION_FAILED',
+                    'item_identifier': item_identifier_for_log,
+                    'reason': f"add_media_item returned None.",
+                    'initial_data': new_item_data_for_db
+                })
+                return False
+        except Exception as e:
+            logging.error(f"Exception during creation or queuing of new item {item_identifier_for_log}: {e}", exc_info=True)
+            self.item_tracker.error({
+                'event': 'ITEM_CREATION_EXCEPTION',
+                'item_identifier': item_identifier_for_log,
+                'reason': str(e),
+                'initial_data': new_item_data_for_db
+            })
+            return False

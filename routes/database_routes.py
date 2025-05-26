@@ -729,14 +729,21 @@ def bulk_queue_action():
                         # --- End: File Deletion & Plex Removal Logic ---
 
                         current_version_val = item_db_data.get('version')
-                        cleaned_version_val = current_version_val 
 
-                        if isinstance(current_version_val, str) and '*' in current_version_val:
-                            cleaned_version_val = current_version_val.replace('*', '')
-                            logging.info(f"Rescrape: Item {item_id}, original version '{current_version_val}', will be updated to cleaned version '{cleaned_version_val}'.")
-                        
+                        cleaned_version_val = current_version_val # Default assignment
+
+                        if current_version_val is None:
+                            logging.warning(f"Rescrape Detail: Item ID {item_id} - Version from DB is None. 'cleaned_version_val' will be None.")
+                            # cleaned_version_val is already None
+                        elif isinstance(current_version_val, str):
+                            if '*' in current_version_val:
+                                cleaned_version_val = current_version_val.replace('*', '')
+                        else: # Not a string and not None
+                            logging.warning(f"Rescrape Detail: Item ID {item_id} - Version from DB is not a string or None: '{current_version_val}' (type: {type(current_version_val)}). 'cleaned_version_val' currently is '{cleaned_version_val}'. This might cause issues if DB expects a string for version.")
+                            # cleaned_version_val will hold the original non-string, non-None value here.
+
                         prepared_items_for_db_update.append({
-                            'id': item_id, 
+                            'id': item_id,
                             'cleaned_version': cleaned_version_val,
                             'current_original_scraped_title': item_db_data.get('original_scraped_torrent_title') # Store for rescrape_original_torrent_title
                         })
@@ -751,14 +758,14 @@ def bulk_queue_action():
                     try:
                         item_ids_for_update_clause = [item['id'] for item in prepared_items_for_db_update]
                         placeholders_for_in_clause = ','.join('?' * len(item_ids_for_update_clause))
-                        
+
                         version_case_sql_parts = []
                         params_for_version_case_values = []
                         for item_update_payload in prepared_items_for_db_update:
-                            version_case_sql_parts.append("WHEN ? THEN ?") 
+                            version_case_sql_parts.append("WHEN ? THEN ?")
                             params_for_version_case_values.extend([item_update_payload['id'], item_update_payload['cleaned_version']])
-                        
-                        version_case_final_sql = "version" 
+
+                        version_case_final_sql = "version"
                         if version_case_sql_parts:
                              version_case_final_sql = "CASE id " + " ".join(version_case_sql_parts) + " ELSE version END"
 
@@ -767,14 +774,12 @@ def bulk_queue_action():
                         for item_update_payload in prepared_items_for_db_update:
                             rescrape_title_case_sql_parts.append("WHEN ? THEN ?")
                             params_for_rescrape_title_case_values.extend([item_update_payload['id'], item_update_payload.get('current_original_scraped_title')])
-                        
+
                         rescrape_title_case_final_sql = "rescrape_original_torrent_title" # Default to existing if no specific update
                         if rescrape_title_case_sql_parts:
                             rescrape_title_case_final_sql = "CASE id " + " ".join(rescrape_title_case_sql_parts) + " ELSE rescrape_original_torrent_title END"
 
-
-                        logging.info(f"Rescrape: Attempting to batch update {len(item_ids_for_update_clause)} items in DB: set to 'Wanted' and update versions for batch {i//BATCH_SIZE + 1}.")
-                        
+                        # MOVED DEFINITIONS UP
                         final_db_update_query = f"""UPDATE media_items 
                                SET state = 'Wanted', 
                                    location_on_disk = NULL, 
@@ -792,8 +797,9 @@ def bulk_queue_action():
                                    fall_back_to_single_scraper = 0,
                                    last_updated = ? 
                                WHERE id IN ({placeholders_for_in_clause})"""
+
+                        sql_params_for_final_db_update = params_for_rescrape_title_case_values + params_for_version_case_values + [datetime.now()] + item_ids_for_update_clause
                         
-                        sql_params_for_final_db_update = params_for_version_case_values + params_for_rescrape_title_case_values + [datetime.now()] + item_ids_for_update_clause
                         
                         cursor_rescape_batch.execute(final_db_update_query, sql_params_for_final_db_update)
                         rows_affected_by_update = cursor_rescape_batch.rowcount

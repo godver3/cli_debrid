@@ -17,9 +17,15 @@ from datetime import datetime
 from queues.upgrading_queue import UpgradingQueue
 from routes.notifications import send_upgrade_failed_notification
 from debrid.status import TorrentFetchStatus
+from debrid.base import ProviderUnavailableError
+import requests
+from database.database_reading import get_media_item_by_id
+from database.core import get_db_connection
 
 # Define a constant for clarity when get_torrent_progress signals a missing torrent
 PROGRESS_RESULT_MISSING = "MISSING_TORRENT"
+DEFAULT_MAX_UNKNOWN_STRIKES = 5
+DEFAULT_CHECKING_GRACE_PERIOD_SECONDS = 60 * 5
 
 class CheckingQueue:
     _instance = None
@@ -33,6 +39,7 @@ class CheckingQueue:
             cls._instance.progress_checks = {}
             cls._instance.debrid_provider = get_debrid_provider()
             cls._instance.uncached_torrents = {}  # Dict of {torrent_hash: {last_check_time, item_ids[]}}
+            cls._instance.unknown_strikes = {} # Tracks consecutive unknown states for torrents
         return cls._instance
 
     def __init__(self):
@@ -90,19 +97,25 @@ class CheckingQueue:
                 torrent_groups[torrent_id].append(item)
         
         # Process items in batches by torrent ID
-        for torrent_id, items in torrent_groups.items():
-            progress = self.get_torrent_progress(torrent_id)
-            state = self.get_torrent_state(torrent_id)
+        for torrent_id, items_group in torrent_groups.items(): # Renamed items to items_group to avoid conflict
+            current_items_for_torrent = [item for item in self.items if item.get('filled_by_torrent_id') == torrent_id]
+            if not current_items_for_torrent:
+                logging.debug(f"Torrent {torrent_id} no longer has items in queue, skipping in get_contents.")
+                continue
+
+            progress = self.get_torrent_progress(torrent_id) 
+            # Call with increment_strikes=False for display purposes
+            state = self.get_torrent_state(torrent_id, increment_strikes=False) 
             
-            # If state is 'missing', these items will be moved to Wanted by get_torrent_state
-            # so we should skip them here and mark them for removal
-            if state == 'missing':
-                items_to_remove.extend(items)
+            if state == 'missing' or state == 'stalled':
+                items_to_remove.extend(items_group)
                 continue
             
-            for item in items:
+            for item in current_items_for_torrent:
                 item_info = dict(item)
-                item_info['progress'] = progress
+                item_info['progress'] = progress # progress here might be stale if state changed it.
+                                                 # For display, maybe get fresh progress or use what get_torrent_state determined.
+                                                 # For now, using the progress fetched at the start of this loop.
                 item_info['state'] = state
                 items_with_info.append(item_info)
         
@@ -236,12 +249,17 @@ class CheckingQueue:
                     queue_manager.move_to_wanted(item, "Checking")
 
                     # Remove the item from the checking queue
-                    if item in self.items:
-                        self.remove_item(item)
+                    if item in self.items: # Check before removing
+                        self.remove_item(item) # This will also clean up unknown_strikes if needed
                         logging.info(f"Removed item {item_id} from checking queue")
 
             except Exception as e:
                 logging.error(f"Failed to handle item {item.get('id', 'unknown')} for missing torrent {torrent_id}: {str(e)}")
+        
+        # Clear strike counter for this torrent as it's decisively missing
+        if torrent_id in self.unknown_strikes:
+            del self.unknown_strikes[torrent_id]
+            logging.debug(f"Cleared unknown strikes for missing torrent {torrent_id}")
 
     @timed_lru_cache(seconds=60)
     def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
@@ -261,6 +279,21 @@ class CheckingQueue:
             elif status_result.status == TorrentFetchStatus.NOT_FOUND:
                 logging.info(f"Torrent {torrent_id} confirmed NOT FOUND (404) by provider.")
                 return PROGRESS_RESULT_MISSING
+            # New block to catch 404s hidden in error messages
+            elif status_result.message and "404" in status_result.message and \
+                 status_result.status in [
+                     TorrentFetchStatus.CLIENT_ERROR,
+                     TorrentFetchStatus.SERVER_ERROR,
+                     TorrentFetchStatus.PROVIDER_HANDLED_ERROR,
+                     TorrentFetchStatus.UNKNOWN_ERROR,
+                     TorrentFetchStatus.REQUEST_ERROR
+                 ]:
+                logging.warning(
+                    f"Torrent {torrent_id} appears to be NOT FOUND (404) based on error message "
+                    f"'{status_result.message}' despite status being {status_result.status.value}. "
+                    f"Treating as MISSING."
+                )
+                return PROGRESS_RESULT_MISSING
             elif status_result.status in [
                 TorrentFetchStatus.RATE_LIMITED,
                 TorrentFetchStatus.PROVIDER_HANDLED_ERROR, # Error logged by provider, treat as temp
@@ -271,16 +304,6 @@ class CheckingQueue:
                     f"Temporary issue fetching torrent {torrent_id} info: {status_result.status.value} - {status_result.message}. Will retry."
                 )
                 return None # Signal to retry later
-            elif status_result.status in [
-                TorrentFetchStatus.CLIENT_ERROR, # Non-404/429 client errors
-                TorrentFetchStatus.UNKNOWN_ERROR
-            ]:
-                logging.error(
-                    f"Error fetching torrent {torrent_id} info: {status_result.status.value} - {status_result.message}. Treating as temporary for now to allow retries."
-                )
-                # For now, to be safe and avoid incorrect blacklisting for potentially recoverable client/unknown errors,
-                # treat as temporary (None). Specific permanent client errors would need explicit handling if they shouldn't be retried.
-                return None
             else: # Should not happen if all enum values are covered
                 logging.error(f"Unhandled TorrentFetchStatus {status_result.status} for torrent {torrent_id}")
                 return None
@@ -289,55 +312,132 @@ class CheckingQueue:
             logging.error(f"Exception in get_torrent_progress for {torrent_id}: {str(e)}", exc_info=True)
             return None # General error, treat as temporary for retry
 
-    def get_torrent_state(self, torrent_id: str) -> str:
-        """Get the current state of a torrent (downloaded, downloading, missing, or unknown)"""
+    def get_torrent_state(self, torrent_id: str, increment_strikes: bool = True) -> str:
+        """Get the current state of a torrent (downloaded, downloading, missing, stalled, or unknown)"""
+        max_strikes = get_setting('Debug', 'max_unknown_strikes', default=DEFAULT_MAX_UNKNOWN_STRIKES)
+        grace_period = get_setting('Debug', 'checking_grace_period_seconds', default=DEFAULT_CHECKING_GRACE_PERIOD_SECONDS)
+        
+        from queues.queue_manager import QueueManager
+        queue_manager = QueueManager()
+
         try:
             progress_or_status = self.get_torrent_progress(torrent_id)
 
             if progress_or_status == PROGRESS_RESULT_MISSING:
                 logging.info(f"Torrent {torrent_id} is missing. Handling via handle_missing_torrent.")
+                if torrent_id in self.unknown_strikes: 
+                    del self.unknown_strikes[torrent_id]
+                    logging.debug(f"Cleared unknown strikes for {torrent_id} as it's now confirmed missing.")
                 try:
-                    # Import QueueManager here to avoid circular imports
-                    from queues.queue_manager import QueueManager
-                    queue_manager = QueueManager()
-                    # This method will move items to Wanted and add to not-wanted list
                     self.handle_missing_torrent(torrent_id, queue_manager)
-                    return 'missing' # State to indicate it was handled as missing
+                    return 'missing' 
                 except Exception as e:
                     logging.error(f"Failed to execute handle_missing_torrent for {torrent_id} within get_torrent_state: {str(e)}")
-                    return 'unknown' # Fallback if handling fails
+                    if increment_strikes:
+                        self.unknown_strikes[torrent_id] = self.unknown_strikes.get(torrent_id, 0) + 1
+                        logging.warning(f"Torrent {torrent_id} state is 'unknown' due to handle_missing_torrent failure. Strike {self.unknown_strikes[torrent_id]}/{max_strikes}.")
+                        if self.unknown_strikes[torrent_id] >= max_strikes:
+                            logging.warning(f"Torrent {torrent_id} reached max unknown strikes after handle_missing_torrent failure.")
+                            self.handle_stalled_torrent(torrent_id, queue_manager, f"Max unknown strikes ({max_strikes}) reached after handle_missing_torrent failure.")
+                            return 'stalled' 
+                    return 'unknown'
 
             elif isinstance(progress_or_status, (int, float)):
                 current_progress = progress_or_status
-                # Cast to int for 100% check to handle 100 or 100.0
+
                 if int(current_progress) == 100:
+                    if torrent_id in self.unknown_strikes: 
+                        del self.unknown_strikes[torrent_id]
+                        logging.debug(f"Cleared unknown strikes for {torrent_id} as it's downloaded (100%).")
                     return 'downloaded'
-                # For > 0 check, float or int works fine
+                
                 if current_progress > 0:
+                    if torrent_id in self.unknown_strikes: 
+                        del self.unknown_strikes[torrent_id]
+                        logging.debug(f"Cleared unknown strikes for {torrent_id} as it's downloading (>0%).")
                     return 'downloading'
                 
-                # Check progress history if available for 0% or 0.0 progress
                 if torrent_id in self.progress_checks:
                     last_progress = self.progress_checks[torrent_id]['last_progress']
-                    # Cast to int for 100% check for last_progress
                     if last_progress is not None and int(last_progress) == 100: 
+                        if torrent_id in self.unknown_strikes: 
+                            del self.unknown_strikes[torrent_id]
+                            logging.debug(f"Cleared unknown strikes for {torrent_id} as history shows downloaded (100%).")
                         return 'downloaded'
-                    # Cast both to float for reliable comparison if last_progress might be int/float
-                    if last_progress is not None and float(current_progress) > float(last_progress):
-                         return 'downloading'
-                
-                return 'unknown' # Progress is 0, 0.0 or not clearly downloading yet
 
-            elif progress_or_status is None: # Temporary error, progress unknown for this cycle
-                logging.warning(f"Could not determine progress for torrent {torrent_id} in get_torrent_state (temporary error). Returning 'unknown' state.")
+                if increment_strikes:
+                    # Find the first item associated with this torrent_id to check its add time.
+                    # This assumes items are added to checking_queue_times when they enter the queue.
+                    item_add_time = None
+                    for item_id_in_dict, t_add_time in self.checking_queue_times.items():
+                        # This is a bit indirect. We need to find an item in self.items that has this torrent_id
+                        # and then use its id to get the time from checking_queue_times.
+                        # A more direct way would be to store torrent_add_time if a torrent can exist without items,
+                        # or ensure items for a torrent are added with their add times consistently.
+                        # For now, let's find the OLDEST item associated with this torrent.
+                        
+                        # Find an item in self.items that matches item_id_in_dict and also has the current torrent_id
+                        # This is inefficient. A better approach is needed if performance becomes an issue.
+                        # A simpler way: find the minimum add_time for any of these items
+                        
+                        # Get all items in the current checking queue associated with this torrent_id
+                        current_items_for_torrent = [item_obj for item_obj in self.items if item_obj.get('filled_by_torrent_id') == torrent_id]
+                        if not current_items_for_torrent:
+                             # If no items are found for this torrent_id (shouldn't happen if called from process loop for an active torrent)
+                             # then we can't determine a grace period based on item add time. Proceed to strike.
+                             pass # Fall through to strike increment
+                        else:
+                            # Find the minimum add_time for any of these items
+                            min_add_time_for_torrent_items = float('inf')
+                            found_any_item_time = False
+                            for item_obj in current_items_for_torrent:
+                                if item_obj['id'] in self.checking_queue_times:
+                                    min_add_time_for_torrent_items = min(min_add_time_for_torrent_items, self.checking_queue_times[item_obj['id']])
+                                    found_any_item_time = True
+                            
+                            if found_any_item_time and (time.time() - min_add_time_for_torrent_items) < grace_period:
+                                logging.debug(f"Torrent {torrent_id} is within grace period ({grace_period}s) with 0% progress. Deferring strike.")
+                                return 'unknown' # Return unknown, but don't increment strike yet.
+                    
+                    # Grace period passed or no item time found, proceed to increment strike for 0% progress.
+                    self.unknown_strikes[torrent_id] = self.unknown_strikes.get(torrent_id, 0) + 1
+                    logging.warning(f"Torrent {torrent_id} state is 'unknown' (progress: {current_progress}). Strike {self.unknown_strikes[torrent_id]}/{max_strikes}.")
+                    if self.unknown_strikes[torrent_id] >= max_strikes:
+                        logging.warning(f"Torrent {torrent_id} reached max unknown strikes ({max_strikes}) due to persistent progress {current_progress} or errors.")
+                        self.handle_stalled_torrent(torrent_id, queue_manager, f"Max unknown strikes ({max_strikes}) reached with progress {current_progress}.")
+                        return 'stalled'
+                return 'unknown' # Return unknown if not incrementing strikes or if grace period deferred it
+
+            elif progress_or_status is None: 
+                if increment_strikes:
+                    self.unknown_strikes[torrent_id] = self.unknown_strikes.get(torrent_id, 0) + 1
+                    logging.warning(f"Could not determine progress for torrent {torrent_id} in get_torrent_state (temporary error). Strike {self.unknown_strikes[torrent_id]}/{max_strikes}. Returning 'unknown' state.")
+                    if self.unknown_strikes[torrent_id] >= max_strikes:
+                        logging.warning(f"Torrent {torrent_id} reached max unknown strikes ({max_strikes}) due to repeated temporary errors.")
+                        self.handle_stalled_torrent(torrent_id, queue_manager, f"Max unknown strikes ({max_strikes}) reached due to temporary errors.")
+                        return 'stalled'
                 return 'unknown'
 
-            else: # Should ideally not be reached if all return types from get_torrent_progress are handled
+            else: 
                 logging.error(f"Unexpected return value from get_torrent_progress for {torrent_id}: {progress_or_status} in get_torrent_state.")
+                if increment_strikes:
+                    self.unknown_strikes[torrent_id] = self.unknown_strikes.get(torrent_id, 0) + 1
+                    logging.warning(f"Torrent {torrent_id} state is 'unknown' (unexpected progress value). Strike {self.unknown_strikes[torrent_id]}/{max_strikes}.")
+                    if self.unknown_strikes[torrent_id] >= max_strikes:
+                        logging.warning(f"Torrent {torrent_id} reached max unknown strikes ({max_strikes}) due to unexpected progress value.")
+                        self.handle_stalled_torrent(torrent_id, queue_manager, f"Max unknown strikes ({max_strikes}) reached with unexpected progress value.")
+                        return 'stalled'
                 return 'unknown'
 
         except Exception as e:
             logging.error(f"General exception in get_state for torrent {torrent_id}: {str(e)}", exc_info=True)
+            if increment_strikes:
+                self.unknown_strikes[torrent_id] = self.unknown_strikes.get(torrent_id, 0) + 1
+                logging.warning(f"Torrent {torrent_id} state is 'unknown' (general exception). Strike {self.unknown_strikes[torrent_id]}/{max_strikes}.")
+                if self.unknown_strikes[torrent_id] >= max_strikes:
+                    logging.warning(f"Torrent {torrent_id} reached max unknown strikes ({max_strikes}) due to general exception.")
+                    self.handle_stalled_torrent(torrent_id, queue_manager, f"Max unknown strikes ({max_strikes}) reached due to general exception.")
+                    return 'stalled'
             return 'unknown'
 
     def add_item(self, item: Dict[str, Any]):
@@ -481,19 +581,35 @@ class CheckingQueue:
                 logging.info(f"Removed hash {hash_value} from uncached tracking as it's now cached")
 
     def remove_item(self, item: Dict[str, Any]):
+        item_id_to_remove = item['id']
         torrent_id = item.get('filled_by_torrent_id')
-        self.items = [i for i in self.items if i['id'] != item['id']]
-        if item['id'] in self.checking_queue_times:
-            del self.checking_queue_times[item['id']]
+        
+        # Remove item from the list
+        original_item_count = len(self.items)
+        self.items = [i for i in self.items if i['id'] != item_id_to_remove]
+        items_removed_count = original_item_count - len(self.items)
+
+        if items_removed_count > 0:
+            logging.debug(f"Successfully removed item {item_id_to_remove} from checking queue items list.")
+        else:
+            logging.debug(f"Item {item_id_to_remove} not found in checking queue items list during removal, or already removed.")
+
+        if item_id_to_remove in self.checking_queue_times:
+            del self.checking_queue_times[item_id_to_remove]
+            logging.debug(f"Removed item {item_id_to_remove} from checking_queue_times.")
         
         # Log removal and check if any other items still reference this torrent
         remaining_items_with_torrent = [i for i in self.items if i.get('filled_by_torrent_id') == torrent_id]
-        logging.debug(f"Removed item {item['id']} from checking queue. Torrent ID {torrent_id} still referenced by {len(remaining_items_with_torrent)} items")
+        logging.debug(f"After removing item {item_id_to_remove}, torrent ID {torrent_id} is still referenced by {len(remaining_items_with_torrent)} items in the queue.")
         
-        # If no more items reference this torrent, clean up progress checks
-        if not remaining_items_with_torrent and torrent_id in self.progress_checks:
-            del self.progress_checks[torrent_id]
-            logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items")
+        # If no more items reference this torrent, clean up progress checks and unknown strikes
+        if torrent_id and not remaining_items_with_torrent:
+            if torrent_id in self.progress_checks:
+                del self.progress_checks[torrent_id]
+                logging.debug(f"Cleaned up progress checks for torrent {torrent_id} as it has no more associated items.")
+            if torrent_id in self.unknown_strikes:
+                del self.unknown_strikes[torrent_id]
+                logging.debug(f"Cleaned up unknown strikes for torrent {torrent_id} as it has no more associated items.")
         
         # Also clean up any uncached torrent tracking if this was the last item
         try:
@@ -576,45 +692,71 @@ class CheckingQueue:
             logging.debug(f"Checking cache status for {len(self.uncached_torrents)} tracked torrents")
             self.check_uncached_torrents(phalanx_db_manager)
 
-        # Group items by torrent ID
-        items_by_torrent = {}
+        # Check for items associated with torrents that are no longer in self.items (due to stalling/missing handling)
+        # and ensure they are marked for removal if not already handled.
+        # This is a safety net, as handle_stalled_torrent and handle_missing_torrent should manage this.
+        active_torrent_ids_in_queue = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
 
-        # Group all items by their torrent ID and log the grouping
-        for item in self.items:
-            torrent_id = item['filled_by_torrent_id']
-            if torrent_id not in items_by_torrent:
-                items_by_torrent[torrent_id] = []
-            items_by_torrent[torrent_id].append(item)
-            logging.debug(f"Grouped item {item['id']} under torrent ID {torrent_id}")
-            # Ensure checking_queue_times is initialized for this item
-            if item['id'] not in self.checking_queue_times:
-                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing with current time.")
-                self.checking_queue_times[item['id']] = current_time
+        items_by_torrent_id_to_process = {}
+        temp_items_to_remove_stale = []
 
-        # Process items by torrent ID
-        for torrent_id, items in items_by_torrent.items():
+        for item in list(self.items): # Iterate over a copy if modifying self.items indirectly
+            torrent_id = item.get('filled_by_torrent_id')
+            if not torrent_id: # Item has no torrent ID, process individually or skip
+                # This logic might need refinement based on how items without torrent_id are handled
+                logging.debug(f"Item {item['id']} has no torrent ID, skipping grouped processing in main loop.")
+                continue
+
+            if torrent_id not in active_torrent_ids_in_queue:
+                 # This can happen if handle_stalled_torrent or handle_missing_torrent removed all items for this torrent_id
+                 # from self.items, but the loop iterating self.items hasn't caught up.
+                 logging.debug(f"Item {item['id']} belongs to torrent {torrent_id} which seems to have been fully processed/removed. Marking for local removal if still present.")
+                 temp_items_to_remove_stale.append(item)
+                 continue
+
+            if torrent_id not in items_by_torrent_id_to_process:
+                items_by_torrent_id_to_process[torrent_id] = []
+            items_by_torrent_id_to_process[torrent_id].append(item)
+        
+        for stale_item in temp_items_to_remove_stale:
+            if self.contains_item_id(stale_item['id']): # Check before removing
+                self.remove_item(stale_item) # Ensure it is removed from self.items
+                logging.debug(f"Removed stale item {stale_item['id']} from checking queue during process loop.")
+
+        # Process items by torrent ID using the filtered list
+        for torrent_id, current_items_for_torrent in items_by_torrent_id_to_process.items():
+            if not current_items_for_torrent: # Should not happen due to pre-filtering but good check
+                logging.debug(f"Torrent {torrent_id} has no items left after filtering, skipping.")
+                continue
             try:
-                logging.debug(f"Processing torrent {torrent_id} with {len(items)} associated items")
+                logging.debug(f"Processing torrent {torrent_id} with {len(current_items_for_torrent)} associated items")
                 
-                progress_or_status = self.get_torrent_progress(torrent_id)
+                # Call get_torrent_state with increment_strikes=True (default) for authoritative check
+                torrent_overall_state = self.get_torrent_state(torrent_id) 
                 
-                if progress_or_status == PROGRESS_RESULT_MISSING:
-                    logging.info(f"Torrent {torrent_id} is missing (confirmed during process loop). Handling missing torrent.")
-                    try:
-                        self.handle_missing_torrent(torrent_id, queue_manager)
-                        # Items are moved by handle_missing_torrent. Mark them for removal from Python queue object.
-                        items_to_remove.extend(items)
-                    except Exception as e:
-                        logging.error(f"Failed to handle missing torrent {torrent_id} in process loop: {str(e)}")
-                    continue # Move to the next torrent
+                if torrent_overall_state == 'missing' or torrent_overall_state == 'stalled':
+                    logging.info(f"Torrent {torrent_id} handled as '{torrent_overall_state}' by get_torrent_state. Items should have been processed.")
+                    # Items are moved/removed by handle_missing_torrent or handle_stalled_torrent called within get_torrent_state.
+                    # The main self.items list is modified by those handlers.
+                    # No need to add to items_to_remove here as the handlers should do it.
+                    continue
 
-                elif progress_or_status is None: # Temporary error from get_torrent_progress
-                    logging.warning(f"Temporary issue determining progress for torrent {torrent_id} in process method. Skipping this cycle.")
-                    continue # Move to the next torrent
+                # If state is not 'missing' or 'stalled', proceed with other checks
+                # We need progress for further logic if not stalled/missing
+                progress_or_status = self.get_torrent_progress(torrent_id)
+
+                if progress_or_status is None: # Temporary error from get_torrent_progress, already handled by get_torrent_state for stalling
+                    logging.warning(f"Temporary issue determining progress for torrent {torrent_id} in process method (state: {torrent_overall_state}). Skipping active processing this cycle.")
+                    continue
                 
-                # If we are here, progress_or_status is an int or float
+                # If we are here, progress_or_status is an int or float (or PROGRESS_RESULT_MISSING, but that's covered by 'missing' state)
+                if progress_or_status == PROGRESS_RESULT_MISSING: # Should be caught by get_torrent_state
+                    logging.warning(f"Torrent {torrent_id} became missing during process loop after get_torrent_state. Re-evaluating.")
+                    self.handle_missing_torrent(torrent_id, queue_manager)
+                    # items_to_remove.extend(current_items_for_torrent) # Items removed by handler
+                    continue
+
                 current_progress = progress_or_status
-                # Ensure it's an int or float, as provider can return float percentages like 0.2 for 0.2%
                 if not isinstance(current_progress, (int, float)):
                     logging.error(f"Unexpected type for current_progress after checks: {type(current_progress)}. Value: {current_progress}. Skipping torrent {torrent_id}.")
                     continue
@@ -627,133 +769,86 @@ class CheckingQueue:
                 last_progress = self.progress_checks[torrent_id]['last_progress']
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
                 
-                # Check if progress just hit 100% (transition from downloading to downloaded)
-                # Use int(current_progress) to robustly compare with 100, handles floats like 100.0
-                if int(current_progress) == 100 and last_progress is not None and last_progress < 100:
-                    logging.info(f"Torrent {torrent_id} just finished downloading. Updating cache status.")
-                    
-                    # Get hash from any item's magnet link
-                    for item in items:
-                        magnet = item.get('filled_by_magnet')
-                        if magnet:
-                            try:
-                                # Extract hash from magnet link
-                                hash_value = None
-                                if magnet.startswith('http'):
-                                    hash_value = download_and_extract_hash(magnet)
-                                else:
-                                    hash_value = extract_hash_from_magnet(magnet)
-                                
-                                if hash_value:
-                                    # Update cache status synchronously
-                                    logging.info(f"Updating cache status for hash {hash_value} to cached=True")
-                                    try:
-                                        phalanx_db_manager.update_cache_status(hash_value, True)
-                                    except Exception as e:
-                                        logging.error(f"Failed to update cache status for hash {hash_value}: {str(e)}")
-                                    break  # We only need to update once per torrent
-                            except Exception as e:
-                                logging.error(f"Failed to update cache status: {str(e)}")
-                
                 if int(current_progress) == 100:
-                    # Process completed torrents in Symlinked/Local mode
+                    # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-                        items_to_scan = [] # Keep track of items not found yet
-                        for item in items:
+                        items_to_scan = [] 
+                        for item_in_torrent_group in current_items_for_torrent:
                             try:
-                                time_in_queue = current_time - self.checking_queue_times[item['id']]
+                                time_in_queue_for_item = current_time - self.checking_queue_times[item_in_torrent_group['id']]
                             except KeyError:
-                                logging.warning(f"Item {item['id']} missing from checking_queue_times. Initializing.")
-                                self.checking_queue_times[item['id']] = current_time
-                                time_in_queue = 0
+                                logging.warning(f"Item {item_in_torrent_group['id']} missing from checking_queue_times. Initializing.")
+                                self.checking_queue_times[item_in_torrent_group['id']] = current_time
+                                time_in_queue_for_item = 0
 
-                            # Log item details just before calling check_local_file_for_item
-                            logging.debug(f"[CheckingQueue Process] Preparing to call check_local_file_for_item for Item ID {item.get('id')}")
-                            logging.debug(f"[CheckingQueue Process] Item Data: upgrading_from='{item.get('upgrading_from')}', state='{item.get('state')}', filled_by_file='{item.get('filled_by_file')}'")
-                            # Optional: Log the full item dict for very detailed debugging
-                            # logging.debug(f"[CheckingQueue Process] Full item data for {item.get('id')}: {item}")
+                            logging.debug(f"[CheckingQueue Process] Preparing to call check_local_file_for_item for Item ID {item_in_torrent_group.get('id')}")
+                            logging.debug(f"[CheckingQueue Process] Item Data: upgrading_from='{item_in_torrent_group.get('upgrading_from')}', state='{item_in_torrent_group.get('state')}', filled_by_file='{item_in_torrent_group.get('filled_by_file')}'")
 
-                            # --- EDIT: Modify call to pass callback and handle boolean result ---
-                            logging.info(f"Checking for local file for item {item['id']}...")
-                            use_extended_search = time_in_queue > 900 and (time_in_queue % 900) < 300
-                            logging.debug(f"Using extended search: {use_extended_search} (time in queue: {time_in_queue:.1f}s)")
+                            use_extended_search = time_in_queue_for_item > 900 and (time_in_queue_for_item % 900) < 300
+                            logging.debug(f"Using extended search: {use_extended_search} (time in queue: {time_in_queue_for_item:.1f}s)")
 
                             processing_successful = check_local_file_for_item(
-                                item,
+                                item_in_torrent_group,
                                 extended_search=use_extended_search,
                             )
 
                             if processing_successful:
-                                logging.info(f"Local file found and symlinked for item {item['id']} by CheckingQueue.")
-
-                                # --- EDIT: Fetch updated item data ---
-                                from database import get_media_item_by_id # Ensure import is available
-                                updated_item_data = get_media_item_by_id(item['id'])
+                                logging.info(f"Local file found and symlinked for item {item_in_torrent_group['id']} by CheckingQueue.")
+                                updated_item_data = get_media_item_by_id(item_in_torrent_group['id'])
                                 if not updated_item_data:
-                                     logging.error(f"Failed to fetch updated data for item {item['id']} after successful local check. Skipping media server update.")
-                                     # Decide how to handle this - maybe continue to state check?
+                                        logging.error(f"Failed to fetch updated data for item {item_in_torrent_group['id']} after successful local check. Skipping media server update.")
                                 else:
-                                     # Use the fresh data for media server updates
-                                     logging.debug(f"Fetched updated data for item {item['id']} before media server update.")
-                                     if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                                         emby_update_item(dict(updated_item_data)) # Pass updated data
-                                     elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                                         plex_update_item(dict(updated_item_data)) # Pass updated data
-                                # --- END EDIT ---
-
-                                # Re-check state after processing, as check_local_file_for_item might change it
-                                from database.core import get_db_connection
+                                        logging.debug(f"Fetched updated data for item {item_in_torrent_group['id']} before media server update.")
+                                        if get_setting('Debug', 'emby_jellyfin_url', default=False):
+                                            emby_update_item(dict(updated_item_data))
+                                        elif get_setting('File Management', 'plex_url_for_symlink', default=False):
+                                            plex_update_item(dict(updated_item_data))
+                                
                                 conn = get_db_connection()
-                                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
+                                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_in_torrent_group['id'],))
                                 current_state_row = cursor.fetchone()
                                 conn.close()
+                                current_item_state = current_state_row['state'] if current_state_row else None
 
-                                current_state = current_state_row['state'] if current_state_row else None
-
-                                if current_state == 'Upgrading':
-                                    logging.info(f"Item {item['id']} is marked for upgrading, keeping in Upgrading state after local check.")
-                                    # handle_state_change is called within check_local_file_for_item
-                                elif current_state == 'Collected':
-                                    logging.info(f"Item {item['id']} state confirmed as Collected after local check.")
-                                    # Ensure it's removed from the Python queue object
-                                    queue_manager.move_to_collected(item, "Checking", skip_notification=True)
-                                elif current_state: # e.g., if it somehow reverted to 'Wanted' or stayed 'Checking' despite success?
-                                    logging.warning(f"Item {item['id']} processed locally but state is '{current_state}'. Moving to Collected.")
-                                    queue_manager.move_to_collected(item, "Checking", skip_notification=True)
+                                if current_item_state == 'Upgrading':
+                                    logging.info(f"Item {item_in_torrent_group['id']} is marked for upgrading, keeping in Upgrading state after local check.")
+                                elif current_item_state == 'Collected':
+                                    logging.info(f"Item {item_in_torrent_group['id']} state confirmed as Collected after local check.")
+                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                elif current_item_state:
+                                    logging.warning(f"Item {item_in_torrent_group['id']} processed locally but state is '{current_item_state}'. Moving to Collected.")
+                                    queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
                                 else:
-                                    logging.error(f"Item {item['id']} processed locally but seems missing from DB. Cannot confirm final state.")
-                                    items_to_remove.append(item) # Ensure removed from memory queue
-
-                            else: # check_local_file_for_item returned False
-                                logging.debug(f"Local file not found yet for item {item['id']}. It might appear later.")
-                                items_to_scan.append(item)
-                            # --- END EDIT ---
-
-                        # If we have items that weren't found directly, do a full scan
+                                    logging.error(f"Item {item_in_torrent_group['id']} processed locally but seems missing from DB. Cannot confirm final state.")
+                            else: 
+                                logging.debug(f"Local file not found yet for item {item_in_torrent_group['id']}. It might appear later.")
+                                items_to_scan.append(item_in_torrent_group)
+                        
                         if items_to_scan:
                             logging.info("Full library scan disabled for now")
+                    # --- End of restored Symlinked/Local processing logic ---
 
-                # Check if we've exceeded the checking queue period for non-actively-downloading items
-                if int(current_progress) == 100:
-                    oldest_item_time = min(self.checking_queue_times.get(item['id'], current_time) for item in items)
+                    oldest_item_time = min((self.checking_queue_times.get(item['id'], current_time) for item in current_items_for_torrent), default=current_time)
                     time_in_queue = current_time - oldest_item_time
-                    checking_queue_limit = self._calculate_dynamic_queue_period(items)
+                    checking_queue_limit = self._calculate_dynamic_queue_period(current_items_for_torrent)
                     
-                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(items)} items)")
+                    logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
                     
                     if time_in_queue > checking_queue_limit:
-                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(items)} items)")
+                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
                         try:
                             self.debrid_provider.remove_torrent(
                                 torrent_id,
-                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(items)} items)"
+                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)"
                             )
                         except Exception as e:
                             logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
                         # Move all items for this torrent back to Wanted
-                        for item in items:
-                            queue_manager.move_to_wanted(item, "Checking")
-                        items_to_remove.extend(items)
+                        # Make a copy of current_items_for_torrent for iteration, as move_to_wanted modifies self.items
+                        for item_to_move in list(current_items_for_torrent):
+                            if self.contains_item_id(item_to_move['id']): # Check if item is still in the main queue
+                                queue_manager.move_to_wanted(item_to_move, "Checking")
+                        # items_to_remove.extend(current_items_for_torrent) # Items are moved by move_to_wanted, which calls remove_item
                         continue
 
                 # Skip remaining checks if the torrent is completed
@@ -775,7 +870,11 @@ class CheckingQueue:
                         # Add upgrade check here
                         upgrading_queue = None # Initialize for potential use
 
-                        for item in items:
+                        for item in list(current_items_for_torrent): # Iterate over a copy
+                            if not self.contains_item_id(item['id']): # Check if item still exists
+                                logging.debug(f"Item {item['id']} no longer in queue, skipping no-progress handling for it.")
+                                continue
+
                             item_identifier = queue_manager.generate_identifier(item)
                             is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
 
@@ -832,32 +931,36 @@ class CheckingQueue:
                                         hash_value = download_and_extract_hash(magnet)
                                         if hash_value: add_to_not_wanted(hash_value)
                                         add_to_not_wanted_urls(magnet)
-                                        logging.info(f"Added hash {hash_value} and URL to not wanted lists for {item_identifier}")
                                     else:
                                         hash_value = extract_hash_from_magnet(magnet)
                                         if hash_value: add_to_not_wanted(hash_value)
-                                        logging.info(f"Added hash {hash_value} to not wanted list for {item_identifier}")
                                 except Exception as e:
                                     logging.error(f"Failed to process magnet for not wanted: {str(e)}")
 
-                        items_to_remove.extend(items)
+                        items_to_remove.extend(current_items_for_torrent) # Items are handled (moved or state restored)
                     else:
                         self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': current_progress}
 
             except Exception as e:
                 logging.error(f"Error processing items for torrent {torrent_id} in checking queue: {e}", exc_info=True)
 
-        # Remove processed items from the Checking queue (use items_to_remove accumulated during normal processing)
-        for item in items_to_remove:
-            if self.contains_item_id(item['id']): # Double check item is still present before removing
+        # The items_to_remove list was mainly for the old structure.
+        # With handlers directly modifying self.items, this final loop might be redundant or need adjustment.
+        # For now, keeping it to catch any stragglers, but ideally, handlers manage their items.
+        final_items_to_remove_explicitly = [] 
+        # Populate final_items_to_remove_explicitly based on any logic that flags items without direct removal in handlers.
+        # This is likely empty if handlers are robust.
+
+        for item in final_items_to_remove_explicitly:
+            if self.contains_item_id(item['id']): 
                  self.remove_item(item)
             else:
-                 logging.debug(f"Item {item.get('id')} already removed from checking queue, skipping removal.")
+                 logging.debug(f"Item {item.get('id')} already removed from checking queue, skipping final removal.")
 
         # After processing all torrents, check if we need to run Plex scan
         if not get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
             # Only run Plex scan if we have any completed torrents
-            if any(self.get_torrent_progress(torrent_id) == 100 for torrent_id in items_by_torrent.keys()):
+            if any(self.get_torrent_progress(torrent_id) == 100 for torrent_id in items_by_torrent_id_to_process.keys()):
                 get_and_add_recent_collected_from_plex()
                 # Add reconciliation call after recent scan processing
                 logging.info("Triggering queue reconciliation after recent Plex scan.")
@@ -928,9 +1031,13 @@ class CheckingQueue:
         current_item_ids = {item['id'] for item in self.items}
         self.checking_queue_times = {k: v for k, v in self.checking_queue_times.items() if k in current_item_ids}
         
-        # Clean up progress cache for removed torrents
+        # Calculate current torrent IDs present in the queue
         current_torrent_ids = {item.get('filled_by_torrent_id') for item in self.items if item.get('filled_by_torrent_id')}
-        logging.debug(f"Cleaned up checking time for item ID: {current_item_ids}")
+
+        # Clean up progress_checks for torrents no longer in queue
+        self.progress_checks = {k: v for k, v in self.progress_checks.items() if k in current_torrent_ids}
+        # Clean up unknown_strikes for torrents no longer in queue
+        self.unknown_strikes = {k: v for k, v in self.unknown_strikes.items() if k in current_torrent_ids}
         
         # Clean up uncached torrents tracking
         all_tracking_item_ids = set()
@@ -957,3 +1064,160 @@ class CheckingQueue:
     def contains_item_id(self, item_id):
         """Check if the queue contains an item with the given ID"""
         return any(i['id'] == item_id for i in self.items)
+
+    def handle_stalled_torrent(self, torrent_id: str, queue_manager, reason: str):
+        """
+        Handle a torrent that has stalled or repeatedly resulted in unknown states.
+        """
+        logging.warning(f"Handling stalled/failed torrent {torrent_id} due to: {reason}")
+        
+        # Get all items in the checking queue with this torrent ID *at this moment*
+        # Iterate over a copy of self.items for safety if handlers modify it.
+        items_for_stalled_torrent = [item for item in list(self.items) if item.get('filled_by_torrent_id') == torrent_id]
+
+        if not items_for_stalled_torrent:
+            logging.warning(f"No items found for stalled torrent {torrent_id} at the moment of handling.")
+            # Clean up strike counter if it exists, as there are no items to process
+            if torrent_id in self.unknown_strikes:
+                del self.unknown_strikes[torrent_id]
+                logging.debug(f"Cleared unknown strikes for {torrent_id} as no items were found for stalling.")
+            return
+        
+        logging.info(f"Found {len(items_for_stalled_torrent)} items for stalled torrent {torrent_id}: {[item['id'] for item in items_for_stalled_torrent]}")
+
+        # Attempt to remove torrent from debrid provider
+        try:
+            logging.info(f"Attempting to remove torrent {torrent_id} from debrid service due to: {reason}")
+            self.debrid_provider.remove_torrent(torrent_id, removal_reason=f"Stalled/Failed: {reason}")
+            logging.info(f"Successfully removed torrent {torrent_id} from debrid service.")
+        except requests.exceptions.HTTPError as e:
+            if hasattr(e, 'response') and e.response is not None:
+                if e.response.status_code == 404:
+                    logging.warning(f"Torrent {torrent_id} was already removed from debrid service (404). Continuing with stalled handling.")
+                elif e.response.status_code == 429:
+                    logging.warning(f"Rate limited (429) when trying to remove torrent {torrent_id} from debrid. "
+                                    f"Aborting stalled handling for this torrent in this cycle. It will be retried later.")
+                    return # Abort and retry later
+                else:
+                    logging.error(f"HTTP error ({e.response.status_code}) while removing stalled torrent {torrent_id} from debrid: {str(e)}. "
+                                  f"Proceeding with item handling as stalled.")
+            else:
+                logging.error(f"HTTP error (no response object) while removing stalled torrent {torrent_id} from debrid: {str(e)}. "
+                              f"Proceeding with item handling as stalled.")
+        except ProviderUnavailableError as e:
+            exc_str = str(e)  # Capture the exception string once
+            # Log the captured string for better diagnostics
+            logging.info(f"Handling ProviderUnavailableError for torrent {torrent_id}. Exception string: '{exc_str}'")
+
+            # Explicitly check for 429 first
+            if "429" in exc_str:
+                logging.warning(
+                    f"Rate limit (429) detected for torrent {torrent_id} (ProviderUnavailableError). "
+                    f"Details: {exc_str}. Aborting stalled handling for this torrent in this cycle to allow for later retry."
+                )
+                return # This is the key retry mechanism: abort current handling
+
+            # Then check for 404
+            elif "404" in exc_str:
+                logging.warning(
+                    f"Not found (404) detected for torrent {torrent_id} (ProviderUnavailableError). "
+                    f"Details: {exc_str}. Continuing with stalled handling as if already removed."
+                )
+                # For a 404, we proceed with the rest of handle_stalled_torrent (e.g., blacklisting, moving items)
+                # as the torrent is effectively gone. No return here.
+            else: # Not a 429 or 404 clearly identified in the ProviderUnavailableError string
+                logging.error(
+                    f"Provider unavailable error (neither 429 nor 404 clearly identified in message) "
+                    f"while removing stalled torrent {torrent_id}. Details: {exc_str}. "
+                    f"Proceeding with item handling as stalled."
+                )
+            # If not a 429, processing continues below (e.g. blacklisting magnets, moving items)
+        except Exception as e: # Catch other potential exceptions from the provider
+            logging.error(f"Unexpected error while removing stalled torrent {torrent_id} from debrid: {str(e)}. "
+                          f"Proceeding with item handling as stalled.")
+
+        # Collect unique magnets to add to not-wanted list
+        magnets_to_add_to_not_wanted = []
+        for item in items_for_stalled_torrent:
+            magnet = item.get('filled_by_magnet')
+            if magnet and magnet not in magnets_to_add_to_not_wanted:
+                magnets_to_add_to_not_wanted.append(magnet)
+        
+        for magnet in magnets_to_add_to_not_wanted:
+            try:
+                logging.info(f"Adding magnet to not-wanted list due to stalled torrent: {magnet[:50]}...")
+                # Re-importing here to ensure availability if called from different contexts
+                from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+                from debrid.common import extract_hash_from_magnet, download_and_extract_hash
+                
+                if magnet.startswith('http'):
+                    hash_value = download_and_extract_hash(magnet) # This can raise exceptions
+                    if hash_value: add_to_not_wanted(hash_value)
+                    add_to_not_wanted_urls(magnet) # Add original URL as well
+                else:
+                    hash_value = extract_hash_from_magnet(magnet)
+                    if hash_value: add_to_not_wanted(hash_value)
+            except Exception as e:
+                logging.error(f"Failed to add magnet to not-wanted list for stalled torrent: {str(e)}")
+        
+        upgrading_queue = None # Initialize for potential use
+
+        for item in items_for_stalled_torrent: # Iterate over the collected list
+            # Double-check if item is still in self.items before processing, as it might have been handled by another concurrent process
+            if not self.contains_item_id(item['id']):
+                logging.debug(f"Item {item['id']} (for stalled torrent {torrent_id}) no longer in self.items. Skipping.")
+                continue
+
+            try:
+                item_id = item.get('id', 'N/A')
+                item_identifier = queue_manager.generate_identifier(item) # item_identifier for logging
+                is_upgrade = item.get('upgrading') or item.get('upgrading_from') is not None
+
+                if is_upgrade:
+                    logging.info(f"Detected failed upgrade for {item_identifier} due to stalled torrent: {reason}")
+                    if upgrading_queue is None:
+                        upgrading_queue = UpgradingQueue() # Lazily initialize
+
+                    upgrading_queue.log_failed_upgrade(item, item.get('filled_by_title', 'Unknown'), f"Stalled torrent: {reason}")
+                    
+                    notification_data = {
+                        'title': item.get('title', 'Unknown Title'),
+                        'year': item.get('year', ''),
+                        'reason': f"Stalled torrent: {reason}"
+                    }
+                    send_upgrade_failed_notification(notification_data)
+
+                    if upgrading_queue.restore_item_state(item):
+                        upgrading_queue.add_failed_upgrade(
+                            item['id'],
+                            {'title': item.get('filled_by_title'), 'magnet': item.get('filled_by_magnet'), 'torrent_id': torrent_id, 'reason': f'stalled_torrent: {reason}'}
+                        )
+                        logging.info(f"Successfully reverted failed upgrade for {item_identifier} (stalled torrent).")
+                    else:
+                        logging.error(f"Failed to restore previous state for {item_identifier} after stalled torrent. Moving to Wanted as fallback.")
+                        queue_manager.move_to_wanted(item, "Checking")
+                else:
+                    # For non-upgrade items, move back to Wanted state to trigger re-scraping
+                    logging.info(f"Moving item {item_identifier} back to Wanted state due to stalled torrent: {reason}")
+                    queue_manager.move_to_wanted(item, "Checking")
+                
+                # remove_item is called by move_to_wanted or restore_item_state indirectly through DB state change and queue update.
+                # Explicitly ensure it's removed from the Python object list if not already.
+                # This call to remove_item will also handle cleaning up progress_checks and unknown_strikes if this torrent_id has no more items.
+                if self.contains_item_id(item_id): # Check again before explicit removal
+                    self.remove_item(item) 
+                    logging.info(f"Ensured item {item_id} (associated with stalled torrent {torrent_id}) is removed from checking queue object.")
+
+            except Exception as e:
+                logging.error(f"Failed to handle item {item.get('id', 'N/A')} for stalled torrent {torrent_id}: {str(e)}", exc_info=True)
+        
+        # Clean up strike counter for this torrent_id after all its items are processed
+        if torrent_id in self.unknown_strikes:
+            del self.unknown_strikes[torrent_id]
+            logging.debug(f"Cleared unknown strikes for {torrent_id} after handling as stalled.")
+        
+        # Final check: if after all this, items for this torrent_id still exist in self.items, log it.
+        # This shouldn't happen if logic is correct.
+        remaining_after_stall_handling = [i for i in self.items if i.get('filled_by_torrent_id') == torrent_id]
+        if remaining_after_stall_handling:
+            logging.error(f"CRITICAL: {len(remaining_after_stall_handling)} items for stalled torrent {torrent_id} still in queue after handling: {[i['id'] for i in remaining_after_stall_handling]}")

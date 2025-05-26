@@ -13,6 +13,7 @@ from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
 from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
 from database.database_reading import get_all_media_items, get_media_item_by_id
+from scraper.functions.ptt_parser import parse_with_ptt
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -80,20 +81,28 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                         logging.debug(f"[SymlinkPath] Added version component to path: '{sanitized_version_folder}'")
             
             elif component == "resolution" and organize_by_resolution:
-                item_version_for_resolution = item.get('version', '') # Resolution folder is derived from version's settings
-                if item_version_for_resolution:
+                resolution_folder_name = "Unknown" # Default to Unknown
+                filled_by_file = item.get('filled_by_file')
+                if filled_by_file:
                     try:
-                        from queues.config_manager import get_version_settings
-                        # Strip asterisks before using the version to get settings
-                        clean_version_for_resolution = item_version_for_resolution.strip('*') 
-                        version_settings = get_version_settings(clean_version_for_resolution) 
-                        if version_settings and 'max_resolution' in version_settings:
-                            resolution_folder_name = version_settings['max_resolution']
-                            if resolution_folder_name: # Ensure not empty
-                                ordered_prefix_parts.append(resolution_folder_name) # Assume already clean from version settings
-                                logging.debug(f"[SymlinkPath] Added resolution component to path: '{resolution_folder_name}'")
+                        parsed_data = parse_with_ptt(filled_by_file)
+                        if parsed_data and not parsed_data.get('parsing_error'):
+                            parsed_resolution = parsed_data.get('resolution')
+                            if parsed_resolution and parsed_resolution.strip():
+                                resolution_folder_name = parsed_resolution.strip()
+                                logging.debug(f"[SymlinkPath] Parsed resolution from filled_by_file '{filled_by_file}': '{resolution_folder_name}'")
+                            else:
+                                logging.debug(f"[SymlinkPath] No resolution found in parsed data for '{filled_by_file}'. Using 'Unknown'.")
+                        else:
+                            logging.warning(f"[SymlinkPath] PTT parsing error or no data for '{filled_by_file}'. Using 'Unknown' for resolution.")
                     except Exception as e:
-                        logging.error(f"[SymlinkPath] Error getting version settings for resolution folder: {str(e)}")
+                        logging.error(f"[SymlinkPath] Error parsing filled_by_file for resolution: {str(e)}")
+                else:
+                    logging.warning("[SymlinkPath] 'filled_by_file' not found in item. Using 'Unknown' for resolution.")
+                
+                if resolution_folder_name: # Ensure not empty, even if it's "Unknown"
+                    ordered_prefix_parts.append(resolution_folder_name) 
+                    logging.debug(f"[SymlinkPath] Added resolution component to path: '{resolution_folder_name}'")
             
             elif component == "type" and organize_by_type:
                 genres = item.get('genres', '') or ''
