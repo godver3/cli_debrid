@@ -1231,10 +1231,6 @@ def run_library_maintenance():
     
     try:
         from utilities.settings import get_setting
-        from utilities.plex_removal_cache import process_removal_cache
-
-        # Remove previous Plex removals
-        process_removal_cache()
 
         # Get collection management type
         collection_type = get_setting('File Management', 'file_collection_management')

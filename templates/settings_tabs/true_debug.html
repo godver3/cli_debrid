@@ -158,6 +158,15 @@
                 <p class="settings-description">Sample rate for tracemalloc (1 in X tasks). Lower values give more frequent data but increase overhead significantly. Default: 100.</p>
             </div>
 
+            <!-- Plex Removal Cache Delay -->
+            <div class="settings-form-group">
+                <label for="debug-plex_removal_cache_delay_minutes" class="settings-title">Plex Removal Cache Delay (Minutes):</label>
+                <input type="number" id="debug-plex_removal_cache_delay_minutes" name="Debug.plex_removal_cache_delay_minutes"
+                       value="{{ settings.get('Debug', {}).get('plex_removal_cache_delay_minutes', 360) }}" class="settings-input"
+                       min="1" data-section="Debug" data-key="plex_removal_cache_delay_minutes">
+                <p class="settings-description">Delay in minutes before processing a cached Plex removal operation. Default: 360 (6 hours).</p>
+            </div>
+
             <!-- Emphasize Number of Items Over Quality -->
             <div class="settings-form-group">
                 <label for="debug-emphasize_number_of_items_over_quality" class="settings-title">Emphasize Number of Items Over Quality:</label>

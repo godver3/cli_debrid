@@ -268,7 +268,7 @@ class ProgramRunner:
             # --- START EDIT: Add new task for library size refresh ---
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
             # --- END EDIT ---
-            'task_process_standalone_plex_removals': 2 * 60 * 60, # Run every 2 hours as a fallback
+            'task_process_standalone_plex_removals': 60 * 60, # Run every hour
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -3083,29 +3083,15 @@ class ProgramRunner:
 
     def task_process_standalone_plex_removals(self):
         """
-        Processes the Plex removal cache if the main library maintenance task is disabled.
-        This ensures that Plex removals are still handled.
+        Processes the Plex removal cache.
         """
-        # Check if the main library maintenance task is disabled
-        # The task name for library maintenance in enabled_tasks is 'task_run_library_maintenance'
-        if 'task_run_library_maintenance' not in self.enabled_tasks:
-            logging.info("Main library maintenance task is disabled. Running standalone Plex removal processing.")
-            try:
-                # Get the min_age_hours setting for cache processing
-                # Defaulting to 6 hours if not set, to match the default in process_removal_cache
-                min_age_hours_setting = get_setting('Debug', 'plex_removal_cache_min_age_hours', 6)
-                try:
-                    min_age_hours = int(min_age_hours_setting)
-                except ValueError:
-                    logging.warning(f"Invalid value for plex_removal_cache_min_age_hours: '{min_age_hours_setting}'. Defaulting to 6 hours.")
-                    min_age_hours = 6
-
-                process_removal_cache(min_age_hours=min_age_hours)
-                logging.info(f"Standalone Plex removal processing complete (min_age_hours: {min_age_hours}).")
-            except Exception as e:
-                logging.error(f"Error during standalone Plex removal processing: {e}", exc_info=True)
-        else:
-            logging.debug("Main library maintenance task is enabled. Skipping standalone Plex removal processing.")
+        try:
+            from utilities.plex_removal_cache import process_removal_cache
+            min_age_hours = 6
+            process_removal_cache(min_age_hours=min_age_hours)
+            logging.info(f"Standalone Plex removal processing complete (min_age_hours: {min_age_hours}).")
+        except Exception as e:
+            logging.error(f"Error during standalone Plex removal processing: {e}", exc_info=True)
 
 
     def task_update_statistics_summary(self):

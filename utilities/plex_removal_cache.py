@@ -100,7 +100,7 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
     Then, the item will be removed from Plex.
     
     Args:
-        min_age_hours: Minimum age in hours before processing a cached removal
+        min_age_hours: Minimum age in hours before processing a cached removal (This parameter is now unused and will be overridden by the setting value)
     """
     from utilities.plex_functions import remove_file_from_plex
     
@@ -110,7 +110,11 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
         return
         
     current_time = time.time()
-    min_age_seconds = min_age_hours * 3600
+    # Get the delay from settings in minutes, default to 360 (6 hours) if not set
+    min_age_minutes_setting = get_setting('Debug', 'plex_removal_cache_delay_minutes', default=360)
+    min_age_seconds = min_age_minutes_setting * 60
+
+    min_age_seconds = 0 # Use task timing instead of setting value
 
     # min_age_seconds = 0 # For testing, set to 0 to process all items immediately
     

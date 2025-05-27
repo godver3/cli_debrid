@@ -14,6 +14,7 @@ from utilities.post_processing import handle_state_change
 from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
 from database.database_reading import get_all_media_items, get_media_item_by_id
 from scraper.functions.ptt_parser import parse_with_ptt
+import json # Ensure json is imported
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -27,6 +28,7 @@ def sanitize_filename(filename: str) -> str:
 
 def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
     """Get the full path for the symlink based on settings and metadata."""
+    import json
     try:
         # --- BEGIN Enhanced Logging ---
         item_title_log = item.get('title', '[Unknown Title]')
@@ -39,9 +41,40 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         # --- END Enhanced Logging ---
         
         logging.debug(f"get_symlink_path received item with filename_real_path: {item.get('filename_real_path')}")
-        logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}")
+        logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}, content_source={item.get('content_source')}")
         
-        symlinked_path = get_setting('File Management', 'symlinked_files_path')
+        # Get the base symlink path from general File Management settings
+        symlinked_path_base = get_setting('File Management', 'symlinked_files_path')
+        
+        # Check for content source specific custom subfolder
+        final_symlinked_path_root = symlinked_path_base # Start with the base path
+        item_content_source_id = item.get('content_source')
+
+        if item_content_source_id:
+            from utilities.settings import get_all_settings # Moved import here to avoid circular dependency if called at top level
+            all_content_sources_config = get_all_settings().get('Content Sources', {})
+            source_specific_config = all_content_sources_config.get(item_content_source_id)
+            
+            if source_specific_config:
+                custom_subfolder_name = source_specific_config.get('custom_symlink_subfolder', '').strip()
+                if custom_subfolder_name:
+                    sanitized_custom_folder = sanitize_filename(custom_subfolder_name) # Sanitize to be safe
+                    if sanitized_custom_folder: # Ensure not empty after sanitization
+                        final_symlinked_path_root = os.path.join(symlinked_path_base, sanitized_custom_folder)
+                        logging.info(f"[SymlinkPath] Using custom subfolder '{sanitized_custom_folder}' for content source '{item_content_source_id}'. New root: '{final_symlinked_path_root}'")
+                    else:
+                        logging.warning(f"[SymlinkPath] Custom subfolder for source '{item_content_source_id}' ('{custom_subfolder_name}') sanitized to empty. Using default base path.")
+                else:
+                    logging.debug(f"[SymlinkPath] No custom subfolder specified for content source '{item_content_source_id}'. Using default base path.")
+            else:
+                logging.debug(f"[SymlinkPath] No specific configuration found for content source '{item_content_source_id}'. Using default base path.")
+        else:
+            logging.debug("[SymlinkPath] No content_source ID found in item. Using default base symlink path.")
+
+        # The rest of the function will use 'final_symlinked_path_root' as the starting point
+        # instead of 'symlinked_path' which was previously 'symlinked_path_base'.
+        # I will rename 'symlinked_path' to 'final_symlinked_path_root' in the following lines where it's used as the base.
+
         organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)
         organize_by_resolution = get_setting('File Management', 'symlink_organize_by_resolution', False)
         organize_by_version = get_setting('File Management', 'symlink_organize_by_version', False)
@@ -53,8 +86,12 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         anime_tv_shows_folder_name_setting = get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows')
         movies_folder_name_setting = get_setting('Debug', 'movies_folder_name', 'Movies')
         tv_shows_folder_name_setting = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
+        # Documentary folder settings
+        enable_separate_documentary_folders = get_setting('Debug', 'enable_separate_documentary_folders', False)
+        documentary_movies_folder_name_setting = get_setting('Debug', 'documentary_movies_folder_name', 'Documentary Movies')
+        documentary_tv_shows_folder_name_setting = get_setting('Debug', 'documentary_tv_shows_folder_name', 'Documentary TV Shows')
 
-        logging.debug(f"[SymlinkPath] Settings: symlinked_path='{symlinked_path}', "
+        logging.debug(f"[SymlinkPath] Settings: final_symlinked_path_root='{final_symlinked_path_root}', "
                       f"organize_by_type={organize_by_type}, "
                       f"organize_by_version={organize_by_version}, "
                       f"organize_by_resolution={organize_by_resolution}, "
@@ -83,6 +120,8 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
             elif component == "resolution" and organize_by_resolution:
                 resolution_folder_name = "Unknown" # Default to Unknown
                 filled_by_file = item.get('filled_by_file')
+                parsed_from_source = None # To track what was parsed
+
                 if filled_by_file:
                     try:
                         parsed_data = parse_with_ptt(filled_by_file)
@@ -90,37 +129,120 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                             parsed_resolution = parsed_data.get('resolution')
                             if parsed_resolution and parsed_resolution.strip():
                                 resolution_folder_name = parsed_resolution.strip()
+                                parsed_from_source = "filled_by_file"
                                 logging.debug(f"[SymlinkPath] Parsed resolution from filled_by_file '{filled_by_file}': '{resolution_folder_name}'")
                             else:
-                                logging.debug(f"[SymlinkPath] No resolution found in parsed data for '{filled_by_file}'. Using 'Unknown'.")
+                                logging.debug(f"[SymlinkPath] No resolution found in parsed data for filled_by_file '{filled_by_file}'.")
                         else:
-                            logging.warning(f"[SymlinkPath] PTT parsing error or no data for '{filled_by_file}'. Using 'Unknown' for resolution.")
+                            logging.warning(f"[SymlinkPath] PTT parsing error or no data for filled_by_file '{filled_by_file}'.")
                     except Exception as e:
                         logging.error(f"[SymlinkPath] Error parsing filled_by_file for resolution: {str(e)}")
                 else:
-                    logging.warning("[SymlinkPath] 'filled_by_file' not found in item. Using 'Unknown' for resolution.")
+                    logging.warning("[SymlinkPath] 'filled_by_file' not found in item. Will attempt filled_by_title.")
+
+                # Fallback to filled_by_title if resolution is still "Unknown" or not parsed from filled_by_file
+                if resolution_folder_name == "Unknown" or not parsed_from_source:
+                    filled_by_title = item.get('filled_by_title')
+                    if filled_by_title:
+                        logging.debug(f"[SymlinkPath] Attempting to parse resolution from filled_by_title: '{filled_by_title}'")
+                        try:
+                            parsed_data_title = parse_with_ptt(filled_by_title)
+                            if parsed_data_title and not parsed_data_title.get('parsing_error'):
+                                parsed_resolution_title = parsed_data_title.get('resolution')
+                                if parsed_resolution_title and parsed_resolution_title.strip():
+                                    resolution_folder_name = parsed_resolution_title.strip()
+                                    parsed_from_source = "filled_by_title"
+                                    logging.info(f"[SymlinkPath] Parsed resolution from filled_by_title '{filled_by_title}': '{resolution_folder_name}'")
+                                else:
+                                    logging.debug(f"[SymlinkPath] No resolution found in parsed data for filled_by_title '{filled_by_title}'. Using 'Unknown'.")
+                            else:
+                                logging.warning(f"[SymlinkPath] PTT parsing error or no data for filled_by_title '{filled_by_title}'. Using 'Unknown'.")
+                        except Exception as e:
+                            logging.error(f"[SymlinkPath] Error parsing filled_by_title for resolution: {str(e)}. Using 'Unknown'.")
+                    else:
+                        logging.warning("[SymlinkPath] 'filled_by_title' not found in item. Using 'Unknown' for resolution.")
                 
+                if not parsed_from_source and resolution_folder_name == "Unknown":
+                    logging.warning("[SymlinkPath] Resolution could not be determined from filled_by_file or filled_by_title. Using 'Unknown'.")
+
                 if resolution_folder_name: # Ensure not empty, even if it's "Unknown"
                     ordered_prefix_parts.append(resolution_folder_name) 
-                    logging.debug(f"[SymlinkPath] Added resolution component to path: '{resolution_folder_name}'")
+                    logging.debug(f"[SymlinkPath] Added resolution component to path: '{resolution_folder_name}' (parsed from: {parsed_from_source or 'default/none'})")
             
             elif component == "type" and organize_by_type:
-                genres = item.get('genres', '') or ''
-                if isinstance(genres, str):
+                # Initial genre value from the item
+                item_genres_value = item.get('genres')
+
+                # Check if genres are missing or effectively empty
+                needs_genre_fetch = False
+                if item_genres_value is None:
+                    needs_genre_fetch = True
+                elif isinstance(item_genres_value, str):
+                    if not item_genres_value.strip() or item_genres_value.strip() == "[]" or item_genres_value.strip() == "[\"anime\"]":
+                        needs_genre_fetch = True
+                elif isinstance(item_genres_value, list) and not item_genres_value:
+                    needs_genre_fetch = True
+                
+                if needs_genre_fetch:
+                    logging.info(f"[SymlinkPath] Genres for item {item.get('imdb_id', 'N/A')} are missing or empty. Attempting to fetch from DirectAPI.")
                     try:
-                        import json
-                        genres = json.loads(genres)
+                        from cli_battery.app.direct_api import DirectAPI 
+                        api_instance = DirectAPI()
+                        
+                        fetched_metadata = None
+                        source = None
+                        item_imdb_id = item.get('imdb_id')
+                        if not item_imdb_id:
+                            logging.warning(f"[SymlinkPath] Cannot fetch genres: IMDb ID is missing for item.")
+                        elif item.get('type') == 'movie':
+                            fetched_metadata, source = api_instance.get_movie_metadata(item_imdb_id)
+                        else: # 'show' or 'episode'
+                            fetched_metadata, source = api_instance.get_show_metadata(item_imdb_id)
+                        
+                        if fetched_metadata and fetched_metadata.get('genres'):
+                            item_genres_value = fetched_metadata.get('genres') 
+                            logging.info(f"[SymlinkPath] Successfully fetched genres for {item_imdb_id} from {source}: {item_genres_value}")
+                        elif item_imdb_id: # Only log warning if we attempted a fetch
+                            logging.warning(f"[SymlinkPath] Failed to fetch genres or genres were empty from DirectAPI for {item_imdb_id}. Source: {source}")
+                    except ImportError:
+                        logging.error("[SymlinkPath] Could not import DirectAPI. Genre fetching skipped. Ensure cli_battery is in PYTHONPATH if this is unexpected.")
+                    except Exception as e_genre_fetch:
+                        logging.error(f"[SymlinkPath] Error fetching genres via DirectAPI for {item.get('imdb_id', 'N/A')}: {e_genre_fetch}")
+                
+                # Process item_genres_value (which might have been updated by the fetch)
+                parsed_genres_list = []
+                if isinstance(item_genres_value, list):
+                    # Ensure all elements are strings for '.lower()' later
+                    parsed_genres_list = [str(g) for g in item_genres_value if g is not None]
+                elif isinstance(item_genres_value, str) and item_genres_value.strip():
+                    try:
+                        # Try parsing as JSON first (e.g., '["Action", "Drama"]')
+                        potential_list = json.loads(item_genres_value)
+                        if isinstance(potential_list, list):
+                            parsed_genres_list = [str(g) for g in potential_list if g is not None]
+                        else: # Parsed to something other than a list
+                            parsed_genres_list = [str(item_genres_value)]
                     except json.JSONDecodeError:
-                        genres = [g.strip() for g in genres.split(',') if g.strip()]
-                if not isinstance(genres, list):
-                    genres = [str(genres)]
-                is_anime = any('anime' in genre.lower() for genre in genres)
+                        # If not JSON, assume comma-separated (e.g., "Action, Drama") or single genre
+                        parsed_genres_list = [g.strip() for g in item_genres_value.split(',') if g.strip()]
+                
+                if not parsed_genres_list and item_genres_value: # If parsing failed but there was some input
+                    logging.warning(f"[SymlinkPath] Could not parse genres '{str(item_genres_value)[:100]}' into a list for {item.get('imdb_id', 'N/A')}. Treating as no genres.")
+
+                # Determine content type based on genres
+                is_anime = any('anime' in genre.lower() for genre in parsed_genres_list)
+                is_documentary = any('documentary' in genre.lower() for genre in parsed_genres_list)
                 
                 folder_name_for_type = ""
                 if is_anime and enable_separate_anime_folders:
                     folder_name_for_type = anime_movies_folder_name_setting if media_type == 'movie' else anime_tv_shows_folder_name_setting
+                    logging.debug(f"[SymlinkPath] Item classified as Anime. Folder type: '{folder_name_for_type}'")
+                elif is_documentary and enable_separate_documentary_folders:
+                    folder_name_for_type = documentary_movies_folder_name_setting if media_type == 'movie' else documentary_tv_shows_folder_name_setting
+                    logging.debug(f"[SymlinkPath] Item classified as Documentary. Folder type: '{folder_name_for_type}'")
                 else:
                     folder_name_for_type = movies_folder_name_setting if media_type == 'movie' else tv_shows_folder_name_setting
+                    logging.debug(f"[SymlinkPath] Item classified as Standard Movie/Show. Folder type: '{folder_name_for_type}'")
                 
                 folder_name_for_type = folder_name_for_type.strip()
                 if not folder_name_for_type:
@@ -154,9 +276,12 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
             template = get_setting('Debug', 'symlink_movie_template',
                                 '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})')
         else: # episode
+            s_num_val = item.get('season_number')
+            e_num_val = item.get('episode_number')
+            
             episode_vars = {
-                'season_number': int(item.get('season_number', 0)),
-                'episode_number': int(item.get('episode_number', 0)),
+                'season_number': int(s_num_val if s_num_val is not None else 0),
+                'episode_number': int(e_num_val if e_num_val is not None else 0),
                 'episode_title': item.get('episode_title', '')
             }
             
@@ -211,7 +336,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 
                 # Path length check
                 # 'parts' at this point contains: ordered_prefix_parts + any preceding template directory parts
-                current_dir_parts_for_check = os.path.join(symlinked_path, *parts)
+                current_dir_parts_for_check = os.path.join(final_symlinked_path_root, *parts)
                 potential_full_path = os.path.join(current_dir_parts_for_check, sanitized_template_part)
                 
                 max_path_length = 255 
@@ -230,7 +355,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                     parts.append(sanitized_template_part)
         
         # 'parts' now contains: ordered_prefix_parts + directory_parts_from_template
-        dir_path = os.path.join(symlinked_path, *parts)
+        dir_path = os.path.join(final_symlinked_path_root, *parts)
         
         try:
             os.makedirs(dir_path, exist_ok=True)
@@ -1228,7 +1353,26 @@ def resync_symlinks_with_new_settings(
             error_count += 1
     # --- End Item Loop ---
 
-    logging.info(f"Symlink resynchronization finished. Total: {total_items}, Symlinks Updated: {updated_count}, Symlinks Created: {created_count}, Source Paths Updated in DB: {source_path_updated_count}, Errors: {error_count}, Skipped: {skipped_count}.")
+    # --- Prune empty folders ---
+    symlink_base_path = get_setting('File Management', 'symlinked_files_path')
+    if symlink_base_path and os.path.exists(symlink_base_path):
+        logging.info(f"Starting pruning of empty directories in {symlink_base_path}")
+        pruned_count = 0
+        # Walk the directory tree from bottom up
+        for root, dirs, files in os.walk(symlink_base_path, topdown=False):
+            for name in dirs:
+                dir_path = os.path.join(root, name)
+                try:
+                    if not os.listdir(dir_path):  # Check if directory is empty
+                        os.rmdir(dir_path)
+                        logging.info(f"Pruned empty directory: {dir_path}")
+                        pruned_count += 1
+                except OSError as e:
+                    logging.warning(f"Could not prune directory {dir_path}: {e}")
+        logging.info(f"Finished pruning. Removed {pruned_count} empty directories.")
+    # --- End Prune empty folders ---
+
+    logging.info(f"Symlink resynchronization finished. Total: {total_items}, Symlinks Updated: {updated_count}, Symlinks Created: {created_count}, Source Paths Updated in DB: {source_path_updated_count}, Errors: {error_count}, Skipped: {skipped_count}.\n") # Added newline for better log readability
     return {
         "status": "completed",
         "total_items": total_items,

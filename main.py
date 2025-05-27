@@ -1336,6 +1336,20 @@ def main():
             logging.info("Successfully migrated content sources to include allow_specials setting")
     # --- End allow_specials migration ---
 
+    # --- Add migration for custom_symlink_subfolder in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'custom_symlink_subfolder' not in source_config:
+                source_config['custom_symlink_subfolder'] = ''
+                content_sources_updated = True
+                logging.info(f"Adding default custom_symlink_subfolder='' to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include custom_symlink_subfolder setting")
+    # --- End custom_symlink_subfolder migration ---
+
     # --- Add migration for year_match_weight in versions ---
     if 'Scraping' in config and 'versions' in config['Scraping']:
         versions_updated = False
