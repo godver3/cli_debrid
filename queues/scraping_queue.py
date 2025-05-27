@@ -391,12 +391,39 @@ class ScrapingQueue:
 
                     # --- End of Multi-pack logic ---
 
-                    logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with check_pack_wantedness=True")
-                    results, filtered_out_results = self.scrape_with_fallback(item_to_process, is_multi_pack, queue_manager, check_pack_wantedness=True)
+                    # Determine initial check_pack_wantedness based on age
+                    check_pack_wantedness_for_initial_scrape = True # Default
+                    is_older_than_7_days = False # Flag to check age
+                    try:
+                        release_date_str = item_to_process.get('release_date')
+                        if release_date_str and release_date_str != 'Unknown':
+                            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                            # 'today' is already defined in this method
+                            if release_date_obj < (today - timedelta(days=7)):
+                                is_older_than_7_days = True
+                                check_pack_wantedness_for_initial_scrape = False
+                                logging.info(f"Item {item_identifier} release date {release_date_str} is older than 7 days. Disabling pack wantedness for initial scrape.")
+                        # If release_date is 'Unknown' or not present, default check_pack_wantedness_for_initial_scrape (True) is used.
+                    except ValueError:
+                        logging.warning(f"Could not parse release date '{release_date_str}' for {item_identifier} to check age for pack wantedness/multi-pack modification. Defaulting to check_pack_wantedness={check_pack_wantedness_for_initial_scrape}.")
+
+                    # If item is an episode and older than 7 days, force multi-pack for initial scrape
+                    if item_to_process['type'] == 'episode' and is_older_than_7_days:
+                        if not is_multi_pack: # Log only if we are changing it
+                            logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
+                        is_multi_pack = True
+                    
+                    logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with initial check_pack_wantedness={check_pack_wantedness_for_initial_scrape}")
+                    results, filtered_out_results = self.scrape_with_fallback(
+                        item_to_process, 
+                        is_multi_pack, 
+                        queue_manager, 
+                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape # Use the determined value
+                    )
 
                     # Ensure both results and filtered_out_results are lists
                     results = results if results is not None else []
-                    # filtered_out_results = filtered_out_results if filtered_out_results is not None else [] # This is not used directly here
+                    filtered_out_results = filtered_out_results if filtered_out_results is not None else []
 
                     # Filter and process results from the first attempt
                     filtered_results = []

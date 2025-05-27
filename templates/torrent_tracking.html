@@ -465,7 +465,7 @@ code {
                     </thead>
                     <tbody>
                         {% for entry in entries %}
-                        <tr class="torrent-entry" data-hash="{{ entry.torrent_hash }}">
+                        <tr class="torrent-entry" id="torrent-{{ entry.torrent_hash }}" data-hash="{{ entry.torrent_hash }}">
                             <td>{{ entry.timestamp }}</td>
                             <td>
                                 {% if entry.item_data %}

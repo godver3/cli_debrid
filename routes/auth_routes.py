@@ -78,22 +78,13 @@ def login():
     if not is_user_system_enabled():
         return redirect(url_for('root.root'))
 
-    # If already authenticated, redirect to root
     if current_user.is_authenticated:
         return redirect(url_for('root.root'))
 
-    # Clear any existing cookies before processing login
-    response = make_response(render_template('login.html', 
-        show_login_reminder=User.query.filter_by(is_default=False).count() == 0))
+    show_login_reminder_flag = User.query.filter_by(is_default=False).count() == 0
     
     from routes.extensions import get_root_domain
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
-    
-    # Clear existing cookies on GET request to ensure clean state
-    if request.method == 'GET':
-        response.set_cookie('session', '', expires=0, path='/', domain=domain)
-        response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
-        return response
 
     if request.method == 'POST':
         username = request.form.get('username')
@@ -102,31 +93,34 @@ def login():
         
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
-            # Clear session first
-            session.clear()
-            
-            # Always set session as permanent
+            session.clear() 
             session.permanent = True
-            
             login_user(user, remember=remember)
-            
-            # Force session save
-            session.modified = True
+            session.modified = True # Ensure session is saved
             
             if not user.onboarding_complete:
                 response = make_response(redirect(url_for('onboarding.onboarding_step', step=1)))
             else:
                 response = make_response(redirect(url_for('root.root')))
             
-            # Add security headers
             response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
             response.headers['Pragma'] = 'no-cache'
             response.headers['Expires'] = '0'
-            
             return response
             
-        flash('Please check your login details and try again.')
-        
+        flash('Please check your login details and try again.', 'error')
+        # If login fails, re-render the login page with the flash message
+        response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag))
+        # Set cookies to be cleared on the response for the failed login attempt page as well,
+        # maintaining consistency with the GET request's cookie clearing.
+        response.set_cookie('session', '', expires=0, path='/', domain=domain)
+        response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
+        return response
+
+    # This is for GET request
+    response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag))
+    response.set_cookie('session', '', expires=0, path='/', domain=domain)
+    response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
     return response
 
 @auth_bp.route('/logout', methods=['POST'])

@@ -637,6 +637,11 @@ SETTINGS_SCHEMA = {
             "description": "Create separate anime folders for anime content when organizing symlinks",
             "default": False
         },
+        "enable_separate_documentary_folders": {
+            "type": "boolean",
+            "description": "Create separate documentary folders for documentary content when organizing symlinks",
+            "default": False
+        },
         "movies_folder_name": {
             "type": "string",
             "description": "Custom name for the Movies folder (default: 'Movies')",
@@ -656,6 +661,16 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Custom name for the Anime TV Shows folder (default: 'Anime TV Shows')",
             "default": "Anime TV Shows"
+        },
+        "documentary_movies_folder_name": {
+            "type": "string",
+            "description": "Custom name for the Documentary Movies folder (default: 'Documentary Movies')",
+            "default": "Documentary Movies"
+        },
+        "documentary_tv_shows_folder_name": {
+            "type": "string",
+            "description": "Custom name for the Documentary TV Shows folder (default: 'Documentary TV Shows')",
+            "default": "Documentary TV Shows"
         },
         "check_for_updates": {
             "type": "boolean",
@@ -736,6 +751,12 @@ SETTINGS_SCHEMA = {
             "default": 100,
             "min": 1
         },
+        "plex_removal_cache_delay_minutes": {
+            "type": "integer",
+            "description": "Delay in minutes before processing a cached Plex removal operation. Default: 360 (6 hours).",
+            "default": 360,
+            "min": 1
+        },
         "emphasize_number_of_items_over_quality": {
             "type": "boolean",
             "description": "Emphasize the number of items over quality when ranking results",
@@ -744,6 +765,26 @@ SETTINGS_SCHEMA = {
         "truncate_episode_notifications": {
             "type": "boolean",
             "description": "Truncate episode notifications to show only the first episode and a summary of the rest.",
+            "default": False
+        },
+        "apply_to_anime_tv_shows": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
+            "default": True
+        },
+        "apply_to_documentary_movies": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to documentary movie folders (if separate documentary folders are enabled)",
+            "default": True
+        },
+        "apply_to_documentary_tv_shows": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to documentary TV show folders (if separate documentary folders are enabled)",
+            "default": True
+        },
+        "only_current_file": {
+            "type": "boolean",
+            "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
             "default": False
         }
     },
@@ -805,6 +846,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Collected": {
@@ -815,6 +861,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Trakt Watchlist": {
@@ -826,6 +877,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Trakt Lists": {
@@ -838,6 +894,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Trakt Collection": {
@@ -849,6 +910,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Overseerr": {
@@ -862,6 +928,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "My Plex Watchlist": {
@@ -873,6 +944,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Other Plex Watchlist": {
@@ -886,6 +962,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "My Plex RSS Watchlist": {
@@ -898,6 +979,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "My Friends Plex RSS Watchlist": {
@@ -910,6 +996,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Friends Trakt Watchlist": {
@@ -923,6 +1014,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             },
             "Special Trakt Lists": {
@@ -954,6 +1050,11 @@ SETTINGS_SCHEMA = {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
                 }
             }
         }
@@ -1119,6 +1220,16 @@ SETTINGS_SCHEMA = {
         "apply_to_anime_tv_shows": {
             "type": "boolean",
             "description": "Apply subtitle downloads to anime TV show folders (if separate anime folders are enabled)",
+            "default": True
+        },
+        "apply_to_documentary_movies": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to documentary movie folders (if separate documentary folders are enabled)",
+            "default": True
+        },
+        "apply_to_documentary_tv_shows": {
+            "type": "boolean",
+            "description": "Apply subtitle downloads to documentary TV show folders (if separate documentary folders are enabled)",
             "default": True
         },
         "only_current_file": {

@@ -164,11 +164,11 @@ def rclone_webhook():
 
         # The path passed to the task should still be the full path for scanning.
         scan_path = absolute_item_dir_or_file_path 
-        logging.info(f"Initiating rclone to symlinks task. Task ID: {task_id}, Scan Path: {scan_path}, Symlink Base: {symlink_base_path_str}")
+        logging.info(f"Initiating rclone to symlinks task. Task ID: {task_id}, Scan Path: {scan_path}, Symlink Base: {symlink_base_path_str}, Assumed Title: {final_dir_component}")
 
         thread = threading.Thread(
             target=_run_rclone_to_symlink_task,
-            args=(scan_path, symlink_base_path_str, dry_run, task_id, True)
+            args=(scan_path, symlink_base_path_str, dry_run, task_id, True, final_dir_component)
         )
         thread.daemon = True
         thread.start()

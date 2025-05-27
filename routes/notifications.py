@@ -584,7 +584,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
             if isinstance(notifications, dict):
                 title = "Upgrade Failed"
                 message = f"Failed to upgrade {notifications.get('title', 'Unknown')} ({notifications.get('year', '')}): {notifications.get('reason', 'Unknown reason')}"
-                if not store_notification(title, message, 'error', link="/queues"):
+                if not store_notification(title, message, 'error', link="/debug/torrent_tracking"):
                     storage_successful = False
             else:
                  logging.warning(f"Received upgrade_failed notification with non-dict data: {notifications}")
@@ -663,7 +663,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                         final_message += "\n" + "\n".join(source_info)
                     # --- END RESTORED LOGIC ---
 
-                    if not store_notification(notification_title, final_message, notif_type, link="/queues"):
+                    if not store_notification(notification_title, final_message, notif_type, link="/debug/torrent_tracking"):
                         storage_successful = False
                         # break # Optional: stop on first failure
 

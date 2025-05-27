@@ -3022,7 +3022,7 @@ def delete_battery_db_files():
 
 # --- Rclone Mount to Symlinks Logic ---
 
-def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False): # Add new parameter
+def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dry_run, task_id, trigger_plex_update_on_success: bool = False, assumed_item_title_from_path: str = None): # Add new parameter
     """Background task to scan Rclone mount, fetch metadata, and create DB entries/symlinks."""
     global rclone_scan_progress
 
@@ -3034,6 +3034,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
         progress_file_path = None 
     else:
         progress_file_path = os.path.join(db_content_dir, 'rclone_to_symlink_processed_files.json')
+        progress_file_path = None # REMOVED
 
     processed_original_files = set()
     if progress_file_path:
@@ -3467,6 +3468,19 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
 
             item_content_source = 'external_webhook' if trigger_plex_update_on_success else 'scanned_item' # Determine content_source
 
+            # Determine the value for filled_by_title
+            filled_by_title_value = None
+            if assumed_item_title_from_path:
+                filled_by_title_value = assumed_item_title_from_path
+                logging.debug(f"[RcloneScan {task_id}] Using assumed_item_title_from_path for filled_by_title: '{filled_by_title_value}' for item '{item_path.name}'")
+            elif item_path and item_path.parent:
+                filled_by_title_value = item_path.parent.name
+                logging.debug(f"[RcloneScan {task_id}] Using parent folder name for filled_by_title: '{filled_by_title_value}' for item '{item_path.name}'")
+            else:
+                logging.warning(f"[RcloneScan {task_id}] Could not determine filled_by_title for item '{item_path.name if item_path else 'Unknown Item'}'. It will be None.")
+
+            raw_genres_list = metadata.get('genres', []) if metadata else [] # Get genres as a list
+
             item_for_db = {
                 'imdb_id': final_imdb_id, 
                 'tmdb_id': final_tmdb_id,
@@ -3483,26 +3497,35 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 'original_path_for_symlink': original_file_path_str,
                 'version': current_parsed_version, 
                 'filled_by_file': item_path.name,
+                'filled_by_title': filled_by_title_value, # <<< USE THE DERIVED VALUE HERE
                 'metadata_updated': current_time, # Use datetime object
-                'genres': json.dumps(metadata.get('genres', [])) if metadata else json.dumps([]),
+                'genres': raw_genres_list, # Store raw list for get_symlink_path
                 'content_source': item_content_source, # Use the determined content_source
             }
-            item_for_db_filtered = {k: v for k, v in item_for_db.items() if v is not None}
+            item_for_db_filtered_for_symlink = {k: v for k, v in item_for_db.items() if v is not None} # Use this for get_symlink_path
 
             # 4. Generate Symlink Path
             try:
-                symlink_dest_path = get_symlink_path(item_for_db_filtered, item_path.name, skip_jikan_lookup=True)
+                # item_for_db_filtered_for_symlink has 'genres' as a list, which is correct for get_symlink_path
+                symlink_dest_path = get_symlink_path(item_for_db_filtered_for_symlink, item_path.name, skip_jikan_lookup=True)
                 if not symlink_dest_path: raise ValueError("get_symlink_path returned None")
-                item_for_db_filtered['location_on_disk'] = symlink_dest_path
+                
+                # Prepare item_for_db_filtered_for_db with genres as JSON string
+                item_for_db_filtered_for_db = item_for_db_filtered_for_symlink.copy() # Start with a copy
+                if 'genres' in item_for_db_filtered_for_db and isinstance(item_for_db_filtered_for_db['genres'], list):
+                    item_for_db_filtered_for_db['genres'] = json.dumps(item_for_db_filtered_for_db['genres'])
+                
+                item_for_db_filtered_for_db['location_on_disk'] = symlink_dest_path # Add location_on_disk now
+
             except Exception as e:
                 logging.warning(f"[RcloneScan {task_id}] Symlink path gen failed for {item_path.name}: {e}")
                 symlink_errors += 1; update_progress(symlink_errors=symlink_errors); continue
-
+            
             # 5. Dry Run or Execution
             if dry_run:
                 preview_data = {
                     'original_file': original_file_path_str, 'parsed_title': parsed_title, 
-                    'parsed_type': current_parsed_type, 'fetched_title': item_for_db_filtered.get('title'),
+                    'parsed_type': current_parsed_type, 'fetched_title': item_for_db_filtered_for_symlink.get('title'), # use _for_symlink version for title consistency in preview
                     'imdb_id': final_imdb_id, 'tmdb_id': final_tmdb_id,
                     'version': current_parsed_version, 'symlink_path': symlink_dest_path,
                     'action': 'CREATE DB Entry & Symlink'
@@ -3512,7 +3535,9 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             else:
                 item_id_from_db = None
                 try:
-                    item_id_from_db = add_media_item(item_for_db_filtered)
+                    # add_media_item is called with item_for_db_filtered_for_db, 
+                    # which has 'genres' as a JSON string
+                    item_id_from_db = add_media_item(item_for_db_filtered_for_db)
                     if not item_id_from_db: raise Exception("add_media_item no ID returned")
                     items_added_to_db += 1; update_progress(items_added_to_db=items_added_to_db)
                 except sqlite3.IntegrityError:
@@ -3557,8 +3582,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                             if plex_url and plex_token:
                                 logging.info(f"[RcloneScan {task_id}] Plex configured and update triggered. Attempting library update for: {symlink_dest_path}")
                                 try:
-                                    # Make sure item_for_db_filtered has the necessary info (title, year, type etc.)
-                                    plex_update_item(item=item_for_db_filtered)
+                                    # Make sure item_for_db_filtered_for_db has the necessary info (title, year, type etc.)
+                                    plex_update_item(item=item_for_db_filtered_for_db)
                                     logging.info(f"[RcloneScan {task_id}] Plex library update triggered for: {symlink_dest_path}")
                                 except Exception as plex_err:
                                     logging.error(f"[RcloneScan {task_id}] Failed to trigger Plex update for {symlink_dest_path}: {plex_err}", exc_info=True)
@@ -3569,34 +3594,34 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                         # --- End Plex Update Call ---
                         
                         # --- Send Notification if from external_webhook ---
-                        if item_for_db_filtered.get('content_source') == 'external_webhook':
+                        if item_for_db_filtered_for_db.get('content_source') == 'external_webhook':
                             try:
                                 notification_item = {
-                                    'type': item_for_db_filtered.get('type'), # 'movie' or 'episode'
-                                    'title': item_for_db_filtered.get('title'),
-                                    'year': item_for_db_filtered.get('year'),
-                                    'tmdb_id': str(item_for_db_filtered.get('tmdb_id')) if item_for_db_filtered.get('tmdb_id') else None,
-                                    'imdb_id': item_for_db_filtered.get('imdb_id'),
-                                    'original_collected_at': item_for_db_filtered.get('collected_at').isoformat() if item_for_db_filtered.get('collected_at') else datetime.now().isoformat(),
-                                    'version': item_for_db_filtered.get('version'),
+                                    'type': item_for_db_filtered_for_db.get('type'), # 'movie' or 'episode'
+                                    'title': item_for_db_filtered_for_db.get('title'),
+                                    'year': item_for_db_filtered_for_db.get('year'),
+                                    'tmdb_id': str(item_for_db_filtered_for_db.get('tmdb_id')) if item_for_db_filtered_for_db.get('tmdb_id') else None,
+                                    'imdb_id': item_for_db_filtered_for_db.get('imdb_id'),
+                                    'original_collected_at': item_for_db_filtered_for_db.get('collected_at').isoformat() if item_for_db_filtered_for_db.get('collected_at') else datetime.now().isoformat(),
+                                    'version': item_for_db_filtered_for_db.get('version'),
                                     'is_upgrade': False, # New items from rclone webhook are not considered upgrades here
-                                    'media_type': 'tv' if item_for_db_filtered.get('type') == 'episode' else 'movie',
+                                    'media_type': 'tv' if item_for_db_filtered_for_db.get('type') == 'episode' else 'movie',
                                     'new_state': 'Collected',
-                                    'content_source': item_for_db_filtered.get('content_source'), # Should be 'external_webhook'
-                                    'filled_by_file': item_for_db_filtered.get('filled_by_file') # ADDED this line
+                                    'content_source': item_for_db_filtered_for_db.get('content_source'), # Should be 'external_webhook'
+                                    'filled_by_file': item_for_db_filtered_for_db.get('filled_by_file') # ADDED this line
                                     # 'content_source_detail': os.path.basename(original_file_path_str) # REMOVED this line
                                 }
-                                if item_for_db_filtered.get('type') == 'episode':
+                                if item_for_db_filtered_for_db.get('type') == 'episode':
                                     notification_item.update({
-                                        'season_number': item_for_db_filtered.get('season_number'),
-                                        'episode_number': item_for_db_filtered.get('episode_number'),
-                                        'episode_title': item_for_db_filtered.get('episode_title')
+                                        'season_number': item_for_db_filtered_for_db.get('season_number'),
+                                        'episode_number': item_for_db_filtered_for_db.get('episode_number'),
+                                        'episode_title': item_for_db_filtered_for_db.get('episode_title')
                                     })
                                 
                                 logging.info(f"[RcloneScan {task_id}] Sending 'collected' notification for item: {notification_item.get('title')}")
                                 send_notifications([notification_item], get_enabled_notifications(), notification_category='collected')
                             except Exception as notify_err:
-                                logging.error(f"[RcloneScan {task_id}] Failed to send notification for {item_for_db_filtered.get('title')}: {notify_err}", exc_info=True)
+                                logging.error(f"[RcloneScan {task_id}] Failed to send notification for {item_for_db_filtered_for_db.get('title')}: {notify_err}", exc_info=True)
                         # --- End Notification ---
                         
                     except Exception as e:
@@ -3658,6 +3683,10 @@ def rclone_to_symlinks_route():
     rclone_mount_path = request.form.get('rclone_mount_path')
     symlink_base_path = request.form.get('symlink_base_path')
     dry_run = request.form.get('dry_run') == 'on' # Checkbox value is 'on' if checked
+    # For manual trigger from debug page, assumed_item_title_from_path will be None
+    # as it's scanning a whole directory, not a specific item signaled by webhook.
+    assumed_item_title_from_path_manual = None 
+
 
     if not rclone_mount_path:
         return jsonify({'success': False, 'error': 'Rclone Mount Path is required.'}), 400
@@ -3670,7 +3699,7 @@ def rclone_to_symlinks_route():
     # Start the background task
     thread = threading.Thread(
         target=_run_rclone_to_symlink_task,
-        args=(rclone_mount_path, symlink_base_path, dry_run, task_id)
+        args=(rclone_mount_path, symlink_base_path, dry_run, task_id, False, assumed_item_title_from_path_manual) # Pass False for trigger_plex_update and None for assumed_item_title
     )
     thread.daemon = True
     thread.start()

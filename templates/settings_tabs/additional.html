@@ -578,6 +578,14 @@
         </div>
 
         <div class="settings-form-group">
+            <label for="additional-enable_separate_documentary_folders" class="settings-title">Enable Separate Documentary Folders:</label>
+            <input type="checkbox" id="additional-enable_separate_documentary_folders" name="Debug.enable_separate_documentary_folders"
+                   data-section="Debug" data-key="enable_separate_documentary_folders"
+                   {% if settings.get('Debug', {}).get('enable_separate_documentary_folders') %}checked{% endif %}>
+            <p class="settings-description">Enable separate folders for documentary content</p>
+        </div>
+
+        <div class="settings-form-group">
             <label for="additional-movies_folder_name" class="settings-title">Movies Folder Name:</label>
             <input type="text" id="additional-movies_folder_name" name="Debug.movies_folder_name"
                    value="{{ settings.get('Debug', {}).get('movies_folder_name', 'Movies') }}" 
@@ -613,6 +621,24 @@
             <p class="settings-description">Name of the anime TV shows folder</p>
         </div>
 
+        <div class="settings-form-group">
+            <label for="additional-documentary_movies_folder_name" class="settings-title">Documentary Movies Folder Name:</label>
+            <input type="text" id="additional-documentary_movies_folder_name" name="Debug.documentary_movies_folder_name"
+                   value="{{ settings.get('Debug', {}).get('documentary_movies_folder_name', 'Documentary Movies') }}"
+                   class="settings-input"
+                   data-section="Debug" data-key="documentary_movies_folder_name">
+            <p class="settings-description">Name of the documentary movies folder</p>
+        </div>
+
+        <div class="settings-form-group">
+            <label for="additional-documentary_tv_shows_folder_name" class="settings-title">Documentary TV Shows Folder Name:</label>
+            <input type="text" id="additional-documentary_tv_shows_folder_name" name="Debug.documentary_tv_shows_folder_name"
+                   value="{{ settings.get('Debug', {}).get('documentary_tv_shows_folder_name', 'Documentary TV Shows') }}"
+                   class="settings-input"
+                   data-section="Debug" data-key="documentary_tv_shows_folder_name">
+            <p class="settings-description">Name of the documentary TV shows folder</p>
+        </div>
+
         <div class="settings-form-group example-paths-container" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #444;">
             <h5 class="settings-title" style="margin-bottom: 10px;">Example Symlink Paths (Based on Current Settings):</h5>
             
@@ -631,6 +657,14 @@
             <div class="example-path-item">
                 <strong class="example-label">Anime TV Episode:</strong>
                 <code id="example-anime-tv-episode-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Documentary Movie:</strong>
+                <code id="example-documentary-movie-path" class="example-path-display"></code>
+            </div>
+            <div class="example-path-item">
+                <strong class="example-label">Documentary TV Episode:</strong>
+                <code id="example-documentary-tv-episode-path" class="example-path-display"></code>
             </div>
             <p class="settings-description" style="margin-top: 10px;">
                 Examples show the path relative to your 'Symlinked Files Path'. Refresh might be needed if base path changes. Path length truncation is not simulated in this preview.
@@ -689,6 +723,18 @@
                            data-section="Subtitle Settings" data-key="apply_to_anime_tv_shows"
                            {% if settings.get('Subtitle Settings', {}).get('apply_to_anime_tv_shows', True) %}checked{% endif %}>
                     <label for="additional-apply_to_anime_tv_shows">Anime TV Shows</label>
+                </div>
+                <div class="settings-checkbox-item">
+                    <input type="checkbox" id="additional-apply_to_documentary_movies" name="Subtitle Settings.apply_to_documentary_movies"
+                           data-section="Subtitle Settings" data-key="apply_to_documentary_movies"
+                           {% if settings.get('Subtitle Settings', {}).get('apply_to_documentary_movies', True) %}checked{% endif %}>
+                    <label for="additional-apply_to_documentary_movies">Documentary Movies</label>
+                </div>
+                <div class="settings-checkbox-item">
+                    <input type="checkbox" id="additional-apply_to_documentary_tv_shows" name="Subtitle Settings.apply_to_documentary_tv_shows"
+                           data-section="Subtitle Settings" data-key="apply_to_documentary_tv_shows"
+                           {% if settings.get('Subtitle Settings', {}).get('apply_to_documentary_tv_shows', True) %}checked{% endif %}>
+                    <label for="additional-apply_to_documentary_tv_shows">Documentary TV Shows</label>
                 </div>
             </div>
             <p class="settings-description">Select which folder types to apply subtitle downloads to</p>
@@ -1293,7 +1339,9 @@ function initializeSymlinkPathExamples() {
         movie: document.getElementById('example-movie-path'),
         animeMovie: document.getElementById('example-anime-movie-path'),
         tvEpisode: document.getElementById('example-tv-episode-path'),
-        animeTvEpisode: document.getElementById('example-anime-tv-episode-path')
+        animeTvEpisode: document.getElementById('example-anime-tv-episode-path'),
+        documentaryMovie: document.getElementById('example-documentary-movie-path'),
+        documentaryTvEpisode: document.getElementById('example-documentary-tv-episode-path')
     };
 
     // Helper to get checkbox value
@@ -1330,10 +1378,13 @@ function initializeSymlinkPathExamples() {
             movieTemplate: getInputValue('Debug.symlink_movie_template', '{title} ({year})/{title} ({year}) - {imdb_id} - {version} - ({original_filename})'),
             episodeTemplate: getInputValue('Debug.symlink_episode_template', '{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})'),
             enableSeparateAnimeFolders: getCheckboxValue('Debug.enable_separate_anime_folders'),
+            enableSeparateDocumentaryFolders: getCheckboxValue('Debug.enable_separate_documentary_folders'),
             moviesFolderName: getInputValue('Debug.movies_folder_name', 'Movies'),
             tvShowsFolderName: getInputValue('Debug.tv_shows_folder_name', 'TV Shows'),
             animeMoviesFolderName: getInputValue('Debug.anime_movies_folder_name', 'Anime Movies'),
-            animeTvShowsFolderName: getInputValue('Debug.anime_tv_shows_folder_name', 'Anime TV Shows')
+            animeTvShowsFolderName: getInputValue('Debug.anime_tv_shows_folder_name', 'Anime TV Shows'),
+            documentaryMoviesFolderName: getInputValue('Debug.documentary_movies_folder_name', 'Documentary Movies'),
+            documentaryTvShowsFolderName: getInputValue('Debug.documentary_tv_shows_folder_name', 'Documentary TV Shows')
         };
     }
 
@@ -1355,6 +1406,15 @@ function initializeSymlinkPathExamples() {
             title: 'Cool Anime Series', year: '2021', type: 'episode', imdb_id: 'tt1231231', version: 'HDTV', resolution: '720p',
             season_number: 2, episode_number: 10, episode_title: 'A New Foe Appears',
             genres: 'Animation,Anime,Action', original_filename: 'Cool.Anime.Series.S02E10.HDTV.mkv', filled_by_file: 'dummy.mkv'
+        },
+        documentaryMovie: {
+            title: 'Amazing Earth', year: '2023', type: 'movie', imdb_id: 'tt2345678', version: 'WEB-DL', resolution: '1080p',
+            genres: 'Documentary', original_filename: 'Amazing.Earth.2023.WEB-DL.mkv', filled_by_file: 'dummy.mkv'
+        },
+        documentaryTvEpisode: {
+            title: 'Planet Life', year: '2022', type: 'episode', imdb_id: 'tt8765432', version: 'BluRay', resolution: '2160p',
+            season_number: 1, episode_number: 3, episode_title: 'The Deep Oceans',
+            genres: 'Documentary', original_filename: 'Planet.Life.S01E03.BluRay.mkv', filled_by_file: 'dummy.mkv'
         }
     };
 
@@ -1377,6 +1437,7 @@ function initializeSymlinkPathExamples() {
         const mediaType = item.type; // 'movie' or 'episode'
         
         const isAnime = item.genres && item.genres.toLowerCase().includes('anime');
+        const isDocumentary = item.genres && item.genres.toLowerCase().includes('documentary');
 
         const folderOrderList = settings.folderOrder.split(',').map(s => s.trim().toLowerCase()).filter(s => s);
 
@@ -1399,6 +1460,8 @@ function initializeSymlinkPathExamples() {
                 let folderNameForType = "";
                 if (isAnime && settings.enableSeparateAnimeFolders) {
                     folderNameForType = mediaType === 'movie' ? settings.animeMoviesFolderName : settings.animeTvShowsFolderName;
+                } else if (isDocumentary && settings.enableSeparateDocumentaryFolders) {
+                    folderNameForType = mediaType === 'movie' ? settings.documentaryMoviesFolderName : settings.documentaryTvShowsFolderName;
                 } else {
                     folderNameForType = mediaType === 'movie' ? settings.moviesFolderName : settings.tvShowsFolderName;
                 }
@@ -1455,6 +1518,8 @@ function initializeSymlinkPathExamples() {
         if (exampleElements.animeMovie) exampleElements.animeMovie.textContent = generateExamplePath(mockItems.animeMovie, settings);
         if (exampleElements.tvEpisode) exampleElements.tvEpisode.textContent = generateExamplePath(mockItems.tvEpisode, settings);
         if (exampleElements.animeTvEpisode) exampleElements.animeTvEpisode.textContent = generateExamplePath(mockItems.animeTvEpisode, settings);
+        if (exampleElements.documentaryMovie) exampleElements.documentaryMovie.textContent = generateExamplePath(mockItems.documentaryMovie, settings);
+        if (exampleElements.documentaryTvEpisode) exampleElements.documentaryTvEpisode.textContent = generateExamplePath(mockItems.documentaryTvEpisode, settings);
     }
 
     // --- Event Listeners ---
@@ -1463,7 +1528,8 @@ function initializeSymlinkPathExamples() {
         'File Management.symlink_organize_by_resolution', 'File Management.symlink_organize_by_version',
         'Debug.symlink_movie_template', 'Debug.symlink_episode_template',
         'Debug.enable_separate_anime_folders', 'Debug.movies_folder_name',
-        'Debug.tv_shows_folder_name', 'Debug.anime_movies_folder_name', 'Debug.anime_tv_shows_folder_name'
+        'Debug.tv_shows_folder_name', 'Debug.anime_movies_folder_name', 'Debug.anime_tv_shows_folder_name',
+        'Debug.enable_separate_documentary_folders', 'Debug.documentary_movies_folder_name', 'Debug.documentary_tv_shows_folder_name'
     ];
 
     settingInputsToWatch.forEach(name => {
