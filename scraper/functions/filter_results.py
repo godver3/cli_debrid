@@ -100,14 +100,14 @@ def filter_results(
             # Get parsed info from result (should be already parsed by PTT)
             if not parsed_info:
                 result['filter_reason'] = "Missing parsed info"
-                logging.info(f"Rejected: Missing parsed info for '{original_title}'")
+                logging.info(f"Rejected: Missing parsed info for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
             
             # Check if it's marked as trash by PTT and filter_trash_releases is enabled
             filter_trash_releases = get_setting('Scraping', 'filter_trash_releases', True)
             if filter_trash_releases and parsed_info.get('trash', False):
                 result['filter_reason'] = "Marked as trash by parser"
-                logging.info(f"Rejected: Marked as trash by parser for '{original_title}'")
+                logging.info(f"Rejected: Marked as trash by parser for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
             
             # Store original title in parsed_info
@@ -156,7 +156,7 @@ def filter_results(
                 
                 # Log the failure reason including all comparison scores
                 result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
-                logging.info(f"Rejected: Title similarity too low ({best_sim:.2f} < {similarity_threshold}) for '{original_title}'")
+                logging.info(f"Rejected: Title similarity too low (best={best_sim:.2f} < {similarity_threshold}) for '{original_title}' (Size: {result['size']:.2f}GB)")
                 # logging.debug(f"  - Main title ({main_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_query_title}'")
                 # if normalized_aliases:
                 #     logging.debug(f"  - Best alias ({best_alias_sim:.2f}): '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
@@ -178,14 +178,14 @@ def filter_results(
             detected_resolution = parsed_info.get('resolution', 'Unknown')
             if not resolution_filter(detected_resolution, max_resolution, resolution_wanted):
                 result['filter_reason'] = f"Resolution mismatch (max: {max_resolution}, wanted: {resolution_wanted})"
-                logging.info(f"Rejected: Resolution '{detected_resolution}' doesn't match criteria '{resolution_wanted} {max_resolution}' for '{original_title}'")
+                logging.info(f"Rejected: Resolution '{detected_resolution}' doesn't match criteria '{resolution_wanted} {max_resolution}' for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
             #logging.debug("✓ Passed resolution check")
             
             # HDR check
             if not enable_hdr and parsed_info.get('is_hdr', False):
                 result['filter_reason'] = "HDR content when HDR is disabled"
-                logging.info(f"Rejected: HDR content not allowed for '{original_title}'")
+                logging.info(f"Rejected: HDR content not allowed for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
             #logging.debug("✓ Passed HDR check")
             
@@ -196,11 +196,11 @@ def filter_results(
                     if isinstance(parsed_year, list):
                         if not any(abs(int(py) - year) <= 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.info(f"Rejected: Movie year list {parsed_year} doesn't match {year} for '{original_title}'")
+                            logging.info(f"Rejected: Movie year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
                     elif abs(int(parsed_year) - year) > 1:
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                        logging.info(f"Rejected: Movie year {parsed_year} doesn't match {year} for '{original_title}'")
+                        logging.info(f"Rejected: Movie year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
                 #logging.debug("✓ Passed year check")
 
@@ -225,7 +225,7 @@ def filter_results(
 
                     if is_tv_content_indicator:
                         result['filter_reason'] = "Detected season/episode/pack info for a movie request"
-                        logging.info(f"Rejected: Detected TV content indicator for movie request: '{original_title}' (Info: {season_episode_info})")
+                        logging.info(f"Rejected: Detected TV content indicator for movie request: '{original_title}' (Info: {season_episode_info}) (Size: {result['size']:.2f}GB)")
                         continue
                 # --- End new check ---
 
@@ -236,11 +236,11 @@ def filter_results(
                     if isinstance(parsed_year, list):
                         if not any(abs(int(py) - year) <= 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.info(f"Rejected: TV year list {parsed_year} doesn't match {year} for '{original_title}'")
+                            logging.info(f"Rejected: TV year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
                     elif abs(int(parsed_year) - year) > 1:
                         result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                        logging.info(f"Rejected: TV year {parsed_year} doesn't match {year} for '{original_title}'")
+                        logging.info(f"Rejected: TV year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
 
                 season_episode_info = parsed_info.get('season_episode_info', {})
@@ -266,18 +266,18 @@ def filter_results(
                     episodes = season_episode_info.get('episodes', [])
                     if len(episodes) == 1:
                         result['filter_reason'] = "Single episode result when searching for multi"
-                        logging.info(f"Rejected: Single episode in multi mode for '{original_title}'")
+                        logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
 
                     if episodes and episode is not None and episode not in episodes:
                         result['filter_reason'] = f"Multi-episode pack does not contain requested episode {episode}"
-                        logging.info(f"Rejected: Multi-pack missing episode {episode} for '{original_title}'")
+                        logging.info(f"Rejected: Multi-pack missing episode {episode} for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
 
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'N/A':
                         result['filter_reason'] = "Single episode result when searching for multi"
-                        logging.info(f"Rejected: Single episode in multi mode for '{original_title}'")
+                        logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
                     elif season_pack == 'Complete':
                         #logging.debug("Complete series pack accepted")
@@ -327,12 +327,12 @@ def filter_results(
                             
                             if not is_likely_anime_pack:
                                 result['filter_reason'] = "Non-multi result when searching for multi"
-                                logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack})")
+                                logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}) (Size: {result['size']:.2f}GB)")
                                 continue
                     else:
                         if season not in season_episode_info.get('seasons', []):
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
-                            logging.info(f"Rejected: Season pack missing season {season} for '{original_title}'")
+                            logging.info(f"Rejected: Season pack missing season {season} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
                     #logging.debug("✓ Passed multi-episode checks")
                 else: # Single episode mode
@@ -376,7 +376,7 @@ def filter_results(
                         if explicit_season_mismatch:
                              reason += " (and title mentions conflicting season)"
                         result['filter_reason'] = reason
-                        logging.info(f"Rejected: {reason} for '{original_title}'")
+                        logging.info(f"Rejected: {reason} for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
                     #logging.debug(f"✓ Passed season check {('(leniently)' if lenient_season_pass else '')}")
                     # --- End Season Check ---
@@ -386,7 +386,7 @@ def filter_results(
                     # Check for multi-season packs (e.g., "Complete", "S01,S02")
                     if (season_pack == 'Complete' or (season_pack not in ['N/A', 'Unknown'] and ',' in season_pack)):
                         result['filter_reason'] = "Multi-season pack when searching for single episode"
-                        logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}'")
+                        logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
 
                     # Check for single season packs (parsed season/pack, but no parsed episodes matching target)
@@ -396,7 +396,7 @@ def filter_results(
                     # Also check if multiple distinct episodes are detected explicitly
                     if len(result_episodes) > 1:
                         result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
-                        logging.info(f"Rejected: Multiple episodes {result_episodes} in single episode mode for '{original_title}'")
+                        logging.info(f"Rejected: Multiple episodes {result_episodes} in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
                     # --- End Pack Checks ---
 
@@ -462,15 +462,15 @@ def filter_results(
                         reason_suffix = f"from '{original_title}'"
                         if is_potential_single_season_pack:
                             result['filter_reason'] = f"Season pack '{season_pack}' detected when searching for single episode {episode} (no matching episode found)"
-                            logging.info(f"Rejected: Season pack '{season_pack}' in single episode mode (no matching episode found) {reason_suffix}")
+                            logging.info(f"Rejected: Season pack '{season_pack}' in single episode mode (no matching episode found) {reason_suffix} (Size: {result['size']:.2f}GB)")
                         elif parsed_date_str and target_air_date:
                              # If dates were available but didn't match
                              result['filter_reason'] = f"Date mismatch: needed {target_air_date}, parsed {parsed_date_str}"
-                             logging.info(f"Rejected: Date mismatch - needed {target_air_date}, parsed {parsed_date_str} {reason_suffix}")
+                             logging.info(f"Rejected: Date mismatch - needed {target_air_date}, parsed {parsed_date_str} {reason_suffix} (Size: {result['size']:.2f}GB)")
                         else:
                             # General episode mismatch
                             result['filter_reason'] = f"Episode mismatch: needed E{episode}, parsed {result_episodes} (or not found explicitly in title/date)"
-                            logging.info(f"Rejected: Episode mismatch - needed E{episode}, parsed {result_episodes} {reason_suffix}")
+                            logging.info(f"Rejected: Episode mismatch - needed E{episode}, parsed {result_episodes} {reason_suffix} (Size: {result['size']:.2f}GB)")
                         continue
                     #logging.debug("✓ Passed episode checks")
                     # --- End Episode Check ---
@@ -491,6 +491,7 @@ def filter_results(
             size_gb_for_filter = total_size_gb # Default: use total size (for movies or single episodes)
             
             result['total_size_gb'] = total_size_gb
+            result['size'] = total_size_gb # Initialize result['size'] with total_size_gb
             
             num_episodes_in_pack = 0 
             is_identified_as_pack = False 
@@ -596,10 +597,10 @@ def filter_results(
                             if not expected_episodes_for_pack_scope.issubset(pending_episodes_set):
                                 pack_is_fully_wanted = False
                                 missing_episodes = sorted(list(expected_episodes_for_pack_scope - pending_episodes_set))
-                                logging.info(f"Rejected: Pack '{original_title}' for {pack_scope_description} is not fully wanted/scraping. Missing {len(missing_episodes)} episodes, e.g., {missing_episodes[:5]}")
+                                logging.info(f"Rejected: Pack '{original_title}' for {pack_scope_description} is not fully wanted/scraping. Missing {len(missing_episodes)} episodes, e.g., {missing_episodes[:5]} (Size: {result['size']:.2f}GB)")
                                 result['filter_reason'] = f"Pack for {pack_scope_description} not fully wanted/scraping (missing {len(missing_episodes)} episodes)"
                             else:
-                                logging.info(f"Pack '{original_title}' for {pack_scope_description} is fully wanted/scraping.")
+                                logging.info(f"Pack '{original_title}' for {pack_scope_description} is fully wanted/scraping. (Size: {result['size']:.2f}GB)")
                         
                     if not pack_is_fully_wanted:
                         continue # Skip to the next result if the pack isn't fully wanted
@@ -688,34 +689,65 @@ def filter_results(
                         size_gb_for_filter = total_size_gb
 
 
+            # --- ADDED DEBUG LOGGING ---
+            if original_title == "The.Handmaids.Tale.S03.SweSub.1080p.x264-Justiso":
+                logging.info(f"[FILTER_DEBUG HANDMAIDS] Pre-final size assignment for '{original_title}':")
+                logging.info(f"  total_size_gb: {total_size_gb:.4f}")
+                logging.info(f"  num_episodes_in_pack (calc'd in filter_results): {num_episodes_in_pack}")
+                logging.info(f"  provides_per_item_size: {provides_per_item_size}")
+                logging.info(f"  size_gb_for_filter (to be assigned to result['size']): {size_gb_for_filter:.4f}")
+            # --- END ADDED DEBUG LOGGING ---
             result['size'] = size_gb_for_filter 
             
             # --- Bitrate Calculation Prep ---
-            # 'num_episodes_in_pack' at this point has its final value after considering pack type, API fallbacks, 
-            # and 'provides_per_item_size' adjustments. This is the number of conceptual episodes 
-            # the 'total_size_gb' is considered to contain for bitrate purposes.
+            # 'num_episodes_in_pack' at this point has its final value after considering pack type, API fallbacks.
+            # 'total_size_gb' is the raw size from the scraper.
+            # 'size_gb_for_filter' is the per-item or per-average-item size.
 
             bitrate = 0
             # runtime is the base runtime for one item (episode or movie) passed into filter_results
-            effective_runtime_for_bitrate = runtime 
-            actual_ep_count_used_for_runtime_calc = 1 # Default for movies or single episodes not identified as packs
+            
+            actual_ep_count_for_bitrate_calc = 1 # Default for movies or single episodes not identified as packs
 
             if is_episode:
                 if is_identified_as_pack:
-                    # For packs, use the calculated number of episodes. Fallback to 1 if count is bad.
-                    actual_ep_count_used_for_runtime_calc = num_episodes_in_pack if num_episodes_in_pack > 0 else 1
-                    if num_episodes_in_pack <= 0: # Log if we had to fallback
-                        logging.warning(f"Pack '{original_title}': num_episodes_in_pack is {num_episodes_in_pack}. Using 1 for runtime calculation. Bitrate may be inaccurate.")
-                    effective_runtime_for_bitrate = runtime * actual_ep_count_used_for_runtime_calc
-                # else (single episode not a pack): effective_runtime_for_bitrate is 'runtime', actual_ep_count_used_for_runtime_calc is 1. This is correct.
-            # else (movie): effective_runtime_for_bitrate is 'runtime', actual_ep_count_used_for_runtime_calc is 1. This is correct.
+                    if provides_per_item_size:
+                        # If scraper says total_size_gb is per item, then bitrate is for 1 item's runtime.
+                        actual_ep_count_for_bitrate_calc = 1
+                        # total_size_gb here is the size of ONE episode as reported by Torrentio/MediaFusion
+                    else:
+                        # If scraper total_size_gb is for the whole pack, then bitrate is for N items' runtime.
+                        # Fallback to 1 if pack count is bad.
+                        actual_ep_count_for_bitrate_calc = num_episodes_in_pack if num_episodes_in_pack > 0 else 1
+                        if num_episodes_in_pack <= 0: 
+                            logging.warning(f"Pack '{original_title}' (not provides_per_item_size): num_episodes_in_pack is {num_episodes_in_pack}. Using 1 for runtime calculation. Bitrate may be inaccurate.")
+                # else (single episode not a pack): actual_ep_count_for_bitrate_calc remains 1. This is correct.
+            # else (movie): actual_ep_count_for_bitrate_calc remains 1. This is correct.
+
+            effective_runtime_for_bitrate = runtime * actual_ep_count_for_bitrate_calc
 
             if effective_runtime_for_bitrate > 0 and total_size_gb > 0:
-                bitrate = calculate_bitrate(total_size_gb, effective_runtime_for_bitrate) # total_size_gb is the key size input
+                # The total_size_gb used here should correspond to the number of episodes in actual_ep_count_for_bitrate_calc
+                # If provides_per_item_size is True and it's a pack, total_size_gb is already the per-item size.
+                # If provides_per_item_size is False and it's a pack, total_size_gb is the full pack size.
+                # This logic is correct as calculate_bitrate expects the total size for the given total runtime.
+                bitrate = calculate_bitrate(total_size_gb, effective_runtime_for_bitrate) 
             else:
                 logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive effective_runtime ({effective_runtime_for_bitrate}min) or total_size_gb ({total_size_gb:.3f}GB). Bitrate set to 0.")
-                bitrate = 0 # Ensure it's 0 if skipped
+                bitrate = 0 
             
+            # --- ADDED DEBUG LOGGING ---
+            if original_title == "The.Handmaids.Tale.S03.SweSub.1080p.x264-Justiso":
+                logging.info(f"[FILTER_DEBUG HANDMAIDS] Pre-final bitrate assignment for '{original_title}':")
+                logging.info(f"  total_size_gb (from scraper): {total_size_gb:.4f}")
+                logging.info(f"  provides_per_item_size: {provides_per_item_size}")
+                logging.info(f"  is_identified_as_pack: {is_identified_as_pack}")
+                logging.info(f"  num_episodes_in_pack (calc'd in filter_results): {num_episodes_in_pack}")
+                logging.info(f"  runtime (base for one item): {runtime}")
+                logging.info(f"  actual_ep_count_for_bitrate_calc: {actual_ep_count_for_bitrate_calc}")
+                logging.info(f"  effective_runtime_for_bitrate: {effective_runtime_for_bitrate:.2f}")
+                logging.info(f"  calculated bitrate (to be assigned to result['bitrate']): {bitrate:.2f} Kbps")
+            # --- END ADDED DEBUG LOGGING ---
             result['bitrate'] = bitrate
             # Store the count that reflects the content of total_size_gb
             result['num_episodes_in_pack_calculated'] = num_episodes_in_pack 
@@ -748,11 +780,11 @@ def filter_results(
                 bitrate_mbps = result['bitrate'] / 1000  # Convert Kbps to Mbps for comparison
                 if bitrate_mbps < min_bitrate_mbps:
                     result['filter_reason'] = f"Bitrate too low: {bitrate_mbps:.2f} Mbps (min: {min_bitrate_mbps} Mbps)"
-                    logging.info(f"Rejected: Bitrate {bitrate_mbps:.2f}Mbps below minimum {min_bitrate_mbps}Mbps for '{original_title}'")
+                    logging.info(f"Rejected: Bitrate {bitrate_mbps:.2f}Mbps below minimum {min_bitrate_mbps}Mbps for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
                 if bitrate_mbps > max_bitrate_mbps:
                     result['filter_reason'] = f"Bitrate too high: {bitrate_mbps:.2f} Mbps (max: {max_bitrate_mbps} Mbps)"
-                    logging.info(f"Rejected: Bitrate {bitrate_mbps:.2f}Mbps above maximum {max_bitrate_mbps}Mbps for '{original_title}'")
+                    logging.info(f"Rejected: Bitrate {bitrate_mbps:.2f}Mbps above maximum {max_bitrate_mbps}Mbps for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
             #logging.debug("✓ Passed bitrate checks")
             
@@ -772,7 +804,7 @@ def filter_results(
 
                 if matched_pre_norm_pattern:
                     result['filter_reason'] = f"Matching filter_out pattern(s) before normalization: {matched_pre_norm_pattern}"
-                    logging.info(f"Rejected (pre-norm): Matched filter_out pattern '{matched_pre_norm_pattern}' for '{original_title}'")
+                    logging.info(f"Rejected (pre-norm): Matched filter_out pattern '{matched_pre_norm_pattern}' for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
             # --- End NEW Pre-Normalization Check ---
 
@@ -801,7 +833,7 @@ def filter_results(
                     # Only reject if it wasn't already rejected by the pre-norm check
                     # (This check is now slightly redundant for patterns caught pre-norm, but harmless)
                     result['filter_reason'] = f"Matching filter_out pattern(s) after normalization: {', '.join(matched_out_patterns)}"
-                    logging.info(f"Rejected (post-norm): Matched filter_out patterns '{matched_out_patterns}' for '{original_title}'")
+                    logging.info(f"Rejected (post-norm): Matched filter_out patterns '{matched_out_patterns}' for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
 
             # Filter In Check (on normalized fields - keep this)
@@ -809,7 +841,7 @@ def filter_results(
                 matched_in_patterns = check_patterns(filter_in_patterns, fields_to_check_patterns)
                 if not matched_in_patterns: # Reject if NO patterns matched ANY field
                     result['filter_reason'] = "Not matching any filter_in patterns (post-normalization)"
-                    logging.info(f"Rejected (post-norm): No matching filter_in patterns for '{original_title}'")
+                    logging.info(f"Rejected (post-norm): No matching filter_in patterns for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
             # logging.debug("✓ Passed pattern checks")
             # --- End Existing Pattern Matching ---
@@ -821,13 +853,13 @@ def filter_results(
 
             if adult_pattern and any(adult_pattern.search(field) for field in fields_to_check_adult if field):
                 result['filter_reason'] = "Adult content filtered"
-                logging.info(f"Rejected: Adult content detected for '{original_title}'")
+                logging.info(f"Rejected: Adult content detected for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
             # logging.debug("✓ Passed adult content check")
             # --- End Adult Content Check ---
             
             filtered_results.append(result)
-            logging.info(f"Accepted: '{original_title}'")
+            logging.info(f"Accepted: '{original_title}' (Size: {result['size']:.2f}GB)")
             
         except Exception as e:
             logging.error(f"Error filtering result '{original_title}': {str(e)}", exc_info=True)
