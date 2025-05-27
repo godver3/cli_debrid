@@ -73,37 +73,25 @@ def rank_result_key(
 
     sim_extracted = fuzz.ratio(normalized_extracted_title, normalized_query) / 100.0
     sim_filename = fuzz.ratio(normalized_filename, normalized_query) / 100.0 if normalized_filename else 0.0
-
-    title_similarity = max(sim_extracted, sim_filename) # Take the best similarity score
+    title_similarity = max(sim_extracted, sim_filename)
     
-    # Handle resolution scoring with unknown resolution support
     resolution_score = parsed_info.get('resolution_rank', 0)
     if resolution_score == 0:
-        # If resolution rank is 0, check if it's an unknown resolution
         resolution = parsed_info.get('resolution', '').lower()
         if resolution == 'unknown':
-            # For unknown resolutions in older content/WEBRips, assign a low but non-zero score
-            # This matches our filter behavior of treating unknown as SD/480p
-            resolution_score = 1  # Equivalent to SD/480p ranking
-            # logging.debug(f"Assigned resolution score of 1 (SD/480p) for unknown resolution in: {torrent_title}")
+            resolution_score = 1
     
     hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
 
-    # Calculate country score
-    media_country = result.get('media_country_code')  # This should be passed from the scrape function
+    media_country = result.get('media_country_code')
     result_country = parsed_info.get('country')
-    
-    # Additional country code parsing for formats like "Title AU" or "Title NZ"
     if not result_country:
-        # Common two-letter country codes that might appear after the title
         country_codes = {'AU': 'au', 'NZ': 'nz', 'UK': 'gb', 'US': 'us', 'CA': 'ca'}
         title_parts = torrent_title.split()
         for i, part in enumerate(title_parts):
-            if part.upper() in country_codes and (i > 0 and not part.lower() in title_parts[i-1].lower()):  # Avoid matching part of a word
+            if part.upper() in country_codes and (i > 0 and not part.lower() in title_parts[i-1].lower()):
                 result_country = country_codes[part.upper()]
-                #logging.info(f"Found country code in title: {part.upper()} -> {result_country}")
                 break
-    
     country_score = 0
     country_reason = "No country code matching applied"
     
@@ -130,8 +118,7 @@ def rank_result_key(
             else:
                 country_reason = f"Non-US content - no country code in result (wanted {media_country})"
 
-    # Handle the case where torrent_year might be a list
-    year_match = 0 # Base score for year match
+    year_match = 0 
     year_reason = "Initialization"
     if query_year is None:
         year_match = 0  # No year match if query_year is None
@@ -167,22 +154,24 @@ def rank_result_key(
 
     scraper = result.get('scraper', '').lower()
 
-    # --- Size and Bitrate Calculation ---
-    
-    # Determine if this result is a multi-episode pack and calculate accurate num_items
+    # Normalize base scores
+    normalized_similarity = title_similarity * 10
+    normalized_resolution = resolution_score * 50 
+    normalized_hdr = hdr_score * 10
+    # country_score is already in a good range, no specific normalization like *10 needed here
+    # language_score will be calculated and normalized later
+
+    # --- Determine if this result is a multi-episode pack and calculate accurate num_items ---
+    # --- This block is now placed AFTER raw score calculation and initial normalization ---
     is_multi_pack = False
     season_pack_type = 'N/A' # Default
-    num_items = 1 # Default to 1 (for movies or single episodes not otherwise classified)
+    num_items = 1 
 
     if content_type.lower() == 'episode':
         parsed_sei = parsed_info.get('season_episode_info', {})
         parsed_episodes_list = parsed_sei.get('episodes', [])
         parsed_seasons_list = parsed_sei.get('seasons', [])
         season_pack_type = parsed_sei.get('season_pack', 'Unknown') # This will be 'Complete'
-
-        # --- REVISED LOGIC FOR ACCURATE NUM_ITEMS ---
-        num_items = 1 
-        is_multi_pack = False
 
         # Priority 1: Explicit single episode identified by parser (e.g., S01E01 via episodes list)
         if parsed_episodes_list and len(parsed_episodes_list) == 1:
@@ -253,69 +242,102 @@ def rank_result_key(
              # logging.debug(f"[RRK] Minor Contradiction: is_multi_pack is True but num_items = {num_items} for '{torrent_title}'. Retaining is_multi_pack for scoring.")
              pass # Allow is_multi_pack to be true even if num_items is 1, if it's a pack type.
 
-    # Get the appropriate size for comparison based on 'multi' flag
-    def get_comparison_size(r, is_multi_search):
-        size_val = r.get('size', 0.0) # Default to 'size' (total size usually)
-        sp_season = r.get('size_per_season')
-        r_is_pack = False
-        if r.get('media_type', content_type.lower()) == 'episode': # Check result type if available
-             r_season_pack = r.get('parsed_info', {}).get('season_episode_info', {}).get('season_pack', 'Unknown')
-             r_is_pack = r_season_pack not in ['N/A', 'Unknown'] or len(r.get('parsed_info', {}).get('season_episode_info', {}).get('episodes', [])) > 1
-             
-        if is_multi_search and r_is_pack and sp_season is not None:
-            # Use per-season size for packs when doing a multi search
-            return float(sp_season)
-        elif not is_multi_search and r_is_pack:
-             # Use total size for packs when doing a single search (packs are penalized later anyway)
-             return float(r.get('total_size_gb', size_val))
-        else:
-            # Use standard size for movies or single episodes
-             return float(r.get('total_size_gb', size_val)) # Prefer total_size_gb if available for consistency
-
-    comparison_size = get_comparison_size(result, multi)
+    # --- Set comparison_size directly from result['size'] (calculated in filter_results.py) ---
+    comparison_size = result.get('size', 0.0) 
+    
     bitrate = float(result.get('bitrate', 0)) # Use the already calculated overall bitrate
 
-    # Calculate percentile ranks using the appropriate size metric
-    all_comparison_sizes = [get_comparison_size(r, multi) for r in all_results]
-    all_bitrates = [float(r.get('bitrate', 0)) for r in all_results]
+    # --- New Absolute Normalized Size Score (uses the direct comparison_size) ---
+    min_s_setting = version_settings.get('min_size_gb', 0.01)
+    min_s = float(min_s_setting if min_s_setting is not None else 0.01)
+    
+    max_s_setting = version_settings.get('max_size_gb', float('inf'))
+    max_s = float(max_s_setting if max_s_setting is not None else float('inf'))
 
-    def percentile_rank(value, all_values):
-        # Filter out zero or invalid values before calculating percentile
-        valid_values = [v for v in all_values if v is not None and v > 0]
-        if not valid_values:
-            return 0 # Avoid division by zero if no valid values
-        return sum(1 for v in valid_values if v <= value) / len(valid_values) if value > 0 else 0
+    current_s = comparison_size # current_s is now always the (average) per-item size
 
-    size_percentile = percentile_rank(comparison_size, all_comparison_sizes)
-    bitrate_percentile = percentile_rank(bitrate, all_bitrates)
-    # --- End Size and Bitrate Calculation ---
+    normalized_size_factor = 0.0
+    normalized_size = 0.0
+    if current_s >= min_s:
+        if max_s != float('inf') and max_s > min_s: # User has defined a specific max per-item size
+            normalized_size_factor = (current_s - min_s) / (max_s - min_s)
+        else: # max_s is infinity or not sensible, use reference caps for per-item size
+            reference_cap_s = 0.0
+            if content_type.lower() == 'episode':
+                # comparison_size is per-episode (or average per-episode for packs)
+                reference_cap_s = 3.0 # Reference cap for a single episode's size
+            else: # movie
+                reference_cap_s = 30.0 # Reference cap for a movie's size
+            
+            # Ensure reference_cap_s is greater than min_s for sensible scaling
+            if reference_cap_s <= min_s: 
+                reference_cap_s = min_s * 2.0 if min_s > 0 else 1.0 # Avoid 0 or negative range
+            
+            if reference_cap_s > min_s : 
+                 normalized_size_factor = (current_s - min_s) / (reference_cap_s - min_s)
+            else: 
+                 normalized_size_factor = 0.0
 
-    # Normalize scores (most to 0-10 range, resolution uses its own scale)
-    normalized_similarity = title_similarity * 10
-    normalized_resolution = resolution_score * 50 # Higher multiplier emphasizes resolution
-    normalized_hdr = hdr_score * 10
-    normalized_size = (size_percentile ** 2) * 20  # Squaring and using a larger multiplier
-    normalized_bitrate = (bitrate_percentile ** 2) * 20 # Squaring and using a larger multiplier
+        normalized_size_factor = max(0.0, min(normalized_size_factor, 1.0)) # Clamp to 0-1
+        normalized_size = (normalized_size_factor ** 1.5) * 20.0 
+    
+    # --- New Absolute Normalized Bitrate Score ---
+    min_b_mbps_setting = version_settings.get('min_bitrate_mbps', 0.0)
+    min_b_mbps = float(min_b_mbps_setting if min_b_mbps_setting is not None else 0.0)
+
+    max_b_mbps_setting = version_settings.get('max_bitrate_mbps', float('inf'))
+    max_b_mbps = float(max_b_mbps_setting if max_b_mbps_setting is not None else float('inf'))
+    
+    current_b_kbps = bitrate # This is in Kbps from result
+    current_b_mbps = current_b_kbps / 1000.0
+
+    normalized_bitrate_factor = 0.0
+    normalized_bitrate = 0.0
+    if current_b_mbps >= min_b_mbps:
+        if max_b_mbps != float('inf') and max_b_mbps > min_b_mbps:
+            normalized_bitrate_factor = (current_b_mbps - min_b_mbps) / (max_b_mbps - min_b_mbps)
+        else: # max_b_mbps is infinity or not sensible
+            reference_cap_b_mbps = 0.0
+            parsed_resolution = parsed_info.get('resolution', 'Unknown').lower()
+            if '2160p' in parsed_resolution or '4k' in parsed_resolution:
+                reference_cap_b_mbps = 25.0
+            elif '1080p' in parsed_resolution:
+                reference_cap_b_mbps = 12.0
+            elif '720p' in parsed_resolution:
+                reference_cap_b_mbps = 6.0
+            else: # SD or Unknown
+                reference_cap_b_mbps = 3.0
+
+            # Ensure reference_cap_b_mbps is greater than min_b_mbps for sensible scaling
+            if reference_cap_b_mbps <= min_b_mbps: 
+                reference_cap_b_mbps = min_b_mbps * 2.0 if min_b_mbps > 0 else 1.0
+
+            if reference_cap_b_mbps > min_b_mbps: # Avoid division by zero
+                normalized_bitrate_factor = (current_b_mbps - min_b_mbps) / (reference_cap_b_mbps - min_b_mbps)
+            else: # Fallback
+                normalized_bitrate_factor = 0.0
+            
+        normalized_bitrate_factor = max(0.0, min(normalized_bitrate_factor, 1.0)) # Clamp to 0-1
+        normalized_bitrate = (normalized_bitrate_factor ** 1.5) * 20.0
+        
     normalized_country = country_score  # Already in +/-10 range
 
     # Calculate language score based on preferred language
-    # Simplified logic: Score based ONLY on similarity to translated title
     language_score = 0
     language_reason = "No language preference or no translated title available"
     if translated_title:
-        parsed_title = parsed_info.get('title', '')
-        normalized_parsed_title = normalize_title(parsed_title).lower()
+        parsed_title_lang = parsed_info.get('title', '') # Use 'title' from parsed_info for language matching
+        normalized_parsed_title_lang = normalize_title(parsed_title_lang).lower()
         normalized_translated_q_title = normalize_title(translated_title).lower()
-        title_lang_sim = fuzz.ratio(normalized_parsed_title, normalized_translated_q_title) / 100.0
+        title_lang_sim = fuzz.ratio(normalized_parsed_title_lang, normalized_translated_q_title) / 100.0
 
-        # Score based on similarity threshold
-        similarity_threshold = 0.90 # High threshold for strong match
-        if title_lang_sim >= similarity_threshold:
-            language_score = 100 # Bonus for strong match to translation
-            language_reason = f"High similarity to translated title ({title_lang_sim:.2f} >= {similarity_threshold})"
+        similarity_threshold_lang = 0.90 
+        if title_lang_sim >= similarity_threshold_lang:
+            language_score = 100 
+            language_reason = f"High similarity to translated title ({title_lang_sim:.2f} >= {similarity_threshold_lang})"
         else:
-            language_score = -25 # Penalty for not matching translation
-            language_reason = f"Low similarity to translated title ({title_lang_sim:.2f} < {similarity_threshold})"
+            language_score = -25 
+            language_reason = f"Low similarity to translated title ({title_lang_sim:.2f} < {similarity_threshold_lang})"
 
     normalized_language = language_score # Use the raw score
 
@@ -486,6 +508,71 @@ def rank_result_key(
     # Add content_type_score to the total score
     total_score += content_type_score
 
+    # --- START DEBUG LOGGING FOR SPECIFIC TITLE ---
+    target_debug_title = "The.Handmaids.Tale.S03.SweSub.1080p.x264-Justiso"
+    current_original_title = result.get('original_title', '')
+
+    if current_original_title == target_debug_title:
+        logging.info(f"--- Detailed Score Debug for: {target_debug_title} ---")
+        logging.info(f"  Query: '{query}', Year: {query_year}, S: {query_season}, E: {query_episode}, Multi: {multi}, Content: {content_type}")
+        logging.info(f"  Parsed Info: {parsed_info}")
+        logging.info(f"  Version Settings: {version_settings}")
+        logging.info(f"  Preferred Lang: {preferred_language}, Translated Title: {translated_title}")
+        
+        logging.info(f"  --- Raw Similarity & Features ---")
+        logging.info(f"    Title Similarity (raw ratio): {title_similarity:.4f} (Normalized Query: '{normalized_query}', Normalized Extracted: '{normalized_extracted_title}')")
+        logging.info(f"    Resolution Score (base): {resolution_score} (Parsed Res: {parsed_info.get('resolution', 'Unknown')})")
+        logging.info(f"    HDR Score (base): {hdr_score} (Parsed HDR: {parsed_info.get('is_hdr', False)}, HDR Enabled: {version_settings.get('enable_hdr', True)})")
+        logging.info(f"    Year Match (base): {year_match} (Query Year: {query_year}, Torrent Year: {torrent_year}, Reason: {year_reason})")
+        logging.info(f"    Country Score (base): {country_score} (Media Country: {media_country}, Result Country: {result_country}, Reason: {country_reason})")
+        logging.info(f"    Language Score (base): {language_score} (Reason: {language_reason})")
+
+        logging.info(f"  --- Size Calculation ---")
+        logging.info(f"    Comparison Size (current_s): {current_s:.4f} GB")
+        logging.info(f"    Min Size (min_s): {min_s:.4f} GB, Max Size (max_s): {max_s if max_s != float('inf') else 'inf'} GB")
+        logging.info(f"    Normalized Size Factor: {normalized_size_factor:.4f}")
+        logging.info(f"    Normalized Size Score (pre-weight): {normalized_size:.4f}")
+
+        logging.info(f"  --- Bitrate Calculation ---")
+        logging.info(f"    Bitrate (current_b_kbps): {current_b_kbps:.2f} Kbps ({current_b_mbps:.2f} Mbps)")
+        logging.info(f"    Min Bitrate (min_b_mbps): {min_b_mbps:.2f} Mbps, Max Bitrate (max_b_mbps): {max_b_mbps if max_b_mbps != float('inf') else 'inf'} Mbps")
+        logging.info(f"    Normalized Bitrate Factor: {normalized_bitrate_factor:.4f}")
+        logging.info(f"    Normalized Bitrate Score (pre-weight): {normalized_bitrate:.4f}")
+
+        logging.info(f"  --- Episode Specific Scores (Base) ---")
+        logging.info(f"    Season Match Score (base): {season_match_score}")
+        logging.info(f"    Episode Match Score (base): {episode_match_score}")
+        logging.info(f"    Num Items (for pack calc): {num_items}, Is Multi Pack (for scoring): {is_multi_pack}")
+        logging.info(f"    Multi Pack Score (base): {multi_pack_score}")
+        logging.info(f"    Single Episode Score (base): {single_episode_score}")
+
+        logging.info(f"  --- Filter & Content Scores ---")
+        logging.info(f"    Preferred Filter Score: {preferred_filter_score} (In: {preferred_filter_in_breakdown}, Out: {preferred_filter_out_breakdown})")
+        logging.info(f"    Content Type Score: {content_type_score}")
+
+        logging.info(f"  --- Weighted Scores ---")
+        logging.info(f"    Weighted Similarity: {weighted_similarity:.4f} (Weight: {similarity_weight})")
+        logging.info(f"    Weighted Resolution: {weighted_resolution:.4f} (Weight: {resolution_weight})")
+        logging.info(f"    Weighted HDR: {weighted_hdr:.4f} (Weight: {hdr_weight})")
+        logging.info(f"    Weighted Size: {weighted_size:.4f} (Weight: {size_weight})")
+        logging.info(f"    Weighted Bitrate: {weighted_bitrate:.4f} (Weight: {bitrate_weight})")
+        logging.info(f"    Weighted Country: {weighted_country:.4f} (Weight: {country_weight})")
+        logging.info(f"    Weighted Language: {weighted_language:.4f} (Weight: {language_weight})")
+        logging.info(f"    Weighted Year Match: {weighted_year_match:.4f} (Weight: {year_match_weight})")
+        logging.info(f"    Weighted Season Match: {season_match_score * 5:.4f}")
+        logging.info(f"    Weighted Episode Match: {episode_match_score * 5:.4f}")
+        
+        logging.info(f"  --- Final Total Score Components Summed ---")
+        logging.info(f"    Sum = {weighted_similarity:.2f} (sim) + {weighted_resolution:.2f} (res) + {weighted_hdr:.2f} (hdr) + " +
+                     f"{weighted_size:.2f} (size) + {weighted_bitrate:.2f} (bit) + {weighted_country:.2f} (country) + " +
+                     f"{weighted_language:.2f} (lang) + {weighted_year_match:.2f} (year) + " +
+                     f"{season_match_score * 5:.2f} (season) + {episode_match_score * 5:.2f} (ep) + " +
+                     f"{multi_pack_score:.2f} (pack_bonus) + {single_episode_score:.2f} (single_ep_penalty) + " +
+                     f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type)")
+        logging.info(f"  Calculated Total Score (before rounding for breakdown): {total_score}")
+        logging.info(f"--- End Detailed Score Debug for: {target_debug_title} ---")
+    # --- END DEBUG LOGGING FOR SPECIFIC TITLE ---
+
     # Create a score breakdown
     score_breakdown = {
         'similarity_score': round(weighted_similarity, 2),
@@ -567,4 +654,4 @@ def rank_result_key(
     # Year match raw score is used as a tie-breaker
     # If you want to prioritize by num_items, it would be the first element:
     # return (-num_items, -total_score, -year_match, -season_match_score, -episode_match_score)
-    return (-total_score, -year_match, -season_match_score, -episode_match_score)
+    return (-total_score, -year_match, -season_match_score, -episode_match_score, result.get('original_title', ''))
