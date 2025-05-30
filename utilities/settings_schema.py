@@ -786,6 +786,12 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Only download subtitles for the current file being processed (instead of scanning all folders)",
             "default": False
+        },
+        "sanitizer_replacement_character": {
+            "type": "string",
+            "description": "Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.",
+            "default": "_",
+            "validate": "filesystem_char"
         }
     },
     "Scrapers": {

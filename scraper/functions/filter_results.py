@@ -53,7 +53,7 @@ def filter_results(
     # Determine content type specific settings
     is_movie = content_type.lower() == 'movie'
     is_episode = content_type.lower() == 'episode'
-    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+    is_anime = genres and any('anime' in g.lower() for g in genres)
     is_ufc = False
     
     # Pre-normalize query title and aliases
@@ -326,9 +326,14 @@ def filter_results(
                                     logging.info(f"  - Anime pack heuristic failed: keywords={has_pack_keywords}, large_size={large_size}, no_episodes={no_explicit_episodes}")
                             
                             if not is_likely_anime_pack:
-                                result['filter_reason'] = "Non-multi result when searching for multi"
-                                logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}) (Size: {result['size']:.2f}GB)")
-                                continue
+                                if check_pack_wantedness:
+                                    result['filter_reason'] = "Non-multi result when searching for multi (pack wantedness check active)"
+                                    logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}, pack_wantedness_check=True) (Size: {result['size']:.2f}GB)")
+                                    continue
+                                else:
+                                    logging.info(f"Skipping 'Not enough episodes for multi mode' rejection for '{original_title}' as check_pack_wantedness is False. (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}) (Size: {result['size']:.2f}GB)")
+                                    # If check_pack_wantedness is false, do not 'continue' here.
+                                    # Let it proceed to other filters.
                     else:
                         if season not in season_episode_info.get('seasons', []):
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"

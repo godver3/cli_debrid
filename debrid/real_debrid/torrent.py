@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Union, Tuple
 import bencodepy
@@ -13,6 +14,7 @@ from ..common.utils import extract_hash_from_magnet, is_valid_hash, process_hash
 from .api import make_request
 # Update this import to get the moved types from debrid.status
 from ..status import TorrentStatus, get_status_flags, TorrentFetchStatus, TorrentInfoStatus
+from ..base import ProviderUnavailableError
 
 def process_hashes(hashes: Union[str, List[str]], batch_size: int = 100) -> List[str]:
     """Process and validate a list of hashes"""
@@ -32,28 +34,45 @@ def get_torrent_info_status(api_key: str, torrent_id: str) -> TorrentInfoStatus:
     Tries to distinguish between success, various error types (404, 429),
     and cases where the underlying make_request handles errors and returns None.
     """
+    # Add retry mechanism for rate limit errors
+    max_retries = 3
+    retry_delay = 5  # Start with 5 seconds delay
+    
     try:
-        # Assumption: make_request might return None if it handles an HTTP error internally (e.g., logs it and suppresses exception).
-        # Or, it might raise an exception (e.g., requests.exceptions.HTTPError) if it doesn't handle it.
-        response_data = make_request('GET', f'/torrents/info/{torrent_id}', api_key)
+        for retry_attempt in range(max_retries):
+            try:
+                # Assumption: make_request might return None if it handles an HTTP error internally (e.g., logs it and suppresses exception).
+                # Or, it might raise an exception (e.g., requests.exceptions.HTTPError) if it doesn't handle it.
+                response_data = make_request('GET', f'/torrents/info/{torrent_id}', api_key)
 
-        if response_data is not None:
-            # Successful retrieval of torrent info
-            return TorrentInfoStatus(status=TorrentFetchStatus.OK, data=response_data)
-        else:
-            # This case is likely hit if make_request encountered an HTTP error (e.g., 404, 429),
-            # logged it internally (as suggested by user logs), and then returned None.
-            # Without changes to make_request to propagate specific error types or codes,
-            # we cannot reliably distinguish the exact HTTP error here.
-            logging.warning(
-                f"make_request for torrent {torrent_id} returned None. This often means an HTTP error "
-                f"(like 404 or 429) occurred and was logged by the underlying API call. "
-                f"The specific error type cannot be determined here without changes to make_request."
-            )
-            return TorrentInfoStatus(
-                status=TorrentFetchStatus.PROVIDER_HANDLED_ERROR,
-                message="Provider API call returned no data. Specific error (e.g., 404, 429) was likely logged by the provider. Check provider logs."
-            )
+                if response_data is not None:
+                    # Successful retrieval of torrent info
+                    return TorrentInfoStatus(status=TorrentFetchStatus.OK, data=response_data)
+                else:
+                    # This case is likely hit if make_request encountered an HTTP error (e.g., 404, 429),
+                    # logged it internally (as suggested by user logs), and then returned None.
+                    # Without changes to make_request to propagate specific error types or codes,
+                    # we cannot reliably distinguish the exact HTTP error here.
+                    logging.warning(
+                        f"make_request for torrent {torrent_id} returned None. This often means an HTTP error "
+                        f"(like 404 or 429) occurred and was logged by the underlying API call. "
+                        f"The specific error type cannot be determined here without changes to make_request."
+                    )
+                    return TorrentInfoStatus(
+                        status=TorrentFetchStatus.PROVIDER_HANDLED_ERROR,
+                        message="Provider API call returned no data. Specific error (e.g., 404, 429) was likely logged by the provider. Check provider logs."
+                    )
+            except ProviderUnavailableError as e:
+                if "429" in str(e) and retry_attempt < max_retries - 1:
+                    wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                    logging.warning(f"Rate limit (429) hit when getting torrent info status. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                    time.sleep(wait_time)
+                else:
+                    # Not a 429 error or we've exhausted retries
+                    return TorrentInfoStatus(
+                        status=TorrentFetchStatus.RATE_LIMITED if "429" in str(e) else TorrentFetchStatus.ERROR,
+                        message=f"Provider unavailable: {str(e)}"
+                    )
 
     # The following except blocks handle cases where make_request *does* raise exceptions
     # that were not caught and converted to a None return by make_request itself.
@@ -83,25 +102,60 @@ def get_torrent_info_status(api_key: str, torrent_id: str) -> TorrentInfoStatus:
 
 def add_torrent(api_key: str, magnet_link: str, temp_file_path: Optional[str] = None) -> Dict:
     """Add a torrent to Real-Debrid and return the full response"""
-    if magnet_link.startswith('magnet:'):
-        # Add magnet link
-        data = {'magnet': magnet_link}
-        result = make_request('POST', '/torrents/addMagnet', api_key, data=data)
-    else:
-        # Add torrent file
-        if not temp_file_path:
-            raise ValueError("Temp file path required for torrent file upload")
-            
-        with open(temp_file_path, 'rb') as f:
-            files = {'file': f}
-            result = make_request('PUT', '/torrents/addTorrent', api_key, files=files)
-            
-    return result
+    # Add retry mechanism for rate limit errors
+    max_retries = 3
+    retry_delay = 5  # Start with 5 seconds delay
+    
+    for retry_attempt in range(max_retries):
+        try:
+            if magnet_link.startswith('magnet:'):
+                # Add magnet link
+                data = {'magnet': magnet_link}
+                result = make_request('POST', '/torrents/addMagnet', api_key, data=data)
+            else:
+                # Add torrent file
+                if not temp_file_path:
+                    raise ValueError("Temp file path required for torrent file upload")
+                    
+                with open(temp_file_path, 'rb') as f:
+                    files = {'file': f}
+                    result = make_request('PUT', '/torrents/addTorrent', api_key, files=files)
+                    
+            return result
+        except ProviderUnavailableError as e:
+            if "429" in str(e) and retry_attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                logging.warning(f"Rate limit (429) hit when adding torrent. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                time.sleep(wait_time)
+            else:
+                # Not a 429 error or we've exhausted retries
+                raise
+        except Exception as e:
+            logging.error(f"Error adding torrent: {str(e)}")
+            raise
 
 def select_files(api_key: str, torrent_id: str, file_ids: List[int]) -> None:
     """Select specific files from a torrent"""
-    data = {'files': ','.join(map(str, file_ids))}
-    make_request('POST', f'/torrents/selectFiles/{torrent_id}', api_key, data=data)
+    # Add retry mechanism for rate limit errors
+    max_retries = 3
+    retry_delay = 5  # Start with 5 seconds delay
+    
+    for retry_attempt in range(max_retries):
+        try:
+            data = {'files': ','.join(map(str, file_ids))}
+            make_request('POST', f'/torrents/selectFiles/{torrent_id}', api_key, data=data)
+            return  # Success, exit function
+        except ProviderUnavailableError as e:
+            if "429" in str(e) and retry_attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                logging.warning(f"Rate limit (429) hit when selecting files. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                time.sleep(wait_time)
+            else:
+                # Not a 429 error or we've exhausted retries
+                raise
+        except Exception as e:
+            logging.error(f"Error selecting files: {str(e)}")
+            raise
 
 def get_torrent_files(api_key: str, hash_value: str) -> List[Dict]:
     """Get list of files in a torrent"""
@@ -133,11 +187,56 @@ def get_torrent_files(api_key: str, hash_value: str) -> List[Dict]:
 def remove_torrent(api_key: str, torrent_id: str) -> None:
     """Remove a torrent from Real-Debrid"""
     logging.error(f"Removing torrent {torrent_id} - THIS FUNCTION IS DEPRECATED AND SHOULD NOT BE CALLED")
-    make_request('DELETE', f'/torrents/delete/{torrent_id}', api_key)
+    
+    # Add retry mechanism for rate limit errors
+    max_retries = 3
+    retry_delay = 5  # Start with 5 seconds delay
+    
+    for retry_attempt in range(max_retries):
+        try:
+            make_request('DELETE', f'/torrents/delete/{torrent_id}', api_key)
+            return  # Success, exit function
+        except ProviderUnavailableError as e:
+            if "429" in str(e) and retry_attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                logging.warning(f"Rate limit (429) hit when removing torrent. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                time.sleep(wait_time)
+            else:
+                # Continue with the function as if removal succeeded if it's a 429 error
+                if "429" in str(e):
+                    logging.warning(f"Rate limit hit when removing torrent {torrent_id} after all retries. Will mark as removed anyway.")
+                    return
+                # Re-raise other provider errors
+                raise
+        except Exception as e:
+            logging.error(f"Error removing torrent: {str(e)}")
+            raise
 
 def list_active_torrents(api_key: str) -> List[Dict]:
     """List all active torrents"""
-    return make_request('GET', '/torrents', api_key)
+    # Add retry mechanism for rate limit errors
+    max_retries = 3
+    retry_delay = 5  # Start with 5 seconds delay
+    
+    for retry_attempt in range(max_retries):
+        try:
+            availability = make_request('GET', '/torrents', api_key)
+            if not availability:
+                return []
+                
+            return availability
+        except ProviderUnavailableError as e:
+            if "429" in str(e) and retry_attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                logging.warning(f"Rate limit (429) hit when listing active torrents. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                time.sleep(wait_time)
+            else:
+                # Not a 429 error or we've exhausted retries
+                logging.error(f"Error listing active torrents: {str(e)}")
+                return []
+        except Exception as e:
+            logging.error(f"Error listing active torrents: {str(e)}")
+            return []
 
 def cleanup_stale_torrents(api_key: str) -> None:
     """Remove stale torrents that are older than 24 hours"""
@@ -149,6 +248,13 @@ def cleanup_stale_torrents(api_key: str) -> None:
                 try:
                     remove_torrent(api_key, torrent['id'])
                     logging.info(f"Removed stale torrent {torrent['id']}")
+                except ProviderUnavailableError as e:
+                    if "429" in str(e):
+                        logging.warning(f"Rate limit hit when removing stale torrent {torrent['id']}. Will continue with next torrent.")
+                        # Add a small delay before continuing to the next torrent
+                        time.sleep(5)
+                    else:
+                        logging.error(f"Provider error removing stale torrent {torrent['id']}: {str(e)}")
                 except Exception as e:
                     logging.error(f"Error removing stale torrent {torrent['id']}: {str(e)}")
     except Exception as e:

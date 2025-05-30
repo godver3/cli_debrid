@@ -262,8 +262,8 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         return {}
 
 def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_number: int, episode_data: Dict[str, Any], is_anime: bool) -> Dict[str, Any]:
-    logging.debug(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number}")
-    logging.debug(f"Show item details: content_source_detail={show_item.get('content_source_detail')}")
+    # logging.debug(f"Creating episode item for {show_item['title']} season {season_number} episode {episode_number}")
+    # logging.debug(f"Show item details: content_source_detail={show_item.get('content_source_detail')}")
 
     # Get the first_aired datetime string
     first_aired_str = episode_data.get('first_aired')
@@ -287,7 +287,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             # Use the localized datetime for both date and time
             release_date = premiere_dt_local_tz.strftime("%Y-%m-%d")
             airtime = premiere_dt_local_tz.strftime("%H:%M")
-            logging.debug(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
+            # logging.debug(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
 
         except (ValueError, iso8601.ParseError) as e: # Catch iso8601.ParseError too
             logging.warning(f"Invalid datetime format or timezone conversion error: {first_aired_str} - {e}")
@@ -305,13 +305,14 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
                     # If that fails, try without seconds (HH:MM)
                     air_time_obj = datetime.strptime(default_airtime_str, "%H:%M").time()
                 airtime = air_time_obj.strftime("%H:%M")
-                logging.debug(f"Using show's default airtime: {airtime} as fallback.")
+                # logging.debug(f"Using show's default airtime: {airtime} as fallback.")
             except ValueError:
                  logging.warning(f"Invalid show default airtime format: {default_airtime_str}. Using default 19:00.")
                  # airtime remains '19:00'
         else:
-            logging.debug("No first_aired data and no default show airtime. Using default 19:00.")
+            # logging.debug("No first_aired data and no default show airtime. Using default 19:00.")
             # airtime remains '19:00'
+            pass
 
     episode_item = {
         'imdb_id': show_item['imdb_id'],
@@ -331,7 +332,7 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
         'content_source_detail': show_item.get('content_source_detail')  # Preserve content source detail
     }
     
-    logging.debug(f"Created episode item with content_source_detail={episode_item.get('content_source_detail')}")
+    # logging.debug(f"Created episode item with content_source_detail={episode_item.get('content_source_detail')}")
     return episode_item
 
 def _get_local_timezone():
@@ -1467,66 +1468,63 @@ def get_media_country_code(imdb_id: str, media_type: str) -> Optional[str]:
         return None
 
 def get_episode_airtime(imdb_id: str) -> Optional[str]:
-    """Get the show's airtime converted to the user's local time."""
-    DEFAULT_AIRTIME = "19:00" # Default if conversion fails
+    """Return the episode's airtime converted to the user's local time, preferring first_aired over airs.time."""
+    DEFAULT_AIRTIME = "19:00"
+
     try:
         metadata, _ = DirectAPI.get_show_metadata(imdb_id)
         if not metadata or not isinstance(metadata, dict):
             logging.warning(f"Could not retrieve valid metadata for show {imdb_id}")
             return DEFAULT_AIRTIME
 
-        airs = metadata.get('airs')
-        if not airs or not isinstance(airs, dict):
-            logging.warning(f"No 'airs' data found in metadata for show {imdb_id}")
-            return DEFAULT_AIRTIME
+        # Try to get first_aired from the upcoming episode
+        seasons = metadata.get('seasons', {})
+        for season_data in seasons.values():
+            if not isinstance(season_data, dict):
+                continue
+            episodes = season_data.get('episodes', {})
+            if not isinstance(episodes, dict):
+                continue
+            for ep in episodes.values():
+                first_aired = ep.get('first_aired')
+                if first_aired:
+                    try:
+                        # Parse and convert to local time
+                        dt = iso8601.parse_date(first_aired)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=timezone.utc)
+                        local_tz = _get_local_timezone()
+                        local_dt = dt.astimezone(local_tz)
+                        airtime_str = local_dt.strftime("%H:%M")
+                        logging.info(f"[Airtime] Used first_aired for {imdb_id}: {first_aired} → {airtime_str} (local)")
+                        return airtime_str
+                    except (iso8601.ParseError, ValueError) as e:
+                        logging.warning(f"Failed to parse first_aired '{first_aired}' for {imdb_id}: {e}")
 
+        # Fall back to using airs.time + airs.timezone
+        airs = metadata.get('airs', {})
         time_str = airs.get('time')
         timezone_str = airs.get('timezone')
 
         if not time_str or not timezone_str:
-            logging.warning(f"Missing time ('{time_str}') or timezone ('{timezone_str}') in 'airs' data for show {imdb_id}")
+            logging.warning(f"No usable first_aired or airs.time for {imdb_id}, defaulting to {DEFAULT_AIRTIME}")
             return DEFAULT_AIRTIME
 
-        # Get the show's timezone
         try:
             show_tz = ZoneInfo(timezone_str)
-        except ZoneInfoNotFoundError:
-            logging.error(f"Invalid timezone identifier '{timezone_str}' for show {imdb_id}. Falling back to default.")
-            return DEFAULT_AIRTIME
-        except Exception as e:
-             logging.error(f"Error creating ZoneInfo for '{timezone_str}': {e}. Falling back to default.")
-             return DEFAULT_AIRTIME
-
-        # Parse the airtime string
-        try:
             air_time_obj = datetime.strptime(time_str, "%H:%M").time()
-        except ValueError:
-            logging.error(f"Invalid airtime format '{time_str}' for show {imdb_id}. Falling back to default.")
+            today = datetime.now().date()
+            show_air_dt = datetime.combine(today, air_time_obj).replace(tzinfo=show_tz)
+            local_air_dt = show_air_dt.astimezone(_get_local_timezone())
+            airtime_str = local_air_dt.strftime("%H:%M")
+            logging.info(f"[Airtime Fallback] Used airs for {imdb_id}: {time_str} {timezone_str} → {airtime_str} (local)")
+            return airtime_str
+        except Exception as e:
+            logging.error(f"Failed to convert airs.time for {imdb_id}: {e}")
             return DEFAULT_AIRTIME
-
-        # Create a naive datetime object for today with the show's airtime
-        now_naive = datetime.now()
-        show_air_datetime_naive = datetime.combine(now_naive.date(), air_time_obj)
-
-        # Make the naive datetime aware using the show's timezone
-        show_air_datetime_aware = show_air_datetime_naive.replace(tzinfo=show_tz)
-
-        # Get the user's local timezone
-        local_tz = _get_local_timezone()
-        if not local_tz:
-             logging.error("Could not determine local timezone. Falling back to default airtime.")
-             return DEFAULT_AIRTIME
-
-        # Convert the show's airtime to the user's local timezone
-        local_air_datetime = show_air_datetime_aware.astimezone(local_tz)
-
-        # Format the time part
-        local_airtime_str = local_air_datetime.strftime("%H:%M")
-        logging.info(f"Converted airtime for {imdb_id}: {time_str} {timezone_str} -> {local_airtime_str} (local)")
-        return local_airtime_str
 
     except Exception as e:
-        logging.error(f"Error calculating local airtime for {imdb_id}: {str(e)}", exc_info=True)
+        logging.error(f"Unexpected error getting airtime for {imdb_id}: {e}", exc_info=True)
         return DEFAULT_AIRTIME
 
 def main():

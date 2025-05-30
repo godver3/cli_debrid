@@ -184,8 +184,21 @@ class RealDebridProvider(DebridProvider):
             # If not cached in PhalanxDB or PhalanxDB failed, check Real-Debrid
             torrent_id = None
             try:
-                # Add the magnet/torrent to RD
-                torrent_id = self.add_torrent(magnet_link if magnet_link and magnet_link.startswith('magnet:') else None, temp_file_path)
+                # Add the magnet/torrent to RD with retry for 429 errors
+                max_retries = 3
+                retry_delay = 5  # Start with 5 seconds delay
+                for retry_attempt in range(max_retries):
+                    try:
+                        torrent_id = self.add_torrent(magnet_link if magnet_link and magnet_link.startswith('magnet:') else None, temp_file_path)
+                        break  # Success, exit retry loop
+                    except ProviderUnavailableError as e:
+                        if "429" in str(e) and retry_attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                            logging.warning(f"{log_prefix} Rate limit (429) hit when adding torrent. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                            time.sleep(wait_time)
+                        else:
+                            # Re-raise if it's not a 429 error or we've exhausted retries
+                            raise
                 
                 if not torrent_id:
                     # If add_torrent returns None, the torrent might already be added
@@ -208,8 +221,23 @@ class RealDebridProvider(DebridProvider):
                                 logging.error(f"{log_prefix} Failed to update PhalanxDB: {str(e)}")
                         continue
                     
-                # Get torrent info
-                info = self.get_torrent_info(torrent_id)
+                # Get torrent info with retry for 429 errors
+                max_retries = 3
+                retry_delay = 5  # Start with 5 seconds delay
+                info = None
+                for retry_attempt in range(max_retries):
+                    try:
+                        info = self.get_torrent_info(torrent_id)
+                        break  # Success, exit retry loop
+                    except ProviderUnavailableError as e:
+                        if "429" in str(e) and retry_attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                            logging.warning(f"{log_prefix} Rate limit (429) hit when getting torrent info. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                            time.sleep(wait_time)
+                        else:
+                            # Not a 429 error or we've exhausted retries
+                            break
+                
                 if not info:
                     logging.error(f"{log_prefix} Failed to get torrent info for ID: {torrent_id}")
                     try:
@@ -722,7 +750,16 @@ class RealDebridProvider(DebridProvider):
 
             # Make the deletion request (retries handled by make_request)
             # Use the api_key property
-            removal_response = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
+            try:
+                removal_response = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
+            except ProviderUnavailableError as e:
+                # Check if this is a rate limit error (429)
+                if "429" in str(e):
+                    logging.warning(f"Rate limit hit when removing torrent {torrent_id}. Will mark as removed anyway.")
+                    # Continue with the function as if removal succeeded
+                else:
+                    # Re-raise other provider errors
+                    raise
 
             # Update status and tracking
             self.update_status(torrent_id, TorrentStatus.REMOVED)

@@ -460,7 +460,8 @@ def update_movie_ids():
                 conn.commit()
                 logging.info(f"Updated movie '{movie_title}' with new IMDb ID: {api_imdb_id} (old ID {movie_imdb_id} added to aliases)")
             else:
-                logging.info(f"Movie comparison: {movie_title} - Database IMDB ID: {movie_imdb_id}, API IMDB ID: {api_imdb_id} - MATCH")
+                # logging.info(f"Movie comparison: {movie_title} - Database IMDB ID: {movie_imdb_id}, API IMDB ID: {api_imdb_id} - MATCH")
+                pass
 
     except Exception as e:
         logging.error(f"Error in update_movie_ids: {str(e)}")
@@ -548,7 +549,8 @@ def update_movie_titles():
                         conn.commit()
                         logging.info(f"Updated movie title from '{movie_title}' to '{new_title}' (old title added to aliases)")
                     else:
-                        logging.info(f"Movie title match - '{movie_title}'")
+                        # logging.info(f"Movie title match - '{movie_title}'")
+                        pass
                 else:
                     logging.warning(f"No metadata found in API for movie {movie_title} (imdb_id: {movie_imdb_id})")
 

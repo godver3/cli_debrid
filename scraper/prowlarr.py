@@ -142,14 +142,30 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
         primary_link = None
         is_torrent_url = False
 
+        guid = item.get('guid')
+        
         if magnet_url and magnet_url.startswith('magnet:'):
             primary_link = magnet_url
         elif download_url:
             primary_link = download_url
             is_torrent_url = True
+        # Check if the guid field contains a magnet link
+        elif guid and guid.startswith('magnet:'):
+            primary_link = guid
+            logging.debug(f"Using magnet link from guid field for '{title}' from {ins_name}")
         else:
             filtered_no_link += 1
-            logging.debug(f"Skipping Prowlarr result '{title}' from {ins_name} - No magnetUrl or downloadUrl found.")
+            # Add more detailed debugging information about the item being skipped
+            item_debug = {
+                'title': title,
+                'indexer': item.get('indexer', 'Unknown'),
+                'guid': guid,
+                'protocol': item.get('protocol', 'Unknown'),
+                'categories': item.get('categories', []),
+                'has_magnet': magnet_url is not None,
+                'has_download': download_url is not None
+            }
+            logging.debug(f"Skipping Prowlarr result '{title}' from {ins_name} - No magnetUrl or downloadUrl found. Item details: {json.dumps(item_debug, indent=2)}")
             continue
 
         seeders = item.get('seeders', 0)

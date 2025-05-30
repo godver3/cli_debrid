@@ -48,6 +48,9 @@ function updateTaskList(taskList, data) {
         console.error("Task list element not provided to updateTaskList");
         return;
     }
+    // --- START EDIT: Add logging ---
+    console.log('[TaskMonitor LOG] updateTaskList received data:', JSON.parse(JSON.stringify(data)));
+    // --- END EDIT ---
     if (data.success) {
         const availableTasks = data.tasks || [];
         const runningTaskNamesSet = new Set(data.running_tasks_list || []);
@@ -59,6 +62,9 @@ function updateTaskList(taskList, data) {
 
              // --- START EDIT: Use pause_info for task list pause message ---
              if (data.paused && data.pause_info && data.pause_info.reason_string) {
+                 // --- START EDIT: Add logging ---
+                 console.log('[TaskMonitor LOG] updateTaskList: Queue is PAUSED.', data.pause_info.reason_string);
+                 // --- END EDIT ---
                  finalHtml = `
                      <div class="task-item paused">
                          <div class="task-name">Queue Paused</div>
@@ -100,6 +106,9 @@ function updateTaskList(taskList, data) {
                      });
                  }
              });
+             // --- START EDIT: Add logging ---
+             console.log('[TaskMonitor LOG] updateTaskList: Running tasks identified:', JSON.parse(JSON.stringify(runningTaskObjects.map(t => t.name))));
+             // --- END EDIT ---
 
              // Populate scheduledTaskObjects (those not currently running)
              availableTasks.forEach(task => {
@@ -176,6 +185,9 @@ function updateTaskList(taskList, data) {
              taskList.innerHTML = finalHtml;
 
         } else { // Program runner not active
+            // --- START EDIT: Add logging ---
+            console.log('[TaskMonitor LOG] updateTaskList: Program not running.');
+            // --- END EDIT ---
             taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
             if (currentTaskNameElement) currentTaskNameElement.textContent = 'Program Stopped';
             if (currentTaskTimeElement) currentTaskTimeElement.textContent = '';
@@ -216,6 +228,9 @@ function setupTaskStream() {
     eventSource.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
+            // --- START EDIT: Add logging ---
+            console.log('[TaskMonitor LOG] SSE onmessage data received:', JSON.parse(JSON.stringify(data)));
+            // --- END EDIT ---
 
             if (data.success) {
                 const tasks = data.tasks || [];
@@ -470,6 +485,9 @@ export function initializeTaskMonitor() {
 
 // --- START EDIT: Rewrite updateTaskDisplay to handle list ---
 function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList) {
+    // --- START EDIT: Add logging ---
+    console.log('[TaskMonitor LOG] updateTaskDisplay called. Paused:', isPaused, 'PauseInfo:', JSON.parse(JSON.stringify(pauseInfo)), 'RunningTasksList:', JSON.parse(JSON.stringify(runningTasksList)), 'ScheduledTasks:', JSON.parse(JSON.stringify(scheduledTasks.map(t => t.name))));
+    // --- END EDIT ---
     if (!currentTaskDisplay || !currentTaskNameElement || !currentTaskTimeElement) {
         console.warn("Task display elements not found during update.");
         return;
@@ -478,6 +496,9 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
     const effectivePauseInfo = pauseInfo || { reason_string: null, error_type: null, status_code: null };
 
     if (isPaused) {
+        // --- START EDIT: Add logging ---
+        console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying PAUSED state.');
+        // --- END EDIT ---
         currentTaskNameElement.textContent = 'Queue Paused';
         let reasonForDisplay = effectivePauseInfo.reason_string || 'Processing is currently paused.';
         if (effectivePauseInfo.error_type === 'UNAUTHORIZED') {
@@ -507,6 +528,10 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
             primaryRunningTask = runningTasksList[0];
         }
         
+        // --- START EDIT: Add logging ---
+        console.log('[TaskMonitor LOG] updateTaskDisplay: Primary running task determined:', primaryRunningTask, 'from list:', JSON.parse(JSON.stringify(runningTasksList)));
+        // --- END EDIT ---
+        
         if (primaryRunningTask) {
             displayTaskName = primaryRunningTask;
             const taskDetails = scheduledTasks.find(st => st.name === primaryRunningTask);
@@ -515,6 +540,13 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
             } else {
                  displayTime = 'Running';
             }
+            // --- START EDIT: Add logging ---
+            console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying single primary task:', displayTaskName, 'Time:', displayTime);
+            // --- END EDIT ---
+        } else {
+            // --- START EDIT: Add logging ---
+             console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying "Multiple Tasks Running". Count:', runningTasksList.length);
+            // --- END EDIT ---
         }
         
         currentTaskNameElement.textContent = displayTaskName;
@@ -532,14 +564,23 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
         });
 
         if (nextTask) {
+            // --- START EDIT: Add logging ---
+            console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying next scheduled task:', nextTask.name, 'Time:', formatTime(nextTask.next_run));
+            // --- END EDIT ---
             currentTaskNameElement.textContent = nextTask.name;
             currentTaskTimeElement.textContent = `in ${formatTime(nextTask.next_run)}`;
         } else {
+            // --- START EDIT: Add logging ---
+            console.log('[TaskMonitor LOG] updateTaskDisplay: No enabled upcoming tasks.');
+            // --- END EDIT ---
             currentTaskNameElement.textContent = 'No upcoming tasks';
             currentTaskTimeElement.textContent = '';
         }
         currentTaskDisplay.classList.remove('running');
     } else {
+        // --- START EDIT: Add logging ---
+        console.log('[TaskMonitor LOG] updateTaskDisplay: No tasks scheduled.');
+        // --- END EDIT ---
         currentTaskNameElement.textContent = 'No tasks scheduled';
         currentTaskTimeElement.textContent = '';
         currentTaskDisplay.classList.remove('running');

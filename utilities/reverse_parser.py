@@ -3,6 +3,9 @@ from utilities.settings import get_setting
 import logging
 import json
 
+# Define regex metacharacters for detection at module level
+REGEX_METACHARACTERS_FOR_DETECTION = r'.*?+^$()[]{}|\\'
+
 def get_version_settings() -> dict:
     """
     Retrieves the version terms settings from the configuration.
@@ -135,6 +138,17 @@ def split_terms(terms_str):
         terms.append(current_term.strip())
     return terms
 
+def _is_likely_regex_pattern(pattern_str: str) -> bool:
+    """
+    Heuristically determines if a string is likely intended as a regex pattern
+    by checking for common regex metacharacters.
+    """
+    if not pattern_str:
+        return False
+    # If any of the common regex metacharacters are present, assume it's a regex.
+    # This aligns with how other parts of the application (e.g., smart_search) identify regex.
+    return any(char in pattern_str for char in REGEX_METACHARACTERS_FOR_DETECTION)
+
 def _compare_resolutions_from_ptt(ptt_resolution: str | None, version_max_res_str: str, version_wanted_op: str) -> bool:
     """Compares PTT-parsed resolution with version's resolution criteria."""
     if not ptt_resolution or ptt_resolution == 'Unknown':
@@ -168,144 +182,313 @@ def _compare_resolutions_from_ptt(ptt_resolution: str | None, version_max_res_st
 
 def _term_matches(term: str, text_source: str | list | None) -> bool:
     """
-    Checks if a term (string or /regex/) matches text.
-    If text_source is a list, checks against each item.
-    Case-insensitive for strings.
+    Checks if a term matches text.
+    If text_source is a list, checks against each item, including items in nested lists.
+    Case-insensitive for strings. Regex pattern matching is also case-insensitive.
+    Detects regex based on content (presence of metacharacters), not slash delimiters.
     """
     if text_source is None:
-        return False
-    
+        return False # No source to match against
+
     term_stripped = term.strip()
-    is_regex = term_stripped.startswith('/') and term_stripped.endswith('/') and len(term_stripped) > 1
-    pattern = term_stripped[1:-1] if is_regex else None
+    if not term_stripped: # An empty term cannot match
+        return False
 
-    sources_to_check = []
+    # Build a flat list of strings to check against
+    sources_to_evaluate = []
     if isinstance(text_source, str):
-        sources_to_check.append(text_source)
+        sources_to_evaluate.append(text_source)
     elif isinstance(text_source, list):
-        sources_to_check.extend([str(s) for s in text_source]) # Ensure all are strings
+        for item in text_source:
+            if item is None: # Skip None items in the list
+                continue
+            if isinstance(item, str):
+                sources_to_evaluate.append(item)
+            elif isinstance(item, list): # Handles nested lists
+                for sub_item in item:
+                    if sub_item is not None:
+                        sources_to_evaluate.append(str(sub_item))
+            else: # For other types in the list, convert to string
+                sources_to_evaluate.append(str(item))
+    
+    if not sources_to_evaluate: # If after processing, there's nothing to check against
+        return False
 
-    for text in sources_to_check:
-        if is_regex and pattern is not None:
-            try:
-                if bool(re.search(pattern, text, re.IGNORECASE)):
-                    return True
-            except re.error as e:
-                logging.warning(f"Invalid regex '{pattern}' in scoring: {e}")
-                return False # Or continue, depending on desired strictness
-        elif not is_regex:
+    # Determine if the term should be treated as a regex
+    is_identified_as_regex = _is_likely_regex_pattern(term_stripped)
+    compiled_pattern = None
+
+    if is_identified_as_regex:
+        try:
+            compiled_pattern = re.compile(term_stripped, re.IGNORECASE)
+        except re.error as e:
+            logging.warning(f"Invalid regex pattern '{term_stripped}' in scoring: {e}. Will attempt literal string match instead.")
+            is_identified_as_regex = False # Fallback to literal match
+
+    for text in sources_to_evaluate:
+        if is_identified_as_regex and compiled_pattern:
+            if compiled_pattern.search(text):
+                return True
+        else: # Literal string match (either not identified as regex, or regex failed to compile)
             if term_stripped.lower() in text.lower():
                 return True
     return False
 
+# Helper function adapted from rank_results.py for use in _calculate_match_score
+def _normalize_filter_pattern_rp(pattern: str) -> str:
+    return re.sub(r'[\s-]+', '', pattern).lower()
+
+# Helper function adapted from rank_results.py for use in _calculate_match_score
+# Uses imported smart_search
+def _check_preferred_rp(patterns_weights, fields_to_check: list, is_bonus: bool):
+    from scraper.functions.other_functions import smart_search
+    score_change = 0
+    matched_normalized_patterns = set() 
+
+    for item in patterns_weights:
+        if not (isinstance(item, list) and len(item) == 2):
+            logging.warning(f"Skipping malformed preferred_filter item: {item}")
+            continue
+        pattern, weight = item
+        
+        # Ensure pattern is a string for normalization and searching
+        pattern_str = str(pattern)
+        
+        try:
+            # Ensure weight can be converted to float
+            weight_float = float(weight)
+        except (ValueError, TypeError):
+            logging.warning(f"Skipping preferred_filter item with invalid weight: {item}")
+            continue
+
+        normalized_pattern = _normalize_filter_pattern_rp(pattern_str)
+
+        if normalized_pattern in matched_normalized_patterns:
+            continue
+
+        for field_value in fields_to_check:
+            # smart_search expects string pattern and string text
+            if smart_search(pattern_str, str(field_value)): 
+                score_change += weight_float if is_bonus else -weight_float
+                matched_normalized_patterns.add(normalized_pattern)
+                break 
+    return score_change #, breakdown
+
 def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, version_config: dict) -> float:
     """
-    Calculates a score based on how well PTT-parsed data matches the scraping version_config.
+    Calculates a score based on how well PTT-parsed data matches the scraping version_config,
+    using logic adapted from filter_results.py and rank_results.py.
+    Logs a single row detailing the outcome for this specific version.
     """
+    from scraper.functions.other_functions import smart_search
     score = 0.0
-    
-    if ptt_data.get('parsing_error') or ptt_data.get('trash', False): # If PTT marked as trash or error
-        logging.debug(f"PTT parsing error or trash for '{filename}' for version '{version_name}'")
-        return -float('inf') 
+    details_suffix = "" # To append details about filter_in bonus
 
-    # 1. Filter Out (critical: immediate disqualification)
-    # Check against raw filename and key PTT fields like title, source, group
-    combined_text_for_filter_out = f"{filename} {ptt_data.get('title','')} {ptt_data.get('source','')} {ptt_data.get('group','')}"
-    for term in version_config.get("filter_out", []):
-        if _term_matches(str(term), combined_text_for_filter_out): # Use the filename for raw matches
-            logging.debug(f"'{filename}' DQ by filter_out '{term}' for version '{version_name}'")
+    DEFAULT_HIGH_BONUS_FOR_FILTER_IN_MATCH = 2500.0 # Tunable: default high score if no preferred_filter_in scores exist
+    SIGNIFICANT_RESOLUTION_MISMATCH_PENALTY = -150.0
+
+    filename_display = (filename[:75] + '...') if len(filename) > 78 else filename
+    version_name_display = (version_name[:17] + '...') if len(version_name) > 20 else version_name
+
+    if ptt_data.get('parsing_error') or ptt_data.get('trash', False):
+        details = "DQ: PTT error/trash"
+        logging.debug(f"{filename_display:<80} | {version_name_display:<20} | {details:<45}")
+        return -float('inf')
+
+    combined_text_for_filter_out = (
+        f"{filename} "
+        f"{ptt_data.get('title','')} "
+        f"{ptt_data.get('source','')} "
+        f"{ptt_data.get('group','')}"
+    )
+    for term_obj in version_config.get("filter_out", []):
+        term = str(term_obj) 
+        if smart_search(term, combined_text_for_filter_out):
+            term_display = (term[:15] + '...') if len(term) > 18 else term
+            details = f"DQ: filter_out '{term_display}'"
+            logging.debug(f"{filename_display:<80} | {version_name_display:<20} | {details:<45}")
             return -float('inf')
 
-    # 2. Resolution Match (using PTT's parsed resolution)
-    ptt_resolution = ptt_data.get('resolution')
-    max_res = version_config.get("max_resolution", "1080p") # Default from schema
-    res_wanted = version_config.get("resolution_wanted", "==")
-    
-    if _compare_resolutions_from_ptt(ptt_resolution, max_res, res_wanted):
-        score += 50
-        score += float(version_config.get("resolution_weight", 0))
-    elif ptt_resolution and ptt_resolution != 'Unknown': # PTT found resolution, but it didn't match
-        score -= 25
-
-    # 3. HDR Match (PTT might have a specific field or it might be in 'other'/'codec')
-    # Assuming PTT might put HDR info in 'codec' or as a general tag.
-    # Your ptt_parser.py doesn't explicitly show an 'other' field, so we'll check common fields.
-    enable_hdr = version_config.get("enable_hdr", False)
-    if enable_hdr:
-        hdr_terms = ["hdr", "dv", "dolby vision", "hdr10", "hlg"] # Check against PTT fields
-        # Check codec, source, or even the original title if PTT doesn't isolate it well
-        combined_hdr_check_text = f"{ptt_data.get('codec','')} {ptt_data.get('source','')} {filename.lower()}"
-        if any(_term_matches(hdr_term, combined_hdr_check_text) for hdr_term in hdr_terms):
-            score += 30
-            score += float(version_config.get("hdr_weight", 0))
-
-    # Data sources for term matching from PTT.
-    # Your ptt_parser.py gives: 'source', 'audio', 'codec', 'group'.
-    # It doesn't show an 'other' or 'tags' field, so we'll rely on these and the raw filename.
-    ptt_matchable_fields = [
+    ptt_matchable_fields_str = [
+        str(field) for field in [
         ptt_data.get('source'),
         ptt_data.get('audio'),
         ptt_data.get('codec'),
         ptt_data.get('group'),
-        filename # Always include raw filename as a fallback
+        filename
+        ] if field is not None
     ]
-    # Filter out None values
-    ptt_matchable_fields = [field for field in ptt_matchable_fields if field is not None]
+    if not ptt_matchable_fields_str:
+        ptt_matchable_fields_str = [filename]
 
+    filter_in_terms = version_config.get("filter_in", [])
+    if filter_in_terms: 
+        found_mandatory_filter_in = False
+        matched_filter_in_term_for_log = ""
+        for term_obj in filter_in_terms:
+            term = str(term_obj)
+            if any(smart_search(term, field_val) for field_val in ptt_matchable_fields_str):
+                found_mandatory_filter_in = True
+                matched_filter_in_term_for_log = term # For logging
+                break
+        
+        if not found_mandatory_filter_in:
+            details = "DQ: Missing filter_in"
+            logging.debug(f"{filename_display:<80} | {version_name_display:<20} | {details:<45}")
+            return -float('inf')
+        else:
+            score += 20 # Base bonus for passing mandatory filter_in
+            
+            # Calculate special bonus based on highest preferred_filter_in score
+            max_pref_in_score_for_version = 0.0
+            has_preferred_filters = False
+            preferred_filter_ins = version_config.get("preferred_filter_in", [])
+            if preferred_filter_ins:
+                has_preferred_filters = True
+                for pref_item in preferred_filter_ins:
+                    if isinstance(pref_item, list) and len(pref_item) == 2:
+                        try:
+                            weight = float(pref_item[1])
+                            if weight > max_pref_in_score_for_version:
+                                max_pref_in_score_for_version = weight
+                        except (ValueError, TypeError):
+                            continue # Skip malformed preferred_filter_in items
+            
+            bonus_from_filter_in_match = 0.0
+            if max_pref_in_score_for_version > 0:
+                bonus_from_filter_in_match = max_pref_in_score_for_version
+            elif has_preferred_filters: # preferred_filter_in exists but all scores were <=0
+                 bonus_from_filter_in_match = DEFAULT_HIGH_BONUS_FOR_FILTER_IN_MATCH # Still give default if non-positive max
+            else: # No preferred_filter_in items at all
+                bonus_from_filter_in_match = DEFAULT_HIGH_BONUS_FOR_FILTER_IN_MATCH
+            
+            score += bonus_from_filter_in_match
+            term_display = (matched_filter_in_term_for_log[:10] + '...') if len(matched_filter_in_term_for_log) > 13 else matched_filter_in_term_for_log
+            details_suffix += f" (FI-match:'{term_display}' +{bonus_from_filter_in_match:.0f})"
 
-    # 4. Preferred Filter Out
-    for pref_out_item in version_config.get("preferred_filter_out", []):
-        if isinstance(pref_out_item, list) and len(pref_out_item) == 2:
-            term, weight = pref_out_item
-            if _term_matches(str(term), ptt_matchable_fields):
-                score -= float(weight)
+    # --- Stricter Resolution Matching ---
+    ptt_resolution = ptt_data.get('resolution') # e.g., "1080p" from file
+    version_max_res_str = version_config.get("max_resolution", "1080p") # e.g., "2160p" from version_config
+    version_wanted_op = version_config.get("resolution_wanted", "==") # e.g., "==" from version_config
 
-    # 5. Filter In
-    for term in version_config.get("filter_in", []):
-        if _term_matches(str(term), ptt_matchable_fields):
-            score += 20
+    resolution_criteria_met = _compare_resolutions_from_ptt(ptt_resolution, version_max_res_str, version_wanted_op)
 
-    # 6. Preferred Filter In
-    for pref_in_item in version_config.get("preferred_filter_in", []):
-        if isinstance(pref_in_item, list) and len(pref_in_item) == 2:
-            term, weight = pref_in_item
-            if _term_matches(str(term), ptt_matchable_fields):
-                score += float(weight)
+    if version_wanted_op == "==":
+        if not resolution_criteria_met:
+            # Strict equality failed. Disqualify.
+            actual_res_display = ptt_resolution if ptt_resolution else "None"
+            details = f"DQ: Res mismatch (is {actual_res_display}, needs == {version_max_res_str})"
+            logging.debug(f"{filename_display:<80} | {version_name_display:<20} | {details:<45}")
+            return -float('inf')
+        else:
+            # Strict equality passed
+            score += 50 
+            score += float(version_config.get("resolution_weight", 0))
+            # details_suffix += " (ResOk==)" 
+    else: # Handles '<=' or '>='
+        if resolution_criteria_met:
+            # '<=' or '>=' condition met
+            score += 50 
+            score += float(version_config.get("resolution_weight", 0))
+            # details_suffix += f" (ResOk{version_wanted_op})"
+        elif ptt_resolution and ptt_resolution != 'Unknown': 
+            # Directional condition NOT met, and file has a known resolution. Apply significant penalty.
+            score += SIGNIFICANT_RESOLUTION_MISMATCH_PENALTY 
+            actual_res_display = ptt_resolution if ptt_resolution else "None"
+            details_suffix += f" (ResFail {actual_res_display}{version_wanted_op}{version_max_res_str} {SIGNIFICANT_RESOLUTION_MISMATCH_PENALTY:.0f})"
+        # If ptt_resolution is None or Unknown, and it's not '==', no specific penalty here, relies on _compare_resolutions_from_ptt returning False.
+
+    # --- HDR Match (logic remains the same) ---
+    enable_hdr_for_version = version_config.get("enable_hdr", False)
+    is_torrent_hdr = ptt_data.get('is_hdr', False)
+    if not is_torrent_hdr:
+        hdr_terms = ["hdr", "dv", "dolby vision", "hdr10", "hlg"]
+        hdr_check_sources = [
+            str(ptt_data.get('codec','')),
+            str(ptt_data.get('source','')),
+            filename.lower()
+        ]
+        hdr_check_text = " ".join(s for s in hdr_check_sources if s)
+        if any(smart_search(hdr_term, hdr_check_text) for hdr_term in hdr_terms):
+            is_torrent_hdr = True
+
+    if is_torrent_hdr:
+        if enable_hdr_for_version:
+            score += 30
+            score += float(version_config.get("hdr_weight", 0))
+        else: 
+            score -= 100 
     
-    logging.debug(f"Score for '{filename}' (PTT res: {ptt_resolution}) with version '{version_name}': {score}")
+    # --- Preferred Filters (logic remains the same) ---
+    pref_out_score = _check_preferred_rp(
+        version_config.get("preferred_filter_out", []),
+        ptt_matchable_fields_str,
+        is_bonus=False
+    )
+    score += pref_out_score
+
+    pref_in_score = _check_preferred_rp(
+        version_config.get("preferred_filter_in", []),
+        ptt_matchable_fields_str,
+        is_bonus=True
+    )
+    score += pref_in_score
+    
+    score_display = f"{score:.2f}"
+    # Truncate details_suffix if it's too long before appending
+    max_details_suffix_len = 43 - len(f"Score: {score_display} ") # Max length for suffix
+    if len(details_suffix) > max_details_suffix_len:
+        details_suffix = details_suffix[:max_details_suffix_len-3] + "..."
+
+    details = f"Score: {score_display}{details_suffix}"
+    if score == -float('inf'): # Should have already logged DQ and returned
+        pass
+    else:
+        logging.debug(f"{filename_display:<80} | {version_name_display:<20} | {details:<45}")
+    
     return score
 
 def parse_filename_for_version(filename: str) -> str:
     """
     Dynamically parses a filename using PTT and then determines its best matching 
     "Scraping" version by scoring it against all configured scraping versions.
+    Excludes generic version names '1080p' and '2160p' from being matched.
     """
     scraping_versions_config = get_setting('Scraping', 'versions', {})
     default_rp_version = get_default_version()
+    
+    excluded_generic_versions = []
 
     if not scraping_versions_config or not isinstance(scraping_versions_config, dict):
-        logging.warning("No valid scraping versions configured. Using Reverse Parser default.")
+        logging.warning("No valid scraping versions configured or config is not a dict. Using Reverse Parser default.")
         return f"{default_rp_version}**"
 
     from scraper.functions.ptt_parser import parse_with_ptt
-    ptt_data = parse_with_ptt(filename) # Parse once
-    logging.debug(f"--- Parsing filename: {filename} (PTT data: {ptt_data}) ---")
+    ptt_data = parse_with_ptt(filename)
+    
+    filename_truncated_header = (filename[:75] + '...') if len(filename) > 78 else filename
 
     if ptt_data.get('parsing_error'):
-        logging.warning(f"PTT parsing failed for '{filename}'. Using Reverse Parser default.")
-        # Consider if a PTT error should try to score anyway, or immediately default.
-        # For now, we let it try to score, as _calculate_match_score handles parsing_error.
+        logging.warning(f"PTT parsing failed for '{filename_truncated_header}'. Using Reverse Parser default '{default_rp_version}'.")
+        # Fall through to scoring, might still get a partial match or default correctly.
     
-    # If PTT itself marks it as trash, we can directly assign default without scoring.
     if ptt_data.get('trash', False):
-        logging.info(f"Filename '{filename}' marked as TRASH by PTT. Using RP default '{default_rp_version}'.")
+        logging.info(f"Filename '{filename_truncated_header}' marked as TRASH by PTT. Using RP default '{default_rp_version}'.")
+        version_name_display = (default_rp_version[:17] + '...') if len(default_rp_version) > 20 else default_rp_version
+        logging.debug(f"{filename_truncated_header:<80} | {version_name_display:<20} | {'DQ: PTT error/trash':<45}") # Increased details width
         return f"{default_rp_version}**"
 
-
     best_match_version_name = None
-    highest_score = -float('inf') # Initialize to a very low number
+    highest_score = -float('inf')
+
+    logging.debug(f"Scoring attempts for: {filename_truncated_header}")
+    logging.debug(f"{'Processed Filename':<80} | {'Version Candidate':<20} | {'Details':<45}") # Increased details width
+    logging.debug(f"{'-'*80} | {'-'*20} | {'-'*45}") # Increased details width
 
     for version_name, version_config in scraping_versions_config.items():
+        if version_name in excluded_generic_versions:
+            continue
+
         if not isinstance(version_config, dict):
             logging.warning(f"Skipping invalid version config for '{version_name}'. Expected dict, got {type(version_config)}")
             continue
@@ -315,19 +498,14 @@ def parse_filename_for_version(filename: str) -> str:
         if current_score > highest_score:
             highest_score = current_score
             best_match_version_name = version_name
-        # Optional: Add tie-breaking logic here if needed
 
-    # Adjust this threshold based on typical scores.
-    # If PTT parsing fails or marks as trash, score will be -inf.
     MINIMUM_ACCEPTABLE_SCORE = 1.0 
-    # This threshold is crucial. If resolution match is 50, a single preferred_filter_in might add 50 more.
-    # A negative score from preferred_filter_out should ideally prevent a match.
 
-    if best_match_version_name and highest_score >= MINIMUM_ACCEPTABLE_SCORE : # Use >= if 0 score is acceptable in some cases
-        logging.info(f"Filename '{filename}' best matched scraping version '{best_match_version_name}' with score {highest_score:.2f}")
+    if best_match_version_name and highest_score >= MINIMUM_ACCEPTABLE_SCORE : 
+        logging.info(f"Filename '{filename_truncated_header}' best matched scraping version '{best_match_version_name}' with score {highest_score:.2f}")
         return f"{best_match_version_name}*"
     else:
-        logging.info(f"Filename '{filename}' did not sufficiently match any scraping version (best score: {highest_score:.2f}). Using RP default '{default_rp_version}'.")
+        logging.info(f"Filename '{filename_truncated_header}' did not sufficiently match any scraping version (best score: {highest_score:.2f}, min_req: {MINIMUM_ACCEPTABLE_SCORE}). Using RP default '{default_rp_version}'.")
         return f"{default_rp_version}**"
 
 def parser_approximation(filename: str) -> dict:

@@ -30,7 +30,7 @@ import threading # For scheduler lock, concurrent queue processing, AND heavy ta
 # --- END EDIT ---
 import functools # Added for partial
 import apscheduler.events # Added for listener events
-from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED, EVENT_JOB_SUBMITTED, EVENT_JOB_MAX_INSTANCES
 # *** END EDIT ***
 from queues.initialization import initialize
 from utilities.settings import get_setting, get_all_settings
@@ -269,6 +269,9 @@ class ProgramRunner:
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
             # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
+            # --- START EDIT: Add media analysis task interval ---
+            'task_analyze_media_files': 1 * 60 * 60, # Once an hour
+            # --- END EDIT ---
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -404,6 +407,9 @@ class ProgramRunner:
             'task_refresh_library_size_cache',
             # --- END EDIT ---
             'task_process_standalone_plex_removals', # Add to dynamic intervals as well
+            # --- START EDIT: Add media analysis task to dynamic intervals ---
+            'task_analyze_media_files',
+            # --- END EDIT ---
         }
         # Add content source tasks with interval > 900s (15 min) to dynamic set
         # This needs to happen *after* content sources are processed, let's refine this later if needed
@@ -464,6 +470,9 @@ class ProgramRunner:
             'task_refresh_library_size_cache',
             # --- END EDIT ---
             'task_process_standalone_plex_removals', # Enable by default
+            # --- START EDIT: Enable media analysis task by default ---
+            # 'task_analyze_media_files', # disabled by default
+            # --- END EDIT ---
         }
         logging.info("Initialized base enabled tasks.")
 
@@ -3718,7 +3727,7 @@ class ProgramRunner:
     # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling AND heavy task locking ***
     def _run_and_measure_task(self, task_name_for_log, func, args, kwargs): # Added task_name_for_log
         """Wraps a task function to measure execution duration, track memory usage with tracemalloc, and handle locking for heavy DB tasks."""
-        start_time = time.time()
+        start_time = time.monotonic()
         # Use the passed task_name_for_log instead of func.__name__ for consistency
         # task_name_for_log = getattr(func, '__name__', 'unknown_function') # Removed
 
@@ -3767,7 +3776,7 @@ class ProgramRunner:
         try:
             # Execute the original task function
             func(*args, **kwargs)
-            duration = time.time() - start_time # Measure duration regardless
+            duration = time.monotonic() - start_time # Measure duration regardless
 
             # Get memory usage after and log delta if sampling this execution
             # Check available again just before use
@@ -3809,8 +3818,8 @@ class ProgramRunner:
             return duration # Return duration for the listener
 
         except Exception as e:
-            duration = time.time() - start_time
-            logging.error(f"Error during execution of wrapped task '{task_name_for_log}' after {duration:.3f}s: {e}", exc_info=True)
+            duration = time.monotonic() - start_time
+            logging.error(f"Error during execution of job '{task_name_for_log}': {e}", exc_info=True)
 
             # Log memory even on error if sampling this execution
             # Check available again just before use
@@ -3928,6 +3937,33 @@ class ProgramRunner:
              logging.error(f"Background task: Runtime error during library size cache refresh: {e_runtime}", exc_info=True)
         except Exception as e:
             logging.error(f"Background task: General error during library size cache refresh: {e}", exc_info=True)
+    # --- END EDIT ---
+
+    # --- START EDIT: Add media analysis task method ---
+    def task_analyze_media_files(self):
+        """Scheduled task to analyze and repair media files."""
+        from utilities.analyze_library import analyze_and_repair_media_files
+
+        logging.info("Initiating scheduled media file analysis and repair task.")
+        try:
+            collection_type = get_setting('File Management', 'file_collection_management', 'Plex')
+            if collection_type not in ['Plex', 'Symlinked/Local']:
+                logging.warning(
+                    f"Unsupported collection type '{collection_type}' for media analysis. Supported types are 'Plex' or 'Symlinked/Local'. Skipping."
+                )
+                return
+
+            # The analyze_and_repair_media_files function uses its own default for max_files_to_check_this_run
+            # If you want to make this configurable via settings.ini for the scheduled task,
+            # you could add:
+            # max_files_setting = get_setting('Maintenance', 'media_analysis_max_files_per_run', <default_from_analyze_library>)
+            # and pass it to the function: analyze_and_repair_media_files(collection_type, max_files_setting)
+
+            analyze_and_repair_media_files(collection_type=collection_type)
+            logging.info("Scheduled media file analysis and repair task completed.")
+
+        except Exception as e:
+            logging.error(f"Error during scheduled media file analysis and repair: {e}", exc_info=True)
     # --- END EDIT ---
 
 def process_overseerr_webhook(data):

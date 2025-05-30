@@ -7,6 +7,7 @@ import bencodepy
 from typing import Optional, Tuple
 from urllib.parse import urlencode
 from .utils import extract_hash_from_magnet
+from .cache import timed_lru_cache
 
 def torrent_to_magnet(file_path: str) -> Optional[str]:
     """
@@ -66,6 +67,7 @@ def torrent_to_magnet(file_path: str) -> Optional[str]:
         logging.error(f"Error converting torrent to magnet: {str(e)}")
         return None
 
+@timed_lru_cache(seconds=60)
 def download_and_extract_hash(url: str, max_redirects: int = 5) -> Optional[str]:
     """
     Download a torrent file from a URL or handle a URL that 

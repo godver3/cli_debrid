@@ -126,7 +126,7 @@ def add_collected_items(media_items_batch, recent=False):
                     new_episode_show_ids.add(item['imdb_id'])
 
         if new_episode_show_ids:
-            logging.info(f"Found {len(new_episode_show_ids)} unique show IDs potentially requiring airtime check for new episodes.")
+            # logging.info(f"Found {len(new_episode_show_ids)} unique show IDs potentially requiring airtime check for new episodes.")
 
             # 1. Bulk check media_items DB for existing airtimes
             ids_to_check_list = list(new_episode_show_ids)
@@ -145,13 +145,13 @@ def add_collected_items(media_items_batch, recent=False):
             except Exception as db_err:
                  logging.error(f"Error querying existing airtimes from media_items: {db_err}")
 
-            logging.info(f"Found {len(airtime_cache)} existing airtimes in media_items DB.")
+            # logging.info(f"Found {len(airtime_cache)} existing airtimes in media_items DB.")
 
             # 2. Identify shows still needing airtime check via battery metadata
             ids_needing_metadata_check = list(new_episode_show_ids - set(airtime_cache.keys()))
 
             if ids_needing_metadata_check:
-                logging.info(f"Checking battery metadata for 'airs' info for {len(ids_needing_metadata_check)} show IDs.")
+                # logging.info(f"Checking battery metadata for 'airs' info for {len(ids_needing_metadata_check)} show IDs.")
                 try:
                     # Bulk query battery for 'airs' info
                     bulk_airs_info = DirectAPI.get_bulk_show_airs(ids_needing_metadata_check)
@@ -170,7 +170,7 @@ def add_collected_items(media_items_batch, recent=False):
                                     airtime_cache[imdb_id] = '19:00' # Default if format invalid
                             else:
                                 # If airs data not found in battery, use default
-                                logging.info(f"No valid 'airs' metadata found in battery for {imdb_id}. Using default airtime.")
+                                # logging.info(f"No valid 'airs' metadata found in battery for {imdb_id}. Using default airtime.")
                                 airtime_cache[imdb_id] = '19:00' # Default if no airs info
                 except Exception as bulk_err:
                     logging.error(f"Error during bulk airs metadata check: {bulk_err}. Using default airtime for remaining shows.")
@@ -184,16 +184,16 @@ def add_collected_items(media_items_batch, recent=False):
                 if imdb_id not in airtime_cache:
                      logging.warning(f"Show ID {imdb_id} missed airtime assignment, assigning default '19:00'.")
                      airtime_cache[imdb_id] = '19:00'
-            logging.info(f"Airtime cache populated for {len(airtime_cache)} shows.")
+            # logging.info(f"Airtime cache populated for {len(airtime_cache)} shows.")
 
         # --- End Pre-fetch Airtime Logic ---
 
-        logging.info(f"Starting processing of {len(filtered_media_items_batch)} filtered media items.")
-        start_time_batch = time.time()
+        # logging.info(f"Starting processing of {len(filtered_media_items_batch)} filtered media items.")
+        # start_time_batch = time.time()
 
         for index, item in enumerate(filtered_media_items_batch):
             item_identifier = generate_identifier(item)
-            start_time_item = time.time()
+            # start_time_item = time.time()
             
             plex_locations = item.get('location', [])
             if isinstance(plex_locations, str):
@@ -229,10 +229,10 @@ def add_collected_items(media_items_batch, recent=False):
                 except Exception as e_check_query:
                     logging.error(f"Error querying for 'Checking' items for {item_identifier}: {e_check_query}")
 
-            logging.debug(
-                f"Processing item {index + 1}/{len(filtered_media_items_batch)}: {item_identifier} "
-                f"from Plex location(s): {plex_locations}. Found {checking_items_count} matching DB item(s) in 'Checking' state (IDs: {checking_item_ids_for_plex_item})."
-            )
+            # logging.debug(
+            #     f"Processing item {index + 1}/{len(filtered_media_items_batch)}: {item_identifier} "
+            #     f"from Plex location(s): {plex_locations}. Found {checking_items_count} matching DB item(s) in 'Checking' state (IDs: {checking_item_ids_for_plex_item})."
+            # )
 
             try:
                 # The original 'locations' variable was for Plex item locations.
@@ -269,27 +269,27 @@ def add_collected_items(media_items_batch, recent=False):
                         db_item_id = existing_db_item['id']
                         
                         is_this_db_item_checking = existing_db_item['state'] == 'Checking'
-                        other_checking_items_exist = checking_items_count > 0 and (not is_this_db_item_checking or checking_items_count > 1)
+                        # other_checking_items_exist = checking_items_count > 0 and (not is_this_db_item_checking or checking_items_count > 1)
 
 
-                        logging.debug(
-                            f"Plex item {item_identifier} (location: {current_plex_location}) matches DB item ID {db_item_id} "
-                            f"(file: {existing_db_item['filled_by_file']}, state: {existing_db_item['state']}). "
-                            f"Is this DB item in 'Checking': {is_this_db_item_checking}. "
-                            f"Total 'Checking' items for these identifiers: {checking_items_count} (IDs: {checking_item_ids_for_plex_item}). "
-                            f"Other 'Checking' items for this media (excluding this specific file match if it was checking): {other_checking_items_exist}."
-                        )
+                        # logging.debug(
+                        #     f"Plex item {item_identifier} (location: {current_plex_location}) matches DB item ID {db_item_id} "
+                        #     f"(file: {existing_db_item['filled_by_file']}, state: {existing_db_item['state']}). "
+                        #     f"Is this DB item in 'Checking': {is_this_db_item_checking}. "
+                        #     f"Total 'Checking' items for these identifiers: {checking_items_count} (IDs: {checking_item_ids_for_plex_item}). "
+                        #     f"Other 'Checking' items for this media (excluding this specific file match if it was checking): {other_checking_items_exist}."
+                        # )
                         
                         if existing_db_item['state'] not in ['Collected', 'Upgrading']:
                             if existing_db_item['release_date'] in ['Unknown', 'unknown', 'None', 'none', None, '']:
                                 days_since_release = 0
-                                logging.debug(f"Unknown release date for {item_identifier} - treating as new content")
+                                # logging.debug(f"Unknown release date for {item_identifier} - treating as new content")
                             else:
                                 try:
                                     release_date = datetime.strptime(existing_db_item['release_date'], '%Y-%m-%d').date()
                                     days_since_release = (datetime.now().date() - release_date).days
                                 except ValueError:
-                                    logging.debug(f"Invalid release date format: {existing_db_item['release_date']} - treating as new content")
+                                    # logging.debug(f"Invalid release date format: {existing_db_item['release_date']} - treating as new content")
                                     days_since_release = 0
 
                             # Check if the DB item was manually assigned
@@ -351,12 +351,12 @@ def add_collected_items(media_items_batch, recent=False):
                                   current_plex_location, is_upgrade, item.get('resolution'), db_item_id))
 
                             # Add post-processing call after state update
-                            start_handle_state = time.time()
+                            # start_handle_state = time.time()
                             if new_state == 'Collected':
                                 handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,)).fetchone()))
                             elif new_state == 'Upgrading':
                                 handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,)).fetchone()))
-                            logging.debug(f"handle_state_change for item {db_item_id} took {time.time() - start_handle_state:.4f} seconds.")
+                            # logging.debug(f"handle_state_change for item {db_item_id} took {time.time() - start_handle_state:.4f} seconds.")
 
                             cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,))
                             updated_item = cursor.fetchone()
@@ -372,28 +372,49 @@ def add_collected_items(media_items_batch, recent=False):
                                 updated_item_dict['new_state'] = notification_state # Add the determined state
                                 # Ensure original_collected_at is set correctly for the notification context
                                 updated_item_dict['original_collected_at'] = updated_item_dict.get('original_collected_at') or existing_db_item.get('collected_at') or collected_at
-                                start_notification_time = time.time()
+                                # start_notification_time = time.time()
                                 add_to_collected_notifications(updated_item_dict)
-                                logging.debug(f"add_to_collected_notifications for item {db_item_id} took {time.time() - start_notification_time:.4f} seconds.")
+                                # logging.debug(f"add_to_collected_notifications for item {db_item_id} took {time.time() - start_notification_time:.4f} seconds.")
                             else:
                                 logging.warning(f"Could not fetch updated item with ID {db_item_id} after update for notification.")
-                        else:
-                             logging.debug(
-                                 f"DB Item ID {db_item_id} ({item_identifier}, file: {existing_db_item['filled_by_file']}) "
-                                 f"is already '{existing_db_item['state']}'. Skipping state update and notification. "
-                                 f"Plex item location: {current_plex_location}."
-                             )
+                        # else:
+                             # logging.debug(
+                             #     f"DB Item ID {db_item_id} ({item_identifier}, file: {existing_db_item['filled_by_file']}) "
+                             #     f"is already '{existing_db_item['state']}'. Skipping state update and notification. "
+                             #     f"Plex item location: {current_plex_location}."
+                             # )
 
                     else:
                         # --- NEW ITEM INSERT ---
                         logging.info(
                             f"Plex item {item_identifier} (location: {current_plex_location}, filename: {filename}) not found in existing_file_map. "
                             f"Proceeding to insert as new DB entry. "
-                            f"Found {checking_items_count} existing 'Checking' item(s) for these identifiers (IDs: {checking_item_ids_for_plex_item})."
+                            # f"Found {checking_items_count} existing 'Checking' item(s) for these identifiers (IDs: {checking_item_ids_for_plex_item})."
                         )
-                        start_insert_time = time.time()
-                        parsed_info = parser_approximation(filename)
-                        version = parsed_info['version']
+                        
+                        # Check if there are any items in 'Checking' state with matching identifiers
+                        if checking_items_count > 0:
+                            # Get the first checking item to use its version
+                            checking_item_id = checking_item_ids_for_plex_item[0]
+                            cursor = conn.execute('SELECT version FROM media_items WHERE id = ?', (checking_item_id,))
+                            checking_item = cursor.fetchone()
+                            cursor.close()
+                            
+                            if checking_item and checking_item['version']:
+                                # Use the version from the checking item
+                                version = checking_item['version']
+                                # logging.info(f"Using version '{version}' from existing 'Checking' item (ID: {checking_item_id}) for {item_identifier}")
+                            else:
+                                # Fallback to parser if version not found
+                                parsed_info = parser_approximation(filename)
+                                version = parsed_info['version']
+                                # logging.info(f"Checking item found but no version available, using parsed version '{version}' for {item_identifier}")
+                        else:
+                            # No checking items found, use parser
+                            # start_insert_time = time.time()
+                            parsed_info = parser_approximation(filename)
+                            version = parsed_info['version']
+                            # logging.debug(f"Using parsed version '{version}' for {item_identifier} (no checking items found)")
 
                         if item_type == 'movie':
                             conn.execute('''
@@ -424,20 +445,22 @@ def add_collected_items(media_items_batch, recent=False):
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
                                 datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution')
                             ))
-                        logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
+                        # logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
+                        logging.info(f"Added new item {item_identifier} (file: {filename}) to collection.")
+
 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)
                 continue
-            finally:
-                logging.debug(f"Finished processing item {item_identifier} in {time.time() - start_time_item:.4f} seconds.")
+            # finally:
+                # logging.debug(f"Finished processing item {item_identifier} in {time.time() - start_time_item:.4f} seconds.")
 
-        logging.info(f"Finished processing main batch loop in {time.time() - start_time_batch:.4f} seconds.")
+        # logging.info(f"Finished processing main batch loop in {time.time() - start_time_batch:.4f} seconds.")
 
         # --- Post-loop cleanup ---
         if not recent:
-            logging.info("Starting post-loop cleanup for missing files.")
-            start_cleanup_time = time.time()
+            # logging.info("Starting post-loop cleanup for missing files.")
+            # start_cleanup_time = time.time()
             cursor = conn.execute('''
                 SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
                 FROM media_items
@@ -447,28 +470,37 @@ def add_collected_items(media_items_batch, recent=False):
                 item = row_to_dict(row)
                 item_identifier = generate_identifier(item)
                 if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
+                    # This item's file is considered missing
                     if get_setting("Debug", "rescrape_missing_files", default=False):
                         try:
+                            # Check if another version of this item already exists in 'Collected' state
+                            current_version = item['version'].strip('*') if item.get('version') else ''
+                            
+                            # Build query based on item type to find other collected versions
                             if item['type'] == 'movie':
                                 matching_cursor = conn.execute('''
                                     SELECT id, version FROM media_items 
-                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'movie' AND state = 'Collected'
-                                ''', (item['imdb_id'], item['tmdb_id']))
-                            else:
+                                    WHERE (imdb_id = ? OR (tmdb_id IS NOT NULL AND tmdb_id = ?)) AND type = 'movie' AND state = 'Collected' AND id != ?
+                                ''', (item['imdb_id'], item['tmdb_id'], item['id']))
+                            else: # episode
                                 matching_cursor = conn.execute('''
                                     SELECT id, version FROM media_items 
-                                    WHERE (imdb_id = ? OR tmdb_id = ?) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected'
-                                ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number']))
+                                    WHERE (imdb_id = ? OR (tmdb_id IS NOT NULL AND tmdb_id = ?)) AND type = 'episode' AND season_number = ? AND episode_number = ? AND state = 'Collected' AND id != ?
+                                ''', (item['imdb_id'], item['tmdb_id'], item['season_number'], item['episode_number'], item['id']))
                             
                             matching_items = matching_cursor.fetchall()
                             matching_cursor.close()
                             
-                            current_version = item['version'].strip('*')
-                            matching_version_exists = any(current_version == m['version'].strip('*') for m in matching_items if m['id'] != item['id'])
+                            matching_version_exists = any(
+                                (m['version'].strip('*') if m.get('version') else '') == current_version 
+                                for m in matching_items
+                            )
                             
                             if matching_version_exists:
+                                logging.info(f"[Missing File Cleanup] Deleting item {item_identifier} (ID: {item['id']}, File: {item['filled_by_file']}) as another collected version ('{current_version}') exists.")
                                 conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
                             else:
+                                logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {item['filled_by_file']}). No other matching version found. Moving to 'Wanted'.")
                                 conn.execute('''
                                     UPDATE media_items 
                                     SET state = 'Wanted', 
@@ -478,19 +510,20 @@ def add_collected_items(media_items_batch, recent=False):
                                         filled_by_torrent_id = NULL, 
                                         collected_at = NULL,
                                         last_updated = ?,
-                                        version = TRIM(version, '*')
+                                        version = TRIM(version, '*') 
                                     WHERE id = ?
                                 ''', (datetime.now(), item['id']))
                         except Exception as e:
-                            conn.rollback()
-                            logging.error(f"Error handling missing file for item {item_identifier}: {str(e)}", exc_info=True)
-                    else:
+                            # conn.rollback() # Rollback for THIS item was removed, transaction handles overall
+                            logging.error(f"Error handling missing file for item {item_identifier} (ID: {item['id']}): {str(e)}", exc_info=True)
+                    else: # rescrape_missing_files is False
+                        logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {item['filled_by_file']}). 'rescrape_missing_files' is False. Deleting item.")
                         conn.execute('''
                             DELETE FROM media_items
                             WHERE id = ?
                         ''', (item['id'],))
             cursor.close()
-            logging.info(f"Finished post-loop cleanup in {time.time() - start_cleanup_time:.4f} seconds.")
+            # logging.info(f"Finished post-loop cleanup in {time.time() - start_cleanup_time:.4f} seconds.")
 
         conn.commit()
     except Exception as e:

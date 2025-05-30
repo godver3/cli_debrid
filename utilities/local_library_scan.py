@@ -18,12 +18,29 @@ import json # Ensure json is imported
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
+    # Get replacement character from settings, default to underscore
+    from utilities.settings import get_setting
+    replacement_char_setting = get_setting('Debug', 'sanitizer_replacement_character', '_')
+    
+    # Determine the actual replacement character to use
+    actual_replacement_char = '_' # Default fallback
+
+    if replacement_char_setting == '':
+        actual_replacement_char = ''
+        logging.debug("Sanitizer replacement is blank; offending characters will be deleted.")
+    elif len(replacement_char_setting) == 1 and re.match(r'[a-zA-Z0-9\-\.~_\[\]]', replacement_char_setting):
+        # Use the valid single character provided by the user
+        actual_replacement_char = replacement_char_setting
+    elif replacement_char_setting != '_': # If setting is not blank, not a valid single char, and not already our default
+        logging.warning(f"Invalid sanitizer replacement character ('{replacement_char_setting}') configured. Using default '_' instead.")
+        # actual_replacement_char remains '_' (the default fallback)
+    
     # Convert Unicode characters to their ASCII equivalents where possible
     import unicodedata
     filename = unicodedata.normalize('NFKD', filename).encode('ascii', 'ignore').decode('ascii')
     
-    # Replace problematic characters
-    filename = re.sub(r'[<>|?*:"\'\&/\\]', '_', filename)  # Added slashes and backslashes
+    # Replace problematic characters with the determined actual_replacement_char
+    filename = re.sub(r'[<>|?*:"\'\&/\\]', actual_replacement_char, filename)  # Added slashes and backslashes
     return filename.strip()  # Just trim whitespace, don't mess with dots
 
 def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
