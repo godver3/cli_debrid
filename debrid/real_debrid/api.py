@@ -2,6 +2,7 @@
 
 import os
 import logging
+import time
 from typing import Optional, Dict, Any, Union, List
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -27,7 +28,7 @@ def should_retry_error(exception: Exception) -> bool:
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=4, max=10),
-    retry=retry_if_exception_type((api.exceptions.RequestException, RealDebridAPIError, RateLimitError)),
+    retry=retry_if_exception_type((api.exceptions.RequestException, RealDebridAPIError, RateLimitError, api.exceptions.HTTPError)),
     retry_error_callback=lambda retry_state: None  # Return None on final failure
 )
 def make_request(
@@ -81,6 +82,16 @@ def make_request(
             elif response.status_code == 403:
                 raise RealDebridAuthError("Access denied")
             elif response.status_code == 429:
+                # Convert to RateLimitError which will be caught by the retry decorator
+                retry_after = response.headers.get('Retry-After')
+                if retry_after:
+                    try:
+                        # If Retry-After is provided, use it as the wait time
+                        retry_after_seconds = int(retry_after)
+                        logging.warning(f"Rate limit exceeded. Server requested wait of {retry_after_seconds}s.")
+                        time.sleep(retry_after_seconds)
+                    except (ValueError, TypeError):
+                        pass  # If we can't parse the Retry-After header, just continue with default retry
                 raise RateLimitError("Rate limit exceeded")
             elif response.status_code == 404:
                 # Check if this is a duplicate torrent add attempt

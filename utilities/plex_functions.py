@@ -218,7 +218,7 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
                 base_episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
     
     if not base_episode_data['release_date']:
-        logger.warning(f"Plex missing originallyAvailableAt for {show_title} S{season_number}E{base_episode_data['episode_number']}. Attempting fallback lookup.")
+        # logger.warning(f"Plex missing originallyAvailableAt for {show_title} S{season_number}E{base_episode_data['episode_number']}. Attempting fallback lookup.")
         fallback_date_found = False
         retrieved_show_metadata = None
 
@@ -226,9 +226,9 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
             if not fallback_date_found and show_imdb_id:
                 if fallback_show_metadata_cache is not None and show_imdb_id in fallback_show_metadata_cache:
                     retrieved_show_metadata = fallback_show_metadata_cache[show_imdb_id]
-                    logger.debug(f"Using cached show metadata for {show_imdb_id} for fallback.")
+                    # logger.debug(f"Using cached show metadata for {show_imdb_id} for fallback.")
                 elif fallback_show_metadata_cache is not None:
-                    logger.debug(f"Fetching and caching show metadata for {show_imdb_id} for fallback.")
+                    # logger.debug(f"Fetching and caching show metadata for {show_imdb_id} for fallback.")
                     try:
                         metadata_result = DirectAPI.get_show_metadata(show_imdb_id)
                         if metadata_result and isinstance(metadata_result, tuple):
@@ -266,7 +266,8 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
                                             logger.info(f"Fallback successful using cached/fetched show metadata: set release_date to {base_episode_data['release_date']}")
                                         break
                     if not fallback_date_found:
-                        logger.warning(f"Failed to find episode S{season_number}E{base_episode_data['episode_number']} in cached/fetched show metadata for {show_imdb_id}.")
+                        # logger.warning(f"Failed to find episode S{season_number}E{base_episode_data['episode_number']} in cached/fetched show metadata for {show_imdb_id}.")
+                        pass
                 elif show_imdb_id:
                     logger.warning(f"No valid show metadata available (cache or fetch failed) for {show_imdb_id} to use for fallback.")
 
@@ -275,7 +276,7 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         
         if not fallback_date_found:
              base_episode_data['release_date'] = None
-             logger.warning(f"All fallbacks failed, release_date remains None for {show_title} S{season_number}E{base_episode_data['episode_number']}")
+             # logger.warning(f"All fallbacks failed, release_date remains None for {show_title} S{season_number}E{base_episode_data['episode_number']}")
 
     episode_entries = []
     if 'Media' in episode_meta and episode_meta['Media']:
@@ -309,7 +310,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     from metadata.metadata import get_metadata, get_release_date
     genres = [genre['tag'] for genre in movie.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(genres)
-    logging.info(f"Movie: {movie['title']}")
+    # logging.info(f"Movie: {movie['title']}")
 
     movie_data = {
         'title': movie['title'],
@@ -351,7 +352,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
     
-    logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
+    # logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
     return movie_entries
 
 async def get_collected_from_plex(request='all', progress_callback=None, bypass=False,

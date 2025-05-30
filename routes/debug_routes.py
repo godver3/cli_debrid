@@ -1456,7 +1456,8 @@ def get_available_tasks():
         {'id': 'task_process_pending_rclone_paths', 'display_name': 'Process Pending Rclone Paths'},
         {'id': 'task_update_tv_show_status', 'display_name': 'Update TV Show Status'},
         {'id': 'task_heartbeat', 'display_name': 'Heartbeat'},
-        {'id': 'final_check_queue', 'display_name': 'Final Check Queue'}
+        {'id': 'final_check_queue', 'display_name': 'Final Check Queue'},
+        {'id': 'task_analyze_library', 'display_name': 'Analyze Library'}
     ]
     
     # Get content sources from program runner for content source tasks

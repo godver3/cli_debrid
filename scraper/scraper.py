@@ -139,7 +139,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Initialize anime-specific variables
         genres = filter_genres(genres)
-        is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+        is_anime = genres and any('anime' in g.lower() for g in genres)
         episode_formats = None
         if is_anime and content_type.lower() == 'episode' and season is not None and episode is not None:
             logging.info(f"Detected anime content: {title}")

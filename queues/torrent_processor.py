@@ -15,7 +15,7 @@ import hashlib
 import inspect
 from datetime import datetime, timedelta
 
-from debrid.base import DebridProvider, TooManyDownloadsError
+from debrid.base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from debrid.common import (
     extract_hash_from_magnet,
     extract_hash_from_file,
@@ -390,8 +390,9 @@ class TorrentProcessor:
         """
         torrent_id = None
         info = None
-        max_retries = 3
-        retry_delay = 2  # seconds
+        # Retries for get_torrent_info (original)
+        get_info_max_retries = 3
+        get_info_retry_delay = 2  # seconds
         temp_file = None
 
         # Get caller information
@@ -400,45 +401,105 @@ class TorrentProcessor:
         logging.info(f"TorrentProcessor.add_to_account called from {caller_info}")
         
         try:
+            # Process torrent to get magnet or temp_file path
+            # This temp_file is cleaned up in the finally block
             magnet, temp_file = self.process_torrent(magnet_or_url)
-            add_response = self.debrid_provider.add_torrent(magnet if magnet else None, temp_file)
+
+            if not magnet and not temp_file:
+                logging.warning(f"Could not process {magnet_or_url} into a magnet or torrent file. Aborting add_to_account.")
+                return None
+
+            # Retry logic for adding the torrent
+            add_max_retries = 3
+            add_retry_delay_seconds = 5  # Start with 5 seconds delay
             
-            torrent_id = add_response
+            add_response = None # To store the response from add_torrent
+
+            for attempt in range(add_max_retries):
+                try:
+                    logging.info(f"Attempt {attempt + 1}/{add_max_retries} to add torrent to debrid account: {magnet_or_url}")
+                    add_response = self.debrid_provider.add_torrent(magnet if magnet else None, temp_file)
+                    
+                    # Assuming add_response is the torrent_id or can be evaluated for success.
+                    # The original code directly assigned this to torrent_id.
+                    if add_response: # If provider returns a truthy value (e.g., torrent_id string)
+                        torrent_id = add_response 
+                        logging.info(f"Successfully added torrent (ID: {torrent_id}) on attempt {attempt + 1}.")
+                        break # Break from retry loop on success
+                    else:
+                        # Provider returned a falsy value without raising an exception, treat as non-retryable failure for this attempt.
+                        logging.error(f"Attempt {attempt + 1}: Failed to add torrent - provider returned no ID or error indication.")
+                        # If it's the last attempt, torrent_id will remain None, handled after loop.
+                        if attempt == add_max_retries - 1:
+                            logging.error("All attempts to add torrent failed as provider returned no ID.")
+                            return None # Explicitly return None if all attempts yield no ID
+
+                except ProviderUnavailableError as pue:
+                    if "429" in str(pue) and attempt < add_max_retries - 1:
+                        wait_time = add_retry_delay_seconds * (2 ** attempt)  # Exponential backoff
+                        logging.warning(
+                            f"Add torrent attempt {attempt + 1}/{add_max_retries} failed with 429 error. "
+                            f"Waiting {wait_time}s before next retry. Error: {str(pue)}"
+                        )
+                        time.sleep(wait_time)
+                    else: # Exhausted retries for 429, or a different ProviderUnavailableError
+                        logging.error(
+                            f"Failed to add torrent after {attempt + 1} attempts due to ProviderUnavailableError: {str(pue)}",
+                            exc_info=True
+                        )
+                        return None # Failed to add
+                except Exception as ex: # Catch any other unexpected error during add_torrent call
+                    logging.error(
+                        f"Unexpected error during add_torrent attempt {attempt + 1}/{add_max_retries}: {str(ex)}",
+                        exc_info=True
+                    )
+                    if attempt == add_max_retries - 1: # If it's the last attempt
+                        return None # Failed to add
+                    # For non-ProviderUnavailableError, decide if retry is appropriate or break.
+                    # For now, let's be conservative and not retry unknown errors immediately.
+                    # However, the user specifically mentioned 429s, so let's assume other errors are fatal for this operation.
+                    return None
+
+
             if not torrent_id:
-                logging.error("Failed to add torrent - no torrent ID returned")
+                logging.error(f"Failed to add torrent after {add_max_retries} attempts - no torrent ID was obtained.")
                 return None
                 
-            logging.info(f"Successfully added torrent (ID: {torrent_id})")
-            
-            for attempt in range(max_retries):
+            # Original logic for get_torrent_info
+            for attempt in range(get_info_max_retries): # Using original retry variables for get_info
                 info = self.debrid_provider.get_torrent_info(torrent_id)
                 
                 if not info or len(info.get('files', [])) == 0:
-                    time.sleep(retry_delay)
+                    time.sleep(get_info_retry_delay) # Using original delay for get_info
                     continue
                 
-                return info
+                return info # Successfully got info
             
+            # If loop finished and info is still not satisfactory
             if not info:
-                logging.error(f"Failed to get info for torrent {torrent_id} after {max_retries} attempts")
-            else:
-                logging.error(f"No files found in torrent {torrent_id} after {max_retries} attempts")
-            return info
+                logging.error(f"Failed to get info for torrent {torrent_id} after {get_info_max_retries} attempts")
+            else: # info exists but has no files
+                logging.error(f"No files found in torrent {torrent_id} after {get_info_max_retries} attempts")
+            # The finally block below will attempt to clean up this torrent_id if it has no files.
+            return info # Return info, which might be empty or None
             
         except Exception as e:
-            logging.error(f"Error adding magnet: {str(e)}", exc_info=True)
+            # This is the general catch-all for errors outside the add_torrent retry loop,
+            # or for errors from process_torrent.
+            logging.error(f"Error in add_to_account for {magnet_or_url}: {str(e)}", exc_info=True)
             return None
             
         finally:
-            if temp_file:
+            if temp_file and os.path.exists(temp_file): # Check os.path.exists for safety
                 try:
                     os.unlink(temp_file)
                 except Exception as e:
-                    logging.error(f"Error cleaning up temp file: {str(e)}")
+                    logging.error(f"Error cleaning up temp file {temp_file}: {str(e)}")
             
+            # Cleanup for empty/failed torrents
             if torrent_id and (not info or len(info.get('files', [])) == 0):
                 try:
-                    logging.info(f"Attempting to remove empty/failed torrent {torrent_id}")
+                    logging.info(f"Attempting to remove empty/failed torrent {torrent_id} (info state: {'exists' if info else 'None'})")
                     self.debrid_provider.remove_torrent(
                         torrent_id,
                         removal_reason="Empty or failed torrent during processing"

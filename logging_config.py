@@ -131,6 +131,18 @@ class APSchedulerDebugNoiseFilter(logging.Filter):
         return True
 # --- End of APSchedulerDebugNoiseFilter ---
 
+class APSchedulerMaxInstancesWarningFilter(logging.Filter):
+    """
+    Filters out all WARNING messages about maximum number of running instances reached from APScheduler.
+    """
+    def filter(self, record):
+        if (
+            record.levelno == logging.WARNING
+            and "maximum number of running instances reached" in record.getMessage()
+        ):
+            return False  # Suppress this warning
+        return True
+
 def log_system_stats():
     """Start the performance monitoring system"""
     monitor.start_monitoring()
@@ -194,6 +206,7 @@ def setup_debug_logging(log_dir):
     debug_handler.addFilter(ExcludeFilter())
     debug_handler.addFilter(APSchedulerQueueJobFilter())
     debug_handler.addFilter(APSchedulerDebugNoiseFilter())
+    debug_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
     formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     debug_handler.setFormatter(formatter)
@@ -208,6 +221,7 @@ def setup_info_logging(log_dir):
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     console_handler.addFilter(ExcludeFilter())
     console_handler.addFilter(APSchedulerQueueJobFilter())
+    console_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
     # Add handler to root logger
     logging.getLogger().addHandler(console_handler)

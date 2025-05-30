@@ -668,7 +668,7 @@ def trending_movies():
         'trakt-api-version': '2',
         'trakt-api-key': trakt_client_id
     }
-    api_url = "https://api.trakt.tv/movies/watched/weekly?extended=full"
+    api_url = "https://api.trakt.tv/movies/watched/weekly?extended=full&limit=20"
 
     try:
         response = api.get(api_url, headers=headers)
@@ -747,7 +747,7 @@ def trending_shows():
         'trakt-api-version': '2',
         'trakt-api-key': trakt_client_id
     }
-    api_url = "https://api.trakt.tv/shows/watched/weekly?extended=full"
+    api_url = "https://api.trakt.tv/shows/watched/weekly?extended=full&limit=20"
 
     try:
         response = api.get(api_url, headers=headers)
@@ -947,12 +947,30 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
             result['magnet'] = result['magnet_link']
             
         # Log some info about the result for debugging
+        if result is None:
+            logging.warning("Encountered None result during processing")
+            continue
+            
+        # Check if result is a dictionary and has the required keys
+        if not isinstance(result, dict):
+            logging.warning(f"Result is not a dictionary: {type(result)}")
+            continue
+            
         if 'torrent_url' in result:
-            logging.info(f"Torrent URL result: {result['title']} (URL: {result['torrent_url'][:40]}...)")
+            try:
+                logging.info(f"Torrent URL result: {result.get('title', 'Unknown')} (URL: {result['torrent_url'][:40]}...)")
+            except (TypeError, KeyError) as e:
+                logging.warning(f"Error logging torrent URL result: {e}")
         elif 'magnet_link' in result:
-            logging.info(f"Magnet link result: {result['title']} (Link: {result['magnet_link'][:40]}...)")
+            try:
+                logging.info(f"Magnet link result: {result.get('title', 'Unknown')} (Link: {result['magnet_link'][:40]}...)")
+            except (TypeError, KeyError) as e:
+                logging.warning(f"Error logging magnet link result: {e}")
         else:
-            logging.warning(f"Result without magnet or torrent URL: {result['title']}")
+            try:
+                logging.warning(f"Result without magnet or torrent URL: {result.get('title', 'Unknown')}")
+            except Exception as e:
+                logging.warning(f"Error logging result without links: {e}")
     
     # Only perform cache check if explicitly requested and not in background mode
     if hashes and not skip_cache_check and not background_cache_check:
