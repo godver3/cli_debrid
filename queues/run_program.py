@@ -95,6 +95,7 @@ from debrid import get_debrid_provider, ProviderUnavailableError
 from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
+import sys # Add for checking apscheduler.events
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -272,6 +273,7 @@ class ProgramRunner:
             # --- START EDIT: Add media analysis task interval ---
             'task_analyze_media_files': 1 * 60 * 60, # Once an hour
             # --- END EDIT ---
+            # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -473,6 +475,7 @@ class ProgramRunner:
             # --- START EDIT: Enable media analysis task by default ---
             # 'task_analyze_media_files', # disabled by default
             # --- END EDIT ---
+            # 'task_artificial_long_run',
         }
         logging.info("Initialized base enabled tasks.")
 
@@ -734,6 +737,9 @@ class ProgramRunner:
         self.task_execution_count = 0
         # ... (rest of __init__)
 
+        # In __init__, add:
+        self.manual_tasks = set()  # Track manually triggered tasks
+
     # *** START EDIT: New method to get task target ***
     def _get_task_target(self, task_name: str):
         """Resolves the target function and arguments for a given task name."""
@@ -797,7 +803,7 @@ class ProgramRunner:
                 lock_acquired = True
                 current_thread_id_inner = threading.get_ident() # Get ID again after lock
                 logging.info(f"SCHED_TASK_POST_LOCK: Acquired scheduler_lock for task '{task_name}' (Thread: {current_thread_id_inner})")
-                job_id = task_name # Use task name as job ID
+                job_id = task_name # Use task name as job ID for regular tasks
 
                 # Check if job already exists
                 existing_job = self.scheduler.get_job(job_id)
@@ -819,9 +825,8 @@ class ProgramRunner:
                 if target_func:
                     try:
                         # Wrap the target function
-                        # --- START EDIT: Pass task_name to the wrapper ---
-                        wrapped_func = functools.partial(self._run_and_measure_task, task_name, target_func, args, kwargs)
-                        # --- END EDIT ---
+                        # For regular tasks, actual_job_id and task_name_for_logging are the same (job_id)
+                        wrapped_func = functools.partial(self._run_and_measure_task, job_id, task_name, target_func, args, kwargs)
 
                         trigger = IntervalTrigger(seconds=interval_seconds)
 
@@ -2892,8 +2897,8 @@ class ProgramRunner:
 
     def trigger_task(self, task_name):
         """Manually trigger a task to run immediately by adding it to APScheduler's queue."""
-        normalized_name = self._normalize_task_name(task_name) # Use existing normalization
-        job_id_base = normalized_name # Base name for logging and naming
+        normalized_name = self._normalize_task_name(task_name)
+        job_id_base = normalized_name # This is the base task name, e.g., "task_artificial_long_run"
 
         logging.info(f"Attempting to manually trigger task: {job_id_base} by adding it to APScheduler queue.")
 
@@ -2901,22 +2906,27 @@ class ProgramRunner:
 
         if target_func:
             try:
-                wrapped_func = functools.partial(self._run_and_measure_task, job_id_base, target_func, args, kwargs)
-                run_now_date = datetime.now(self.scheduler.timezone)
-                
                 # Generate a unique ID for this manual job instance
                 manual_job_instance_id = f"manual_{job_id_base}_{uuid.uuid4()}"
+                
+                # Pass the unique manual_job_instance_id as the first arg (actual_job_id_from_scheduler)
+                # and job_id_base as the second arg (task_name_for_logging) to _run_and_measure_task
+                wrapped_func = functools.partial(self._run_and_measure_task, manual_job_instance_id, job_id_base, target_func, args, kwargs)
+                
+                run_now_date = datetime.now(self.scheduler.timezone)
 
                 with self.scheduler_lock:
                     self.scheduler.add_job(
                         func=wrapped_func,
-                        trigger='date',
+                        trigger='date',  # Use DateTrigger for true run-once
                         run_date=run_now_date,
-                        id=manual_job_instance_id, # Use the unique instance ID
+                        id=manual_job_instance_id, # Use the unique ID for this job instance
                         name=f"Manual run of {job_id_base}",
-                        replace_existing=False,
-                        misfire_grace_time=None # Allow job to run no matter how late
+                        replace_existing=False, # Should be false for unique IDs
+                        max_instances=1, # Max instances for this specific job ID
+                        misfire_grace_time=60 # Allow 1 minute grace time for manual tasks
                     )
+                    
                 logging.info(f"Task '{job_id_base}' (Manual Job ID: {manual_job_instance_id}) successfully queued for immediate execution via APScheduler.")
                 return {"success": True, "message": f"Task '{job_id_base}' queued for execution.", "job_id": manual_job_instance_id}
 
@@ -3698,38 +3708,68 @@ class ProgramRunner:
     def _job_listener(self, event: apscheduler.events.JobEvent):
         """Listener called for various job events to track executing tasks."""
         task_id_for_log = getattr(event, 'job_id', 'unknown_job')
-        event_code_for_log = getattr(event, 'code', 'unknown_event')
+        event_code = event.code 
+        is_manual_task = task_id_for_log.startswith('manual_')
+        log_prefix = f"APScheduler event for task '{task_id_for_log}':"
 
-        # --- START EDIT: Modify set based on event ---
-        if event_code_for_log == EVENT_JOB_SUBMITTED:
-            with self._running_task_lock:
-                self.currently_executing_tasks.add(task_id_for_log)
+        if event_code == EVENT_JOB_SUBMITTED:
+            logging.info(f"{log_prefix} Job Submitted.")
+            if is_manual_task:
+                with self._running_task_lock: # Lock for modifying manual_tasks
+                    self.manual_tasks.add(task_id_for_log)
+                    logging.debug(f"Manual task '{task_id_for_log}' added to manual_tasks set.")
+            return # Submitted jobs don't proceed to interval adjustment logic
 
-        elif event_code_for_log in [EVENT_JOB_EXECUTED, EVENT_JOB_ERROR, EVENT_JOB_MISSED]:
-            with self._running_task_lock:
-                # Use discard to safely remove even if not present
-                self.currently_executing_tasks.discard(task_id_for_log)
-        # --- END EDIT ---
+        elif event_code == EVENT_JOB_EXECUTED: # Successful completion
+            logging.info(f"{log_prefix} Job Executed Successfully.")
+            if is_manual_task:
+                with self._running_task_lock: # Lock for modifying manual_tasks
+                    self.manual_tasks.discard(task_id_for_log)
+                    logging.debug(f"Manual task '{task_id_for_log}' removed from manual_tasks set after successful execution.")
+                    # DO NOT return here; successful executions proceed to interval adjustment logic below.
 
+        elif event_code == EVENT_JOB_ERROR:
+            exception_info = getattr(event, 'exception', 'N/A')
+            logging.error(f"{log_prefix} Job Errored. Exception: {exception_info}", exc_info=True if event.exception else False)
+            if is_manual_task:
+                with self._running_task_lock: # Lock for modifying manual_tasks
+                    self.manual_tasks.discard(task_id_for_log)
+                    logging.debug(f"Manual task '{task_id_for_log}' removed from manual_tasks set due to error.")
+            return # Errors skip interval adjustment logic
 
-        # --- Handle Exception Logging (Only for relevant events) ---
-        if event_code_for_log == EVENT_JOB_ERROR and hasattr(event, 'exception') and event.exception:
-             logging.warning(f"Job '{task_id_for_log}' failed with exception: {getattr(event, 'exception', 'N/A')}")
-             return
+        elif event_code == EVENT_JOB_MISSED:
+            logging.warning(f"{log_prefix} Job Missed.")
+            if is_manual_task:
+                with self._running_task_lock: # Lock for modifying manual_tasks
+                    self.manual_tasks.discard(task_id_for_log)
+                    logging.debug(f"Manual task '{task_id_for_log}' removed from manual_tasks set due to being missed.")
+            return # Missed jobs skip interval adjustment logic
 
-        # --- Handle Interval Adjustment (Only for successful execution) ---
-        if event_code_for_log != EVENT_JOB_EXECUTED:
-             return
+        elif event_code == EVENT_JOB_MAX_INSTANCES:
+            logging.warning(f"{log_prefix} Job Max Instances Reached (skipped).")
+            if is_manual_task: # If a manual task was somehow submitted then skipped for max_instances
+                with self._running_task_lock: # Lock for modifying manual_tasks
+                    self.manual_tasks.discard(task_id_for_log)
+                    logging.debug(f"Manual task '{task_id_for_log}' removed from manual_tasks set due to max instances.")
+            return # Max_instances skips interval adjustment logic
+        
+        else: # Other unknown event codes
+            logging.debug(f"{log_prefix} Unhandled event code {event_code}.")
+            return # Unhandled events skip interval adjustment logic
 
+        # Original comment: Handle Interval Adjustment (Only for successful execution)
+        # The logic here ensures that only EVENT_JOB_EXECUTED reaches this point.
         # ... (rest of interval adjustment logic remains the same) ...
     # *** END EDIT ***
 
     # *** START EDIT: Modify _run_and_measure_task for tracemalloc sampling AND heavy task locking ***
-    def _run_and_measure_task(self, task_name_for_log, func, args, kwargs): # Added task_name_for_log
+    def _run_and_measure_task(self, actual_job_id_from_scheduler, task_name_for_logging, func, args, kwargs): # Added task_name_for_log
         """Wraps a task function to measure execution duration, track memory usage with tracemalloc, and handle locking for heavy DB tasks."""
         start_time = time.monotonic()
-        # Use the passed task_name_for_log instead of func.__name__ for consistency
-        # task_name_for_log = getattr(func, '__name__', 'unknown_function') # Removed
+        
+        log_display_name = task_name_for_logging
+        if actual_job_id_from_scheduler != task_name_for_logging: # True for manual tasks
+            log_display_name = f"{task_name_for_logging} (Job ID: {actual_job_id_from_scheduler})"
 
         mem_before = 0
         mem_after = 0
@@ -3739,15 +3779,20 @@ class ProgramRunner:
         # --- Heavy Task Lock Handling ---
         # is_heavy_task = task_name_for_log in self.HEAVY_DB_TASKS # REVERTED - Scheduler handles global queue
         # if is_heavy_task: # REVERTED
-            # logging.debug(f"Task '{task_name_for_log}' requires heavy task lock. Attempting acquisition...") # REVERTED
+            # logging.debug(f"Task '{task_name_for_logging}' requires heavy task lock. Attempting acquisition...") # REVERTED
             # lock_acquired = self.heavy_task_lock.acquire(blocking=False) # REVERTED
             # if not lock_acquired: # REVERTED
-                 # logging.info(f"Skipping heavy task '{task_name_for_log}' execution: Another heavy task is currently running.") # REVERTED
+                 # logging.info(f"Skipping heavy task '{task_name_for_logging}' execution: Another heavy task is currently running.") # REVERTED
                  # return # Skip execution if lock not acquired # REVERTED
             # else: # REVERTED
-                 # logging.info(f"Heavy task lock acquired for '{task_name_for_log}'. Proceeding with execution.") # REVERTED
+                 # logging.info(f"Heavy task lock acquired for '{task_name_for_logging}'. Proceeding with execution.") # REVERTED
         # --- End Heavy Task Lock Handling ---
 
+        # --- START EDIT: Manage currently_executing_tasks ---
+        with self._running_task_lock:
+            self.currently_executing_tasks.add(actual_job_id_from_scheduler)
+            logging.info(f"Task '{log_display_name}' started execution, added to currently_executing_tasks.")
+        # --- END EDIT ---
 
         # Determine if we should sample this execution
         # Check if enabled AND available AND actually tracing
@@ -3757,7 +3802,7 @@ class ProgramRunner:
             if self.task_execution_count % self.tracemalloc_sample_rate == 0:
                 run_tracemalloc_sample = True
                 # Log when a sample is being taken for visibility
-                logging.info(f"[Tracemalloc] Sampling task '{task_name_for_log}' (Execution #{self.task_execution_count})")
+                logging.info(f"[Tracemalloc] Sampling task '{log_display_name}' (Execution #{self.task_execution_count})")
 
         # Get memory usage before if sampling this execution
         # Check available again just before use
@@ -3765,11 +3810,11 @@ class ProgramRunner:
             try:
                 mem_before, _ = tracemalloc.get_traced_memory()
             except Exception as e_mem:
-                logging.error(f"[Tracemalloc] Error getting memory before task '{task_name_for_log}': {e_mem}")
+                logging.error(f"[Tracemalloc] Error getting memory before task '{log_display_name}': {e_mem}")
                 run_tracemalloc_sample = False # Don't try 'after' if 'before' failed
         elif run_tracemalloc_sample:
              # Should not happen if checks above are correct, but log defensively
-             logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available/tracing at point of memory check.")
+             logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available/tracing at point of memory check.")
              run_tracemalloc_sample = False
 
 
@@ -3790,14 +3835,14 @@ class ProgramRunner:
 
                     log_level = logging.INFO if abs(mem_delta_mb) < 1 else logging.WARNING # Log higher if delta > 1MB
                     # Added [Tracemalloc Sample] prefix for clarity
-                    logging.log(log_level, f"Task '{task_name_for_log}' completed in {duration:.3f}s. [Tracemalloc Sample] Mem Before: {mem_before_mb:.2f}MB, Mem After: {mem_after_mb:.2f}MB, Delta: {mem_delta_mb:+.2f}MB")
+                    logging.log(log_level, f"Task '{log_display_name}' completed in {duration:.3f}s. [Tracemalloc Sample] Mem Before: {mem_before_mb:.2f}MB, Mem After: {mem_after_mb:.2f}MB, Delta: {mem_delta_mb:+.2f}MB")
 
                     # If memory increased significantly during the sample, log top allocations
                     if mem_delta > 1024 * 1024: # Log top allocations if increase > 1MB (adjust threshold if needed)
                         snapshot = tracemalloc.take_snapshot()
                         # Log top allocations from the end snapshot. Comparing snapshots adds complexity.
                         top_stats = snapshot.statistics('lineno')
-                        logging.warning(f"[Tracemalloc] Task '{task_name_for_log}' sample showed positive memory delta > 1MB. Top 5 allocations at end:")
+                        logging.warning(f"[Tracemalloc] Task '{log_display_name}' sample showed positive memory delta > 1MB. Top 5 allocations at end:")
                         for i, stat in enumerate(top_stats[:5], 1):
                             # Limit traceback line length for cleaner logs
                             trace_line = stat.traceback.format()[-1]
@@ -3805,21 +3850,21 @@ class ProgramRunner:
                             logging.warning(f"  {i}: {trace_line} - Size: {stat.size / 1024:.1f} KiB, Count: {stat.count}")
 
                 except Exception as e_mem:
-                    logging.error(f"[Tracemalloc] Error getting memory after task '{task_name_for_log}': {e_mem}")
+                    logging.error(f"[Tracemalloc] Error getting memory after task '{log_display_name}': {e_mem}")
             elif run_tracemalloc_sample:
                 # Log if we intended to sample but tracemalloc became unavailable
-                 logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available at point of 'after' memory check.")
+                 logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of 'after' memory check.")
 
 
             # Optional: Log normal duration if not sampling (can be noisy)
             # else:
-            #    logging.debug(f"Task '{task_name_for_log}' completed successfully in {duration:.3f}s (No tracemalloc sample this time)")
+            #    logging.debug(f"Task '{log_display_name}' completed successfully in {duration:.3f}s (No tracemalloc sample this time)")
 
             return duration # Return duration for the listener
 
         except Exception as e:
             duration = time.monotonic() - start_time
-            logging.error(f"Error during execution of job '{task_name_for_log}': {e}", exc_info=True)
+            logging.error(f"Error during execution of job '{log_display_name}': {e}", exc_info=True)
 
             # Log memory even on error if sampling this execution
             # Check available again just before use
@@ -3831,23 +3876,28 @@ class ProgramRunner:
                      mem_delta_mb = mem_delta / (1024 * 1024)
                      mem_before_mb = mem_before / (1024 * 1024)
                      mem_after_mb = mem_after / (1024 * 1024)
-                     logging.error(f"[Tracemalloc] Memory state after error in '{task_name_for_log}'. Mem Before: {mem_before_mb:.2f}MB, Mem After: {mem_after_mb:.2f}MB, Delta: {mem_delta_mb:+.2f}MB")
+                     logging.error(f"[Tracemalloc] Memory state after error in '{log_display_name}'. Mem Before: {mem_before_mb:.2f}MB, Mem After: {mem_after_mb:.2f}MB, Delta: {mem_delta_mb:+.2f}MB")
                  except Exception as e_mem_err:
-                     logging.error(f"[Tracemalloc] Error getting memory after task error in '{task_name_for_log}': {e_mem_err}")
+                     logging.error(f"[Tracemalloc] Error getting memory after task error in '{log_display_name}': {e_mem_err}")
             elif run_tracemalloc_sample:
                  # Log if we intended to sample but tracemalloc became unavailable
-                 logging.warning(f"[Tracemalloc] Attempted sample for '{task_name_for_log}', but tracemalloc not available at point of error memory check.")
+                 logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of error memory check.")
 
             raise # Re-raise the exception
-        # finally:
+        finally:
+            # --- START EDIT: Manage currently_executing_tasks ---
+            with self._running_task_lock:
+                self.currently_executing_tasks.discard(actual_job_id_from_scheduler)
+                logging.info(f"Task '{log_display_name}' finished execution, removed from currently_executing_tasks.")
+            # --- END EDIT ---
             # --- Release heavy task lock if acquired ---
             # if lock_acquired: # REVERTED
                 # try: # REVERTED
                     # self.heavy_task_lock.release() # REVERTED
-                    # logging.info(f"Heavy task lock released for '{task_name_for_log}'.") # REVERTED
+                    # logging.info(f"Heavy task lock released for '{task_name_for_logging}'.") # REVERTED
                 # except Exception as e_release: # REVERTED
                     # Should not happen if lock_acquired is True, but log defensively # REVERTED
-                    # logging.error(f"Error releasing heavy task lock for '{task_name_for_log}': {e_release}") # REVERTED
+                    # logging.error(f"Error releasing heavy task lock for '{task_name_for_logging}': {e_release}") # REVERTED
             # --- End Release heavy task lock --- # REVERTED
     # *** END EDIT ***
 
@@ -3965,6 +4015,19 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error during scheduled media file analysis and repair: {e}", exc_info=True)
     # --- END EDIT ---
+
+    # *** START EDIT: Add the new long-running task method ***
+    def task_artificial_long_run(self):
+        task_name = 'task_artificial_long_run'
+        logging.info(f"'{task_name}' has started.")
+        
+        duration_seconds = 120 # Run for 2 minutes
+        
+        logging.info(f"'{task_name}' will now sleep for {duration_seconds} seconds.")
+        time.sleep(duration_seconds)
+        
+        logging.info(f"'{task_name}' has finished sleeping and is now complete.")
+    # *** END EDIT ***
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')
@@ -4380,7 +4443,8 @@ def _setup_scheduler_listeners(runner_instance):
                 apscheduler.events.EVENT_JOB_SUBMITTED |
                 apscheduler.events.EVENT_JOB_EXECUTED |
                 apscheduler.events.EVENT_JOB_ERROR |
-                apscheduler.events.EVENT_JOB_MISSED
+                apscheduler.events.EVENT_JOB_MISSED |
+                apscheduler.events.EVENT_JOB_MAX_INSTANCES # Added EVENT_JOB_MAX_INSTANCES
             )
             runner_instance.initial_listeners_setup_complete = True # Mark listeners as setup
             logging.info(f"[_setup_scheduler_listeners] APScheduler job listeners added successfully for scheduler (ID: {id(runner_instance.scheduler)}).")

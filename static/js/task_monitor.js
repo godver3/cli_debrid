@@ -517,40 +517,16 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
     }
 
     if (runningTasksList && runningTasksList.length > 0) {
-        let displayTaskName = 'Multiple Tasks Running';
-        let displayTime = `${runningTasksList.length} active`;
-
-        let primaryRunningTask = runningTasksList.find(taskName => {
-            return TASK_DISPLAY_PRIORITY.some(priority => taskName.toLowerCase().includes(priority.toLowerCase())) ||
-                   taskName.endsWith('_wanted');
-        });
-        if (!primaryRunningTask && runningTasksList.length > 0) {
-            primaryRunningTask = runningTasksList[0];
-        }
+        // Since only one task can be running, we can just use the first one
+        const runningTask = runningTasksList[0];
+        const taskDetails = scheduledTasks.find(st => st.name === runningTask);
         
-        // --- START EDIT: Add logging ---
-        console.log('[TaskMonitor LOG] updateTaskDisplay: Primary running task determined:', primaryRunningTask, 'from list:', JSON.parse(JSON.stringify(runningTasksList)));
-        // --- END EDIT ---
-        
-        if (primaryRunningTask) {
-            displayTaskName = primaryRunningTask;
-            const taskDetails = scheduledTasks.find(st => st.name === primaryRunningTask);
-            if (taskDetails && taskDetails.interval) {
-                displayTime = `Running (Interval: ${formatTime(taskDetails.interval)})`;
-            } else {
-                 displayTime = 'Running';
-            }
-            // --- START EDIT: Add logging ---
-            console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying single primary task:', displayTaskName, 'Time:', displayTime);
-            // --- END EDIT ---
+        currentTaskNameElement.textContent = runningTask;
+        if (taskDetails && taskDetails.interval) {
+            currentTaskTimeElement.textContent = `Running (Interval: ${formatTime(taskDetails.interval)})`;
         } else {
-            // --- START EDIT: Add logging ---
-             console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying "Multiple Tasks Running". Count:', runningTasksList.length);
-            // --- END EDIT ---
+            currentTaskTimeElement.textContent = 'Running';
         }
-        
-        currentTaskNameElement.textContent = displayTaskName;
-        currentTaskTimeElement.textContent = displayTime;
         currentTaskDisplay.classList.add('running');
     } else if (scheduledTasks && scheduledTasks.length > 0) {
         let nextTask = null;
