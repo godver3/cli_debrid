@@ -154,7 +154,6 @@ def format_notification_content(notifications, notification_type, notification_c
     unique_notifications = []
     seen_keys = set()
     if isinstance(notifications, list): # Ensure it's a list before iterating
-        logging.debug(f"Notifications: Starting deduplication for batch of {len(notifications)} items.") # Add log
         for item in notifications:
             if not isinstance(item, dict): # Skip non-dict items
                 logging.warning(f"Notifications: Skipping non-dictionary item during deduplication: {item}")
@@ -177,22 +176,12 @@ def format_notification_content(notifications, notification_type, notification_c
             if key not in seen_keys:
                 seen_keys.add(key)
                 unique_notifications.append(item)
-                logging.debug(f"Notifications: Keeping unique item with dedupe key: {key}") # Add log
-            else:
-                 logging.debug(f"Notifications: Skipping duplicate item with dedupe key: {key}") # Modify log
     else:
         # If notifications is not a list (e.g., single system message), keep it as is
         unique_notifications = notifications
-        if not isinstance(notifications, list): # Add log for non-list case
-             logging.debug(f"Notifications: Input was not a list, skipping deduplication. Item: {notifications}")
-
-
-    # --- END: Deduplicate notifications ---
-    logging.debug(f"Notifications: Finished deduplication. {len(unique_notifications)} unique items remain.") # Add log
 
     # --- START EDIT: Use the deduplicated list from now on ---
     if not unique_notifications:
-         logging.debug("Notifications: No unique notifications left after deduplication.") # Add log
          return "" # Return empty string if no unique notifications left
     # --- END EDIT ---
 
@@ -275,7 +264,6 @@ def format_notification_content(notifications, notification_type, notification_c
 
     # Group items by show/movie
     grouped_items = {}
-    logging.debug("Notifications: Starting grouping of unique items...") # Add log
     for item in unique_notifications:
         # --- START EDIT: Check for Checking state during an upgrade ---
         # If the state is 'Checking' but 'upgrading_from' is present, treat it as 'Upgrading' for formatting.
@@ -297,10 +285,8 @@ def format_notification_content(notifications, notification_type, notification_c
         # Store the original item, but we'll use the effective_state when formatting
         grouped_items[key].append(item)
         # More detailed log for adding item to group
-        logging.debug(f"Notifications: Adding item (Title: {item.get('title')}, Version: {version_key_part}, OrigState: {original_state}, EffState: {effective_state}) to group with key: {key}")
 
     content = []
-    logging.debug(f"Notifications: Finished grouping. {len(grouped_items)} groups formed.") # Add log
 
     # Process each group
     # --- EDIT: Update the key unpacking to include version ---
@@ -308,7 +294,6 @@ def format_notification_content(notifications, notification_type, notification_c
     # --- END EDIT ---
         # Log details about the group being processed
         group_key_for_log = (title, type_, year, state, is_upgrade, version)
-        logging.debug(f"Notifications: Processing group with key: {group_key_for_log}. Contains {len(items)} item(s). First item details: {items[0]}")
         # Create a representative item for the group
         group_item = items[0].copy()
 
@@ -320,7 +305,6 @@ def format_notification_content(notifications, notification_type, notification_c
         # Add the title line only once per group using the (potentially modified) group_item
         formatted_title_line = format_title(group_item) # Get the formatted title
         content.append(formatted_title_line) # Add it
-        logging.debug(f"Notifications: Added title line for group {group_key_for_log}: '{formatted_title_line}'") # Log title line addition
 
         # Sort episodes by season and episode number
         if type_ == 'episode':
@@ -350,12 +334,10 @@ def format_notification_content(notifications, notification_type, notification_c
                 episode_line = format_episode(first_item)
                 if episode_line:
                     content.append(f"{episode_line} {format_state_suffix(effective_episode_state, first_item.get('is_upgrade', False))}")
-                    logging.debug(f"Notifications: Added first episode line for group {group_key_for_log}: '{content[-1]}'")
 
                 # Add a summary for the rest
                 num_other_episodes = len(sorted_items) - 1
                 content.append(f"    ...and {num_other_episodes} other episode(s).")
-                logging.debug(f"Notifications: Added truncated summary for group {group_key_for_log}: '{content[-1]}'")
             else:
                 # Original behavior if not truncating or only one episode
                 for item in sorted_items:
@@ -369,17 +351,15 @@ def format_notification_content(notifications, notification_type, notification_c
                         # Pass the effective state to format_state_suffix
                         content.append(f"{episode_line} {format_state_suffix(effective_episode_state, item.get('is_upgrade', False))}")
                     # --- END EDIT ---
-                    logging.debug(f"Notifications: Added episode line for group {group_key_for_log}: '{content[-1]}'") # Log episode line addition
             # --- END: Truncate episode notifications ---
         else:
             # For movies, just add the state suffix (using the effective state) to the title line
             state_suffix = format_state_suffix(state, is_upgrade) # Get suffix
             content[-1] = f"{content[-1]} {state_suffix}" # Append suffix
-            logging.debug(f"Notifications: Appended movie state suffix for group {group_key_for_log}. Full line: '{content[-1]}'") # Log movie line update
 
     # Join with single newlines between items
     final_content = "\n".join(content)
-    logging.debug(f"Notifications: Final formatted content generated:\n---\n{final_content}\n---") # Log final content
+    logging.debug(f"Notifications: Final formattd notification:\n---\n{final_content}\n---") # Log final content
     return final_content
 
 def start_safety_valve_timer(enabled_notifications, notification_category):
@@ -688,14 +668,12 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
     if notification_category in ['collected', 'upgrading']:
         if notifications: # Ensure there's at least one notification
             trigger_scan_check = True
-            logging.debug(f"Overseerr: Category '{notification_category}' will trigger scan check.")
     elif notification_category == 'state_change' and isinstance(notifications, list):
         for item_data in notifications:
             if isinstance(item_data, dict):
                 current_state = item_data.get('new_state')
                 if current_state == 'Collected' or current_state == 'Upgraded':
                     trigger_scan_check = True
-                    logging.debug(f"Overseerr: Item '{item_data.get('title')}' reached '{current_state}' via state_change, will trigger scan check.")
                     break # One item is enough to trigger the scan check for all instances
     
     if trigger_scan_check:
@@ -717,24 +695,19 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
             # it's assumed to be handled by the dedicated 'collected'/'upgrading' notification flow.
             # We exclude it from this generic 'state_change' batch to prevent duplication.
             if item_state == 'Collected' or item_state == 'Upgraded':
-                logging.debug(f"Item '{item_in_batch.get('title', 'N/A')}' with state '{item_state}' will be excluded from 'state_change' batch (category: {notification_category}) to prevent duplication with dedicated notifications.")
                 continue
             temp_notifications.append(item_in_batch)
         
         notifications = temp_notifications # Use the filtered list
         if original_count > 0 and not notifications:
-            logging.debug(f"All items filtered from 'state_change' (category: {notification_category}) batch as they were 'Collected'/'Upgraded'. No 'state_change' notification to send for this specific batch content.")
+            pass
             # No need to return early, subsequent logic will handle an empty 'notifications' list
             # by eventually producing no content to send.
-        elif original_count != len(notifications):
-            logging.debug(f"Filtered out {original_count - len(notifications)} 'Collected'/'Upgraded' items from 'state_change' (category: {notification_category}) batch.")
     # --- END: MODIFICATION ---
 
     for notification_id, notification_config in enabled_notifications.items():
-        logging.debug(f"Processing notification target ID: {notification_id}")
 
         if not notification_config.get('enabled', False):
-            logging.debug(f"Target {notification_id} is NOT enabled.")
             continue
         logging.debug(f"Target {notification_id} IS enabled.")
 
@@ -743,9 +716,7 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
         # Check if the target is enabled for the overall category of this notification batch
         category_enabled = notify_on.get(notification_category, True) # Default to True if key missing
         if not category_enabled:
-            logging.debug(f"Target {notification_id} has batch category '{notification_category}' DISABLED.")
             continue
-        logging.debug(f"Target {notification_id} has batch category '{notification_category}' ENABLED.")
 
         # --- Item-Level Filtering (New Logic) ---
         content_input = notifications # Default to using the original batch
@@ -779,11 +750,8 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
 
                 if item_category_enabled:
                     filtered_items.append(item)
-                else:
-                    logging.debug(f"Filtering out item for target {notification_id} because category '{item_category}' is disabled. Item: {item.get('title', 'N/A')}")
 
             if not filtered_items:
-                logging.debug(f"No items left for target {notification_id} after item-level filtering for batch category '{notification_category}'. Skipping.")
                 continue # Skip this target if no relevant items remain
 
             content_input = filtered_items # Use the filtered list for formatting
@@ -792,16 +760,13 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
 
 
         notification_type = notification_config.get('type')
-        logging.debug(f"Target {notification_id} type is '{notification_type}'.")
 
         content = "" # Initialize content
         try:
             # Pass the potentially filtered list (content_input) to the formatter
             content = format_notification_content(content_input, notification_type, notification_category)
             if not content: # Handle case where formatting results in empty string (e.g., after deduplication)
-                 logging.debug(f"Formatted content for {notification_id} is empty after format_notification_content. Skipping sending.")
                  continue
-            logging.debug(f"Formatted content for {notification_id} ({notification_type}): {content[:100]}...")
         except Exception as e:
             logging.error(f"Failed to format notification content for {notification_type} ({notification_id}): {str(e)}")
             send_successful = False
@@ -816,11 +781,8 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     logging.warning(f"Skipping Discord notification ({notification_id}): webhook URL is empty")
                     continue
 
-                logging.info(f"--> Attempting to send Discord notification for {notification_id}...")
                 send_result = send_discord_notification(webhook_url, content) # Store the result
-                if send_result:
-                     logging.info(f"<-- Discord notification for {notification_id} SUCCEEDED.")
-                else:
+                if not send_result:
                      logging.warning(f"<-- Discord notification for {notification_id} FAILED after retries.")
 
             elif notification_type == 'Email':
@@ -838,13 +800,10 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                      logging.warning(f"Skipping Email notification ({notification_id}): Missing required SMTP configuration fields.")
                      continue
 
-                logging.info(f"--> Attempting to send Email notification for {notification_id}...")
                 # Pass notification_category here
                 send_result = send_email_notification(smtp_config, content, notification_category)
-                if send_result:
-                    logging.info(f"<-- Email notification for {notification_id} SUCCEEDED.")
-                else:
-                    logging.warning(f"<-- Email notification for {notification_id} FAILED.")
+                if not send_result:
+                     logging.warning(f"<-- Email notification for {notification_id} FAILED after retries.")
 
             elif notification_type == 'Telegram':
                 # Add a flag for processed_telegram if you are tracking it
@@ -855,13 +814,10 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     logging.warning(f"Skipping Telegram notification ({notification_id}): bot_token or chat_id is empty")
                     continue
 
-                logging.info(f"--> Attempting to send Telegram notification for {notification_id}...")
                 try:
                     send_result = send_telegram_notification(bot_token, chat_id, content)
-                    if send_result:
-                        logging.info(f"<-- Telegram notification for {notification_id} SUCCEEDED.")
-                    else:
-                        logging.warning(f"<-- Telegram notification for {notification_id} FAILED after retries.")
+                    if not send_result:
+                         logging.warning(f"<-- Telegram notification for {notification_id} FAILED after retries.")
                 except Exception as e: # send_telegram_notification can raise exceptions
                     logging.error(f"<-- Telegram notification for {notification_id} FAILED with exception: {str(e)}")
                     send_result = False
@@ -878,12 +834,10 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     logging.warning(f"Skipping NTFY notification ({notification_id}): host or topic is empty")
                     continue
 
-                logging.info(f"--> Attempting to send NTFY notification for {notification_id}...")
                 try:
                     # send_ntfy_notification doesn't explicitly return True/False
                     # but logs success/failure. We'll assume success if no exception.
                     send_ntfy_notification(host, api_key, priority, topic, content)
-                    logging.info(f"<-- NTFY notification for {notification_id} attempt logged by sender function.")
                     send_result = True # Assume success if no exception
                 except Exception as e:
                     logging.error(f"<-- NTFY notification for {notification_id} FAILED with exception: {str(e)}")
@@ -900,12 +854,6 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
             send_successful = False
             continue
 
-    if not processed_discord:
-         logging.debug("No Discord notification target was processed (check enabled status, category filter, and type).")
-    if not processed_email:
-         logging.debug("No Email notification target was processed (check enabled status, category filter, and type).")
-
-    logging.debug(f"Finished sending external notifications for category '{notification_category}'. Overall success: {send_successful}")
     return send_successful
 
 def send_notifications(notifications, enabled_notifications, notification_category='collected'):
@@ -919,14 +867,11 @@ def send_discord_notification(webhook_url, content):
 
     for attempt in range(MAX_RETRIES):
         try:
-            logging.debug(f"Discord POST attempt {attempt + 1} to {webhook_url}")
             response = requests.post(webhook_url, json={'content': content}, timeout=15)
-            logging.debug(f"Discord POST attempt {attempt + 1} status: {response.status_code}, Response: {response.text[:200]}")
 
             response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
             # If successful:
-            logging.info(f"Discord POST attempt {attempt + 1} successful.")
             return True # Successfully sent the original message
 
         except requests.exceptions.Timeout:
@@ -954,7 +899,6 @@ def send_discord_notification(webhook_url, content):
                         # Call the helper function to send in chunks
                         split_success = _send_discord_chunks(webhook_url, content, CHUNK_SEND_DELAY)
                         if split_success:
-                            logging.info("Successfully sent Discord notification content in smaller chunks.")
                             return True # Return True as the content was eventually sent
                         else:
                             logging.error("Failed to send Discord notification content even after splitting into chunks.")
@@ -974,11 +918,8 @@ def send_discord_notification(webhook_url, content):
                         try:
                             # Discord returns Retry-After in seconds (float or int)
                             delay = max(float(retry_after), delay) # Use longer delay if Retry-After is bigger
-                            logging.info(f"Respecting Discord Retry-After header: waiting {delay:.2f} seconds.")
                         except ValueError:
                             logging.warning(f"Could not parse Retry-After header value: {retry_after}. Using default backoff.")
-                    else:
-                         logging.info(f"No Retry-After header found. Using default backoff: {delay} seconds.")
 
                     if attempt < MAX_RETRIES - 1:
                          time.sleep(delay)
@@ -1015,8 +956,6 @@ def _send_discord_chunks(webhook_url, original_content, delay_between_chunks, ma
     total_lines = len(lines)
     num_chunks = math.ceil(total_lines / max_lines_per_chunk)
     
-    logging.info(f"Splitting content into {num_chunks} chunks (max {max_lines_per_chunk} lines each).")
-    
     all_chunks_sent = True
     for i in range(num_chunks):
         start_index = i * max_lines_per_chunk
@@ -1025,20 +964,15 @@ def _send_discord_chunks(webhook_url, original_content, delay_between_chunks, ma
         chunk_content = "\n".join(chunk_lines)
         
         if not chunk_content:
-            logging.debug(f"Skipping empty chunk {i+1}/{num_chunks}")
             continue
-            
-        logging.debug(f"Sending chunk {i+1}/{num_chunks} ({len(chunk_lines)} lines) to {webhook_url}")
-        
+                    
         try:
             # Use a simple, single attempt for each chunk for now. Could add retries here too if needed.
             response = requests.post(webhook_url, json={'content': chunk_content}, timeout=10)
             response.raise_for_status() # Check for errors on chunk send
-            logging.info(f"Successfully sent chunk {i+1}/{num_chunks}.")
             
             # Add delay before sending the next chunk (if not the last one)
             if i < num_chunks - 1:
-                logging.debug(f"Waiting {delay_between_chunks}s before next chunk...")
                 time.sleep(delay_between_chunks)
                 
         except requests.exceptions.RequestException as chunk_e:
@@ -1102,12 +1036,9 @@ def send_email_notification(smtp_config, content, notification_category):
                 logging.debug("Starting TLS for email connection.")
                 server.starttls()
                 server.ehlo() # Re-identify after starting TLS
-            else:
-                 logging.debug("SMTP server does not support STARTTLS.")
 
             # Login only if username/password are provided
             if smtp_config.get('smtp_username') and smtp_config.get('smtp_password'):
-                logging.debug("Logging into SMTP server.")
                 try:
                     server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
                 except smtplib.SMTPAuthenticationError as auth_err:
@@ -1116,12 +1047,8 @@ def send_email_notification(smtp_config, content, notification_category):
                 except smtplib.SMTPException as smtp_err:
                     logging.error(f"SMTP login error: {smtp_err}")
                     return False # Other login error
-            else:
-                logging.debug("Proceeding with anonymous SMTP connection (no username/password provided).")
 
-            logging.debug(f"Sending email to {smtp_config['to_address']} with subject '{subject}'")
             server.send_message(msg)
-        logging.info(f"Email notification sent successfully to {smtp_config['to_address']}")
         return True # Indicate success
     except smtplib.SMTPConnectError as e:
         logging.error(f"Failed to connect to SMTP server {smtp_config['smtp_server']}:{smtp_config['smtp_port']}. Error: {e}")
@@ -1154,7 +1081,6 @@ def send_ntfy_notification(host, api_key, priority, topic, content):
             data= (content).encode('utf-8'),
             headers=headers)
         response.raise_for_status()
-        logging.info(f"NTFY notification sent successfully")
     except Exception as e:
         logging.error(f"Failed to send NTFY notification: {str(e)}")
 
@@ -1167,8 +1093,6 @@ def send_telegram_notification(bot_token, chat_id, content):
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             response = requests.post(url, json={'chat_id': chat_id, 'text': content, 'parse_mode': 'HTML'})
             response.raise_for_status()
-            if attempt > 0:
-                logging.info(f"Telegram notification sent successfully after {attempt + 1} attempts")
             return True
         except requests.exceptions.RequestException as e:
             if attempt < MAX_RETRIES - 1:
@@ -1197,7 +1121,7 @@ def get_enabled_notifications():
     except RuntimeError as e:  # Catches "Working outside of application context"
         if "Working outside of application context" in str(e):
             # This is expected during startup, just log at debug level
-            logging.debug("Outside Flask context, reading notifications directly from config")
+            pass
         else:
             # Log other RuntimeErrors as errors
             logging.error(f"Unexpected RuntimeError in get_enabled_notifications: {str(e)}")
@@ -1239,7 +1163,6 @@ def get_enabled_notifications():
                 ]):
                     enabled_notifications[notification_id] = notification_config
 
-        logging.debug(f"Found {len(enabled_notifications)} enabled notifications from config")
         return enabled_notifications
 
 def send_program_stop_notification(message="Program stopped"):
@@ -1327,13 +1250,11 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
     """
     if overseerr_instance_id in overseerr_job_id_cache:
         cached_job_id = overseerr_job_id_cache[overseerr_instance_id]
-        logging.debug(f"Overseerr: Using cached Job ID '{cached_job_id}' for scan on instance '{overseerr_instance_id}'.")
         return cached_job_id
 
     api_endpoint = f"{overseerr_url}/api/v1/settings/jobs"
     headers = {"X-Api-Key": overseerr_api_key, "Accept": "application/json"}
     
-    logging.debug(f"Overseerr: Attempting to get job list from {overseerr_url} for instance '{overseerr_instance_id}'")
     try:
         response = requests.get(api_endpoint, headers=headers, timeout=15)
         response.raise_for_status()
@@ -1344,7 +1265,6 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
         
         for job in jobs:
             if job.get("id") == preferred_job_id:
-                logging.info(f"Overseerr: Found preferred Plex scan job '{job.get('name')}' (ID: {preferred_job_id}) for instance '{overseerr_instance_id}'.")
                 overseerr_job_id_cache[overseerr_instance_id] = preferred_job_id
                 return preferred_job_id
 
@@ -1366,7 +1286,6 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
             if any(keyword in job_name_lower for keyword in plex_keywords) or \
                any(keyword.replace(" ", "-") in job_id_lower for keyword in plex_keywords):
                 found_job_id = job.get("id")
-                logging.info(f"Overseerr: Found Plex scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}' by keyword.")
                 break
         
         # Second pass: General scan keywords if no Plex-specific one was found
@@ -1378,7 +1297,6 @@ def get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instan
                 if any(keyword in job_name_lower for keyword in general_scan_keywords) or \
                    any(keyword.replace(" ", "-") in job_id_lower for keyword in general_scan_keywords):
                     found_job_id = job.get("id")
-                    logging.info(f"Overseerr: Found general scan job '{job.get('name')}' (ID: {found_job_id}) for instance '{overseerr_instance_id}' as fallback by keyword.")
                     break
 
         if found_job_id:
@@ -1401,7 +1319,6 @@ def trigger_overseerr_scan(overseerr_url, overseerr_api_key, overseerr_instance_
     """
     global overseerr_scan_schedulers # Ensure we can modify this global
     
-    logging.info(f"Overseerr: Timer elapsed. Attempting to trigger scan for instance '{overseerr_display_name}' ({overseerr_instance_id}).")
 
     job_id = get_overseerr_scan_job_id(overseerr_url, overseerr_api_key, overseerr_instance_id)
 
@@ -1431,9 +1348,8 @@ def trigger_overseerr_scan(overseerr_url, overseerr_api_key, overseerr_instance_
                 # it's good practice to ensure it's cancelled, though it should have finished.
                 # For simplicity, just deleting the key is often enough if the timer function only runs once.
                 del overseerr_scan_schedulers[overseerr_instance_id]
-                logging.debug(f"Overseerr: Removed scan scheduler for instance '{overseerr_instance_id}'.")
             except KeyError:
-                logging.debug(f"Overseerr: Scan scheduler for instance '{overseerr_instance_id}' already removed.")
+                logging.warning(f"Overseerr: Scan scheduler for instance '{overseerr_instance_id}' already removed.")
 
 
 def handle_overseerr_scan_scheduling():
@@ -1460,13 +1376,7 @@ def handle_overseerr_scan_scheduling():
             # This handles cases where a timer might have been created but the trigger function failed before removing it.
             timer = overseerr_scan_schedulers[instance_id]
             if timer.is_alive():
-                logging.debug(f"Overseerr: Scan timer already active/pending for instance '{instance_display_name}' ({instance_id}). Skipping new schedule.")
                 continue
-            else:
-                logging.debug(f"Overseerr: Found a finished/dead timer for instance '{instance_display_name}' ({instance_id}). Allowing new schedule.")
-                # The timer will be replaced below.
-
-        logging.info(f"Overseerr: Scheduling a Plex/Library scan for instance '{instance_display_name}' ({instance_id}) in {OVERSEERR_SCAN_DELAY} seconds.")
         
         new_timer = Timer(
             OVERSEERR_SCAN_DELAY,

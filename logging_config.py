@@ -138,7 +138,7 @@ class APSchedulerMaxInstancesWarningFilter(logging.Filter):
     def filter(self, record):
         if (
             record.levelno == logging.WARNING
-            and "maximum number of running instances reached" in record.getMessage()
+            and ("maximum number of running instances reached" in record.getMessage() or "Job Max Instances Reached" in record.getMessage())
         ):
             return False  # Suppress this warning
         return True

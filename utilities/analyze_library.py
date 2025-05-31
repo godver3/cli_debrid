@@ -27,9 +27,26 @@ def is_symlink_valid_for_analysis(path):
             return False, None
     return False, None
 
-def is_file_playable_for_analysis(path):
+def is_file_playable_for_analysis(path, ffprobe_timeout=30, warmup_read_size=1024):
     if not path or not os.path.exists(path) or os.path.isdir(path):
         return False
+
+    # Attempt a small read to "warm up" the file access, especially for remote mounts
+    try:
+        with open(path, 'rb') as f:
+            f.read(warmup_read_size)
+        logging.debug(f"Warmup read successful for {path}")
+    except IOError:
+        # If warmup read fails, file is likely inaccessible
+        logging.warning(f"Warmup read failed for {path}. File might be inaccessible.")
+        return False # Or, one could choose to still let ffprobe try, but failing here is safer.
+    except Exception as e:
+        # Other errors during warmup
+        logging.warning(f"Warmup read exception for {path}: {e}. Proceeding to ffprobe.")
+        # We can choose to proceed to ffprobe or return False.
+        # Let's proceed, ffprobe is the main check.
+        pass
+
     try:
         cmd = [
             "ffprobe", "-v", "error", "-count_frames",
@@ -38,12 +55,16 @@ def is_file_playable_for_analysis(path):
             "-read_intervals", "%+#1",
             "-of", "csv=p=0", path
         ]
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=10).decode().strip()
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=ffprobe_timeout).decode().strip()
         value = output.split(',')[0]
         if value.isdigit() and int(value) > 0:
             return True
-    except Exception:
-        pass
+    except subprocess.TimeoutExpired:
+        logging.warning(f"ffprobe (frame count) timed out after {ffprobe_timeout}s for {path}")
+    except Exception as e:
+        # Log general errors, but don't make it too verbose for common ffprobe "failures" on non-media/corrupt files
+        logging.debug(f"ffprobe (frame count) check failed for {path}: {e}")
+        pass # Fall through to the duration check
 
     try:
         cmd = [
@@ -52,10 +73,16 @@ def is_file_playable_for_analysis(path):
             "-of", "default=noprint_wrappers=1:nokey=1",
             path
         ]
-        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=10).decode().strip()
-        return bool(output and float(output) > 0)
-    except Exception:
-        return False
+        output = subprocess.check_output(cmd, stderr=subprocess.DEVNULL, timeout=ffprobe_timeout).decode().strip()
+        # Ensure output is not empty before attempting float conversion
+        if output and float(output) > 0:
+            return True
+    except subprocess.TimeoutExpired:
+        logging.warning(f"ffprobe (duration) timed out after {ffprobe_timeout}s for {path}")
+    except Exception as e:
+        logging.debug(f"ffprobe (duration) check failed for {path}: {e}")
+    
+    return False
 
 def _process_broken_media_item_analysis(db_path, item_id, title, imdb_id, season_number, episode_number, version, item_type, episode_title_text, location_on_disk, symlink_abs_path_to_remove_if_bad):
     conn = None
