@@ -359,7 +359,7 @@ def format_notification_content(notifications, notification_type, notification_c
 
     # Join with single newlines between items
     final_content = "\n".join(content)
-    logging.debug(f"Notifications: Final formattd notification:\n---\n{final_content}\n---") # Log final content
+    logging.debug(f"Notifications: Final formatted notification:\n---\n{final_content}\n---") # Log final content
     return final_content
 
 def start_safety_valve_timer(enabled_notifications, notification_category):
