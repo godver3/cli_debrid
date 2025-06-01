@@ -998,15 +998,23 @@ def main():
     except Exception as e:
         logging.error(f"Error during statistics summary/cache initialization: {e}")
 
+    from utilities.settings import ensure_settings_file, get_setting, set_setting
+    # from database import verify_database # No longer needed here
+    from database.not_wanted_magnets import validate_not_wanted_entries
+    from queues.config_manager import load_config, save_config
+    
+    # Set Debug.max_upgrading_score to 0.0 if missing
+    debug_settings = get_setting('Debug')
+    if 'max_upgrading_score' not in debug_settings:
+        set_setting('Debug', 'max_upgrading_score', 0.0)
+        logging.info("Set missing Debug.max_upgrading_score to default value 0.0")
+
     # Set up notification handlers NOW THAT DB IS READY
     setup_crash_handler()
     register_shutdown_handler()
     register_startup_handler() # This should now succeed
 
-    from utilities.settings import ensure_settings_file, get_setting, set_setting
-    # from database import verify_database # No longer needed here
-    from database.not_wanted_magnets import validate_not_wanted_entries
-    from queues.config_manager import load_config, save_config
+
 
     # Batch set deprecated settings
     set_setting('Debug', 'skip_initial_plex_update', False)
@@ -1349,6 +1357,20 @@ def main():
             save_config(config)
             logging.info("Successfully migrated content sources to include custom_symlink_subfolder setting")
     # --- End custom_symlink_subfolder migration ---
+
+    # --- Add migration for cutoff_date in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'cutoff_date' not in source_config:
+                source_config['cutoff_date'] = ''
+                content_sources_updated = True
+                logging.info(f"Adding default cutoff_date='' to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include cutoff_date setting")
+    # --- End cutoff_date migration ---
 
     # --- Add migration for year_match_weight in versions ---
     if 'Scraping' in config and 'versions' in config['Scraping']:

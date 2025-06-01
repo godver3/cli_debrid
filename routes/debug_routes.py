@@ -844,6 +844,13 @@ def get_and_add_wanted_content(source_id):
     source_type = source_id.split('_')[0]
     versions_from_config = source_data.get('versions', []) # Default to empty list if missing
     source_media_type = source_data.get('media_type', 'All')
+    cutoff_date = source_data.get('cutoff_date', '')
+    if cutoff_date:
+        try:
+            cutoff_date = datetime.strptime(cutoff_date, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid cutoff_date format in source {source_id}. Expected YYYY-MM-DD, got {cutoff_date}")
+            cutoff_date = None
 
     logging.info(f"Processing source: {source_id}")
     logging.debug(f"Source type: {source_type}, media type: {source_media_type}, versions (as dict): {versions_from_config}")
@@ -854,6 +861,7 @@ def get_and_add_wanted_content(source_id):
     items_processed = 0
     total_items_added = 0 # Renamed for clarity
     media_type_skipped = 0
+    cutoff_date_skipped = 0
 
     wanted_content = []
     try: # Add try block for source fetching
@@ -926,6 +934,7 @@ def get_and_add_wanted_content(source_id):
                     batch_total_items_added = 0
                     batch_cache_skipped = 0
                     batch_media_type_skipped = 0
+                    batch_cutoff_date_skipped = 0
 
                     try:
                         logging.debug(f"Processing batch of {len(items)} items from {source_id}")
@@ -984,6 +993,29 @@ def get_and_add_wanted_content(source_id):
                                 added_count = add_wanted_items(all_items_meta, versions_to_inject or versions_from_config) 
                                 batch_total_items_added += added_count or 0
 
+                                # Filter by cutoff date after metadata processing
+                                if cutoff_date:
+                                    items_filtered_date = []
+                                    for item in all_items_meta:
+                                        release_date = item.get('release_date')
+                                        if not release_date or release_date.lower() == 'unknown':
+                                            items_filtered_date.append(item)
+                                            continue
+                                        try:
+                                            item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
+                                            if item_date >= cutoff_date:
+                                                items_filtered_date.append(item)
+                                            else:
+                                                batch_cutoff_date_skipped += 1
+                                                logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
+                                        except ValueError:
+                                            # If we can't parse the date, allow the item through
+                                            items_filtered_date.append(item)
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
+                                    all_items_meta = items_filtered_date
+                                    if batch_cutoff_date_skipped > 0:
+                                        logging.debug(f"Batch {source_id}: Skipped {batch_cutoff_date_skipped} items due to cutoff date")
+
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
                         # Continue to next batch
@@ -993,6 +1025,7 @@ def get_and_add_wanted_content(source_id):
                     total_items_added += batch_total_items_added
                     cache_skipped += batch_cache_skipped
                     media_type_skipped += batch_media_type_skipped
+                    cutoff_date_skipped += batch_cutoff_date_skipped
 
             else: # Handle single list of items (assuming this path is less common based on previous logic)
                 original_count = len(wanted_content)
@@ -1041,6 +1074,29 @@ def get_and_add_wanted_content(source_id):
                         added_count = add_wanted_items(all_items_meta, versions_from_config) 
                         total_items_added += added_count or 0
 
+                        # Filter by cutoff date after metadata processing
+                        if cutoff_date:
+                            items_filtered_date = []
+                            for item in all_items_meta:
+                                release_date = item.get('release_date')
+                                if not release_date or release_date.lower() == 'unknown':
+                                    items_filtered_date.append(item)
+                                    continue
+                                try:
+                                    item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
+                                    if item_date >= cutoff_date:
+                                        items_filtered_date.append(item)
+                                    else:
+                                        cutoff_date_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
+                                except ValueError:
+                                    # If we can't parse the date, allow the item through
+                                    items_filtered_date.append(item)
+                                    logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
+                            all_items_meta = items_filtered_date
+                            if cutoff_date_skipped > 0:
+                                logging.debug(f"{source_id}: Skipped {cutoff_date_skipped} items due to cutoff date")
+
             # Save the updated cache
             save_source_cache(source_id, source_cache)
             logging.debug(f"Final cache state for {source_id}: {len(source_cache)} entries")
@@ -1049,18 +1105,19 @@ def get_and_add_wanted_content(source_id):
             if items_processed > 0: stats_msg += f" (Processed {items_processed} items)"
             if cache_skipped > 0: stats_msg += f", Skipped {cache_skipped} (cache)"
             if media_type_skipped > 0: stats_msg += f", Skipped {media_type_skipped} (media type)"
+            if cutoff_date_skipped > 0: stats_msg += f", Skipped {cutoff_date_skipped} (cutoff date)"
             logging.info(stats_msg)
 
         except Exception as process_error:
             logging.error(f"Error processing items from {source_id}: {str(process_error)}", exc_info=True)
             # Return counts accumulated so far, plus the error
-            return {'added': total_items_added, 'processed': items_processed, 'cache_skipped': cache_skipped, 'media_type_skipped': media_type_skipped, 'error': f"Error processing items: {str(process_error)}"}
+            return {'added': total_items_added, 'processed': items_processed, 'cache_skipped': cache_skipped, 'media_type_skipped': media_type_skipped, 'cutoff_date_skipped': cutoff_date_skipped, 'error': f"Error processing items: {str(process_error)}"}
 
     else:
         logging.info(f"No wanted content retrieved from {source_id}")
 
     # Return the final counts
-    return {'added': total_items_added, 'processed': items_processed, 'cache_skipped': cache_skipped, 'media_type_skipped': media_type_skipped}
+    return {'added': total_items_added, 'processed': items_processed, 'cache_skipped': cache_skipped, 'media_type_skipped': media_type_skipped, 'cutoff_date_skipped': cutoff_date_skipped}
 
 def get_content_sources():
     """Get content sources from ProgramRunner instance."""
@@ -1220,7 +1277,8 @@ def move_item_to_wanted(item_id, current_original_scraped_title=None):
                 upgrading_from = NULL,
                 version = TRIM(version, '*'),
                 upgrading = NULL,
-                fall_back_to_single_scraper = 0
+                fall_back_to_single_scraper = 0,
+                upgraded = NULL
             WHERE id = ?
         ''', (datetime.now(), current_original_scraped_title, item_id))
         conn.commit()

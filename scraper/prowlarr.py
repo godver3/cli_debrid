@@ -2,7 +2,7 @@ from routes.api_tracker import api
 import logging
 from typing import List, Dict, Any, Optional
 from utilities.settings import get_setting
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote_plus
 import re
 import json # Import json for pretty printing
 
@@ -221,7 +221,7 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
         if is_torrent_url:
             result_dict['torrent_url'] = primary_link
             if info_hash:
-                constructed_magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={urlencode(str(title))}"
+                constructed_magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={quote_plus(str(title))}"
                 result_dict['magnet_link'] = constructed_magnet
         else:
             result_dict['magnet_link'] = primary_link

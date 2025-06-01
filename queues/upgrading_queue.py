@@ -466,6 +466,17 @@ class UpgradingQueue:
         logging.info(f"Starting hourly scrape for {item_identifier}")
         self.currently_processing_item_id = item['id']
         try:
+            # --- Max Upgrading Score Check ---
+            max_upgrading_score = 0.0
+            try:
+                max_upgrading_score = float(get_setting('Debug', 'max_upgrading_score', 0.0))
+            except Exception as e:
+                logging.warning(f"Could not parse max_upgrading_score setting: {e}. Defaulting to 0.0 (disabled)")
+            if max_upgrading_score > 0 and item.get('current_score', 0) >= max_upgrading_score:
+                logging.info(f"Skipping upgrade for {item_identifier}: current_score {item.get('current_score', 0)} >= max_upgrading_score {max_upgrading_score}")
+                return
+            # --- End Max Upgrading Score Check ---
+
             update_media_item(item['id'], upgrading=True)
 
             # Determine if the current item is a multi-pack using PTT parser

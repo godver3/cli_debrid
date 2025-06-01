@@ -186,6 +186,41 @@
                 <div id="sanitizer-char-error" class="settings-error" style="display: none; color: red;">Invalid character. Please use a character that is valid for filenames.</div>
             </div>
             
+            <!-- Max Upgrading Score -->
+            <div class="settings-form-group">
+                <label for="debug-max_upgrading_score" class="settings-title">Max Upgrading Score:</label>
+                <input type="number" step="any" id="debug-max_upgrading_score" name="Debug.max_upgrading_score"
+                       value="{{ settings.get('Debug', {}).get('max_upgrading_score', settings_schema.Debug.max_upgrading_score.default) }}" class="settings-input"
+                       data-section="Debug" data-key="max_upgrading_score">
+                <p class="settings-description">{{ settings_schema.Debug.max_upgrading_score.description }}</p>
+            </div>
+            
+            <!-- Delayed Scrape Based On Score -->
+            <div class="settings-form-group">
+                <label for="debug-delayed_scrape_based_on_score" class="settings-title">Delayed Scrape Based On Score:</label>
+                <input type="checkbox" id="debug-delayed_scrape_based_on_score" name="Debug.delayed_scrape_based_on_score"
+                       data-section="Debug" data-key="delayed_scrape_based_on_score"
+                       {% if settings.get('Debug', {}).get('delayed_scrape_based_on_score', false) %}checked{% endif %}>
+                <p class="settings-description">If enabled, only accept results above the minimum scrape score for a limited period before accepting lower scored releases.</p>
+            </div>
+
+            <!-- Delayed Scrape Time Limit -->
+            <div class="settings-form-group">
+                <label for="debug-delayed_scrape_time_limit" class="settings-title">Delayed Scrape Time Limit (Hours):</label>
+                <input type="number" step="any" min="0.1" id="debug-delayed_scrape_time_limit" name="Debug.delayed_scrape_time_limit"
+                       value="{{ settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) }}" class="settings-input"
+                       data-section="Debug" data-key="delayed_scrape_time_limit">
+                <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
+            </div>
+
+            <!-- Minimum Scrape Score -->
+            <div class="settings-form-group">
+                <label for="debug-minimum_scrape_score" class="settings-title">Minimum Scrape Score:</label>
+                <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
+                       value="{{ settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) }}" class="settings-input"
+                       data-section="Debug" data-key="minimum_scrape_score">
+                <p class="settings-description">Minimum scrape score to accept results above.</p>
+            </div>
             <script>
                 document.addEventListener('DOMContentLoaded', function() {
                     const sanitizerInput = document.getElementById('debug-sanitizer_replacement_character');

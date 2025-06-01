@@ -792,6 +792,33 @@ SETTINGS_SCHEMA = {
             "description": "Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.",
             "default": "_",
             "validate": "filesystem_char"
+        },
+        "max_upgrading_score": {
+            "type": "float",
+            "description": "Maximum allowed upgrading score. Upgrades will be disabled once this score is reached. Set to 0 to disable this limit.",
+            "default": 0.0
+        },
+        "delayed_scrape_based_on_score": {
+            "type": "boolean",
+            "description": "If enabled, only accept results above the minimum scrape score for a limited period before accepting lower scored releases.",
+            "default": False
+        },
+        "delayed_scrape_time_limit": {
+            "type": "float",
+            "description": "Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.",
+            "default": 6.0,
+            "min": 0.1
+        },
+        "minimum_scrape_score": {
+            "type": "float",
+            "description": "Minimum scrape score to accept results above.",
+            "default": 0.0,
+            "min": 0.0
+        },
+        "scale_final_scores": {
+            "type": "boolean",
+            "description": "Scale final scores to a range of 0-100",
+            "default": False
         }
     },
     "Scrapers": {
@@ -857,6 +884,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "default": ""
                 }
             },
             "Collected": {
@@ -871,6 +903,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -887,6 +924,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -905,6 +947,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "default": ""
                 }
             },
             "Trakt Collection": {
@@ -920,6 +967,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -939,6 +991,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "default": ""
                 }
             },
             "My Plex Watchlist": {
@@ -954,6 +1011,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -973,6 +1035,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "default": ""
                 }
             },
             "My Plex RSS Watchlist": {
@@ -989,6 +1056,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1007,6 +1079,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "default": ""
                 }
             },
             "Friends Trakt Watchlist": {
@@ -1024,6 +1101,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1060,6 +1142,11 @@ SETTINGS_SCHEMA = {
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
                     "default": ""
                 }
             }

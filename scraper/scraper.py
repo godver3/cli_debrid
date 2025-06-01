@@ -808,6 +808,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             score = result.get('score_breakdown', {}).get('total_score', 'N/A')
             logging.info(f"  - Score: {score} | Title: {result.get('original_title')}")
 
+        # --- SCALE SCORES TO 0.01 - 100 ---
+        if get_setting('Debug', 'scale_final_scores', False):
+            scale_total_scores(deduplicated_results)
+
         logging.info(f"[scrape_main] Returning: passed_results={len(deduplicated_results)}, filtered_out_results={len(all_filtered_out_results)}")
         return deduplicated_results, all_filtered_out_results
 
@@ -815,3 +819,43 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.error(f"Unexpected error in scrape function for {title} ({year}): {str(e)}", exc_info=True)
         logging.debug(f"[scrape_main] Error, returning empty lists.")
         return [], []  # Return empty lists in case of an error
+
+def scale_total_scores(results: List[Dict[str, Any]], score_key: str = 'score_breakdown.total_score', min_val: float = 0.01, max_val: float = 100.0):
+    """
+    Linearly scale the total_score in each result's score_breakdown to [min_val, max_val].
+    Modifies results in-place.
+    """
+    def get_nested(d, path):
+        for k in path.split('.'):
+            d = d[k]
+        return d
+
+    def set_nested(d, path, value):
+        keys = path.split('.')
+        for k in keys[:-1]:
+            d = d[k]
+        d[keys[-1]] = value
+
+    scores = []
+    for r in results:
+        try:
+            scores.append(get_nested(r, score_key))
+        except Exception:
+            continue
+
+    if not scores:
+        return  # Nothing to scale
+
+    min_score = min(scores)
+    max_score = max(scores)
+
+    for r in results:
+        try:
+            raw = get_nested(r, score_key)
+            if max_score == min_score:
+                scaled = max_val
+            else:
+                scaled = min_val + (raw - min_score) * (max_val - min_val) / (max_score - min_score)
+            set_nested(r, score_key, round(scaled, 2))
+        except Exception:
+            continue

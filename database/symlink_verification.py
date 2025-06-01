@@ -300,7 +300,8 @@ def update_verification_attempt(verification_id: int) -> bool:
 @retry_on_db_lock()
 def mark_file_as_permanently_failed(verification_id: int, reason: str) -> bool:
     """
-    Mark a file as permanently failed in verification and move back to Wanted state.
+    Mark a file as permanently failed in verification.
+    Does not change the associated media item's state.
     
     Args:
         verification_id: The ID of the verification record
@@ -324,7 +325,7 @@ def mark_file_as_permanently_failed(verification_id: int, reason: str) -> bool:
             
         media_item_id = result[0]
         
-        # Update the verification record
+        # Update the verification record only
         cursor.execute(
             """
             UPDATE symlinked_files_verification 
@@ -336,22 +337,12 @@ def mark_file_as_permanently_failed(verification_id: int, reason: str) -> bool:
             (reason, datetime.now(), verification_id)
         )
         
-        # Update the media item - set state back to Wanted
-        cursor.execute(
-            """
-            UPDATE media_items 
-            SET plex_verified = FALSE,
-                verification_failed = TRUE,
-                verification_failure_reason = ?,
-                state = 'Wanted',
-                last_updated = ?
-            WHERE id = ?
-            """,
-            (reason, datetime.now(), media_item_id)
-        )
-        
+        if cursor.rowcount == 0:
+            logger.warning(f"No verification record found with ID {verification_id} to mark as permanently failed, or it was already processed.")
+            return False
+
         conn.commit()
-        logger.info(f"Marked file as permanently failed and moved back to Wanted state: {verification_id} - Reason: {reason}")
+        logger.info(f"Marked verification record {verification_id} as permanently failed. Reason: {reason}. Associated media item state NOT changed.")
         return True
     except sqlite3.OperationalError as e:
         logger.debug(f"OperationalError in mark_file_as_permanently_failed for ID {verification_id}: {e}. Handing over to retry_on_db_lock.")
