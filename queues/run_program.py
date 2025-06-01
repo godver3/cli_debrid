@@ -1283,6 +1283,13 @@ class ProgramRunner:
         source_type = source.split('_')[0]
         versions_from_config = data.get('versions', []) # Default to empty list if missing
         source_media_type = data.get('media_type', 'All')
+        cutoff_date = data.get('cutoff_date', '')
+        if cutoff_date:
+            try:
+                cutoff_date = datetime.strptime(cutoff_date, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                logging.warning(f"Invalid cutoff_date format in source {source}. Expected YYYY-MM-DD, got {cutoff_date}")
+                cutoff_date = None
 
         # Convert versions_from_config to the expected dictionary format
         if isinstance(versions_from_config, list):
@@ -1304,6 +1311,7 @@ class ProgramRunner:
             items_processed = 0
             total_items = 0
             media_type_skipped = 0
+            cutoff_date_skipped = 0
 
             wanted_content = []
             # Pass the original versions_from_config to fetchers, assuming they expect list/dict as per config
@@ -1441,6 +1449,29 @@ class ProgramRunner:
                                 for item_raw in items_to_process_raw:
                                     update_cache_for_item(item_raw, source, source_cache)
 
+                                # Filter by cutoff date after metadata processing
+                                if cutoff_date:
+                                    items_filtered_date = []
+                                    for item in all_items:
+                                        release_date = item.get('release_date')
+                                        if not release_date or release_date.lower() == 'unknown':
+                                            items_filtered_date.append(item)
+                                            continue
+                                        try:
+                                            item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
+                                            if item_date >= cutoff_date:
+                                                items_filtered_date.append(item)
+                                            else:
+                                                cutoff_date_skipped += 1
+                                                logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
+                                        except ValueError:
+                                            # If we can't parse the date, allow the item through
+                                            items_filtered_date.append(item)
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
+                                    all_items = items_filtered_date
+                                    if cutoff_date_skipped > 0:
+                                        logging.debug(f"Batch {source}: Skipped {cutoff_date_skipped} items due to cutoff date")
+
                                 from database import add_collected_items, add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
                                 add_wanted_items(all_items, versions_to_inject or versions_dict)
@@ -1491,6 +1522,29 @@ class ProgramRunner:
                             for item_raw in items_to_process_raw:
                                 update_cache_for_item(item_raw, source, source_cache)
 
+                            # Filter by cutoff date after metadata processing
+                            if cutoff_date:
+                                items_filtered_date = []
+                                for item in all_items:
+                                    release_date = item.get('release_date')
+                                    if not release_date or release_date.lower() == 'unknown':
+                                        items_filtered_date.append(item)
+                                        continue
+                                    try:
+                                        item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
+                                        if item_date >= cutoff_date:
+                                            items_filtered_date.append(item)
+                                        else:
+                                            cutoff_date_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
+                                    except ValueError:
+                                        # If we can't parse the date, allow the item through
+                                        items_filtered_date.append(item)
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
+                                all_items = items_filtered_date
+                                if cutoff_date_skipped > 0:
+                                    logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
+
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
                             add_wanted_items(all_items, versions_dict)
@@ -1506,6 +1560,8 @@ class ProgramRunner:
                     stats_msg += f", skipped {cache_skipped} cached items"
                 if media_type_skipped > 0:
                     stats_msg += f", skipped {media_type_skipped} items due to media type mismatch"
+                if cutoff_date_skipped > 0:
+                    stats_msg += f", skipped {cutoff_date_skipped} items due to cutoff date"
                 stats_msg += ")"
                 logging.info(stats_msg)
             else:
@@ -1809,23 +1865,44 @@ class ProgramRunner:
                  tasks_to_reset = []
                  for task_id in slowdown_candidates:
                       job = self.scheduler.get_job(task_id)
-                      original_interval = self.original_task_intervals.get(task_id)
-                      if job and original_interval:
+                      # --- CHANGE: Use self.task_intervals (custom-aware) instead of self.original_task_intervals ---
+                      base_interval = self.task_intervals.get(task_id)
+                      if job and base_interval:
                            current_job_interval = job.trigger.interval.total_seconds()
-                           if current_job_interval != original_interval:
+                           if current_job_interval != base_interval:
                                 needs_reset = True
                                 tasks_to_reset.append(task_id)
 
                  if needs_reset:
                       logging.info(f"Resetting intervals for {len(tasks_to_reset)} tasks to default values.")
                       for task_id in tasks_to_reset:
-                           original_interval = self.original_task_intervals.get(task_id)
-                           if original_interval:
+                           # --- CHANGE: Use self.task_intervals (custom-aware) instead of self.original_task_intervals ---
+                           base_interval = self.task_intervals.get(task_id)
+                           if base_interval:
                                 try:
-                                    self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=original_interval))
-                                    logging.debug(f"Reset interval for '{task_id}' to {original_interval}s")
+                                    self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=base_interval))
+                                    logging.debug(f"Reset interval for '{task_id}' to {base_interval}s")
+                                    # --- DEBUG LOGGING ---
+                                    if task_id == "Checking":
+                                        job = self.scheduler.get_job(task_id)
+                                        if job:
+                                            live_interval = job.trigger.interval.total_seconds()
+                                            logging.info(f"[DEBUG] After reset: self.task_intervals['Checking']={self.task_intervals.get('Checking')}, scheduler job interval={live_interval}")
+                                    # --- END DEBUG LOGGING ---
                                 except Exception as e:
-                                    logging.error(f"Error resetting job '{task_id}' interval to {original_interval}s: {e}")
+                                    logging.error(f"Error resetting job '{task_id}' interval to {base_interval}s: {e}")
+
+                 for task_id in slowdown_candidates:
+                    job = self.scheduler.get_job(task_id)
+                    base_interval = self.task_intervals.get(task_id)
+                    if job and base_interval:
+                        try:
+                            next_run = datetime.now(self.scheduler.timezone) + timedelta(seconds=base_interval)
+                            job.modify(next_run_time=next_run)
+                            logging.info(f"[DEBUG] Forced next run time for '{task_id}' to {next_run} (interval {base_interval}s)")
+                        except Exception as e:
+                            logging.error(f"Error forcing next run time for '{task_id}': {e}")
+                # --- END NEW BLOCK ---
 
 
         self._was_idle_last_check = system_is_idle
@@ -3956,6 +4033,17 @@ class ProgramRunner:
                     trigger=IntervalTrigger(seconds=target_interval_seconds) # Use target seconds
                 )
                 logging.info(f"Successfully rescheduled task '{normalized_name}' with new interval {target_interval_seconds}s.")
+                # --- DEBUG LOGGING ---
+                job = self.scheduler.get_job(normalized_name)
+                if job:
+                    live_interval = job.trigger.interval.total_seconds()
+                    logging.info(f"[DEBUG] After live update: self.task_intervals['{normalized_name}']={self.task_intervals.get(normalized_name)}, scheduler job interval={live_interval}")
+                    # --- Force next run time to now + interval ---
+                    from datetime import datetime, timedelta
+                    next_run = datetime.now(self.scheduler.timezone) + timedelta(seconds=target_interval_seconds)
+                    job.modify(next_run_time=next_run)
+                    logging.info(f"[DEBUG] Forced next run time for '{normalized_name}' to {next_run}")
+                # --- END DEBUG LOGGING ---
                 return True
             except Exception as e:
                 logging.error(f"Error rescheduling job '{normalized_name}' with new interval: {e}", exc_info=True)

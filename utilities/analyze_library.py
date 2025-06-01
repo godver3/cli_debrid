@@ -18,6 +18,16 @@ ANALYSIS_THREADS = 15  # Number of threads for file analysis
 MEDIA_ANALYSIS_PROGRESS_JSON = "media_file_analysis_progress.json" # Stored in USER_DB_CONTENT
 FILES_TO_ANALYZE_PER_RUN = 200
 
+def is_ffprobe_available():
+    """Checks if ffprobe is installed and accessible in the system's PATH."""
+    try:
+        subprocess.run(["ffprobe", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        logging.info("ffprobe is available.")
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logging.error("ffprobe command not found or failed to execute. Please ensure ffprobe is installed and in your system's PATH.")
+        return False
+
 def is_symlink_valid_for_analysis(path):
     if os.path.islink(path):
         try:
@@ -261,6 +271,10 @@ def analyze_and_repair_media_files(collection_type, max_files_to_check_this_run=
     Main orchestrator for analyzing and repairing media files for a given collection type.
     Scans files starting from the last processed point, and resets when a full pass is completed.
     """
+    if not is_ffprobe_available():
+        logging.warning("Skipped as ffprobe is not available.")
+        return # Exit if ffprobe is not available
+
     logging.info(f"Starting media file analysis and repair for collection type: {collection_type}")
 
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')

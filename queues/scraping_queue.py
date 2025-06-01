@@ -436,6 +436,73 @@ class ScrapingQueue:
                                     continue
                             filtered_results.append(result)
 
+                    # --- START: Delayed Scrape Based on Score Logic ---
+                    delayed_scrape_enabled = get_setting("Debug", "delayed_scrape_based_on_score", False)
+                    delayed_scrape_time_limit = float(get_setting("Debug", "delayed_scrape_time_limit", 6.0))
+                    minimum_scrape_score = float(get_setting("Debug", "minimum_scrape_score", 0.0))
+                    now = datetime.now()
+                    release_date_str = item_to_process.get('release_date')
+                    airtime_str = item_to_process.get('airtime')
+                    release_datetime = None
+                    if release_date_str and release_date_str != 'Unknown':
+                        try:
+                            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                            # Parse airtime, fallback to 00:00
+                            if airtime_str:
+                                try:
+                                    try:
+                                        airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                                    except ValueError:
+                                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                                except ValueError:
+                                    airtime = datetime.strptime("00:00", '%H:%M').time()
+                            else:
+                                airtime = datetime.strptime("00:00", '%H:%M').time()
+                            release_datetime = datetime.combine(release_date, airtime)
+                            # Apply offset based on type
+                            offset_hours = 0.0
+                            if item_to_process.get('type') == 'movie':
+                                offset_setting = get_setting("Queue", "movie_airtime_offset", "19")
+                                try:
+                                    offset_hours = float(offset_setting)
+                                except (ValueError, TypeError):
+                                    offset_hours = 19.0
+                            elif item_to_process.get('type') == 'episode':
+                                offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
+                                try:
+                                    offset_hours = float(offset_setting)
+                                except (ValueError, TypeError):
+                                    offset_hours = 0.0
+                            release_datetime += timedelta(hours=offset_hours)
+                        except Exception:
+                            release_datetime = None
+                    # If release_datetime is None, treat as if enough time has passed (allow all results)
+                    if delayed_scrape_enabled and minimum_scrape_score > 0:
+                        # Split results by score
+                        high_score_results = [r for r in filtered_results if r.get('score_breakdown', {}).get('total_score', 0) >= minimum_scrape_score]
+                        low_score_results = [r for r in filtered_results if r not in high_score_results]
+                        use_low_score = False
+                        if not high_score_results and filtered_results:
+                            # Only fallback to low score if enough time has passed
+                            if release_datetime:
+                                hours_since_release = (now - release_datetime).total_seconds() / 3600.0
+                                if hours_since_release >= delayed_scrape_time_limit:
+                                    use_low_score = True
+                                    logging.info(f"Delayed scrape: {hours_since_release:.2f}h since release+airtime, allowing lower scored results for {item_identifier}.")
+                                else:
+                                    logging.info(f"Delayed scrape: Only {hours_since_release:.2f}h since release+airtime, not enough to allow lower scored results for {item_identifier}.")
+                                    filtered_results = [] # Treat as no suitable results
+                            else:
+                                # No valid release date, allow all results
+                                use_low_score = True
+                                logging.info(f"Delayed scrape: No valid release date/airtime, allowing lower scored results for {item_identifier}.")
+                        if high_score_results:
+                            filtered_results = high_score_results
+                        elif use_low_score:
+                            filtered_results = low_score_results
+                        # else: filtered_results already set to [] if not enough time has passed
+                    # --- END: Delayed Scrape Based on Score Logic ---
+
                     # If no filtered results from the first attempt (which includes multi->single internal fallback)
                     # AND the item is an episode, try the final fallback: multi-pack with check_pack_wantedness=False
                     if not filtered_results and item_to_process['type'] == 'episode':
