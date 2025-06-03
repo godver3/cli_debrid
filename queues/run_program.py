@@ -96,6 +96,7 @@ from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
+from metadata.metadata import _get_local_timezone # Added import
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -132,7 +133,6 @@ class ProgramRunner:
         self.queue_paused = False
         
         # Configure scheduler timezone using the local timezone helper
-        from metadata.metadata import _get_local_timezone
         try:
             tz = _get_local_timezone()
             logging.info(f"Initializing APScheduler with timezone: {tz.key}")
@@ -1280,16 +1280,29 @@ class ProgramRunner:
         self.task_reconcile_queues()
         
     def process_content_source(self, source, data):
+        from datetime import datetime, timedelta # Add this import
         source_type = source.split('_')[0]
         versions_from_config = data.get('versions', []) # Default to empty list if missing
         source_media_type = data.get('media_type', 'All')
-        cutoff_date = data.get('cutoff_date', '')
-        if cutoff_date:
+        raw_cutoff_date = data.get('cutoff_date', '')
+        parsed_cutoff_date = None
+
+        if raw_cutoff_date:
             try:
-                cutoff_date = datetime.strptime(cutoff_date, '%Y-%m-%d').date()
-            except (ValueError, TypeError):
-                logging.warning(f"Invalid cutoff_date format in source {source}. Expected YYYY-MM-DD, got {cutoff_date}")
-                cutoff_date = None
+                # Try to interpret as number of days ago
+                days_ago = int(raw_cutoff_date)
+                parsed_cutoff_date = (datetime.now() - timedelta(days=days_ago)).date()
+                logging.debug(f"Cutoff date for {source} set to {days_ago} days ago: {parsed_cutoff_date}")
+            except ValueError:
+                # If not an int, try to interpret as YYYY-MM-DD
+                try:
+                    parsed_cutoff_date = datetime.strptime(raw_cutoff_date, '%Y-%m-%d').date()
+                    logging.debug(f"Cutoff date for {source} set to specific date: {parsed_cutoff_date}")
+                except (ValueError, TypeError):
+                    logging.warning(f"Invalid cutoff_date format for source {source}. Expected YYYY-MM-DD or number of days, got '{raw_cutoff_date}'. No cutoff will be applied.")
+                    parsed_cutoff_date = None
+        
+        cutoff_date = parsed_cutoff_date # Use the parsed_cutoff_date
 
         # Convert versions_from_config to the expected dictionary format
         if isinstance(versions_from_config, list):
@@ -1776,15 +1789,19 @@ class ProgramRunner:
             'task_precompute_airing_shows',
             'task_update_tv_show_status'
         }
-        for task, interval in self.original_task_intervals.items():
-             if task.endswith('_wanted') and interval > 900:
-                 slowdown_candidates.add(task)
+        # Add content source tasks with interval > 900s (15 min) to dynamic set
+        # This needs to happen *after* content sources are processed, let's refine this later if needed
+        # For now, initialize with the base set. We can add sources dynamically later.
 
         idle_increase_seconds = 300
         # DELAY_THRESHOLD = 3 # Remove delay threshold
 
         # --- Determine idle state based on Scraping/Adding queues ---
         system_is_idle = False
+        # Initialize queue status variables to prevent UnboundLocalError if queue check fails
+        scraping_empty = True 
+        adding_empty = True
+        checking_empty = True
         if hasattr(self, 'queue_manager') and self.queue_manager:
             scraping_queue = self.queue_manager.queues.get('Scraping')
             adding_queue = self.queue_manager.queues.get('Adding')
@@ -1830,42 +1847,38 @@ class ProgramRunner:
                                  logging.error(f"Error modifying job '{task_id}' interval to {new_interval}s: {e}")
 
             else: # System is active
-                 active_reason = []
+                 active_reason_parts = [] # Renamed for clarity
                  # Update active reason based on new check
-                 if not system_is_idle: 
-                     reasons = []
-                     if not scraping_empty: reasons.append("Scraping queue has items")
-                     if not adding_empty: reasons.append("Adding queue has items")
-                     if not checking_empty: reasons.append("Checking queue has items")
-                     active_reason.append("; ".join(reasons) if reasons else "One or more core queues have items")
+                 # This logic seems to check specific queues if not idle, let's ensure it's correct
+                 if not scraping_empty: active_reason_parts.append("Scraping queue has items")
+                 if not adding_empty: active_reason_parts.append("Adding queue has items")
+                 if not checking_empty: active_reason_parts.append("Checking queue has items")
+                 
+                 final_active_reason_str = "; ".join(active_reason_parts) if active_reason_parts else "One or more core queues have items"
 
-                 # Remove delayed task check from reason
-                 # if delayed_tasks_count >= DELAY_THRESHOLD: active_reason.append(f"{delayed_tasks_count} potentially delayed tasks >= threshold {DELAY_THRESHOLD}")
 
-                 # Logging logic (same as before)
-                 # ...
-                 log_now = False # Determine if logging is needed
+                 log_now = False 
                  if not hasattr(self, '_last_active_state_log'):
                       self._last_active_state_log = 0
-                      self._was_idle_last_check = True # Assume initially idle so first active state logs
+                      # Ensure _was_idle_last_check is initialized if it's the first run or after a restart
+                      if not hasattr(self, '_was_idle_last_check'):
+                          self._was_idle_last_check = True # Assume was idle to trigger initial active log if system starts active
 
-                 if not self._was_idle_last_check: # Only log transition to active or periodically
+                 if not self._was_idle_last_check: 
                       if current_time - self._last_active_state_log >= 600:
                            log_now = True
-                 else: # Was idle, now active
+                 else: 
                       log_now = True
 
 
                  if log_now:
-                      # Updated log message
-                      logging.info(f"System active ({', '.join(active_reason)}) - ensuring default task intervals.")
+                      logging.info(f"System active ({final_active_reason_str}) - ensuring default task intervals.")
                       self._last_active_state_log = current_time
 
                  needs_reset = False
                  tasks_to_reset = []
                  for task_id in slowdown_candidates:
                       job = self.scheduler.get_job(task_id)
-                      # --- CHANGE: Use self.task_intervals (custom-aware) instead of self.original_task_intervals ---
                       base_interval = self.task_intervals.get(task_id)
                       if job and base_interval:
                            current_job_interval = job.trigger.interval.total_seconds()
@@ -1876,34 +1889,39 @@ class ProgramRunner:
                  if needs_reset:
                       logging.info(f"Resetting intervals for {len(tasks_to_reset)} tasks to default values.")
                       for task_id in tasks_to_reset:
-                           # --- CHANGE: Use self.task_intervals (custom-aware) instead of self.original_task_intervals ---
                            base_interval = self.task_intervals.get(task_id)
                            if base_interval:
                                 try:
                                     self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=base_interval))
                                     logging.debug(f"Reset interval for '{task_id}' to {base_interval}s")
-                                    # --- DEBUG LOGGING ---
                                     if task_id == "Checking":
-                                        job = self.scheduler.get_job(task_id)
-                                        if job:
-                                            live_interval = job.trigger.interval.total_seconds()
+                                        job_check = self.scheduler.get_job(task_id) # Re-fetch job
+                                        if job_check:
+                                            live_interval = job_check.trigger.interval.total_seconds()
                                             logging.info(f"[DEBUG] After reset: self.task_intervals['Checking']={self.task_intervals.get('Checking')}, scheduler job interval={live_interval}")
-                                    # --- END DEBUG LOGGING ---
                                 except Exception as e:
                                     logging.error(f"Error resetting job '{task_id}' interval to {base_interval}s: {e}")
+            
+            # Conditional block for forcing next_run_time on state change:
+            if not hasattr(self, '_was_idle_last_check'): # Initialize if it doesn't exist (e.g. first run)
+                self._was_idle_last_check = not system_is_idle # Set to opposite of current to ensure first run acts as a change if needed by logging
 
-                 for task_id in slowdown_candidates:
+            if system_is_idle != self._was_idle_last_check:
+                logging.info(f"System idle state changed (was_idle: {self._was_idle_last_check}, is_idle: {system_is_idle}). Forcing next run time for slowdown_candidates.")
+                for task_id in slowdown_candidates:
                     job = self.scheduler.get_job(task_id)
-                    base_interval = self.task_intervals.get(task_id)
+                    base_interval = self.task_intervals.get(task_id) # Uses current configured interval
                     if job and base_interval:
                         try:
-                            next_run = datetime.now(self.scheduler.timezone) + timedelta(seconds=base_interval)
-                            job.modify(next_run_time=next_run)
-                            logging.info(f"[DEBUG] Forced next run time for '{task_id}' to {next_run} (interval {base_interval}s)")
+                            next_run_utc = datetime.now(self.scheduler.timezone) + timedelta(seconds=base_interval)
+                            job.modify(next_run_time=next_run_utc)
+                            # Convert to local time for logging
+                            local_tz = _get_local_timezone()
+                            next_run_local = next_run_utc.astimezone(local_tz)
+                            logging.info(f"[DEBUG] Forced next run time for '{task_id}' to {next_run_local} (interval {base_interval}s) due to state change.")
                         except Exception as e:
-                            logging.error(f"Error forcing next run time for '{task_id}': {e}")
-                # --- END NEW BLOCK ---
-
+                            logging.error(f"Error forcing next run time for '{task_id}' due to state change: {e}")
+            # --- END NEW BLOCK / MODIFIED BLOCK ---
 
         self._was_idle_last_check = system_is_idle
          # --- END REFACTOR ---
@@ -2275,7 +2293,7 @@ class ProgramRunner:
             if reconciled_count > 0 or deleted_count > 0:
                  # Make this log more informative
                  logging.info(f"Queue reconciliation completed: {reconciled_count} items updated to 'Collected', {deleted_count} duplicate items deleted based on shared file paths.")
-            else:
+            else: 
                  logging.debug("Queue reconciliation found no items needing reconciliation.")
 
         except sqlite3.Error as e:

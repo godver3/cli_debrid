@@ -834,6 +834,7 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.mdb_list import get_wanted_from_mdblists
     from content_checkers.content_source_detail import append_content_source_detail
     from metadata.metadata import process_metadata
+    from datetime import datetime, timedelta # Add this import
 
     content_sources = get_all_settings().get('Content Sources', {})
     source_data = content_sources.get(source_id) # Use .get for safety
@@ -844,13 +845,25 @@ def get_and_add_wanted_content(source_id):
     source_type = source_id.split('_')[0]
     versions_from_config = source_data.get('versions', []) # Default to empty list if missing
     source_media_type = source_data.get('media_type', 'All')
-    cutoff_date = source_data.get('cutoff_date', '')
-    if cutoff_date:
+    raw_cutoff_date = source_data.get('cutoff_date', '')
+    parsed_cutoff_date = None
+
+    if raw_cutoff_date:
         try:
-            cutoff_date = datetime.strptime(cutoff_date, '%Y-%m-%d').date()
-        except (ValueError, TypeError):
-            logging.warning(f"Invalid cutoff_date format in source {source_id}. Expected YYYY-MM-DD, got {cutoff_date}")
-            cutoff_date = None
+            # Try to interpret as number of days ago
+            days_ago = int(raw_cutoff_date)
+            parsed_cutoff_date = (datetime.now() - timedelta(days=days_ago)).date()
+            logging.debug(f"Cutoff date for {source_id} set to {days_ago} days ago: {parsed_cutoff_date}")
+        except ValueError:
+            # If not an int, try to interpret as YYYY-MM-DD
+            try:
+                parsed_cutoff_date = datetime.strptime(raw_cutoff_date, '%Y-%m-%d').date()
+                logging.debug(f"Cutoff date for {source_id} set to specific date: {parsed_cutoff_date}")
+            except (ValueError, TypeError):
+                logging.warning(f"Invalid cutoff_date format in source {source_id}. Expected YYYY-MM-DD or number of days, got '{raw_cutoff_date}'. No cutoff will be applied.")
+                parsed_cutoff_date = None
+    
+    cutoff_date = parsed_cutoff_date # Use the parsed_cutoff_date
 
     logging.info(f"Processing source: {source_id}")
     logging.debug(f"Source type: {source_type}, media type: {source_media_type}, versions (as dict): {versions_from_config}")
@@ -981,40 +994,47 @@ def get_and_add_wanted_content(source_id):
 
                             processed_items_meta = process_metadata(items_for_metadata)
                             if processed_items_meta:
-                                all_items_meta = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
-                                for item in all_items_meta:
+                                all_items_meta_processed_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                                for item in all_items_meta_processed_batch:
                                     item['content_source'] = source_id
                                     item = append_content_source_detail(item, source_type=source_type)
 
-                                for item_original in items_to_process_raw: # Use raw items for cache update
-                                    update_cache_for_item(item_original, source_id, source_cache)
-
-                                from database import add_wanted_items
-                                added_count = add_wanted_items(all_items_meta, versions_to_inject or versions_from_config) 
-                                batch_total_items_added += added_count or 0
-
-                                # Filter by cutoff date after metadata processing
+                                final_items_for_db_batch = []
+                                current_batch_cutoff_skipped = 0 # Local counter for this batch iteration's date skips
                                 if cutoff_date:
-                                    items_filtered_date = []
-                                    for item in all_items_meta:
+                                    for item in all_items_meta_processed_batch:
                                         release_date = item.get('release_date')
                                         if not release_date or release_date.lower() == 'unknown':
-                                            items_filtered_date.append(item)
+                                            final_items_for_db_batch.append(item)
                                             continue
                                         try:
                                             item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
                                             if item_date >= cutoff_date:
-                                                items_filtered_date.append(item)
+                                                final_items_for_db_batch.append(item)
                                             else:
-                                                batch_cutoff_date_skipped += 1
+                                                current_batch_cutoff_skipped += 1
                                                 logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                         except ValueError:
-                                            # If we can't parse the date, allow the item through
-                                            items_filtered_date.append(item)
-                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
-                                    all_items_meta = items_filtered_date
-                                    if batch_cutoff_date_skipped > 0:
-                                        logging.debug(f"Batch {source_id}: Skipped {batch_cutoff_date_skipped} items due to cutoff date")
+                                            final_items_for_db_batch.append(item)
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through (pre-DB add)")
+                                else:
+                                    # No cutoff date, so all processed items are candidates for DB for this batch
+                                    final_items_for_db_batch = all_items_meta_processed_batch
+                                
+                                batch_cutoff_date_skipped += current_batch_cutoff_skipped # Add to the specific batch counter
+
+                                if current_batch_cutoff_skipped > 0: # Log if items were skipped in this batch
+                                    logging.debug(f"Batch {source_id}: Skipped {current_batch_cutoff_skipped} items due to cutoff date (pre-DB add)")
+                                
+                                if final_items_for_db_batch:
+                                    # Update cache for items that were initially considered (items_to_process_raw)
+                                    # This matches the original placement of cache updates.
+                                    for item_original in items_to_process_raw: 
+                                        update_cache_for_item(item_original, source_id, source_cache)
+
+                                    from database import add_wanted_items
+                                    added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config)
+                                    batch_total_items_added += added_count or 0
 
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
@@ -1062,40 +1082,49 @@ def get_and_add_wanted_content(source_id):
                         
                     processed_items_meta = process_metadata(items_for_metadata)
                     if processed_items_meta:
-                        all_items_meta = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
-                        for item in all_items_meta:
+                        all_items_meta_processed_non_batch = processed_items_meta.get('movies', []) + processed_items_meta.get('episodes', [])
+                        for item in all_items_meta_processed_non_batch:
                             item['content_source'] = source_id
                             item = append_content_source_detail(item, source_type=source_type)
 
-                        for item_original in items_to_process_raw: # Use raw items for cache update
-                            update_cache_for_item(item_original, source_id, source_cache)
+                        # Update cache for all items that passed the initial cache filter (items_to_process_raw)
+                        # This happens before date filtering of the metadata-processed items.
+                        for item_original in items_to_process_raw: # Your line 1074
+                            update_cache_for_item(item_original, source_id, source_cache) # Your line 1075
 
-                        from database import add_wanted_items
-                        added_count = add_wanted_items(all_items_meta, versions_from_config) 
-                        total_items_added += added_count or 0
-
-                        # Filter by cutoff date after metadata processing
+                        # Determine the final list of items to add to the database after date filtering
+                        final_items_for_db_non_batch = []
+                        current_non_batch_cutoff_skipped = 0 # Local counter for this section's date skips
                         if cutoff_date:
-                            items_filtered_date = []
-                            for item in all_items_meta:
+                            for item in all_items_meta_processed_non_batch:
                                 release_date = item.get('release_date')
                                 if not release_date or release_date.lower() == 'unknown':
-                                    items_filtered_date.append(item)
+                                    final_items_for_db_non_batch.append(item)
                                     continue
                                 try:
                                     item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
                                     if item_date >= cutoff_date:
-                                        items_filtered_date.append(item)
+                                        final_items_for_db_non_batch.append(item)
                                     else:
-                                        cutoff_date_skipped += 1
-                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
+                                        current_non_batch_cutoff_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date} (pre-DB add for non-batch)")
                                 except ValueError:
-                                    # If we can't parse the date, allow the item through
-                                    items_filtered_date.append(item)
-                                    logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
-                            all_items_meta = items_filtered_date
-                            if cutoff_date_skipped > 0:
-                                logging.debug(f"{source_id}: Skipped {cutoff_date_skipped} items due to cutoff date")
+                                    final_items_for_db_non_batch.append(item)
+                                    logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through (pre-DB add for non-batch)")
+                        else:
+                            # If no cutoff_date, all items processed from metadata are candidates for DB
+                            final_items_for_db_non_batch = all_items_meta_processed_non_batch
+                        
+                        cutoff_date_skipped += current_non_batch_cutoff_skipped # Add to the main function-wide counter
+
+                        if current_non_batch_cutoff_skipped > 0: # Log if items were skipped by date in this non-batch section
+                             logging.debug(f"{source_id}: Skipped {current_non_batch_cutoff_skipped} items due to cutoff date (pre-DB add for non-batch)")
+
+                        # Add only the date-filtered items to the database
+                        if final_items_for_db_non_batch:
+                            from database import add_wanted_items # Already imported at your line 1077
+                            added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config) 
+                            total_items_added += added_count or 0
 
             # Save the updated cache
             save_source_cache(source_id, source_cache)
@@ -3607,6 +3636,7 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                     # For now, if DB entry is duplicate, then this file is not "successfully processed" into a *new* DB entry.
                     # This needs careful thought if we want to "adopt" existing DB entries.
                     # Current logic: if DB duplicate, then this file is not "successfully processed" into a *new* DB entry.
+                    # This needs careful thought if we want to "adopt" existing DB entries.
                     continue 
                 except Exception as e:
                     logging.error(f"[RcloneScan {task_id}] DB add error for {item_path.name}: {e}", exc_info=True)

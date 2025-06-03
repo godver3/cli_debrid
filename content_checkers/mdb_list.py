@@ -5,6 +5,7 @@ from utilities.settings import get_all_settings, get_setting
 import os
 import pickle
 from datetime import datetime, timedelta
+# import requests # No longer needed for direct test here
 
 REQUEST_TIMEOUT = 10  # seconds
 
@@ -44,11 +45,15 @@ def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
     headers = {
         'Accept': 'application/json'
     }
-    # Ensure the URL starts with 'https://'
+    # Ensure the URL starts with 'http://' or 'https://'
     if not url.startswith('http://') and not url.startswith('https://'):
         url = 'https://' + url
-    if not url.endswith('/json'):
-        url += '/json'
+    
+    # Append /json only if the URL does not already end with .json
+    if not url.endswith('.json'):
+        if not url.endswith('/'):
+            url += '/'
+        url += 'json'
     
     try:
         logging.info(f"Fetching items from MDBList URL: {url}")
@@ -60,14 +65,28 @@ def fetch_items_from_mdblist(url: str) -> List[Dict[str, Any]]:
         return []
 
 def assign_media_type(item: Dict[str, Any]) -> str:
-    media_type = item.get('mediatype', '').lower()
-    if media_type == 'movie':
+    # Try new format first (e.g., from Trakt)
+    media_type_new = item.get('type', '').lower()
+    if media_type_new == 'movie':
         return 'movie'
-    elif media_type in ['show', 'tv']:
+    elif media_type_new == 'show': # handles 'show' for Trakt TV shows
         return 'tv'
-    else:
-        logging.warning(f"Unknown media type: {media_type}. Defaulting to 'movie'.")
+
+    # Fallback to original MDBList format
+    media_type_orig = item.get('mediatype', '').lower()
+    if media_type_orig == 'movie':
         return 'movie'
+    elif media_type_orig in ['show', 'tv']:
+        return 'tv'
+    
+    # If neither format provides a clear type, log warning and default
+    if media_type_new: # Log the value from the new format if it was present but not 'movie' or 'show'
+        logging.warning(f"Unknown media type from 'type' key: {item.get('type')}. Defaulting to 'movie'.")
+    elif media_type_orig: # Log the value from the original format if it was present but not recognized
+        logging.warning(f"Unknown media type from 'mediatype' key: {item.get('mediatype')}. Defaulting to 'movie'.")
+    else: # Log if neither key was found
+        logging.warning(f"Media type key ('type' or 'mediatype') not found in item. Defaulting to 'movie'. Item keys: {list(item.keys())}")
+    return 'movie'
 
 def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     all_wanted_items = []
@@ -80,8 +99,17 @@ def get_wanted_from_mdblists(mdblist_url: str, versions: Dict[str, bool]) -> Lis
     
     skipped_count = 0
     cache_skipped = 0
-    for item in items:
-        imdb_id = item.get('imdb_id')
+    for item_index, item in enumerate(items):
+        imdb_id = None
+        # Try to get imdb_id from original MDBList format
+        if 'imdb_id' in item:
+            imdb_id = item.get('imdb_id')
+        # Else, try to get imdb_id from new Trakt-like format
+        elif 'movie' in item and isinstance(item['movie'], dict) and 'ids' in item['movie'] and isinstance(item['movie']['ids'], dict):
+            imdb_id = item['movie']['ids'].get('imdb')
+        elif 'show' in item and isinstance(item['show'], dict) and 'ids' in item['show'] and isinstance(item['show']['ids'], dict):
+            imdb_id = item['show']['ids'].get('imdb')
+        
         if not imdb_id:
             skipped_count += 1
             continue

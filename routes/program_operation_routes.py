@@ -643,7 +643,6 @@ def program_is_initializing():
     return program_runner.is_initializing() if program_runner else False
 
 @program_operation_bp.route('/api/check_program_conditions')
-@login_required
 @admin_required
 def check_program_conditions():
     config = load_config()

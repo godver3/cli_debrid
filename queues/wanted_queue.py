@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time as dt_time
 from typing import Dict, Any, List
 
 from utilities.settings import get_setting
@@ -15,7 +15,7 @@ WANTED_THROTTLE_SCRAPING_SIZE = 100
 
 class WantedQueue:
     def __init__(self):
-        logging.info("WantedQueue initialized (no longer stores items in memory).")
+        logging.info("WantedQueue initialized.")
 
     def contains_item_id(self, item_id):
         """Check if the DB contains an item with the given ID in Wanted state"""
@@ -69,6 +69,48 @@ class WantedQueue:
             logging.error(f"Error during wanted item reconciliation check for ID {item_id}: {str(e)}")
             return False # Assume not reconciled on error
 
+    def _is_within_alternate_scrape_window(self, item, now=None):
+        if now is None:
+            now = datetime.now()
+        use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
+        if not use_alt:
+            return False
+        anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
+        try:
+            anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
+        except Exception:
+            anchor_time = dt_time(0, 0)
+        today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
+        if now < today_anchor:
+            anchor_dt = today_anchor
+        else:
+            anchor_dt = today_anchor
+        window_start = anchor_dt - timedelta(hours=24)
+        # Get item datetime
+        release_date_str = item.get('release_date')
+        airtime_str = item.get('airtime')
+        if not release_date_str or release_date_str.lower() in ['unknown', 'none']:
+            return False
+        try:
+            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+            if airtime_str:
+                try:
+                    airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                except ValueError:
+                    try:
+                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    except ValueError:
+                        airtime = dt_time(0, 0)
+            else:
+                airtime = dt_time(0, 0)
+            item_dt = datetime.combine(release_date, airtime)
+        except Exception:
+            return False
+        # If the item is older than the window, always allow
+        if item_dt < window_start:
+            return True
+        return window_start <= item_dt <= anchor_dt
+
     def _evaluate_item_readiness_and_act(self, item: Dict[str, Any], current_datetime: datetime, queue_manager) -> Dict[str, Any]:
         """
         Evaluates a single item's readiness, performs actions like reconciliation or moving to Unreleased,
@@ -97,9 +139,39 @@ class WantedQueue:
                 return {'status': 'reconciled', 'item_data': item, 'message': f"Reconciled and removed {item_identifier}"}
 
             # Handle early release first
-            if item.get('early_release', False):
+            is_early_release = item.get('early_release', False)
+            if is_early_release:
                 # No capacity check here, just readiness. Capacity is handled in the main process() loop.
+                logging.info(f"[{item_identifier}] Early release flag is True. Marking as 'scrape'.")
                 return {'status': 'scrape', 'item_data': item, 'message': f"Early release {item_identifier} is ready."}
+
+            # --- Alternate scrape time strategy ---
+            use_alt_strategy = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
+            if use_alt_strategy:
+                is_in_alt_window = self._is_within_alternate_scrape_window(item, current_datetime)
+                logging.debug(f"[{item_identifier}] Alternate scrape window check result: {is_in_alt_window}")
+                if is_in_alt_window:
+                    logging.info(f"[{item_identifier}] Eligible by alternate scrape time strategy. Marking as 'scrape'.")
+                    return {'status': 'scrape', 'item_data': item, 'message': f"{item_identifier} eligible by alternate scrape time strategy."}
+                else:
+                    # If alt strategy is on but item is not in window, it doesn't mean 'wait' yet, normal logic follows.
+                    logging.debug(f"[{item_identifier}] Not in alternate scrape window. Proceeding with normal date logic.")
+            
+            # If alternate strategy is ON but item wasn't in window, it should fall through to normal date logic.
+            # If alternate strategy is OFF, it also falls through to normal date logic.
+            # Only if alt strategy is ON AND item IS in window does it return 'scrape' or 'wait' from that block.
+            # The original code for alternate strategy only returned 'scrape' or 'wait' if it was in the window.
+            # My adjustment: if alt strategy is on and item is NOT in window, then normal processing continues
+            # If the item IS in the window, it gets 'scrape'.
+            # The 'else' for alt_strategy returning 'wait' is only if the function _is_within_alternate_scrape_window itself decided it should wait.
+            # The original:
+            # if get_setting('Debug', 'use_alternate_scrape_time_strategy', False):
+            #     if self._is_within_alternate_scrape_window(item, current_datetime):
+            #         return {'status': 'scrape', 'item_data': item, 'message': f"{item_identifier} eligible by alternate scrape time strategy."}
+            #     else: # This else was problematic, it would make items wait indefinitely if not in window
+            #         return {'status': 'wait', 'item_data': item, 'message': f"{item_identifier} not in alternate scrape window."}
+            # Corrected flow: if use_alt_strategy and is_in_alt_window -> 'scrape'. Otherwise, continue.
+            # The _is_within_alternate_scrape_window does not have a 'wait' state, it's boolean.
 
             # Check 2: Release Date & Time Logic (adapted from original process loop)
             release_date_str = item.get('release_date')
@@ -142,8 +214,6 @@ class WantedQueue:
                         logging.warning(f"Invalid {log_release_type} date format for Magnet Assigned item {item_identifier}: {effective_release_date_to_parse}. Treating as ready.")
                         release_date = current_datetime.date() # Use today's date if magnet assigned and date is bad
 
-            # If Magnet Assigned and date was bad/missing, release_date is now set to today.
-            # If not Magnet Assigned and date was bad/missing, it would have been moved to Unreleased above.
 
             effective_scrape_time = None
             if release_date: # This implies date is valid or has been set for magnet_assigned
@@ -152,8 +222,12 @@ class WantedQueue:
                     try: airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
                     except ValueError:
                         try: airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                        except ValueError: airtime = datetime.strptime("00:00", '%H:%M').time()
-                else: airtime = datetime.strptime("00:00", '%H:%M').time()
+                        except ValueError: 
+                            airtime = datetime.strptime("00:00", '%H:%M').time()
+                            logging.warning(f"[{item_identifier}] Invalid airtime format '{airtime_str}', defaulting to 00:00.")
+                else: 
+                    airtime = datetime.strptime("00:00", '%H:%M').time()
+                    logging.debug(f"[{item_identifier}] No airtime provided, defaulting to 00:00.")
                 
                 release_datetime = datetime.combine(release_date, airtime)
 
@@ -170,25 +244,23 @@ class WantedQueue:
                 effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
 
             # Check if ready to move
-            if is_magnet_assigned: # Always ready if magnet assigned (and not reconciled)
+            if is_magnet_assigned: # Always ready if magnet assigned (and not reconciled or early_release)
+                logging.info(f"[{item_identifier}] Magnet Assigned. Marking as 'scrape'.")
                 return {'status': 'scrape', 'item_data': item, 'message': f"Magnet Assigned {item_identifier} is ready."}
             
             if effective_scrape_time:
                 if effective_scrape_time <= current_datetime:
+                    logging.info(f"[{item_identifier}] Effective scrape time is in the past or now. Marking as 'scrape'.")
                     return {'status': 'scrape', 'item_data': item, 'message': f"{item_identifier} release time met."}
                 else: # Not ready yet, check if it should go to Unreleased or just wait
                     time_until_release = effective_scrape_time - current_datetime
                     if time_until_release > timedelta(hours=24):
-                        logging.debug(f"Item {item_identifier} is more than 24 hours away from {log_release_type}. Moving to Unreleased.")
                         queue_manager.move_to_unreleased(item, "Wanted")
                         return {'status': 'unreleased', 'item_data': item, 'message': f"{item_identifier} moved to Unreleased (>24h to {log_release_type})."}
                     else:
-                        # Within 24 hours, keep in Wanted
                         return {'status': 'wait', 'item_data': item, 'message': f"{item_identifier} waiting (<24h to {log_release_type})."}
             
-            # If we reach here, something is off (e.g. no release_date and not magnet_assigned but wasn't caught)
-            # This case should ideally be covered by prior checks. Default to wait.
-            logging.warning(f"Item {item_identifier} reached end of readiness check with no definitive action. Defaulting to wait.")
+            logging.warning(f"[{item_identifier}] Reached end of readiness check with no definitive action (e.g. no release_date and not magnet_assigned but wasn't caught). Defaulting to wait.")
             return {'status': 'wait', 'item_data': item, 'message': f"{item_identifier} undecided, defaulting to wait."}
 
         except Exception as e_eval:
@@ -204,19 +276,18 @@ class WantedQueue:
         while new_idx < len(candidate_items_list) and \
               candidate_items_list[new_idx].get('imdb_id') == show_imdb_id:
             new_idx += 1
+        # logging.debug(f"Advanced index from {current_idx} to {new_idx} for show {show_imdb_id}") # Optional: if too verbose
         return new_idx
 
     def process(self, queue_manager):
         processed_candidates_count = 0
         moved_to_scraping_count = 0
-        moved_to_unreleased_count = 0 # Will be incremented by _evaluate_item_readiness_and_act
+        moved_to_unreleased_count = 0 
 
         try:
             # 0. Move manually blacklisted items first
             try:
                 blacklisted_count = self.move_blacklisted_items()
-                if blacklisted_count > 0:
-                    logging.info(f"Processed {blacklisted_count} manually blacklisted items found in Wanted state.")
             except Exception as e_blacklist:
                 logging.error(f"Error moving manually blacklisted items: {e_blacklist}", exc_info=True)
 
@@ -226,24 +297,26 @@ class WantedQueue:
                 logging.warning("DEBUG SETTING ENABLED: Ignoring Wanted Queue throttling limits.")
 
             current_scraping_queue_size = 0
-            allowed_to_add_count = float('inf')
+            allowed_to_add_count = float('inf') 
 
             if not ignore_throttling:
                 try:
-                    scraping_queue = queue_manager.queues["Scraping"]
-                    current_scraping_queue_size = len(scraping_queue.items) if hasattr(scraping_queue, 'items') else len(scraping_queue.get_contents())
-                except KeyError:
-                    logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
-                    return False
+                    scraping_queue = queue_manager.queues.get("Scraping") 
+                    if scraping_queue:
+                        current_scraping_queue_size = len(scraping_queue.get_contents())
+                    else:
+                        logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
+                except Exception as e_sq_check:
+                    logging.error(f"Error checking ScrapingQueue size: {e_sq_check}", exc_info=True)
 
                 if current_scraping_queue_size >= WANTED_THROTTLE_SCRAPING_SIZE:
                     return True
 
-                allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
-                if allowed_to_add_count <= 0 and not (len(scraping_queue.items) < SCRAPING_QUEUE_MAX_SIZE and SCRAPING_QUEUE_MAX_SIZE > 0) : # Check if it can actually add anything
-                    logging.debug("Scraping queue is full or cannot accept more. Skipping Wanted processing cycle.")
-                    return True
-            
+                if scraping_queue: 
+                    allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
+                    if allowed_to_add_count <= 0 : 
+                        return True
+
             # 2. Build Query for Candidate Items (same as before)
             query = "SELECT * FROM media_items WHERE state = 'Wanted'"
             params = []
@@ -266,16 +339,22 @@ class WantedQueue:
             if order_by_clauses:
                 query += " ORDER BY " + ", ".join(order_by_clauses)
             
-            # Fetch a bit more to allow for filtering and batching shows
-            fetch_limit = int(allowed_to_add_count * 2) + 50 if allowed_to_add_count != float('inf') else 200 
-            query += f" LIMIT ?"
-            params.append(fetch_limit)
+            fetch_limit = int(allowed_to_add_count * 1.5) + 50 if allowed_to_add_count != float('inf') else 200 
+            if allowed_to_add_count != float('inf') and allowed_to_add_count <= 10: 
+                 fetch_limit = max(fetch_limit, 50) 
+            elif allowed_to_add_count == float('inf'): 
+                 fetch_limit = 200 
+            else: 
+                 fetch_limit = int(allowed_to_add_count * 1.5) + 50
+
+            query_with_limit = query + f" LIMIT ?" 
+            params_with_limit = params + [fetch_limit] 
 
             conn = None
             candidate_items_raw = []
             try:
                 conn = get_db_connection()
-                cursor = conn.execute(query, params)
+                cursor = conn.execute(query_with_limit, params_with_limit)
                 candidate_items_raw = cursor.fetchall()
             except Exception as e_fetch:
                 logging.error(f"Error fetching wanted items from DB: {e_fetch}", exc_info=True)
@@ -283,187 +362,180 @@ class WantedQueue:
             finally:
                 if conn: conn.close()
 
-            if not candidate_items_raw: return True
+            if not candidate_items_raw:
+                return True 
             
             candidate_items = [dict(row) for row in candidate_items_raw]
 
-            if source_priority_list: # Python-side sorting by content_source_priority
+            if source_priority_list: 
                 def get_source_priority_key(item):
                     source = item.get('content_source', '')
                     priority_index = source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
-                    imdb_id_val = item.get('imdb_id', '') # Default to empty string
+                    imdb_id_val = item.get('imdb_id') or '' 
                     season_num_val = item.get('season_number') if item.get('type') == 'episode' else float('inf')
-                    if season_num_val is None and item.get('type') == 'episode': season_num_val = float('-inf') # Sort None seasons first for episodes
+                    if season_num_val is None and item.get('type') == 'episode': season_num_val = float('-inf') 
                     episode_num_val = item.get('episode_number') if item.get('type') == 'episode' else float('inf')
                     if episode_num_val is None and item.get('type') == 'episode': episode_num_val = float('-inf')
-                    return (priority_index, imdb_id_val, season_num_val, episode_num_val)
+                    release_date_val = item.get('release_date') or '' 
+                    type_priority = 0 
+                    if sort_order_type == "Movies First":
+                        type_priority = 0 if item.get('type') == 'movie' else 1
+                    elif sort_order_type == "Episodes First":
+                        type_priority = 0 if item.get('type') == 'episode' else 1
+                    return (priority_index, type_priority, release_date_val if sort_by_release_date else '', imdb_id_val, season_num_val, episode_num_val)
                 candidate_items.sort(key=get_source_priority_key)
 
             # 3. Process Candidate Items
             current_datetime = datetime.now()
-            shows_batched_or_skipped_this_cycle = set() # Tracks imdb_ids
+            # Tracks imdb_ids of shows for which a scrape batch was done, OR a lead item errored causing candidate skip for that show.
+            shows_fully_processed_this_cycle = set() 
 
             idx = 0
             while idx < len(candidate_items):
-                # Check if we can START processing a new item or batch
-                # This condition allows one show batch to be processed even if allowed_to_add_count is 0 initially (meaning queue is at max but not over throttle)
-                # or if a previous show batch exceeded allowed_to_add_count.
+                
                 can_start_new_item_or_batch = (moved_to_scraping_count < allowed_to_add_count) or \
                                               (moved_to_scraping_count == 0 and allowed_to_add_count >= 0)
-
+                if allowed_to_add_count == float('inf'): 
+                    can_start_new_item_or_batch = True
 
                 item = candidate_items[idx]
                 item_imdb_id = item.get('imdb_id')
-                item_id = item['id'] # For logging
+                item_id = item['id'] 
+                item_identifier_log = queue_manager.generate_identifier(item)
 
-                # Skip if this item is part of a show already handled or decided upon this cycle
-                if item_imdb_id and item_imdb_id in shows_batched_or_skipped_this_cycle:
+                # If this show's candidate items were already processed (due to full batch OR leading error skip), advance.
+                if item_imdb_id and item_imdb_id in shows_fully_processed_this_cycle:
                     idx += 1
                     continue
                 
-                # If general capacity is full and we've already added something, stop.
                 if not can_start_new_item_or_batch and moved_to_scraping_count > 0:
-                    logging.debug(f"Scraping queue general capacity effectively reached. Limit: {allowed_to_add_count}, Current: {moved_to_scraping_count}. Halting Wanted processing for this cycle.")
                     break
                 
                 processed_candidates_count +=1
                 
-                # Evaluate the current item. This function might move it to Unreleased or Reconcile it.
                 evaluation_result = self._evaluate_item_readiness_and_act(item, current_datetime, queue_manager)
                 status = evaluation_result['status']
                 
                 if status == 'reconciled':
                     idx += 1
                     continue 
+                
                 if status == 'unreleased':
-                    moved_to_unreleased_count += 1 # Count is handled here based on helper's action
-                    if item_imdb_id: shows_batched_or_skipped_this_cycle.add(item_imdb_id)
-                    idx += 1
+                    moved_to_unreleased_count += 1
+                    idx += 1 # Process next candidate item
                     continue
-                if status == 'error' or status == 'wait':
-                    if item_imdb_id: shows_batched_or_skipped_this_cycle.add(item_imdb_id) # Mark show as considered
-                    # Advance index past other episodes of this show in the current candidate list
-                    # as their fate is tied to this first episode's evaluation for this cycle.
-                    if item['type'] == 'episode' and item_imdb_id:
-                        idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id)
-                    else:
-                        idx += 1
+                
+                if status == 'error':
+                    if item_imdb_id:
+                        shows_fully_processed_this_cycle.add(item_imdb_id) # Mark show due to error
+                        if item['type'] == 'episode': 
+                            prev_idx = idx
+                            idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id)
+                            continue 
+                    idx += 1 # Movie error or post-advance
                     continue
 
-                # If status is 'scrape', the item is ready.
+                if status == 'wait':
+                    # Item is waiting. Process next candidate item individually.
+                    # Do NOT advance past other episodes of this show in candidate_items.
+                    idx += 1
+                    continue
+
                 if status == 'scrape':
                     if item['type'] == 'movie':
-                        if can_start_new_item_or_batch: # Check capacity for this movie
-                            logging.debug(f"Moving movie {queue_manager.generate_identifier(item)} to Scraping.")
+                        if can_start_new_item_or_batch:
+                            logging.info(f"Moving movie {item_identifier_log} to Scraping.")
                             queue_manager.move_to_scraping(item, "Wanted")
                             moved_to_scraping_count += 1
-                            idx += 1
                         else:
-                            logging.debug(f"Movie {queue_manager.generate_identifier(item)} ready, but no capacity. Halting.")
-                            break # Stop processing this cycle.
+                            break 
+                        idx += 1
                     
                     elif item['type'] == 'episode':
-                        # Full show batching logic
-                        if item_imdb_id and can_start_new_item_or_batch: # We can start this show
-                            shows_batched_or_skipped_this_cycle.add(item_imdb_id)
-                            logging.info(f"Preparing to batch all ready episodes for show {item_imdb_id}, ignoring standard pick limit for this show.")
+                        if item_imdb_id and can_start_new_item_or_batch:
+                            # This episode is scrape-ready. Initiate full show batch.
+                            # Add to set to indicate this show's scrape batch processing has been triggered from candidate list.
+                            shows_fully_processed_this_cycle.add(item_imdb_id)
 
                             current_show_episodes_from_db = []
                             conn_show = None
                             try:
                                 conn_show = get_db_connection()
-                                # Fetch ALL wanted episodes for this show, ordered correctly
-                                # Ensure correct sorting for episodes within the show
-                                show_query_order_clauses = []
-                                # Episode type specific ordering (season, episode)
-                                show_query_order_clauses.append("CASE WHEN type = 'episode' THEN season_number ELSE NULL END ASC NULLS FIRST")
-                                show_query_order_clauses.append("CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC NULLS FIRST")
-                                # Fallback ordering by ID if not an episode or numbers are null (though less likely for a show batch)
-                                show_query_order_clauses.append("id ASC")
-
-
+                                show_query_order_clauses = [
+                                    "CASE WHEN type = 'episode' THEN season_number ELSE NULL END ASC NULLS FIRST",
+                                    "CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC NULLS FIRST",
+                                    "id ASC"
+                                ]
                                 show_query = f"SELECT * FROM media_items WHERE state = 'Wanted' AND imdb_id = ? ORDER BY {', '.join(show_query_order_clauses)}"
                                 cursor_show = conn_show.execute(show_query, (item_imdb_id,))
                                 current_show_episodes_from_db_raw = cursor_show.fetchall()
                                 current_show_episodes_from_db = [dict(row) for row in current_show_episodes_from_db_raw]
                             except Exception as e_show_fetch:
                                 logging.error(f"Error fetching all episodes for show {item_imdb_id} for batching: {e_show_fetch}", exc_info=True)
-                                idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id) # Advance main idx
+                                prev_idx = idx
+                                idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id) 
                                 continue 
                             finally:
                                 if conn_show: conn_show.close()
 
                             if not current_show_episodes_from_db:
                                 logging.warning(f"No episodes found in DB for show {item_imdb_id} during batch attempt, though initial item was ready.")
+                                prev_idx = idx
                                 idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id)
                                 continue
 
                             current_show_batch_ready_to_move = []
-                            # Track already processed candidates from this specific show fetch to avoid double counting
-                            # if an item from candidate_items was also in current_show_episodes_from_db
-                            # However, processed_candidates_count is for the outer loop.
-                            # Here we are evaluating each item from the specific show query.
-                            for show_episode_item in current_show_episodes_from_db:
-                                # We increment processed_candidates_count only if it's not the 'item' we already processed.
-                                # This count is more about items from the initial candidate_items list.
-                                # The important thing is evaluating each show_episode_item.
+                            for i_s_e, show_episode_item in enumerate(current_show_episodes_from_db):
+                                show_ep_identifier = queue_manager.generate_identifier(show_episode_item)
                                 eval_res = self._evaluate_item_readiness_and_act(show_episode_item, current_datetime, queue_manager)
                                 if eval_res['status'] == 'scrape':
                                     current_show_batch_ready_to_move.append(show_episode_item)
                                 elif eval_res['status'] == 'unreleased':
                                     moved_to_unreleased_count += 1
-                                # Reconciled items are handled by _evaluate_item_readiness_and_act.
-                                # Wait/error items are just skipped for this batch.
-
+                                
                             if current_show_batch_ready_to_move:
                                 logging.info(f"Moving full batch of {len(current_show_batch_ready_to_move)} ready episodes for show {item_imdb_id} to Scraping.")
                                 for batch_item_to_move in current_show_batch_ready_to_move:
                                     queue_manager.move_to_scraping(batch_item_to_move, "Wanted")
                                     moved_to_scraping_count += 1
+                            
+                            prev_idx = idx
+                            idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id) # Advance past this show in candidate_items
+                            
+                        elif item_imdb_id and not can_start_new_item_or_batch: # Not enough capacity to start a batch
+                            if moved_to_scraping_count < allowed_to_add_count or allowed_to_add_count == float('inf'):
+                                queue_manager.move_to_scraping(item, "Wanted")
+                                moved_to_scraping_count += 1
                             else:
-                                logging.info(f"No episodes for show {item_imdb_id} were ready to scrape in the full batch check.")
-                            
-                            # Advance idx in the original candidate_items list past all episodes of this show
-                            idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id)
-                            
-                            # If this large show batch has filled/overfilled what was initially allowed, stop further *new* items this cycle.
-                            if moved_to_scraping_count >= allowed_to_add_count and allowed_to_add_count != float('inf') and allowed_to_add_count > 0 :
-                                logging.debug(f"Scraping queue add limit ({allowed_to_add_count}) met/exceeded by show batch. Halting for new items this cycle.")
-                                break # Exit main while loop for candidate_items
-
-                        elif item_imdb_id and not can_start_new_item_or_batch:
-                            # This case means we couldn't even start this show batch due to initial capacity check.
-                            shows_batched_or_skipped_this_cycle.add(item_imdb_id) # Mark so we don't retry this show's first item
-                            logging.debug(f"Not enough capacity to start show batch for {item_imdb_id} (Allowed: {allowed_to_add_count}, Moved: {moved_to_scraping_count}). Will try next cycle.")
-                            idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id) 
-                            if moved_to_scraping_count > 0 and allowed_to_add_count > 0 : # If we already moved something and there was a limit
-                                break
-                            # else continue to check if other smaller items in candidate_items might fit
+                                break 
+                            idx += 1 
                         
-                        else: # Should not happen if item_imdb_id and can_start_new_item_or_batch was the entry condition
-                            idx +=1
+                        else: # Episode 'scrape' but no imdb_id, or other edge case
+                            logging.warning(f"Episode {item_identifier_log} is 'scrape' but not handled by batch logic (no imdb_id or other). Moving as single item if capacity allows.")
+                            if moved_to_scraping_count < allowed_to_add_count or allowed_to_add_count == float('inf'):
+                                queue_manager.move_to_scraping(item, "Wanted")
+                                moved_to_scraping_count += 1
+                            else:
+                                break
+                            idx += 1
                     
-                    # After processing an item/batch, check if the overall limit is now hit.
-                    # This check is more general now, as the show batch might have exceeded it.
-                    if moved_to_scraping_count >= allowed_to_add_count and allowed_to_add_count != float('inf') and allowed_to_add_count > 0 :
-                         logging.debug(f"Scraping queue add limit ({allowed_to_add_count}) reached after processing. Stopping.")
-                         break # Exit main while loop
-
-                else: # Unknown status from _evaluate_item_readiness_and_act or non-scrape status for first item of a potential show
-                    logging.warning(f"Item {item_id} (status: {status}) not moved to scrape. Marking show {item_imdb_id} as considered for this cycle.")
-                    if item_imdb_id: # Ensure show is marked as considered
-                        shows_batched_or_skipped_this_cycle.add(item_imdb_id)
-                    
-                    if item['type'] == 'episode' and item_imdb_id: # Advance past all of this show's items in candidate_items
-                        idx = self._advance_idx_past_show(candidate_items, idx, item_imdb_id)
-                    else: # Movie or other, just advance one
+                    else: # Unknown type marked as 'scrape'
+                        logging.warning(f"Item {item_identifier_log} is 'scrape' but unknown type: {item.get('type')}")
                         idx += 1
-            
-            #logging.info(f"Wanted queue processing complete. Processed Candidates: {processed_candidates_count}/{len(candidate_items)}, Moved to Scraping: {moved_to_scraping_count}, Accounted for Unreleased: {moved_to_unreleased_count}")
 
+                    if moved_to_scraping_count >= allowed_to_add_count and allowed_to_add_count != float('inf') and allowed_to_add_count > 0 :
+                         break 
+                    continue
+
+                logging.error(f"Item {item_identifier_log} (idx {idx}) had unexpected status '{status}' from evaluation. Advancing index.")
+                idx += 1
+            
         except Exception as e:
             logging.error(f"Fatal error in wanted queue processing: {str(e)}", exc_info=True)
             return False
+        finally:
+            # logging.info("WantedQueue process cycle ended.")
+            pass
         return True
 
     def move_blacklisted_items(self):

@@ -1932,9 +1932,10 @@ class MetadataManager:
 
         try:
             if session: # Use provided session
-                 # Ensure Item.item_metadata is loaded
+                 # Ensure Item.item_metadata and seasons/episodes are loaded
                  items = session_context.query(Item).options(
-                     selectinload(Item.item_metadata)
+                     selectinload(Item.item_metadata),
+                     selectinload(Item.seasons).selectinload(Season.episodes) # Eager load seasons and episodes
                  ).filter(
                      Item.imdb_id.in_(imdb_ids), Item.type == 'show'
                  ).all()
@@ -1944,7 +1945,7 @@ class MetadataManager:
                  item_ids_to_save_empty_xem = []
 
                  for item in items:
-                      # --- Define and populate item_metadata dict ---
+                      # --- Define and populate item_metadata dict ---\
                       item_metadata = {}
                       has_xem = False
                       tvdb_id = None
@@ -1958,7 +1959,20 @@ class MetadataManager:
                            except Exception as e:
                                logger.error(f"Error processing metadata key {m.key} for {item.imdb_id}: {e}")
                                item_metadata[m.key] = m.value
-                      # --- End definition ---
+                      # --- End definition ---\
+
+                      # Add formatted seasons data if available
+                      if hasattr(item, 'seasons') and item.seasons:
+                          try:
+                              item_metadata['seasons'] = MetadataManager.format_seasons_data(item.seasons)
+                              logger.debug(f"Formatted and added season data for {item.imdb_id} in bulk fetch (provided session).")
+                          except Exception as e_seasons:
+                              logger.error(f"Error formatting season data for {item.imdb_id} in bulk (provided session): {e_seasons}")
+                              item_metadata['seasons'] = {} # Default to empty if formatting fails
+                      else:
+                          item_metadata['seasons'] = {} # Default to empty if no seasons loaded
+                          logger.debug(f"No seasons loaded or attribute missing for {item.imdb_id} in bulk fetch (provided session).")
+
 
                       metadata_map[item.imdb_id] = item_metadata # Use the populated dict
                       # ... check if XEM needs fetching ...
@@ -2030,9 +2044,10 @@ class MetadataManager:
 
             else: # Create local session
                  with session_context as local_session:
-                      # Ensure Item.item_metadata is loaded
+                      # Ensure Item.item_metadata and seasons/episodes are loaded
                       items = local_session.query(Item).options(
-                          selectinload(Item.item_metadata)
+                          selectinload(Item.item_metadata),
+                          selectinload(Item.seasons).selectinload(Season.episodes) # Eager load seasons and episodes
                       ).filter(
                           Item.imdb_id.in_(imdb_ids), Item.type == 'show'
                       ).all()
@@ -2041,7 +2056,7 @@ class MetadataManager:
                       tvdb_ids_to_fetch_xem = {}
                       item_ids_to_save_empty_xem = []
                       for item in items:
-                          # --- Define and populate item_metadata dict ---
+                          # --- Define and populate item_metadata dict ---\
                           item_metadata = {}
                           has_xem = False
                           tvdb_id = None
@@ -2055,7 +2070,19 @@ class MetadataManager:
                               except Exception as e:
                                   logger.error(f"Error processing metadata key {m.key} for {item.imdb_id}: {e}")
                                   item_metadata[m.key] = m.value
-                          # --- End definition ---
+                          # --- End definition ---\
+
+                          # Add formatted seasons data if available
+                          if hasattr(item, 'seasons') and item.seasons:
+                              try:
+                                  item_metadata['seasons'] = MetadataManager.format_seasons_data(item.seasons)
+                                  logger.debug(f"Formatted and added season data for {item.imdb_id} in bulk fetch (local session).")
+                              except Exception as e_seasons:
+                                  logger.error(f"Error formatting season data for {item.imdb_id} in bulk (local session): {e_seasons}")
+                                  item_metadata['seasons'] = {} # Default to empty if formatting fails
+                          else:
+                              item_metadata['seasons'] = {} # Default to empty if no seasons loaded
+                              logger.debug(f"No seasons loaded or attribute missing for {item.imdb_id} in bulk fetch (local session).")
 
                           metadata_map[item.imdb_id] = item_metadata # Use the populated dict
                           # ... check if XEM needs fetching ...
@@ -2068,7 +2095,7 @@ class MetadataManager:
                                   item_ids_to_save_empty_xem.append(item.id)
 
 
-                      # --- Bulk Fetch XEM Mapping ---
+                      # --- Bulk Fetch XEM Mapping ---\
                       fetched_xem_mappings = {}
                       # ... fetch logic ...
                       if tvdb_ids_to_fetch_xem:

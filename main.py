@@ -1014,7 +1014,26 @@ def main():
     register_shutdown_handler()
     register_startup_handler() # This should now succeed
 
+    # Add migration for media_type setting
+    config = load_config()
 
+    # --- MIGRATION: Set default monitor_mode for enabled Collected content sources ---
+    if 'Content Sources' in config:
+        updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            # Check if this is a Collected content source and is enabled
+            if (
+                (source_id == 'Collected' or source_id.startswith('Collected_'))
+                and isinstance(source_config, dict)
+                and source_config.get('enabled', False)
+            ):
+                if 'monitor_mode' not in source_config:
+                    source_config['monitor_mode'] = 'Monitor All Episodes'
+                    updated = True
+                    logging.info(f"Set default monitor_mode for {source_id} to 'Monitor All Episodes'")
+        if updated:
+            save_config(config)
+            logging.info("Saved config after setting default monitor_mode for Collected content sources.")
 
     # Batch set deprecated settings
     set_setting('Debug', 'skip_initial_plex_update', False)
@@ -1092,9 +1111,6 @@ def main():
         if emby_settings_updated:
             save_config(config)
             logging.info("Successfully migrated Emby settings to Emby/Jellyfin settings")
-
-    # Add migration for media_type setting
-    config = load_config()
 
     # Add migration for folder locations
     if 'Debug' in config:
@@ -1371,6 +1387,62 @@ def main():
             save_config(config)
             logging.info("Successfully migrated content sources to include cutoff_date setting")
     # --- End cutoff_date migration ---
+
+    # --- MIGRATION: Standardize 'Plex Watchlist' type to 'My Plex Watchlist' with fixed key 'My Plex Watchlist_1' ---
+    plex_watchlist_migration_updated = False
+    if 'Content Sources' in config and isinstance(config.get('Content Sources'), dict):
+        content_sources = config['Content Sources']
+        
+        keys_to_delete_for_plex_migration = []
+        # Stores the dictionary data that will be used for the "My Plex Watchlist_1" key.
+        # The last processed "Plex Watchlist" type source will define this data.
+        data_for_my_plex_watchlist_1_entry = None 
+
+        # Iterate over a copy of items because we might delete keys from the original dict
+        for key, source_config_item in list(content_sources.items()):
+            if isinstance(source_config_item, dict) and source_config_item.get('type') == "Plex Watchlist": # Corrected type to search for
+                plex_watchlist_migration_updated = True # Mark that a change is happening
+                
+                # Prepare the updated data for this source. Work on a copy.
+                updated_source_data_for_plex = source_config_item.copy()
+                updated_source_data_for_plex['type'] = "My Plex Watchlist" # Corrected target type
+                
+                # Standardize display_name as well for consistency
+                if updated_source_data_for_plex.get('display_name') != "My Plex Watchlist":
+                    updated_source_data_for_plex['display_name'] = "My Plex Watchlist"
+                    logging.info(f"Content source migration: Updating display_name for source (original key: {key}, original type: 'Plex Watchlist') to 'My Plex Watchlist'.")
+                
+                # This item is a candidate to become/update "My Plex Watchlist_1".
+                # The last one processed with type "Plex Watchlist" will "win".
+                data_for_my_plex_watchlist_1_entry = updated_source_data_for_plex
+                
+                if key != "My Plex Watchlist_1":
+                    keys_to_delete_for_plex_migration.append(key)
+                # If key is "My Plex Watchlist_1", it will be correctly updated by the assignment later if this was the last one.
+                
+        # Perform deletions of old keys that are being consolidated
+        for key_to_del in keys_to_delete_for_plex_migration:
+            if key_to_del in content_sources: # Should always be true
+                del content_sources[key_to_del]
+                logging.info(f"Content source migration: Removed old entry '{key_to_del}' (original type 'Plex Watchlist') as it's being consolidated into 'My Plex Watchlist_1'.")
+
+        # Assign the final "My Plex Watchlist_1" data if any "Plex Watchlist" type was found
+        if data_for_my_plex_watchlist_1_entry is not None:
+            # Check if we are overwriting an existing "My Plex Watchlist_1" or creating it.
+            existing_entry_for_target_key = content_sources.get("My Plex Watchlist_1")
+            if existing_entry_for_target_key is not None and existing_entry_for_target_key is not data_for_my_plex_watchlist_1_entry:
+                logging.info(f"Content source migration: Updating/Overwriting entry 'My Plex Watchlist_1' with data from a consolidated source (original type 'Plex Watchlist').")
+            elif existing_entry_for_target_key is None: # Check if it's a new creation
+                 logging.info(f"Content source migration: Creating new entry 'My Plex Watchlist_1' from a source with original type 'Plex Watchlist'.")
+            # If existing_entry_for_target_key is data_for_my_plex_watchlist_1_entry, it means the item was already "My Plex Watchlist_1" and just got its internals updated.
+
+            content_sources["My Plex Watchlist_1"] = data_for_my_plex_watchlist_1_entry
+            # plex_watchlist_migration_updated is already true if data_for_my_plex_watchlist_1_entry is not None
+        
+    if plex_watchlist_migration_updated:
+        save_config(config)
+        logging.info("Successfully migrated 'Plex Watchlist' content sources to the standardized 'My Plex Watchlist' type and key ('My Plex Watchlist_1').")
+    # --- End 'Plex Watchlist' key and type migration ---
 
     # --- Add migration for year_match_weight in versions ---
     if 'Scraping' in config and 'versions' in config['Scraping']:

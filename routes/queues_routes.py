@@ -257,6 +257,7 @@ def api_queue_contents():
     })
 
 def process_item_for_response(item, queue_name, currently_processing_upgrade_id=None):
+    from utilities.settings import get_setting
     try:
         # Add scraping version settings to each item
         scraping_versions = get_setting('Scraping', 'versions', {})
@@ -292,60 +293,71 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             # --- START EDIT: Calculate and format scrape time ---
             item['formatted_scrape_time'] = "Unknown" # Default value
             try:
+                use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
+                anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
+                now = datetime.now()
                 release_date_str = item.get('release_date')
                 airtime_str = item.get('airtime')
                 version = item.get('version')
                 item_type = item.get('type')
 
-                # Determine if physical release is required
+                scraping_versions = get_setting('Scraping', 'versions', {})
                 version_settings = scraping_versions.get(version, {})
                 require_physical = version_settings.get('require_physical_release', False)
                 physical_release_date_str = item.get('physical_release_date')
 
-                # Determine the effective release date string
                 effective_release_date_str = None
                 if require_physical and physical_release_date_str:
                     effective_release_date_str = physical_release_date_str
                 elif not require_physical and release_date_str and str(release_date_str).lower() not in ['unknown', 'none', 'null', '']:
                     effective_release_date_str = str(release_date_str)
-                # If physical is required but missing, or normal release is missing/invalid, we can't calculate
 
-                if effective_release_date_str:
+                if use_alt and effective_release_date_str:
+                    try:
+                        anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
+                    except Exception:
+                        anchor_time = datetime.strptime('00:00', '%H:%M').time()
+                    # Calculate the anchor datetime for today and tomorrow
+                    today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
+                    if now < today_anchor:
+                        prev_anchor = today_anchor - timedelta(days=1)
+                        next_anchor = today_anchor
+                    else:
+                        prev_anchor = today_anchor
+                        next_anchor = today_anchor + timedelta(days=1)
+                    # Item's anchor datetime
+                    item_release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
+                    item_anchor_dt = datetime.combine(item_release_date, anchor_time)
+                    # If item's anchor is in the future, show that
+                    if item_anchor_dt > now:
+                        item['formatted_scrape_time'] = item_anchor_dt.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
+                    else:
+                        # Show the next anchor after now
+                        item['formatted_scrape_time'] = next_anchor.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
+                elif effective_release_date_str:
                     # Parse effective date
                     release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
-
-                    # Parse airtime (with defaults)
-                    airtime = None
                     if airtime_str:
                         try: airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
                         except ValueError:
                             try: airtime = datetime.strptime(airtime_str, '%H:%M').time()
                             except ValueError: airtime = datetime.strptime("00:00", '%H:%M').time()
                     else: airtime = datetime.strptime("00:00", '%H:%M').time()
-
-                    # Combine date and time
                     release_datetime = datetime.combine(release_date, airtime)
-
-                    # Get offset from settings
                     offset_hours = 0.0
                     if item_type == 'movie':
                         movie_offset_setting = get_setting("Queue", "movie_airtime_offset", "0")
                         try: offset_hours = float(movie_offset_setting)
-                        except (ValueError, TypeError): pass # Keep 0.0 on error
+                        except (ValueError, TypeError): pass
                     elif item_type == 'episode':
                         episode_offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
                         try: offset_hours = float(episode_offset_setting)
-                        except (ValueError, TypeError): pass # Keep 0.0 on error
-
-                    # Calculate effective scrape time
+                        except (ValueError, TypeError): pass
                     effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
-
-                    # Format for display
                     item['formatted_scrape_time'] = effective_scrape_time.strftime('%Y-%m-%d %I:%M %p')
-
             except Exception as e:
                  logging.warning(f"Could not calculate scrape time for Wanted item {item.get('id')}: {e}")
-                 item['formatted_scrape_time'] = "Error Calculating" # Or keep "Unknown"
+                 item['formatted_scrape_time'] = "Error Calculating"
             # --- END EDIT ---
         elif queue_name == 'Checking':
             # Convert datetime to string for time_added

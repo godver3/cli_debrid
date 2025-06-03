@@ -494,6 +494,12 @@ SETTINGS_SCHEMA = {
                     "description": "Preferred language code (ISO 639-1) for metadata like titles."
                 }
             }
+        },
+        "accept_uncached_within_hours": {
+            "type": "integer",
+            "description": "If an item was released within the last X hours, accept uncached releases. Set to 0 to disable.",
+            "default": 0,
+            "min": 0
         }
     },
     "Trakt": {
@@ -819,6 +825,17 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Scale final scores to a range of 0-100",
             "default": False
+        },
+        "use_alternate_scrape_time_strategy": {
+            "type": "boolean",
+            "description": "Enable alternate scraping time strategy: Instead of scraping based on queue offsets/airtime/release date, scrape all items with release dates and airtimes within the past 24 hours of the user-identified time each day.",
+            "default": False
+        },
+        "alternate_scrape_time_24h": {
+            "type": "string",
+            "description": "24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.",
+            "default": "00:00",
+            "validate": "time"
         }
     },
     "Scrapers": {
@@ -887,7 +904,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -895,6 +912,21 @@ SETTINGS_SCHEMA = {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
                 "display_name": {"type": "string", "default": "Collected"},
+                "monitor_mode": {
+                    "type": "string",
+                    "description": [
+                        "Controls which episodes are monitored for collection:",
+                        "'Monitor All Episodes' - All episodes are monitored (default, current behavior).",
+                        "'Monitor Future Episodes' - Only episodes with a release date after the show is added are monitored.",
+                        "'Monitor Recent (90 Days) and Future' - Only episodes released in the last 90 days and all future episodes are monitored."
+                    ],
+                    "default": "Monitor All Episodes",
+                    "choices": [
+                        "Monitor All Episodes",
+                        "Monitor Future Episodes",
+                        "Monitor Recent (90 Days) and Future"
+                    ]
+                },
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
@@ -907,7 +939,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -928,7 +960,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -950,7 +982,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -971,7 +1003,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -994,7 +1026,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1015,7 +1047,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1038,7 +1070,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1060,7 +1092,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1082,7 +1114,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1105,7 +1137,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             },
@@ -1146,7 +1178,7 @@ SETTINGS_SCHEMA = {
                 },
                 "cutoff_date": {
                     "type": "string",
-                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format). Leave empty to process all content.",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
                 }
             }

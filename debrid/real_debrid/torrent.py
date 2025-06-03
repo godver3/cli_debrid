@@ -70,7 +70,7 @@ def get_torrent_info_status(api_key: str, torrent_id: str) -> TorrentInfoStatus:
                 else:
                     # Not a 429 error or we've exhausted retries
                     return TorrentInfoStatus(
-                        status=TorrentFetchStatus.RATE_LIMITED if "429" in str(e) else TorrentFetchStatus.ERROR,
+                        status=TorrentFetchStatus.RATE_LIMITED if "429" in str(e) else TorrentFetchStatus.UNKNOWN_ERROR,
                         message=f"Provider unavailable: {str(e)}"
                     )
 

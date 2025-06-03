@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, List
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time as dt_time
 import json
 import time
 
@@ -167,6 +167,13 @@ class ScrapingQueue:
             item_id_being_processed = item_to_process['id'] # Store ID for later check
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
+
+            # --- Alternate scrape time strategy ---
+            if not self._is_within_alternate_scrape_window(item_to_process, datetime.now()):
+                logging.info(f"{item_identifier} is not within the alternate scrape window. Moving back to Wanted queue.")
+                queue_manager.move_to_wanted(item_to_process, "Scraping")
+                self.remove_item(item_to_process)
+                return True
 
             # --- START: Check if related item is in Adding Queue --- 
             item_imdb_id = item_to_process.get('imdb_id')
@@ -682,9 +689,36 @@ class ScrapingQueue:
                         # logging.debug(f"Using original item S{target_season}E{target_episode} for result: {r.get('original_title')}")
                         
                     # Perform the check using the determined target season/episode
-                    # Handles cases where target_season/target_episode might be None
-                    season_match = (target_season is None or parsed_seasons == [target_season])
-                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    season_match = False
+                    episode_match = False
+                    item_title_for_check = item.get('title', '').lower()
+                    is_formula_1_item = "formula 1" in item_title_for_check
+
+                    if is_formula_1_item and not scene_mapping: # Apply F1 logic only if not using XEM override
+                        parsed_torrent_year_val = parsed_info.get('year')
+                        actual_torrent_year = None
+                        if isinstance(parsed_torrent_year_val, list):
+                            if parsed_torrent_year_val and str(parsed_torrent_year_val[0]).isdigit():
+                                actual_torrent_year = int(parsed_torrent_year_val[0])
+                        elif parsed_torrent_year_val and str(parsed_torrent_year_val).isdigit():
+                            actual_torrent_year = int(parsed_torrent_year_val)
+
+                        # For F1, target_season is event year. PTT season from torrent is S01 or empty.
+                        season_match = (
+                            (not parsed_seasons or parsed_seasons == [1]) and
+                            (actual_torrent_year is not None and actual_torrent_year == target_season)
+                        )
+                        # Episode match for F1: be lenient if torrent has no parsed episodes, or match if it does.
+                        episode_match = (target_episode is None or not parsed_episodes or parsed_episodes == [target_episode])
+                        
+                        # if not (season_match and episode_match):
+                        #     logging.debug(f"F1 DEBUG (initial scrape): Post-filter mismatch for '{r.get('original_title')}': "
+                        #                   f"Item S{target_season}E{target_episode}. "
+                        #                   f"Torrent ParsedYear: {actual_torrent_year}, ParsedSeasonPTT: {parsed_seasons}, ParsedEpisodePTT: {parsed_episodes}. "
+                        #                   f"Match S:{season_match}, E:{episode_match}")
+                    else: # Original logic for non-F1 or F1 with XEM
+                        season_match = (target_season is None or parsed_seasons == [target_season])
+                        episode_match = (target_episode is None or parsed_episodes == [target_episode])
                     
                     if season_match and episode_match:
                         filtered_results_using_mapping.append(r)
@@ -715,25 +749,31 @@ class ScrapingQueue:
         # Ensure individual results and filtered_out are lists
         individual_results = individual_results if individual_results is not None else []
         individual_filtered_out = individual_filtered_out if individual_filtered_out is not None else []
+        logging.info(f"Individual episode scrape for {item_identifier} initially returned {len(individual_results)} results.")
+        if individual_results:
+            logging.debug(f"  Initial individual titles: {[r.get('original_title', 'N/A') for r in individual_results]}")
+
 
         # Filter out unwanted magnets and URLs for individual results
         if not skip_filter: # Apply existing filters
-            individual_results = [
-                r for r in individual_results 
-                if not (
-                    not item.get('disable_not_wanted_check') and 
-                    (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))
-                )
-            ]
-            # New filter for individual results
-            if stored_rescrape_title:
-                original_individual_results_count = len(individual_results)
-                individual_results = [
-                    r for r in individual_results
-                    if not (r.get('original_title') and r.get('original_title') == stored_rescrape_title)
-                ]
-                if len(individual_results) < original_individual_results_count:
-                    logging.info(f"Filtered out {original_individual_results_count - len(individual_results)} individual results matching stored rescrape title: '{stored_rescrape_title}' for {item_identifier}")
+            temp_individual_results = []
+            for r_idx, r_val in enumerate(individual_results):
+                logging.debug(f"  Checking individual result #{r_idx + 1} ('{r_val.get('original_title', 'N/A')}') for not_wanted/rescrape filters.")
+                if not item.get('disable_not_wanted_check'):
+                    if is_magnet_not_wanted(r_val['magnet']):
+                        logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_magnet_not_wanted.")
+                        continue
+                    if is_url_not_wanted(r_val['magnet']):
+                        logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_url_not_wanted.")
+                        continue
+                if stored_rescrape_title and r_val.get('original_title') and r_val.get('original_title') == stored_rescrape_title:
+                    logging.info(f"    Filtered out '{r_val.get('original_title')}' due to matching stored rescrape title: '{stored_rescrape_title}'.")
+                    continue
+                temp_individual_results.append(r_val)
+            
+            if len(individual_results) != len(temp_individual_results):
+                logging.info(f"  After not_wanted/rescrape filters, {len(temp_individual_results)} individual results remain for {item_identifier}.")
+            individual_results = temp_individual_results
 
 
         # For episodes, use the original season/episode numbers from the item for the fallback filtering logic as well
@@ -744,16 +784,21 @@ class ScrapingQueue:
         if season is not None and episode is not None:
             date_based_results = []
             regular_results = []
+            logging.debug(f"Processing {len(individual_results)} individual results for S/E matching for {item_identifier} (Item S{season}E{episode}).")
             # Separate date-based and regular results
-            for result in individual_results:
+            for result_idx, result in enumerate(individual_results):
+                logging.debug(f"  S/E Pre-sort check for individual result #{result_idx + 1} '{result.get('original_title', 'N/A')}': Parsed PTT: {result.get('parsed_info')}")
                 if result.get('parsed_info', {}).get('date'):
                     result['is_date_based'] = True # Mark it
                     date_based_results.append(result)
+                    logging.debug(f"    '{result.get('original_title')}' marked as date_based.")
                 else:
                     regular_results.append(result)
+                    logging.debug(f"    '{result.get('original_title')}' marked as regular (non-date_based PTT).")
             
             filtered_regular_results = []
-            for r in regular_results:
+            logging.debug(f"  Checking {len(regular_results)} regular (non-date PTT) results for S/E match for {item_identifier}.")
+            for r_idx, r in enumerate(regular_results):
                 parsed_info = r.get('parsed_info', {})
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 parsed_seasons = season_episode_info.get('seasons', [])
@@ -764,22 +809,60 @@ class ScrapingQueue:
                 target_season = None
                 target_episode = None
                 
+                log_prefix = f"    Regular result #{r_idx+1} ('{r.get('original_title', 'N/A')}'):"
+
                 if scene_mapping: # Use scene mapping if present
                     target_season = scene_mapping.get('season')
                     target_episode = scene_mapping.get('episode')
+                    logging.debug(f"{log_prefix} Using XEM S{target_season}E{target_episode}. PTT S{parsed_seasons}E{parsed_episodes}.")
                 else: # Fallback to original item numbers
                     target_season = season # Uses the original item season from above
                     target_episode = episode # Uses the original item episode from above
+                    logging.debug(f"{log_prefix} Using Item S{target_season}E{target_episode}. PTT S{parsed_seasons}E{parsed_episodes}Year{parsed_info.get('year')}.")
                     
                 # Perform the check using the determined target season/episode
-                season_match = (target_season is None or parsed_seasons == [target_season])
-                episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                season_match = False
+                episode_match = False
+                item_title_for_check = item.get('title', '').lower()
+                is_formula_1_item = "formula 1" in item_title_for_check
+
+                if is_formula_1_item and not scene_mapping: # Apply F1 logic only if not using XEM override
+                    logging.debug(f"{log_prefix} Applying F1 matching logic.")
+                    parsed_torrent_year_val = parsed_info.get('year')
+                    actual_torrent_year = None
+                    if isinstance(parsed_torrent_year_val, list):
+                        if parsed_torrent_year_val and str(parsed_torrent_year_val[0]).isdigit():
+                            actual_torrent_year = int(parsed_torrent_year_val[0])
+                    elif parsed_torrent_year_val and str(parsed_torrent_year_val).isdigit():
+                        actual_torrent_year = int(parsed_torrent_year_val)
+
+                    season_match = (
+                        (not parsed_seasons or parsed_seasons == [1]) and
+                        (actual_torrent_year is not None and actual_torrent_year == target_season)
+                    )
+                    episode_match = (target_episode is None or not parsed_episodes or parsed_episodes == [target_episode])
+                    logging.debug(f"{log_prefix} F1 S_match:{season_match} (PTT_S:{parsed_seasons} vs Item_Year(TargetS):{target_season}, Torrent_Year:{actual_torrent_year}), E_match:{episode_match} (PTT_E:{parsed_episodes} vs Item_E:{target_episode}).")
+                else: # Original logic for non-F1 or F1 with XEM
+                    logging.debug(f"{log_prefix} Applying Non-F1/XEM matching logic.")
+                    season_match = (target_season is None or parsed_seasons == [target_season])
+                    episode_match = (target_episode is None or parsed_episodes == [target_episode])
+                    logging.debug(f"{log_prefix} Non-F1/XEM S_match:{season_match} (PTT_S:{parsed_seasons} vs TargetS:{target_season}), E_match:{episode_match} (PTT_E:{parsed_episodes} vs TargetE:{target_episode}).")
 
                 if season_match and episode_match:
+                    logging.debug(f"{log_prefix} PASSED S/E match. Adding to filtered_regular_results.")
                     filtered_regular_results.append(r)
+                else:
+                    logging.debug(f"{log_prefix} FAILED S/E match. Discarding.")
 
+            logging.debug(f"  Finished S/E checks. Date-based: {len(date_based_results)}, Filtered Regular: {len(filtered_regular_results)} for {item_identifier}.")
             # Combine date-based and filtered regular results
             individual_results = date_based_results + filtered_regular_results
+            if individual_results:
+                 logging.info(f"  After all S/E filtering, {len(individual_results)} individual results remain for {item_identifier}.")
+                 logging.debug(f"    Final individual titles: {[r.get('original_title', 'N/A') for r in individual_results]}")
+            else:
+                 logging.info(f"  After all S/E filtering, 0 individual results remain for {item_identifier}.")
+
 
         if individual_results:
             logging.info(f"Found results for individual episode scraping of {item_identifier}.")
@@ -882,18 +965,26 @@ class ScrapingQueue:
 
         # --- Original Logic for Non-Upgrade Items ---
         if self.is_item_old(item):
+            item_title_for_f1_check = (item.get('title', '') or item.get('series_title', '')).lower()
+            is_formula_1_item = "formula 1" in item_title_for_f1_check
+
             if item['type'] == 'episode':
-                logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
-                queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+                if is_formula_1_item:
+                    logging.info(f"No results found for old Formula 1 item {item_identifier}. Blacklisting this specific item.")
+                    queue_manager.move_to_blacklisted(item, "Scraping") # Blacklist only this F1 item
+                else:
+                    logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
+                    queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
+                
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
-            elif item['type'] == 'movie':
+            elif item['type'] == 'movie': # Movies (including F1 if ever classified as such) are blacklisted individually
                 logging.info(f"No results found for old movie {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping") # Direct blacklist
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
-            else:
-                logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Blacklisting item.")
+            else: # Unknown types
+                logging.warning(f"Unknown item type {item['type']} for {item_identifier} (is_formula_1_item: {is_formula_1_item}). Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping") # Direct blacklist
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
@@ -913,11 +1004,11 @@ class ScrapingQueue:
             moved = False # Flag to track if moved
             if max_wake_count <= 0:
                 logging.info(f"Item {item_identifier} version '{item.get('version')}' has max_wake_count <= 0 ({max_wake_count}). Initiating final check or blacklist.")
-                queue_manager.initiate_final_check_or_blacklist(item, "Scraping") # <--- CHANGED
+                queue_manager.initiate_final_check_or_blacklist(item, "Scraping") 
                 moved = True
             elif current_wake_count >= max_wake_count:
                 logging.info(f"Item {item_identifier} reached max wake count ({current_wake_count}/{max_wake_count}). Initiating final check or blacklist.")
-                queue_manager.initiate_final_check_or_blacklist(item, "Scraping") # <--- CHANGED
+                queue_manager.initiate_final_check_or_blacklist(item, "Scraping") 
                 moved = True
             else:
                 logging.info(f"Item {item_identifier} (Wake count: {current_wake_count}/{max_wake_count}) moving to Sleeping queue.")
@@ -925,9 +1016,6 @@ class ScrapingQueue:
                 moved = True
 
             self.reset_not_wanted_check(item['id'])
-             # Remove item from current queue explicitly only if it was successfully moved *by this function*
-             # The initiate_final_check_or_blacklist handles removal internally now.
-             # So, only remove if moved to Sleeping.
             if moved and self.contains_item_id(item.get('id')) and max_wake_count > 0 and current_wake_count < max_wake_count:
                  self.remove_item(item)
 
@@ -968,3 +1056,45 @@ class ScrapingQueue:
     def contains_item_id(self, item_id):
         """Check if the queue contains an item with the given ID"""
         return any(i['id'] == item_id for i in self.items)
+
+    def _is_within_alternate_scrape_window(self, item, now=None):
+        if now is None:
+            now = datetime.now()
+        use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
+        if not use_alt:
+            return True  # If not enabled, always allow
+        anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
+        try:
+            anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
+        except Exception:
+            anchor_time = dt_time(0, 0)
+        today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
+        if now < today_anchor:
+            anchor_dt = today_anchor
+        else:
+            anchor_dt = today_anchor
+        window_start = anchor_dt - timedelta(hours=24)
+        # Get item datetime
+        release_date_str = item.get('release_date')
+        airtime_str = item.get('airtime')
+        if not release_date_str or release_date_str.lower() in ['unknown', 'none']:
+            return False
+        try:
+            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+            if airtime_str:
+                try:
+                    airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                except ValueError:
+                    try:
+                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    except ValueError:
+                        airtime = dt_time(0, 0)
+            else:
+                airtime = dt_time(0, 0)
+            item_dt = datetime.combine(release_date, airtime)
+        except Exception:
+            return False
+        # If the item is older than the window, always allow
+        if item_dt < window_start:
+            return True
+        return window_start <= item_dt <= anchor_dt
