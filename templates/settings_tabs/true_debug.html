@@ -221,6 +221,22 @@
                        data-section="Debug" data-key="minimum_scrape_score">
                 <p class="settings-description">Minimum scrape score to accept results above.</p>
             </div>
+
+            <!-- Alternate Scraping Time Strategy -->
+            <div class="settings-form-group">
+                <label for="debug-use_alternate_scrape_time_strategy" class="settings-title">Enable Alternate Scraping Time Strategy:</label>
+                <input type="checkbox" id="debug-use_alternate_scrape_time_strategy" name="Debug.use_alternate_scrape_time_strategy"
+                       data-section="Debug" data-key="use_alternate_scrape_time_strategy"
+                       {% if settings.get('Debug', {}).get('use_alternate_scrape_time_strategy', false) %}checked{% endif %}>
+                <p class="settings-description">Enable alternate scraping time strategy: Instead of scraping based on queue offsets/airtime/release date, scrape all items with release dates and airtimes within the past 24 hours of the user-identified time each day.</p>
+            </div>
+            <div class="settings-form-group">
+                <label for="debug-alternate_scrape_time_24h" class="settings-title">Alternate Scrape Time (24h format):</label>
+                <input type="text" id="debug-alternate_scrape_time_24h" name="Debug.alternate_scrape_time_24h"
+                       value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', settings_schema.Debug.alternate_scrape_time_24h.default) }}"
+                       class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
+                <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
+            </div>
             <script>
                 document.addEventListener('DOMContentLoaded', function() {
                     const sanitizerInput = document.getElementById('debug-sanitizer_replacement_character');

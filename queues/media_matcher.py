@@ -157,16 +157,32 @@ class MediaMatcher:
             # Season/Episode matching (using target_season/target_episode)
             season_episode_match = False
             if not date_match: # Only check if date didn't match
-                # Ensure target_season is not None before checking containment, unless it's None because of XEM
-                season_match = (target_season is not None and target_season in ptt_result.get('seasons', [])) or \
-                               (using_xem and target_season is None and not ptt_result.get('seasons')) # Allow None season match if XEM provided None and file has no season
-                episode_match = target_episode in ptt_result.get('episodes', [])
-                # Also check fallback episode if PTT episodes are empty
-                if not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == target_episode:
-                    episode_match = True
+                # Determine item title for F1 check
+                item_title_for_f1_check = (item.get('series_title', '') or item.get('title', '')).lower()
+                is_formula_1_item = "formula 1" in item_title_for_f1_check
+
+                if is_formula_1_item and not using_xem: # Apply F1 logic if not overridden by XEM
+                    # For F1, target_season IS the event year.
+                    # We check if the file's PTT season is typical for F1 (empty or S1).
+                    # The year from the filename's PTT is not reliable here.
+                    season_match = (not ptt_result.get('seasons') or ptt_result.get('seasons') == [1])
+                    
+                    # Episode match for F1: item's event number should be in filename's PTT episodes,
+                    # or filename has no PTT episodes (e.g. single file for the whole event part).
+                    episode_match = (target_episode is None or not ptt_result.get('episodes') or target_episode in ptt_result.get('episodes', []))
+                    
+                    logging.debug(f"Strict F1 match: S/E check -> S:{season_match} E:{episode_match} (Item S{target_season}E{target_episode}, FilePTTSeason: {ptt_result.get('seasons')}, FilePTTEpisodes: {ptt_result.get('episodes')})")
+                else: # Original logic for non-F1 or if using XEM
+                    season_match = (target_season is not None and target_season in ptt_result.get('seasons', [])) or \
+                                   (using_xem and target_season is None and not ptt_result.get('seasons')) # Allow None season match if XEM provided None and file has no season
+                    episode_match = target_episode in ptt_result.get('episodes', [])
+                    # Also check fallback episode if PTT episodes are empty
+                    if not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == target_episode:
+                        episode_match = True
+                    logging.debug(f"Strict non-F1/XEM match: S/E check -> S:{season_match} E:{episode_match} (Target S{target_season}E{target_episode})")
 
                 season_episode_match = season_match and episode_match
-                logging.debug(f"Strict match: S/E check -> S:{season_match} E:{episode_match} (Target S{target_season}E{target_episode})")
+                logging.debug(f"Strict match S/E component result: {season_episode_match}")
 
 
                 # Last resort: check file date against TMDB date for season/episode files if S/E match failed
@@ -224,6 +240,31 @@ class MediaMatcher:
 
         # --- TV Episode Logic ---
         elif item_type == 'episode':
+            # Check for Formula 1
+            item_title_for_f1_check = (item.get('series_title', '') or item.get('title', '')).lower()
+            is_formula_1_item = "formula 1" in item_title_for_f1_check
+
+            if is_formula_1_item:
+                logging.debug(f"Formula 1 item detected: '{item_title_for_f1_check}'. Applying simplified 'session' file matching.")
+                for parsed_file_info in parsed_files:
+                    # Ensure 'parsed_info' and 'original_filename' exist
+                    parsed_info_dict = parsed_file_info.get('parsed_info', {})
+                    original_filename = parsed_info_dict.get('original_filename', '')
+                    
+                    if "session" in original_filename.lower():
+                        logging.info(f"F1 Match (simplified): Found 'session' in filename '{original_filename}'. Matching item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} to file: {parsed_file_info['path']}")
+                        return (os.path.basename(parsed_file_info['path']), item) # Return basename path and item
+                    elif "qualifying" in original_filename.lower():
+                        logging.info(f"F1 Match (simplified): Found 'qualifying' in filename '{original_filename}'. Matching item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} to file: {parsed_file_info['path']}")
+                        return (os.path.basename(parsed_file_info['path']), item) # Return basename path and item
+                    elif "race" in original_filename.lower():
+                        logging.info(f"F1 Match (simplified): Found 'race' in filename '{original_filename}'. Matching item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} to file: {parsed_file_info['path']}")
+                        return (os.path.basename(parsed_file_info['path']), item) # Return basename path and item
+                    
+                
+                logging.info(f"F1 Match (simplified): No file containing 'session'/'qualifying'/'race' found for item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')}. No match by this specific F1 rule.")
+                return None # No file with "session" found for this F1 item by this rule
+
             # Determine if relaxed matching should be used (copied from original _match_tv_content)
             genres = item.get('genres', [])
             if isinstance(genres, str):

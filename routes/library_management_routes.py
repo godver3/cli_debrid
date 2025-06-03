@@ -11,25 +11,16 @@ from cli_battery.app.direct_api import DirectAPI
 from utilities.settings import load_config
 from database.database_reading import get_distinct_library_shows, get_collected_episodes_count
 import logging
+from .models import admin_required # Import admin_required from models
 
 library_management = Blueprint('library_management', __name__)
 
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated or current_user.role != 'admin':
-            return jsonify({'error': 'Admin privileges required'}), 403
-        return f(*args, **kwargs)
-    return decorated_function
-
 @library_management.route('/library-management')
-@login_required
 @admin_required
 def manage_libraries():
     return render_template('library_management.html')
 
 @library_management.route('/api/libraries', methods=['GET'])
-@login_required
 @admin_required
 def get_libraries():
     # TODO: Implement logic to get all configured libraries
@@ -37,7 +28,6 @@ def get_libraries():
     return jsonify(libraries)
 
 @library_management.route('/api/libraries', methods=['POST'])
-@login_required
 @admin_required
 def create_library():
     data = request.get_json()
@@ -45,7 +35,6 @@ def create_library():
     return jsonify({'message': 'Library created successfully'})
 
 @library_management.route('/api/libraries/<library_id>', methods=['PUT'])
-@login_required
 @admin_required
 def update_library(library_id):
     data = request.get_json()
@@ -53,14 +42,12 @@ def update_library(library_id):
     return jsonify({'message': 'Library updated successfully'})
 
 @library_management.route('/api/libraries/<library_id>', methods=['DELETE'])
-@login_required
 @admin_required
 def delete_library(library_id):
     # TODO: Implement library deletion logic
     return jsonify({'message': 'Library deleted successfully'})
 
 @library_management.route('/api/libraries/verify', methods=['POST'])
-@login_required
 @admin_required
 def verify_library_path():
     data = request.get_json()
@@ -82,7 +69,6 @@ def verify_library_path():
     })
 
 @library_management.route('/api/libraries/scan-broken', methods=['POST'])
-@login_required
 @admin_required
 def scan_broken_symlinks():
     """Scan for broken symlinks in the library."""
@@ -93,7 +79,6 @@ def scan_broken_symlinks():
     return jsonify(results)
 
 @library_management.route('/api/libraries/repair-symlink', methods=['POST'])
-@login_required
 @admin_required
 def repair_symlink():
     """Attempt to repair a broken symlink."""
@@ -109,7 +94,6 @@ def repair_symlink():
     return jsonify(result) 
 
 @library_management.route('/library-shows-overview')
-@login_required
 @admin_required
 def library_shows_overview_page():
     """
@@ -153,7 +137,6 @@ def library_shows_overview_page():
         )
 
 @library_management.route('/api/library-show-details/<imdb_id>')
-@login_required
 @admin_required
 def get_library_show_details(imdb_id):
     """

@@ -31,7 +31,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'media_type_mismatch': 0,
             'existing_blacklisted': 0,
             'trakt_error': 0,
-            'anime_filter': 0
+            'anime_filter': 0,
+            'monitor_mode_no_date': 0,
+            'monitor_mode_invalid_date': 0,
+            'monitor_mode_future_skip': 0,
+            'monitor_mode_recent_skip': 0
         }
         airtime_cache = {}
 
@@ -362,10 +366,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 items_skipped += 1
                 continue
 
-            season_number = item.get('season_number')
+            season_number_for_blacklist = item.get('season_number')
             is_item_blacklisted = (
-                is_blacklisted(item.get('imdb_id', ''), season_number) or 
-                is_blacklisted(item.get('tmdb_id', ''), season_number)
+                is_blacklisted(item.get('imdb_id', ''), season_number_for_blacklist) or 
+                is_blacklisted(item.get('tmdb_id', ''), season_number_for_blacklist)
             )
             if is_item_blacklisted:
                 skip_stats['blacklisted'] += 1
@@ -382,6 +386,50 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+            content_source = item.get('content_source')
+
+            # Monitor Mode Filtering for "Collected_" sources (episodes only)
+            if item_type == 'episode' and content_source and content_source.startswith('Collected_'):
+                if content_source in content_sources:
+                    source_config = content_sources[content_source]
+                    monitor_mode = source_config.get('monitor_mode', 'Monitor All Episodes')
+                    
+                    if monitor_mode != 'Monitor All Episodes':
+                        release_date_str = item.get('release_date')
+
+                        if not release_date_str:
+                            logging.warning(f"MONITOR_MODE_SKIP (Missing Date): Episode '{normalized_title}' from source '{content_source}'. monitor_mode: {monitor_mode}.")
+                            skip_stats.setdefault('monitor_mode_no_date', 0)
+                            skip_stats['monitor_mode_no_date'] += 1
+                            items_skipped += 1
+                            continue 
+
+                        try:
+                            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                            today = datetime.now().date()
+
+                            if monitor_mode == 'Monitor Future Episodes':
+                                if release_date_obj < today:
+                                    skip_stats.setdefault('monitor_mode_future_skip', 0)
+                                    skip_stats['monitor_mode_future_skip'] += 1
+                                    items_skipped += 1
+                                    continue
+                            elif monitor_mode == 'Monitor Recent (90 Days) and Future':
+                                ninety_days_ago = today - timedelta(days=90)
+                                if release_date_obj < ninety_days_ago:
+                                    skip_stats.setdefault('monitor_mode_recent_skip', 0)
+                                    skip_stats['monitor_mode_recent_skip'] += 1
+                                    items_skipped += 1
+                                    continue
+                        except ValueError:
+                            logging.warning(f"MONITOR_MODE_SKIP (Invalid Date Format): Episode '{normalized_title}' from source '{content_source}' due to invalid release date format '{release_date_str}'. monitor_mode: {monitor_mode}.")
+                            skip_stats.setdefault('monitor_mode_invalid_date', 0)
+                            skip_stats['monitor_mode_invalid_date'] += 1
+                            items_skipped += 1
+                            continue
+                else:
+                    logging.warning(f"Content source '{content_source}' for item '{normalized_title}' not found in configuration. Skipping monitor_mode check for this item.")
+            
             genres = json.dumps(item.get('genres', []))
             item_genres_list = [str(g).lower() for g in item.get('genres', [])]
             is_anime = 'anime' in item_genres_list
@@ -556,6 +604,16 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         if skip_stats['trakt_error'] > 0:
             skip_report.append(f"- {skip_stats['trakt_error']} items skipped Trakt check due to API errors") # Report Trakt errors
         
+        # Add new monitor_mode skip reasons to the report
+        if skip_stats.get('monitor_mode_future_skip', 0) > 0:
+            skip_report.append(f"- {skip_stats['monitor_mode_future_skip']} episodes skipped by 'Monitor Future Episodes' mode")
+        if skip_stats.get('monitor_mode_recent_skip', 0) > 0:
+            skip_report.append(f"- {skip_stats['monitor_mode_recent_skip']} episodes skipped by 'Monitor Recent (90 Days) and Future' mode")
+        if skip_stats.get('monitor_mode_no_date', 0) > 0:
+            skip_report.append(f"- {skip_stats['monitor_mode_no_date']} episodes skipped by monitor mode due to missing release date")
+        if skip_stats.get('monitor_mode_invalid_date', 0) > 0:
+            skip_report.append(f"- {skip_stats['monitor_mode_invalid_date']} episodes skipped by monitor mode due to invalid release date format")
+
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
         logging.info(f"Final stats - Added: {items_added}, Updated: {items_updated}, Total Skipped: {items_skipped}")

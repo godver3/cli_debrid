@@ -44,26 +44,25 @@ def webhook():
 
         # If this is a TV show request, look for season information
         if data.get('media', {}).get('media_type') == 'tv':
-            # Look for season information in the extra field
+            # Always try to parse season information from 'extra' if present,
+            # allowing downstream logic (e.g. in process_metadata or run_program) to decide if it's used.
             extra_items = data.get('extra', [])
-            for item in extra_items:
-                if item.get('name') == 'Requested Seasons':
+            for item_extra in extra_items: # Renamed item to item_extra to avoid conflict with outer scope
+                if item_extra.get('name') == 'Requested Seasons':
                     try:
                         # The value could be a single season or a comma-separated list
-                        seasons_str = item.get('value', '')
-                        requested_seasons = [int(s.strip()) for s in seasons_str.split(',')]
+                        seasons_str = item_extra.get('value', '')
+                        # Ensure we only parse digits
+                        requested_seasons = [int(s.strip()) for s in seasons_str.split(',') if s.strip().isdigit()]
                         if requested_seasons:
-                            # Add to media section
+                            # data['media'] is guaranteed to be a dict here by the outer condition
                             data['media']['requested_seasons'] = requested_seasons
-                            logging.info(f"Added season information to webhook data: {requested_seasons}")
+                            logging.info(f"Parsed requested_seasons from webhook: {requested_seasons}")
                     except ValueError as e:
                         logging.error(f"Error parsing season information from webhook: {str(e)}")
-
-            # Only process if partial requests are allowed
-            if get_setting('debug', 'allow_partial_overseerr_requests', False):
-                logging.info("Partial requests are not allowed, clearing requested seasons")
-                if 'requested_seasons' in data['media']:
-                    del data['media']['requested_seasons']
+            # The previous 'allow_partial_overseerr_requests' setting conditional logic is removed from here.
+            # Downstream functions (like process_overseerr_webhook in run_program.py and subsequently process_metadata)
+            # will determine if these parsed requested_seasons are ultimately used.
 
         # Mark this request as coming from Overseerr
         if data.get('media'):

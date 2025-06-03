@@ -99,7 +99,7 @@
                 const sourceTypes = data.source_types;
                 const dropdownOptions = sourceTypes.map(type => ({
                     value: type,
-                    text: type
+                    text: type === 'MDBList' ? 'MDBList/JSON list)' : type
                 }));
 
                 window.showPopup({
@@ -597,9 +597,9 @@
                     <span class="settings-toggle-icon">+</span>
                     <h4>
                         {% if config.display_name %}
-                            {{ config.display_name }} [{{ config.type }}]
+                            {{ config.display_name }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
                         {% else %}
-                            {{ source_id }} [{{ config.type }}]
+                            {{ source_id }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
                         {% endif %}
                     </h4>
                     <div class="source-buttons">
@@ -897,6 +897,28 @@
                                                 <p class="settings-description">Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.</p>
                                             {% endif %}
                                         </div>
+                                    {% elif key == 'monitor_mode' and settings_schema['Content Sources'].schema is defined and config.type in settings_schema['Content Sources'].schema and key in settings_schema['Content Sources'].schema[config.type] %}
+                                         {% set field_schema = settings_schema['Content Sources'].schema[config.type][key] %}
+                                         <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                                         <select id="content-sources-{{ source_id }}-{{ key }}"
+                                                 name="Content Sources.{{ source_id }}.{{ key }}"
+                                                 class="settings-input"
+                                                 data-section="Content Sources"
+                                                 data-key="{{ source_id }}.{{ key }}">
+                                             {% for option in field_schema.choices %}
+                                                 <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                                             {% endfor %}
+                                         </select>
+                                         {% if field_schema.description is iterable and not field_schema.description is string and field_schema.description|length > 1 %}
+                                             <p class="settings-description">{{ field_schema.description[0] }}</p>
+                                             <ul class="settings-description">
+                                                 {% for line in field_schema.description[1:] %}
+                                                     <li>{{ line }}</li>
+                                                 {% endfor %}
+                                             </ul>
+                                         {% elif field_schema.description %}
+                                             <p class="settings-description">{{ field_schema.description }}</p>
+                                         {% endif %}
                                     {% elif settings_schema['Content Sources'].schema is defined and
                                            config.type in settings_schema['Content Sources'].schema and
                                            key in settings_schema['Content Sources'].schema[config.type] and
@@ -941,15 +963,15 @@
                                                     data-section="Content Sources"
                                                     data-key="{{ source_id }}.{{ key }}">
                                          {% endif %}
+                                         {# Render description for general fields if available, but skip for monitor_mode #}
+                                         {% if settings_schema['Content Sources'].schema is defined and
+                                               config.type in settings_schema['Content Sources'].schema and
+                                               key in settings_schema['Content Sources'].schema[config.type] and
+                                               key != 'allow_specials' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and
+                                               settings_schema['Content Sources'].schema[config.type][key].description is defined %}
+                                             <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
+                                         {% endif %}
                                     {% endif %}
-                                    {# Render description for general fields if available #}
-                                     {% if settings_schema['Content Sources'].schema is defined and
-                                           config.type in settings_schema['Content Sources'].schema and
-                                           key in settings_schema['Content Sources'].schema[config.type] and
-                                           key != 'allow_specials' and key != 'custom_symlink_subfolder' and
-                                           settings_schema['Content Sources'].schema[config.type][key].description is defined %}
-                                         <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
-                                     {% endif %}
                                 </div> {# End .settings-form-group for general fields #}
                             {% endif %} {# End if key != 'type' #}
                         {% endfor %} {# End general loop for other types #}

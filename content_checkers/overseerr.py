@@ -124,16 +124,18 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     wanted_item = {
                         'tmdb_id': media.get('tmdbId'),
                         'media_type': media.get('mediaType'),
+                        'content_source': item.get('content_source'),
+                        'content_source_detail': item.get('content_source_detail')
                     }
 
                     # Handle season information for TV shows when partial requests are allowed
                     if allow_partial and media.get('mediaType') == 'tv' and 'seasons' in item:
-                        requested_seasons = []
-                        for season in item.get('seasons', []):
-                            if season.get('seasonNumber') is not None:
-                                requested_seasons.append(season.get('seasonNumber'))
-                        if requested_seasons:
-                            wanted_item['requested_seasons'] = requested_seasons
+                        requested_seasons_os = []
+                        for season_os in item.get('seasons', []):
+                            if season_os.get('seasonNumber') is not None:
+                                requested_seasons_os.append(season_os.get('seasonNumber'))
+                        if requested_seasons_os:
+                            wanted_item['requested_seasons'] = requested_seasons_os
 
                     if not disable_caching:
                         # Check cache for this item

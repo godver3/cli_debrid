@@ -231,18 +231,39 @@ def filter_results(
 
             elif is_episode:
                 # Add year check for TV shows
-                parsed_year = parsed_info.get('year')
-                if parsed_year:
-                    if isinstance(parsed_year, list):
-                        if not any(abs(int(py) - year) <= 1 for py in parsed_year):
-                            result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                            logging.info(f"Rejected: TV year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
-                    elif abs(int(parsed_year) - year) > 1:
-                        result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                        logging.info(f"Rejected: TV year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                        continue
+                # Check if the title is "Formula 1" (case-insensitive) to bypass year check
+                is_formula_1 = "formula 1" in title.lower()
 
+                if not is_formula_1: # Only perform year check if not Formula 1
+                    parsed_year = parsed_info.get('year')
+                    if parsed_year:
+                        if isinstance(parsed_year, list):
+                            # Ensure all elements in parsed_year are convertible to int before comparison
+                            try:
+                                if not any(abs(int(py) - year) <= 1 for py in parsed_year if str(py).isdigit()):
+                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
+                                    logging.info(f"Rejected: TV year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                    continue
+                            except ValueError:
+                                # Handle cases where a year in the list is not a valid integer
+                                logging.warning(f"Skipping year check due to invalid year format in list for '{original_title}': {parsed_year}")
+                                result['filter_reason'] = f"Invalid year format in list: {parsed_year}"
+                                continue
+
+                        elif isinstance(parsed_year, (int, str)) and str(parsed_year).isdigit():
+                            if abs(int(parsed_year) - year) > 1:
+                                result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
+                                logging.info(f"Rejected: TV year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                continue
+                        else:
+                            # Handle cases where parsed_year is not a list or a valid int/str digit
+                            logging.warning(f"Skipping year check due to invalid year format for '{original_title}': {parsed_year}")
+                            # Optionally, you could reject here if strict year parsing is required
+                            # result['filter_reason'] = f"Invalid year format: {parsed_year}"
+                            # continue
+                else:
+                    logging.info(f"Skipping year check for Formula 1 title: '{title}'")
+                
                 season_episode_info = parsed_info.get('season_episode_info', {})
                 #logging.debug(f"Season episode info: {season_episode_info}")
                 
@@ -354,31 +375,63 @@ def filter_results(
                     lenient_season_pass = False # Flag if we passed season check due to leniency
                     explicit_season_mismatch = False # Flag if title explicitly mentions a different season
 
-                    if season in result_seasons:
-                        # Parsed season explicitly matches the target season
-                        season_match = True
-                    elif is_anime and parsed_season_is_missing_or_default and season > 1:
-                         # Check if title explicitly mentions a different season before applying leniency
-                         # Example: Searching S7, title says "S01". We should NOT be lenient here.
-                         # Allow leniency only if no other season is clearly stated.
-                         if not re.search(rf'[Ss](?!{season:02d})\d\d?', original_title):
+                    if is_formula_1:
+                        parsed_torrent_year_val = parsed_info.get('year')
+                        actual_torrent_year = None
+                        if isinstance(parsed_torrent_year_val, list):
+                            if parsed_torrent_year_val and str(parsed_torrent_year_val[0]).isdigit():
+                                actual_torrent_year = int(parsed_torrent_year_val[0])
+                        elif parsed_torrent_year_val and str(parsed_torrent_year_val).isdigit():
+                            actual_torrent_year = int(parsed_torrent_year_val)
+
+                        # For Formula 1, the 'season' parameter to this function is the event year.
+                        # We match if the torrent's parsed year equals this event year.
+                        # We also expect PTT to parse "Formula.1" as S01 or no season.
+                        if actual_torrent_year and actual_torrent_year == season:
+                            if not result_seasons or result_seasons == [1]: # Common for F1 torrents named like "Formula.1.2024..."
+                                season_match = True
+                                logging.info(f"Formula 1: Matched event year {season} with torrent's parsed year {actual_torrent_year}. Parsed seasons from PTT: {result_seasons}. Title: '{original_title}'")
+                            else:
+                                # This case means year matches, but PTT found an unexpected season number (not S1 or empty)
+                                logging.warning(f"Formula 1: Event year {season} matched torrent year {actual_torrent_year}, but PTT parsed seasons {result_seasons} (expected [1] or empty) for '{original_title}'. Treating as season mismatch.")
+                                # season_match remains False
+                        else:
+                            # Torrent's own year does not match the requested event year
+                            logging.info(f"Formula 1: Torrent's parsed year {actual_torrent_year} did not match requested event year {season} for '{original_title}'.")
+                            # season_match remains False
+                    
+                    else: # Original logic for non-Formula 1 content
+                        if season in result_seasons:
+                            # Parsed season explicitly matches the target season
+                            season_match = True
+                        elif is_anime and parsed_season_is_missing_or_default and season > 1:
+                             # Check if title explicitly mentions a different season before applying leniency
+                             # Example: Searching S7, title says "S01". We should NOT be lenient here.
+                             # Allow leniency only if no other season is clearly stated.
+                             if not re.search(rf'[Ss](?!{season:02d})\\d\\d?', original_title):
+                                 season_match = True
+                                 lenient_season_pass = True
+                                 #logging.debug(f"Allowing anime result ({original_title}) parsed as S1/None when target is S{season} (no conflicting season found in title)")
+                             else:
+                                explicit_season_mismatch = True
+                                #logging.debug(f"Anime result ({original_title}) parsed as S1/None has conflicting season info when target is S{season}. Not applying leniency.")
+                        elif not result_seasons:
+                             # Allow titles with NO season info at all (might be absolute)
                              season_match = True
-                             lenient_season_pass = True
-                             #logging.debug(f"Allowing anime result ({original_title}) parsed as S1/None when target is S{season} (no conflicting season found in title)")
-                         else:
-                            explicit_season_mismatch = True
-                            #logging.debug(f"Anime result ({original_title}) parsed as S1/None has conflicting season info when target is S{season}. Not applying leniency.")
-                    elif not result_seasons:
-                         # Allow titles with NO season info at all (might be absolute)
-                         season_match = True
-                         lenient_season_pass = True # Mark as lenient pass
-                         #logging.debug(f"Allowing result ({original_title}) with no season info to pass season check")
+                             lenient_season_pass = True # Mark as lenient pass
+                             #logging.debug(f"Allowing result ({original_title}) with no season info to pass season check")
 
                     if not season_match:
                         # Reject if we didn't find an explicit match OR a lenient pass
                         # Also reject if leniency was skipped due to explicit conflicting season info
                         reason = f"Season mismatch: expected S{season}, parsed {result_seasons}"
-                        if explicit_season_mismatch:
+                        if is_formula_1 and actual_torrent_year and actual_torrent_year != season:
+                            reason = f"Formula 1 season/event year mismatch: expected event year S{season} (to match torrent's content year), torrent's parsed year was {actual_torrent_year}"
+                        elif is_formula_1 and (result_seasons and result_seasons != [1]):
+                             reason = f"Formula 1 season parsing mismatch: expected S1 from torrent title, PTT parsed {result_seasons}"
+
+
+                        if explicit_season_mismatch and not is_formula_1: # Add original_title context for non-F1
                              reason += " (and title mentions conflicting season)"
                         result['filter_reason'] = reason
                         logging.info(f"Rejected: {reason} for '{original_title}' (Size: {result['size']:.2f}GB)")
@@ -494,9 +547,6 @@ def filter_results(
             # Size calculation
             total_size_gb = parse_size(result.get('size', 0)) # Raw total size of the torrent
             size_gb_for_filter = total_size_gb # Default: use total size (for movies or single episodes)
-            
-            result['total_size_gb'] = total_size_gb
-            result['size'] = total_size_gb # Initialize result['size'] with total_size_gb
             
             num_episodes_in_pack = 0 
             is_identified_as_pack = False 
