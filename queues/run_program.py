@@ -96,7 +96,6 @@ from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
-from metadata.metadata import _get_local_timezone # Added import
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -134,6 +133,7 @@ class ProgramRunner:
         
         # Configure scheduler timezone using the local timezone helper
         try:
+            from metadata.metadata import _get_local_timezone # Added import
             tz = _get_local_timezone()
             logging.info(f"Initializing APScheduler with timezone: {tz.key}")
             # --- START EDIT: Configure scheduler for sequential execution ---
@@ -1916,6 +1916,7 @@ class ProgramRunner:
                             next_run_utc = datetime.now(self.scheduler.timezone) + timedelta(seconds=base_interval)
                             job.modify(next_run_time=next_run_utc)
                             # Convert to local time for logging
+                            from metadata.metadata import _get_local_timezone # Added import
                             local_tz = _get_local_timezone()
                             next_run_local = next_run_utc.astimezone(local_tz)
                             logging.info(f"[DEBUG] Forced next run time for '{task_id}' to {next_run_local} (interval {base_interval}s) due to state change.")
