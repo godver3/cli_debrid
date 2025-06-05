@@ -850,7 +850,35 @@ def bulk_queue_action():
                 if conn_rescape_batch:
                     conn_rescape_batch.close()
                 # --- End New Rescrape Logic ---
-
+            elif action == 'force_priority':
+                logging.info("Entering 'force_priority' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'UPDATE media_items SET force_priority = TRUE, last_updated = ? WHERE id IN ({placeholders})',
+                        [datetime.now()] + batch
+                    )
+                    total_processed += cursor.rowcount
+                    conn.commit()
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk force_priority.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                finally:
+                    conn.close()
             else:
                 logging.warning(f"Bulk action returning error: Invalid action '{action}'")
                 # No need to explicitly resume here, finally block will handle it.
@@ -867,7 +895,8 @@ def bulk_queue_action():
                 "move": f"moved to {target_queue} queue",
                 "change_version": f"changed to version {target_queue}",
                 "early_release": "marked as early release and moved to Wanted queue",
-                "rescrape": "deleted files/Plex entries for and moved to Wanted queue" # Added rescrape message
+                "rescrape": "deleted files/Plex entries for and moved to Wanted queue", # Added rescrape message
+                "force_priority": "marked for forced priority"
             }
             action_text = action_map.get(action, f"processed ({action})")
             message = f"Successfully {action_text} {total_processed} items"

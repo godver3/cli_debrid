@@ -47,6 +47,7 @@
                 <option value="">Change Selected Version...</option>
             </select>
             <button id="bulk-early-release" class="bulk-action-btn" disabled>Mark Selected as Early Release</button>
+            <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
         </div>
     </div>
     <div id="column-selector-wrapper">
@@ -1736,6 +1737,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const bulkChangeVersion = document.getElementById('bulk-change-version');
     const bulkEarlyReleaseBtn = document.getElementById('bulk-early-release');
     const bulkRescrapeBtn = document.getElementById('bulk-rescrape');
+    const bulkForcePriorityBtn = document.getElementById('bulk-force-priority');
 
     // Fetch available versions and populate the version dropdown
     fetch('/settings/get_scraping_versions')
@@ -1860,6 +1862,7 @@ document.addEventListener('DOMContentLoaded', function() {
         bulkChangeVersion.disabled = selectedCount === 0;
         bulkEarlyReleaseBtn.disabled = selectedCount === 0;
         bulkRescrapeBtn.disabled = selectedCount === 0;
+        bulkForcePriorityBtn.disabled = selectedCount === 0;
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
@@ -2135,6 +2138,25 @@ document.addEventListener('DOMContentLoaded', function() {
             cancelText: 'Cancel',
             onConfirm: () => { // Removed async
                  executeBulkAction(selectedItems, 'rescrape', null, 'Rescrape', 'rescrape initiated for');
+            },
+        });
+    });
+
+    // Handle bulk force priority
+    bulkForcePriorityBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Force Priority',
+            message: `Are you sure you want to mark ${selectedItems.length} item(s) for forced priority? This will make them jump to the front of their respective queues.`,
+            confirmText: 'Mark for Priority',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'force_priority', null, 'Force Priority', 'marked for forced priority');
             },
         });
     });

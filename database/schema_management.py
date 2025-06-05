@@ -222,6 +222,9 @@ def migrate_schema():
         if 'rescrape_original_torrent_title' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN rescrape_original_torrent_title TEXT')
             logging.info("Successfully added rescrape_original_torrent_title column to media_items table.")
+        if 'force_priority' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN force_priority BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added force_priority column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -456,7 +459,8 @@ def create_tables():
                 current_score REAL DEFAULT 0,
                 final_check_add_timestamp TIMESTAMP,
                 real_debrid_original_title TEXT,
-                rescrape_original_torrent_title TEXT
+                rescrape_original_torrent_title TEXT,
+                force_priority BOOLEAN DEFAULT FALSE
             )
         ''')
 

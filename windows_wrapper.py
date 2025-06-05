@@ -107,6 +107,8 @@ def setup_environment():
         os.environ['CLI_DEBRID_PORT'] = str(ports['main'])
     if 'CLI_DEBRID_BATTERY_PORT' not in os.environ:
         os.environ['CLI_DEBRID_BATTERY_PORT'] = str(ports['battery'])
+    if 'CLI_DEBRID_BATTERY_HOST' not in os.environ:
+        os.environ['CLI_DEBRID_BATTERY_HOST'] = '127.0.0.1'
     if 'CLI_DEBRID_TUNNEL_PORT' not in os.environ:
         os.environ['CLI_DEBRID_TUNNEL_PORT'] = str(ports['tunnel_main'])
     if 'CLI_DEBRID_BATTERY_TUNNEL_PORT' not in os.environ:

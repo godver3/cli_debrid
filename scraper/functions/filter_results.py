@@ -60,8 +60,29 @@ def filter_results(
     normalized_query_title = normalize_title(title).lower()
     normalized_aliases = [normalize_title(alias).lower() for alias in (matching_aliases or [])]
     normalized_translated_title = normalize_title(translated_title).lower() if translated_title else None
-    similarity_threshold = float(version_settings.get('similarity_threshold_anime', 0.35)) if is_anime else float(version_settings.get('similarity_threshold', 0.8))
     
+    # Determine base similarity threshold
+    base_similarity_threshold = float(version_settings.get('similarity_threshold_anime', 0.35)) if is_anime else float(version_settings.get('similarity_threshold', 0.8))
+    
+    # Adjust threshold for shorter titles if not anime/UFC (which have their own specific low threshold)
+    # We'll check is_ufc later in the loop for each result, but for threshold setting,
+    # we only care if the *overall query* might be for anime (which has a low threshold).
+    # If it's not anime, apply dynamic threshold for short titles.
+    similarity_threshold = base_similarity_threshold
+    if not is_anime: # Only apply dynamic scaling if not anime (UFC check is per-result)
+        query_title_len = len(normalized_query_title)
+        if query_title_len < 5:
+            similarity_threshold = 1.0
+        elif query_title_len < 6:
+            similarity_threshold = 0.95
+        elif query_title_len < 8:
+            similarity_threshold = 0.90
+        elif query_title_len < 10:
+            similarity_threshold = 0.85
+        # If query_title_len >= 10, it uses the base_similarity_threshold (e.g., 0.8)
+        # or the anime threshold if is_anime was true.
+    logging.info(f"DEBUG: Title length: {query_title_len}, Similarity threshold: {similarity_threshold}")
+
     #logging.debug(f"Content type: {'movie' if is_movie else 'episode'}, Anime: {is_anime}, Title similarity threshold: {similarity_threshold}")
     
     # Cache season episode counts for multi-episode content

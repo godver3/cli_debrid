@@ -227,7 +227,6 @@ class WantedQueue:
                             logging.warning(f"[{item_identifier}] Invalid airtime format '{airtime_str}', defaulting to 00:00.")
                 else: 
                     airtime = datetime.strptime("00:00", '%H:%M').time()
-                    logging.debug(f"[{item_identifier}] No airtime provided, defaulting to 00:00.")
                 
                 release_datetime = datetime.combine(release_date, airtime)
 
@@ -283,15 +282,50 @@ class WantedQueue:
         processed_candidates_count = 0
         moved_to_scraping_count = 0
         moved_to_unreleased_count = 0 
+        forced_items_moved_count = 0 # New counter for forced items
 
         try:
             # 0. Move manually blacklisted items first
             try:
                 blacklisted_count = self.move_blacklisted_items()
+                # Optional: logging.info(f"Processed manual blacklist, {blacklisted_count} items moved.")
             except Exception as e_blacklist:
                 logging.error(f"Error moving manually blacklisted items: {e_blacklist}", exc_info=True)
 
-            # 1. Check Throttling
+            # 1. Process Force Priority Items (NEW SECTION)
+            logging.info("Starting processing of force-prioritized items.")
+            conn_force = None
+            try:
+                conn_force = get_db_connection()
+                # Assuming force_priority is an INTEGER field (1 for true, 0 or NULL for false)
+                # The specific column name and true value (e.g., `force_priority = TRUE`) might need adjustment
+                # based on your actual database schema.
+                cursor_force = conn_force.execute("SELECT * FROM media_items WHERE state = 'Wanted' AND force_priority = 1")
+                forced_items_raw = cursor_force.fetchall()
+                
+                if forced_items_raw:
+                    forced_items = [dict(row) for row in forced_items_raw]
+                    logging.info(f"Found {len(forced_items)} force-prioritized items in Wanted state.")
+                    for item in forced_items:
+                        item_identifier_log = queue_manager.generate_identifier(item)
+                        try:
+                            logging.info(f"Force-prioritizing item {item_identifier_log} to Scraping queue.")
+                            queue_manager.move_to_scraping(item, "Wanted") # State changes here
+                            forced_items_moved_count += 1
+                            moved_to_scraping_count += 1 # Increment general counter as well
+                        except Exception as e_move_forced:
+                            logging.error(f"Error moving force-prioritized item {item_identifier_log} to scraping: {e_move_forced}", exc_info=True)
+                else:
+                    logging.info("No force-prioritized items found in Wanted state.")
+
+            except Exception as e_force:
+                logging.error(f"Error fetching or processing force-prioritized items: {e_force}", exc_info=True)
+            finally:
+                if conn_force:
+                    conn_force.close()
+            logging.info(f"Finished processing force-prioritized items. Moved {forced_items_moved_count} items directly to scraping.")
+
+            # 2. Check Throttling (for REGULAR items)
             ignore_throttling = get_setting("Debug", "ignore_wanted_queue_throttling", False)
             if ignore_throttling:
                 logging.warning("DEBUG SETTING ENABLED: Ignoring Wanted Queue throttling limits.")
@@ -309,16 +343,26 @@ class WantedQueue:
                 except Exception as e_sq_check:
                     logging.error(f"Error checking ScrapingQueue size: {e_sq_check}", exc_info=True)
 
+                # If current scraping queue is already at or above the hard throttle limit for Wanted, stop.
+                # This check now correctly reflects any forced items that were just added.
                 if current_scraping_queue_size >= WANTED_THROTTLE_SCRAPING_SIZE:
-                    return True
+                    logging.info(f"Scraping queue size ({current_scraping_queue_size}) meets or exceeds WANTED_THROTTLE_SCRAPING_SIZE ({WANTED_THROTTLE_SCRAPING_SIZE}). Pausing Wanted processing.")
+                    return True # Stop processing more items from Wanted
 
-                if scraping_queue: 
-                    allowed_to_add_count = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
-                    if allowed_to_add_count <= 0 : 
-                        return True
+                # Calculate how many more items we are allowed to add to scraping from the regular wanted pool
+                allowed_to_add_this_cycle = max(0, SCRAPING_QUEUE_MAX_SIZE - current_scraping_queue_size)
+                
+                # Note: `moved_to_scraping_count` already includes forced items.
+                # We need to calculate how many *more* regular items can be added.
+                # The `allowed_to_add_count` for the loop below should be the remaining capacity.
+                allowed_to_add_count = allowed_to_add_this_cycle
 
-            # 2. Build Query for Candidate Items (same as before)
-            query = "SELECT * FROM media_items WHERE state = 'Wanted'"
+                if allowed_to_add_count <= 0 and SCRAPING_QUEUE_MAX_SIZE > 0 : # Check SCRAPING_QUEUE_MAX_SIZE > 0 to avoid issues if it's 0 (unlimited)
+                    logging.info(f"Scraping queue size ({current_scraping_queue_size}) means no more regular items can be added (max: {SCRAPING_QUEUE_MAX_SIZE}).")
+                    return True # Stop processing more items from Wanted if no capacity for regular items
+
+            # 3. Build Query for Candidate Items (REGULAR items)
+            query = "SELECT * FROM media_items WHERE state = 'Wanted'" # This will not pick up already moved forced items
             params = []
             order_by_clauses = []
             sort_order_type = get_setting("Queue", "queue_sort_order", "None")
@@ -385,7 +429,7 @@ class WantedQueue:
                     return (priority_index, type_priority, release_date_val if sort_by_release_date else '', imdb_id_val, season_num_val, episode_num_val)
                 candidate_items.sort(key=get_source_priority_key)
 
-            # 3. Process Candidate Items
+            # 4. Process Candidate Items
             current_datetime = datetime.now()
             # Tracks imdb_ids of shows for which a scrape batch was done, OR a lead item errored causing candidate skip for that show.
             shows_fully_processed_this_cycle = set() 

@@ -388,7 +388,10 @@ def task_stream():
                 tz = program_runner.scheduler.timezone if program_runner and hasattr(program_runner, 'scheduler') else pytz.utc
                 current_time_dt = datetime.now(tz)
 
-                running_tasks_list = []
+                # Renamed to reflect its purpose before filtering
+                potential_running_task_ids = []
+                ui_visible_running_tasks_list = [] # This will be sent to UI
+
                 is_paused = False
                 pause_info_to_send = {
                     "reason_string": None, "error_type": None, "service_name": None,
@@ -396,27 +399,48 @@ def task_stream():
                 }
                 tasks_info = []
                 program_running_state = False
+                
+                # Get current monotonic time ONCE for consistent check across tasks in this iteration
+                current_monotonic_now = time.monotonic()
 
                 if program_runner is not None:
                     program_running_state = program_runner.is_running()
 
-                    # Read the set of currently executing tasks directly
+                    # Get all actually running task IDs and their start times
+                    potential_running_tasks_with_starts = {}
                     try:
-                        with program_runner._running_task_lock: # Use lock for safe read of the set
-                             # Convert set to list for JSON serialization
-                             running_tasks_list = list(program_runner.currently_executing_tasks)
+                        # Atomically get the set of currently running task IDs
+                        with program_runner._running_task_lock:
+                            current_task_ids_snapshot = list(program_runner.currently_executing_tasks)
+                        
+                        # Atomically get their start times
+                        with program_runner._executing_task_start_times_lock:
+                            for task_id in current_task_ids_snapshot:
+                                if task_id in program_runner.executing_task_start_times:
+                                    potential_running_tasks_with_starts[task_id] = program_runner.executing_task_start_times[task_id]
+                                else:
+                                    logging.warning(f"Task '{task_id}' in currently_executing_tasks but missing from executing_task_start_times. Won't be shown as running this cycle.")
+                    
                     except Exception as read_err:
-                         logging.error(f"Error reading currently_executing_tasks: {read_err}", exc_info=True)
-                         running_tasks_list = [] # Default to empty list on error
+                         logging.error(f"Error reading running task data for UI stifling: {read_err}", exc_info=True)
+                         # potential_running_tasks_with_starts remains empty
 
+                    # Filter tasks based on duration for UI display
+                    for task_id, start_time_monotonic in potential_running_tasks_with_starts.items():
+                        duration_monotonic = current_monotonic_now - start_time_monotonic
+                        if duration_monotonic >= 0.1:  # Stifle period of 1 second
+                            ui_visible_running_tasks_list.append(task_id)
+                        else:
+                            # This logging can be verbose if many short tasks run
+                            logging.debug(f"Task '{task_id}' running for {duration_monotonic:.3f}s, stifled from UI display.")
+                    
                     # Get pause state
                     is_paused = program_runner.queue_paused
                     if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
-                        pause_info_to_send = program_runner.pause_info.copy() # Send a copy
+                        pause_info_to_send = program_runner.pause_info.copy()
 
-                    # Get task list if scheduler is running
+                    # Get scheduled task list (this part remains the same)
                     if program_running_state and hasattr(program_runner, 'scheduler'):
-                         # Use scheduler lock for safety when iterating jobs
                         with program_runner.scheduler_lock:
                             jobs = program_runner.scheduler.get_jobs()
                             for job in jobs:
@@ -424,8 +448,7 @@ def task_stream():
                                 if isinstance(job.trigger, IntervalTrigger):
                                     interval = job.trigger.interval.total_seconds()
 
-                                # Skip tasks with interval < 120 seconds (2 minutes)
-                                if interval is not None and interval < 150:
+                                if interval is not None and interval < 150: # Skip tasks with interval < 150 seconds
                                     continue
 
                                 next_run_timestamp = None
@@ -446,18 +469,16 @@ def task_stream():
                                     'interval': interval,
                                     'enabled': enabled,
                                 })
-
                         tasks_info.sort(key=lambda x: x['name'])
 
-
-                # Construct the data payload using the list of running tasks
+                # Construct the data payload using the new filtered list for running tasks
                 data = {
                     'success': True,
                     'running': program_running_state,
                     'tasks': tasks_info,
                     'paused': is_paused,
                     'pause_info': pause_info_to_send,
-                    'running_tasks_list': running_tasks_list
+                    'running_tasks_list': ui_visible_running_tasks_list # Use the filtered list
                 }
 
                 yield f"data: {json.dumps(data, default=str)}\n\n"

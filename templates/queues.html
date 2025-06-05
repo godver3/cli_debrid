@@ -294,6 +294,13 @@
          background-color: rgba(0, 123, 255, 0.1); /* Light blue background */
          /* border-left: 3px solid #007bff; */
     }
+
+    /* Style for force priority items */
+    .item.force-priority-item {
+        border-left: 3px solid #ffc107; /* Amber border */
+        padding-left: 17px; /* Adjust padding to account for border */
+    }
+
 </style>
 
 <script type="module">
@@ -508,9 +515,11 @@
             const isProcessing = item.is_processing || false;
             const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
             const processingClass = isProcessing ? 'is-processing' : '';
+            const isForcePriority = item.is_force_priority || false;
+            const forcePriorityClass = isForcePriority ? 'force-priority-item' : '';
 
             let itemContent = `
-                <div class="item ${processingClass}" onclick="copyItemToClipboard(this, event)">
+                <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
                     ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}${releaseInfo}
             `;
 
@@ -567,6 +576,8 @@
         const isProcessing = item.is_processing || false; 
         const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
         const processingClass = isProcessing ? 'is-processing' : '';
+        const isForcePriority = item.is_force_priority || false;
+        const forcePriorityClass = isForcePriority ? 'force-priority-item' : '';
 
         let seasonEpisode = '';
         if (item.type === 'episode' && item.season_number && item.episode_number) {
@@ -576,7 +587,7 @@
         }
 
         let itemContent = `
-            <div class="item ${processingClass}" onclick="copyItemToClipboard(this, event)">
+            <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
                 ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}
         `;
 

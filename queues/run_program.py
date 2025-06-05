@@ -109,15 +109,18 @@ class ProgramRunner:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ProgramRunner, cls).__new__(cls)
-            cls._instance._initialized = False
+            # Initialize _initialized here before __init__ is called
+            cls._instance._initialized_runner_attributes = False # Ensure this is named uniquely
         return cls._instance
     
     def __init__(self):
-        if hasattr(self, '_initialized') and self._initialized:
+        if hasattr(self, '_initialized_runner_attributes') and self._initialized_runner_attributes:
             return
-        self._initialized = True
-        self.running = False
-        self.initializing = False
+        
+        self._running = False 
+        self._initializing = False 
+        self._stopping = False # ADDED: New state for stopping phase
+        
         # --- START EDIT: Use pause_info instead of pause_reason ---
         self.pause_info = {
             "reason_string": None,
@@ -165,6 +168,9 @@ class ProgramRunner:
         self.scheduler_lock = threading.RLock() # MODIFIED: Ensure RLock for reentrancy
         self.heavy_task_lock = threading.Lock()
         self.paused_jobs_by_queue = set() # Keep track of jobs paused by pause_queue
+        
+        self.executing_task_start_times = {}
+        self._executing_task_start_times_lock = threading.Lock()
         
         from queues.queue_manager import QueueManager
         
@@ -265,7 +271,7 @@ class ProgramRunner:
             # 'task_local_library_scan': 900, # Default: 15 mins (Can be added if needed)
             'task_plex_full_scan': 1800, # Run every hour (Can be adjusted)
             # NEW Load Adjustment Task
-            'task_adjust_intervals_for_load': 120, # Run every 2 minutes
+            # 'task_adjust_intervals_for_load': 120, # Run every 2 minutes
             # --- START EDIT: Add new task for library size refresh ---
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
             # --- END EDIT ---
@@ -464,7 +470,7 @@ class ProgramRunner:
             'task_refresh_plex_tokens',
             'task_update_tv_show_status',
             # NEW Load Adjustment Task
-            'task_adjust_intervals_for_load',
+            # 'task_adjust_intervals_for_load',
             # --- START EDIT: Add 'task_verify_plex_removals' back to default set ---
             'task_verify_plex_removals',
             # --- END EDIT ---
@@ -739,6 +745,7 @@ class ProgramRunner:
 
         # In __init__, add:
         self.manual_tasks = set()  # Track manually triggered tasks
+        self._initialized_runner_attributes = True # Mark as initialized at the end of actual init logic
 
     # *** START EDIT: New method to get task target ***
     def _get_task_target(self, task_name: str):
@@ -770,7 +777,7 @@ class ProgramRunner:
                 target_func = self.process_content_source
                 args = [source_id, source_data]
             else:
-                logging.error(f"Content source data not found for source ID '{source_id}' derived from task '{task_name}'")
+                logging.warning(f"Content source data not found for source ID '{source_id}' derived from task '{task_name}'. This task will be skipped.")
 
         # 3. Regular task_* methods (including combined tasks and new load adjustment task)
         elif task_name.startswith('task_'):
@@ -858,7 +865,7 @@ class ProgramRunner:
                         logging.error(f"Error scheduling task '{job_id}': {e}", exc_info=True)
                         return False
                 else:
-                     logging.error(f"Failed to determine target function for task '{task_name}'. Cannot schedule.")
+                     logging.warning(f"Failed to determine target function for task '{task_name}'. Cannot schedule. This might be an obsolete task toggle.")
                      return False
         finally:
             current_thread_id_finally = threading.get_ident()
@@ -870,22 +877,64 @@ class ProgramRunner:
 
 
     def _schedule_initial_tasks(self):
-        """Schedules all enabled tasks based on initial configuration."""
-        logging.info("Scheduling initial tasks...")
+        """Schedules all enabled tasks based on initial configuration and prunes obsolete content source tasks."""
+        logging.info("Scheduling initial tasks and checking for obsolete toggles...")
         scheduled_count = 0
-        failed_count = 0
-        for task_name in self.enabled_tasks:
+        failed_to_schedule_count = 0 # Tasks that couldn't be scheduled for various reasons (e.g. no interval)
+        pruned_obsolete_task_count = 0
+
+        # Iterate over a copy of the set to allow modification of the original self.enabled_tasks
+        tasks_to_process = list(self.enabled_tasks)
+
+        for task_name in tasks_to_process:
+            # Ensure task is still in self.enabled_tasks; it might have been removed if tasks_to_process had duplicates
+            # and one was already processed and removed. However, list(set) makes duplicates unlikely.
+            # This check is more of a safeguard if self.enabled_tasks was manipulated externally during this loop,
+            # or if tasks_to_process could somehow have a task not currently in self.enabled_tasks.
+            if task_name not in self.enabled_tasks:
+                continue
+
             interval = self.task_intervals.get(task_name)
             if interval is not None:
+                # Attempt to schedule
                 if self._schedule_task(task_name, interval, initial_run=True):
                     scheduled_count += 1
                 else:
-                    failed_count += 1
+                    # Scheduling failed. _schedule_task already logged a warning if it was due to target_func being None.
+                    # Now, specifically check if it was an obsolete content source task.
+                    is_content_source_task_pattern = task_name.startswith('task_') and task_name.endswith('_wanted')
+                    
+                    if is_content_source_task_pattern:
+                        # Confirm the failure was due to a missing content source by re-checking _get_task_target's outcome.
+                        # _get_task_target logs its own warning if the source_id is not found.
+                        target_func_check, _, _ = self._get_task_target(task_name)
+                        if target_func_check is None:
+                            logging.warning(
+                                f"Obsolete task toggle found for missing content source: '{task_name}'. "
+                                f"Removing it from active enabled tasks. This change will be saved if/when task toggles are persisted."
+                            )
+                            self.enabled_tasks.discard(task_name) # Remove from the live set
+                            pruned_obsolete_task_count += 1
+                        else:
+                            # Task matched content source pattern, _schedule_task failed, but _get_task_target now finds a function.
+                            # This is an unexpected state, possibly due to timing or a different scheduling issue.
+                            logging.error(f"Task '{task_name}' (content source type) failed to schedule, but a target function was found on re-check. Investigate.")
+                            failed_to_schedule_count += 1
+                    else:
+                        # Failed to schedule, and it's not a content source task pattern.
+                        # The warning for this was already logged by _schedule_task if target_func was None.
+                        failed_to_schedule_count += 1
             else:
                 logging.warning(f"Task '{task_name}' is enabled but has no interval defined in task_intervals. Skipping scheduling.")
-                failed_count += 1
-        logging.info(f"Initial task scheduling complete. Scheduled: {scheduled_count}, Failed/Skipped: {failed_count}")
-
+                failed_to_schedule_count += 1
+        
+        if pruned_obsolete_task_count > 0:
+            logging.info(f"Pruned {pruned_obsolete_task_count} obsolete content source task toggle(s) from the active configuration during this startup.")
+        
+        logging.info(f"Initial task scheduling Tally: "
+                     f"Successfully Scheduled: {scheduled_count}, "
+                     f"Failed/Skipped (e.g. no interval, other errors): {failed_to_schedule_count}, "
+                     f"Pruned Obsolete Content Source Tasks: {pruned_obsolete_task_count}.")
 
     def _is_within_pause_schedule(self):
         """Checks if the current time is within the configured pause schedule."""
@@ -917,7 +966,7 @@ class ProgramRunner:
 
     def task_heartbeat(self):
         random_number = random.randint(1, 100)
-        if self.running:
+        if self._running:
             if random_number < 100:
                 logging.info("Program running...")
             else:
@@ -1607,7 +1656,7 @@ class ProgramRunner:
         logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
     def run_initialization(self):
-        self.initializing = True
+        self._initializing = True 
         logging.info("Running initialization...")
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
         
@@ -1618,59 +1667,125 @@ class ProgramRunner:
         else:
             logging.info("Initialization disabled, skipping...")
         
-        self.initializing = False
+        self._initializing = False
 
     def start(self):
-        if not self.running:
-            self.running = True
-            # *** START EDIT: Start Scheduler ***
-            try:
-                 logging.info("Starting APScheduler...")
-                 self.scheduler.start(paused=False) # Start scheduler, ensure it's not paused initially
-                 logging.info("APScheduler started.")
-            except Exception as e:
-                 logging.error(f"Failed to start APScheduler: {e}", exc_info=True)
-                 self.running = False # Indicate startup failure
-                 return # Don't proceed if scheduler fails
-            # *** END EDIT ***
-            self.run()
+        if self._running and self.scheduler and self.scheduler.running:
+            logging.info("ProgramRunner.start called, but program is already running.")
+            return
+        if self._initializing:
+            logging.info("ProgramRunner.start called, but program is already initializing.")
+            return
+        if self._stopping: 
+            logging.warning("ProgramRunner.start called, but program is currently stopping.")
+            return
+
+        self._initializing = True
+        self._stopping = False 
+        logging.info("ProgramRunner: Initializing...")
+        
+        try:
+            logging.info("Starting APScheduler...")
+            if self.scheduler and not self.scheduler.running:
+                start_paused = self._is_within_pause_schedule()
+                self.scheduler.start(paused=start_paused) 
+                logging.info(f"APScheduler started. Paused: {start_paused}")
+            elif not self.scheduler:
+                logging.error("ProgramRunner.start: CRITICAL - Scheduler not initialized. Cannot start.")
+                self._initializing = False # Ensure initializing is reset
+                return
+
+            self._running = True
+            # self._initializing = False # Moved to finally
+            self.update_heartbeat() 
+            logging.info("ProgramRunner: Started successfully.")
+            # self.run() # The run loop should be started by the external caller if this is a thread target.
+                       # If ProgramRunner.start() is the entry point for its own thread, then self.run() is appropriate here.
+                       # Based on program_operation_routes, a new thread is created for runner_instance.start,
+                       # so this start method itself becomes the thread's target.
+                       # However, the `run_program` function at the end of the file calls program_runner.start() and then returns,
+                       # implying start() might be expected to block or manage its own loop if it's the main program thread.
+                       # The `run` method contains the main while loop.
+                       # If `start` is called in a new thread, and `start` calls `self.run()`, that is correct.
+            self.run() # Assuming start() is the entry point for the ProgramRunner's main execution flow.
+
+        except Exception as e:
+            logging.error(f"ProgramRunner: Error during start: {e}", exc_info=True)
+            self._running = False
+            # self._initializing = False # Moved to finally
+            if self.scheduler and self.scheduler.running:
+                try:
+                    self.scheduler.shutdown(wait=False)
+                except Exception as e_shutdown:
+                    logging.error(f"Error shutting down scheduler after failed start: {e_shutdown}")
+        finally:
+            self._initializing = False # Ensure initializing is false after attempt.
+
 
     def stop(self):
-        logging.warning("Program stop requested")
-        self.running = False
-        self.initializing = False
-        # *** START EDIT: Shutdown Scheduler ***
+        # Check if already fully stopped and not in the process of stopping
+        if not self._running and not self._initializing and not self._stopping:
+            logging.info("ProgramRunner.stop called, but program is not running, initializing, or actively stopping.")
+            self._running = False
+            self._initializing = False
+            self._stopping = False 
+            return
+
+        logging.info(f"ProgramRunner.stop called. Current state: running={self._running}, initializing={self._initializing}, stopping={self._stopping}")
+        
+        self._stopping = True 
+        self._initializing = False 
+        
         try:
-            if self.scheduler and self.scheduler.running:
-                 logging.info("Shutting down APScheduler...")
-                 # wait=False allows the stop command to return faster,
-                 # but background jobs might still be finishing.
-                 # Set wait=True for a cleaner shutdown if blocking is acceptable.
-                 self.scheduler.shutdown(wait=True) # Changed wait to True
-                 logging.info("APScheduler shut down.")
-        except Exception as e:
-            logging.error(f"Error shutting down APScheduler: {e}", exc_info=True)
-        # *** END EDIT ***
+            if self._running: # If it thought it was running, mark it as not running anymore.
+                self._running = False 
+            
+            if self.scheduler:
+                try:
+                    logging.info("Attempting to shut down APScheduler...")
+                    if self.scheduler.running:
+                        self.scheduler.shutdown(wait=True) 
+                        logging.info("APScheduler shut down successfully.")
+                    else:
+                        logging.info("APScheduler was not running when stop was called.")
+                except Exception as e:
+                    logging.error(f"Error shutting down APScheduler: {e}", exc_info=True)
+                self.scheduler = None 
+            else:
+                logging.info("No APScheduler instance to shut down (was None).")
+            
+            self._running = False # Final confirmation
+            logging.info("ProgramRunner: Stop sequence completed.")
+
+        except Exception as e_stop_main:
+            logging.error(f"ProgramRunner: Error during main stop logic: {e_stop_main}", exc_info=True)
+            self._running = False # Ensure running is false on error
+        finally:
+            self._stopping = False # Reset stopping flag
+            logging.info(f"ProgramRunner: _stopping flag set to False. Final state: running={self._running}")
+
 
     def is_running(self):
-        # *** EDIT: Check scheduler state as well ***
-        return self.running and self.scheduler and self.scheduler.running
-        # *** END EDIT ***
+        return self._running and self.scheduler is not None and self.scheduler.running
+        
 
-    def is_initializing(self):  # Add this method
-        return self.initializing
+    def is_initializing(self): 
+        return self._initializing
+
+    def is_stopping(self): 
+        return self._stopping
 
     def run(self):
         try:
             logging.info("Starting program run loop (monitoring scheduler state)")
-            self.running = True  # Make sure running flag is set
+            self._running = True  # Make sure running flag is set
 
             self.run_initialization()
 
             # *** START EDIT: Simplified run loop ***
             # The main loop now just keeps the script alive while the scheduler runs.
             # We can add checks here if needed (e.g., monitoring scheduler health).
-            while self.running:
+            while self._running:
                 try:
                     # Check scheduler status periodically
                     if not self.scheduler or not self.scheduler.running:
@@ -2219,7 +2334,8 @@ class ProgramRunner:
              logging.error(f"Unexpected error during time synchronization: {e}")
 
     def task_reconcile_queues(self):
-        """Task to reconcile items in Checking state with matching filled_by_file items"""
+        """Task to reconcile items in Checking state with matching filled_by_file items,
+           and deduplicate items in Wanted, Scraping, or Unreleased states."""
         import sqlite3
         import logging
         import os
@@ -2240,11 +2356,13 @@ class ProgramRunner:
         conn = get_db_connection()
         cursor = conn.cursor()
         reconciled_count = 0
-        deleted_count = 0
+        deleted_count_filepath = 0 # Renamed for clarity
+        deleted_count_semantic = 0 # For the new deduplication step
         now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         try:
-            # Find pairs of (Checking item, Matching non-Checking item) with the same filled_by_file
+            # Step 1: Original reconciliation for 'Checking' items based on filled_by_file
+            reconciliation_logger.info("Starting reconciliation for 'Checking' items based on shared file paths...")
             cursor.execute("""
                 SELECT 
                     c.id as checking_id, c.title as checking_title, c.type as checking_type, c.filled_by_file,
@@ -2258,51 +2376,114 @@ class ProgramRunner:
             reconciliation_pairs = cursor.fetchall()
 
             items_to_update = []
-            items_to_delete = set() # Use set to avoid duplicates
+            items_to_delete_filepath = set()
 
             for pair in reconciliation_pairs:
-                # Log the reconciliation
                 reconciliation_logger.info(
-                    f"Reconciliation Found based on shared file: '{pair['filled_by_file']}'\n"
-                    f"  - Keeping (was Checking): ID={pair['checking_id']}, Title='{pair['checking_title']}', Type={pair['checking_type']}, File={pair['filled_by_file']}\n"
-                    f"  - Deleting (Matching):    ID={pair['matching_id']}, Title='{pair['matching_title']}', State={pair['matching_state']}, Type={pair['matching_type']}, File={pair['filled_by_file']}"
+                    f"File-based Reconciliation Found: shared file '{pair['filled_by_file']}'\n"
+                    f"  - Keeping (was Checking, now Collected): ID={pair['checking_id']}, Title='{pair['checking_title']}', Type={pair['checking_type']}\n"
+                    f"  - Deleting (Matching entry): ID={pair['matching_id']}, Title='{pair['matching_title']}', State={pair['matching_state']}, Type={pair['matching_type']}"
                 )
                 items_to_update.append(pair['checking_id'])
-                items_to_delete.add(pair['matching_id'])
+                items_to_delete_filepath.add(pair['matching_id'])
 
             if items_to_update:
-                # Bulk update Checking items to Collected state
                 update_sql = f"UPDATE media_items SET state = 'Collected', collected_at = ? WHERE id IN ({','.join(['?']*len(items_to_update))})"
                 params = [now_str] + items_to_update
                 cursor.execute(update_sql, params)
                 reconciled_count = cursor.rowcount
-                # Add criteria to update log
-                reconciliation_logger.info(f"Updated {reconciled_count} 'Checking' items to 'Collected' state due to matching file paths. IDs: {items_to_update}")
+                reconciliation_logger.info(f"Updated {reconciled_count} 'Checking' items to 'Collected' (file-based reconciliation). IDs: {items_to_update}")
 
-            if items_to_delete:
-                # Bulk delete the matching items
-                # Ensure items being updated aren't accidentally deleted if IDs overlap somehow (unlikely)
-                delete_ids = list(items_to_delete - set(items_to_update))
-                if delete_ids:
-                    delete_sql = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(delete_ids))})"
-                    cursor.execute(delete_sql, delete_ids)
-                    deleted_count = cursor.rowcount
-                     # Add criteria to delete log
-                    reconciliation_logger.info(f"Deleted {deleted_count} duplicate items (non-Checking state) that shared a file path with reconciled items. IDs: {delete_ids}")
+            if items_to_delete_filepath:
+                delete_ids_filepath = list(items_to_delete_filepath - set(items_to_update))
+                if delete_ids_filepath:
+                    delete_sql = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(delete_ids_filepath))})"
+                    cursor.execute(delete_sql, delete_ids_filepath)
+                    deleted_count_filepath = cursor.rowcount
+                    reconciliation_logger.info(f"Deleted {deleted_count_filepath} duplicate items (file-based reconciliation). IDs: {delete_ids_filepath}")
+
+            # --- Step 2: New deduplication for Wanted, Scraping, Unreleased states ---
+            reconciliation_logger.info("Starting semantic deduplication for 'Wanted', 'Scraping', 'Unreleased' items (IMDB ID, S/E, Version - with '*' trimmed from version)...")
+            
+            cursor.execute("""
+                SELECT id, imdb_id, season_number, episode_number, version, state, type, title
+                FROM media_items
+                WHERE state IN ('Wanted', 'Scraping', 'Unreleased')
+                  AND imdb_id IS NOT NULL
+                ORDER BY imdb_id, type, season_number, episode_number, version, id
+            """)
+            candidate_semantic_duplicates = cursor.fetchall()
+
+            items_to_delete_semantic_set = set()
+            processed_groups = {}
+
+            for item_row in candidate_semantic_duplicates:
+                item = dict(item_row)
+                
+                s_num_key = item['season_number'] if item['type'] == 'episode' else None
+                e_num_key = item['episode_number'] if item['type'] == 'episode' else None
+                
+                # Trim asterisks from version for grouping key
+                raw_version = item['version']
+                version_key = raw_version.replace('*', '') if isinstance(raw_version, str) else raw_version
+
+                group_key = (item['imdb_id'], version_key, s_num_key, e_num_key)
+
+                if group_key not in processed_groups:
+                    processed_groups[group_key] = []
+                processed_groups[group_key].append(item) # Store original item for logging/details
+
+            state_priority = {'Scraping': 0, 'Wanted': 1, 'Unreleased': 2}
+
+            for group_key, items_in_group in processed_groups.items():
+                if len(items_in_group) > 1:
+                    # Sort items: by state priority, then by ID (smallest ID is older)
+                    items_in_group.sort(key=lambda x: (state_priority.get(x['state'], 99), x['id']))
+                    
+                    item_to_keep = items_in_group[0]
+                    ids_in_group_to_delete = [i['id'] for i in items_in_group[1:]]
+
+                    if ids_in_group_to_delete:
+                        # Log with original version for clarity, but mention grouping logic
+                        deleted_titles_log = [f"ID:{i['id']} '{i['title']}' (State:{i['state']}, OrigV:'{i['version']}')" for i in items_in_group[1:]]
+                        group_key_log = (group_key[0], group_key[1], group_key[2], group_key[3]) # imdb, trimmed_version, s, e
+                        reconciliation_logger.info(
+                            f"Semantic Deduplication for group (key: {group_key_log}):\n"
+                            f"  - Keeping: ID={item_to_keep['id']}, Title='{item_to_keep['title']}', State='{item_to_keep['state']}', Type='{item_to_keep['type']}', OrigV:'{item_to_keep['version']}'\n"
+                            f"  - Deleting: {'; '.join(deleted_titles_log)}"
+                        )
+                        for del_id in ids_in_group_to_delete:
+                            items_to_delete_semantic_set.add(del_id)
+            
+            if items_to_delete_semantic_set:
+                final_semantic_delete_ids = list(items_to_delete_semantic_set - items_to_delete_filepath - set(items_to_update))
+                                
+                if final_semantic_delete_ids:
+                    delete_sql_semantic = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(final_semantic_delete_ids))})"
+                    cursor.execute(delete_sql_semantic, final_semantic_delete_ids)
+                    deleted_count_semantic = cursor.rowcount
+                    reconciliation_logger.info(f"Deleted {deleted_count_semantic} items based on semantic duplication (IMDB ID, S/E, Version - with '*' trimmed). IDs: {final_semantic_delete_ids}")
 
             conn.commit()
-            if reconciled_count > 0 or deleted_count > 0:
-                 # Make this log more informative
-                 logging.info(f"Queue reconciliation completed: {reconciled_count} items updated to 'Collected', {deleted_count} duplicate items deleted based on shared file paths.")
+
+            log_parts = []
+            if reconciled_count > 0:
+                log_parts.append(f"{reconciled_count} items updated to 'Collected'")
+            if deleted_count_filepath > 0:
+                log_parts.append(f"{deleted_count_filepath} duplicates deleted (shared file paths)")
+            if deleted_count_semantic > 0:
+                log_parts.append(f"{deleted_count_semantic} duplicates deleted (content/version with '*' trimmed)")
+
+            if log_parts:
+                 logging.info(f"Queue reconciliation completed: {', '.join(log_parts)}.")
             else: 
-                 logging.debug("Queue reconciliation found no items needing reconciliation.")
+                 logging.debug("Queue reconciliation found no items needing update or deletion in this cycle.")
 
         except sqlite3.Error as e:
             logging.error(f"Database error during queue reconciliation: {str(e)}")
-            conn.rollback() # Rollback on error
+            if conn: conn.rollback() # Rollback on error
         finally:
-            conn.close() # Ensure connection is closed
-
+            if conn: conn.close() # Ensure connection is closed
 
     def reinitialize(self):
         """Force reinitialization of the program runner to pick up new settings"""
@@ -2314,7 +2495,7 @@ class ProgramRunner:
                 self.scheduler.shutdown(wait=True) # Wait for jobs to finish if possible
                 logging.info("Scheduler stopped.")
 
-        self._initialized = False
+        self._initialized_runner_attributes = False
         self.__init__() # Re-runs init, including scheduling initial tasks
 
         # Restart scheduler if it was running before
@@ -3890,6 +4071,12 @@ class ProgramRunner:
             logging.info(f"Task '{log_display_name}' started execution, added to currently_executing_tasks.")
         # --- END EDIT ---
 
+        # Record start time for UI stifling
+        # 'start_time' is already time.monotonic() from the beginning of this function
+        with self._executing_task_start_times_lock:
+            self.executing_task_start_times[actual_job_id_from_scheduler] = start_time 
+        logging.debug(f"Task '{log_display_name}' start time {start_time:.3f} recorded for UI stifling.")
+
         # Determine if we should sample this execution
         # Check if enabled AND available AND actually tracing
         if self._tracemalloc_enabled and tracemalloc_available and tracemalloc and tracemalloc.is_tracing():
@@ -3986,6 +4173,14 @@ class ProgramRunner:
                 self.currently_executing_tasks.discard(actual_job_id_from_scheduler)
                 logging.info(f"Task '{log_display_name}' finished execution, removed from currently_executing_tasks.")
             # --- END EDIT ---
+            
+            # Clear start time for UI stifling
+            with self._executing_task_start_times_lock:
+                removed_start_time = self.executing_task_start_times.pop(actual_job_id_from_scheduler, None)
+            if removed_start_time is not None:
+                logging.debug(f"Task '{log_display_name}' start time removed for UI stifling.")
+            else:
+                logging.warning(f"Task '{log_display_name}' was not found in executing_task_start_times upon completion/error for UI stifling.")
             # --- Release heavy task lock if acquired ---
             # if lock_acquired: # REVERTED
                 # try: # REVERTED
