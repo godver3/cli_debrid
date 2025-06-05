@@ -8,6 +8,8 @@ from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_tr
 from content_checkers.plex_watchlist import MyPlexAccount
 import logging
 import feedparser # Keep import for RSS
+from urllib.parse import urlparse
+
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure
 try:
     # Assuming cli_battery is a sibling directory or installed package
@@ -49,45 +51,71 @@ from .models import user_required # Added import
 def check_cli_battery_connection():
     """Check connection to cli_battery service using environment variables."""
     try:
-        battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
-        response = requests.get(f'http://localhost:{battery_port}/', timeout=5)
+        battery_url_from_settings = get_setting('Metadata Battery', 'url')
+        if not battery_url_from_settings:
+            log.error("CLI Battery connection check failed: Battery URL not configured in settings.")
+            return {
+                'name': 'cli_battery',
+                'connected': False,
+                'error': 'Battery URL not configured in settings.',
+                'details': {}
+            }
+
+        # Extract port for details, default if not in URL (though it should be)
+        parsed_url = urlparse(battery_url_from_settings)
+        battery_port_from_url = parsed_url.port if parsed_url.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
+
+
+        response = requests.get(battery_url_from_settings, timeout=5) # Use the full URL from settings
         return {
             'name': 'cli_battery',
             'connected': response.status_code == 200,
             'error': None if response.status_code == 200 else f'Status code: {response.status_code}',
             'details': {
-                'url': f'http://localhost:{battery_port}/',
-                'port': battery_port
+                'url': battery_url_from_settings,
+                'port': battery_port_from_url
             }
         }
     except requests.Timeout:
+        battery_url_display = get_setting('Metadata Battery', 'url', f'http://{os.environ.get("CLI_DEBRID_BATTERY_HOST", "localhost")}:{os.environ.get("CLI_DEBRID_BATTERY_PORT", "5001")}/')
+        log.warning(f"CLI Battery connection check failed: Timeout while trying to connect to {battery_url_display}")
+        parsed_url_display = urlparse(battery_url_display)
+        battery_port_display = parsed_url_display.port if parsed_url_display.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
         return {
             'name': 'cli_battery',
             'connected': False,
             'error': 'Connection timed out',
             'details': {
-                'url': f'http://localhost:{battery_port}/',
-                'port': battery_port
+                'url': battery_url_display,
+                'port': battery_port_display
             }
         }
     except requests.ConnectionError:
+        battery_url_display = get_setting('Metadata Battery', 'url', f'http://{os.environ.get("CLI_DEBRID_BATTERY_HOST", "localhost")}:{os.environ.get("CLI_DEBRID_BATTERY_PORT", "5001")}/')
+        log.warning(f"CLI Battery connection check failed: Connection refused by {battery_url_display}")
+        parsed_url_display = urlparse(battery_url_display)
+        battery_port_display = parsed_url_display.port if parsed_url_display.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
         return {
             'name': 'cli_battery',
             'connected': False,
             'error': 'Connection refused',
             'details': {
-                'url': f'http://localhost:{battery_port}/',
-                'port': battery_port
+                'url': battery_url_display,
+                'port': battery_port_display
             }
         }
     except Exception as e:
+        battery_url_display = get_setting('Metadata Battery', 'url', f'http://{os.environ.get("CLI_DEBRID_BATTERY_HOST", "localhost")}:{os.environ.get("CLI_DEBRID_BATTERY_PORT", "5001")}/')
+        log.error(f"CLI Battery connection check failed: An unexpected error occurred while trying to connect to {battery_url_display}. Error: {str(e)}", exc_info=True)
+        parsed_url_display = urlparse(battery_url_display)
+        battery_port_display = parsed_url_display.port if parsed_url_display.port else int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
         return {
             'name': 'cli_battery',
             'connected': False,
             'error': str(e),
             'details': {
-                'url': f'http://localhost:{battery_port}/',
-                'port': battery_port
+                'url': battery_url_display,
+                'port': battery_port_display
             }
         }
 

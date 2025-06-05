@@ -276,6 +276,10 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
         item['is_processing'] = (queue_name == 'Upgrading' and item['id'] == currently_processing_upgrade_id)
         # --- END EDIT ---
         
+        # --- START EDIT: Add force_priority flag ---
+        item['is_force_priority'] = item.get('force_priority', False)
+        # --- END EDIT ---
+        
         if queue_name == 'Upgrading':
             upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
             if upgrade_info:

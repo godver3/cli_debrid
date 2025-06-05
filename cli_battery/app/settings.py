@@ -49,6 +49,7 @@ class Settings:
     def Trakt(self):
         if self._trakt is None:
             battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
+            battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost') # Get host from env
             # These read from the MAIN config via utilities.settings
             self._trakt = {
                 'client_id': get_setting('Trakt', 'client_id', ''),
@@ -56,7 +57,7 @@ class Settings:
                 'access_token': get_setting('Trakt', 'access_token', ''),
                 'refresh_token': get_setting('Trakt', 'refresh_token', ''),
                 'expires_at': get_setting('Trakt', 'expires_at', None),
-                'redirect_uri': get_setting('Trakt', 'redirect_uri', f'http://localhost:{battery_port}/trakt_callback')
+                'redirect_uri': get_setting('Trakt', 'redirect_uri', f'http://{battery_host}:{battery_port}/trakt_callback')
             }
         return self._trakt
 

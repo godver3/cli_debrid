@@ -481,7 +481,8 @@ def setup_tray_icon():
         image = Image.open(icon_path)
         import socket
         ip_address = socket.gethostbyname(socket.gethostname())
-        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:{os.environ.get('CLI_DEBRID_PORT', '5000')}\nBattery: localhost:{os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')}", menu)
+        battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
+        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:{os.environ.get('CLI_DEBRID_PORT', '5000')}\nBattery: {battery_host}:{os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')}", menu)
         
         # Set up double-click handler
         icon.on_activate = restore_from_tray
@@ -1494,10 +1495,11 @@ def main():
 
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
+    battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
     
     # Set metadata battery URL with the correct port
-    set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
-    #logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
+    set_setting('Metadata Battery', 'url', f'http://{battery_host}:{battery_port}')
+    logging.info(f"Set metadata battery URL to http://{battery_host}:{battery_port}")
 
     ensure_settings_file()
     # verify_database() # No longer needed here

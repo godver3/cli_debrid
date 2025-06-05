@@ -290,35 +290,72 @@ def fetch_items_from_trakt(endpoint: str, headers=None) -> List[Dict[str, Any]]:
         return []
 
 def assign_media_type(item: Dict[str, Any]) -> str:
-    if 'movie' in item:
+    if 'movie' in item:  # Item is a wrapper e.g. {"movie": {...}}
         return 'movie'
-    elif 'episode' in item:
-        return 'tv'  # We still return 'tv' for episodes since we want to track the show
-    elif 'show' in item:
+    elif 'show' in item:  # Item is a wrapper e.g. {"show": {...}}
         return 'tv'
+    elif 'episode' in item:  # Item is a wrapper e.g. {"episode": {...}, "show": {...}}
+        return 'tv'
+    # If not a wrapper, item might be the direct movie/show object
+    # Check for show-specific keys first
+    elif 'first_aired' in item or \
+         'aired_episodes' in item or \
+         ('status' in item and item['status'] in ['returning series', 'ended', 'in production', 'canceled', 'planned', 'pilot']):
+        return 'tv'
+    # Check for movie-specific keys if not identified as a show
+    elif 'released' in item: # Heuristic for direct movie object
+        return 'movie'
     else:
-        logging.warning(f"Unknown media type: {item}. Skipping.")
+        item_title = item.get('title', 'N/A')
+        item_year = item.get('year', 'N/A')
+        id_keys = list(item.get('ids', {}).keys())
+        logging.warning(f"Unknown media type for item: Title='{item_title}', Year='{item_year}', ID keys={id_keys}. Skipping. Full item keys: {list(item.keys())}")
         return ''
 
 def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
-    # For episodes, we want the show's ID, not the episode ID
+    ids_container = None
+
     if 'episode' in item:
         if 'show' not in item:
             logging.error(f"Episode item missing show data: {json.dumps(item, indent=2)}")
             return ''
-        ids = item['show'].get('ids', {})
-    else:
-        media_type_key = 'show' if media_type == 'tv' else media_type
-        if media_type_key not in item:
-            logging.error(f"Media type '{media_type_key}' not found in item: {json.dumps(item, indent=2)}")
-            return ''
-        ids = item[media_type_key].get('ids', {})
-    
+        ids_container = item['show']
+    else:  # Item is a movie or a show (not an episode)
+        # Based on media_type, determine the expected key if it's a wrapped item
+        expected_wrapper_key = 'show' if media_type == 'tv' else media_type  # 'movie' or 'show'
+
+        if expected_wrapper_key in item:
+            # It's a wrapped item like item['movie'] = {...} or item['show'] = {...}
+            ids_container = item[expected_wrapper_key]
+        else:
+            # It's a direct item (e.g., from /movies/trending or /shows/trending)
+            # The item itself is the container of 'ids'
+            ids_container = item
+            
+    if not ids_container:
+        logging.error(f"Could not determine ids_container for item: {json.dumps(item, indent=2)} with media_type: {media_type}")
+        return ''
+        
+    ids = ids_container.get('ids', {})
     if not ids:
-        logging.error(f"No IDs found for item: {json.dumps(item, indent=2)}")
+        logging.warning(f"No 'ids' dictionary found in determined container for item: {json.dumps(item, indent=2)}. Container was part of item.")
         return ''
     
-    return ids.get('imdb') or ids.get('tmdb') or ids.get('tvdb') or ''
+    # Prioritize IMDb, then TMDB, then TVDB, ensuring the ID is a string.
+    imdb = ids.get('imdb')
+    if imdb:
+        return str(imdb)
+    
+    tmdb = ids.get('tmdb')
+    if tmdb:
+        return str(tmdb)
+        
+    tvdb = ids.get('tvdb')
+    if tvdb:
+        return str(tvdb)
+
+    logging.warning(f"No IMDb, TMDB, or TVDB ID found in 'ids' for item: {json.dumps(item, indent=2)}")
+    return ''
 
 def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     processed_items = []

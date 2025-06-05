@@ -21,44 +21,63 @@ class ScrapingQueue:
         """Synchronize the in-memory queue with the database state."""
         from database import get_all_media_items, get_media_item_by_id
         
+        # Specific ID for debugging
+        DEBUG_ITEM_ID_UPDATE = '177245'
+        logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] ScrapingQueue.update() called.")
+        
         # Fetch current items with 'Scraping' state from DB
         db_items_raw = get_all_media_items(state="Scraping")
         db_items_dict = {item['id']: dict(item) for item in db_items_raw}
-        db_item_ids = set(db_items_dict.keys())
+        db_item_ids_from_db_query = set(db_items_dict.keys())
         
-        # Identify items to add (in DB but not in memory)
-        items_to_add_ids = db_item_ids - self._item_ids
+        if DEBUG_ITEM_ID_UPDATE in db_item_ids_from_db_query:
+            debug_item_from_db = db_items_dict.get(DEBUG_ITEM_ID_UPDATE)
+            if debug_item_from_db:
+                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] Found in DB fetch. DB State: {debug_item_from_db.get('state')}, DB force_priority: {debug_item_from_db.get('force_priority')}")
+        else:
+            logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] NOT found in DB fetch with state='Scraping'.")
         
-        # Identify items to remove (in memory but not in DB 'Scraping' state anymore)
-        items_to_remove_ids = self._item_ids - db_item_ids
-        
-        # Remove items that are no longer in 'Scraping' state in DB
-        if items_to_remove_ids:
-            self.items = [item for item in self.items if item['id'] not in items_to_remove_ids]
-            self._item_ids -= items_to_remove_ids
-            logging.debug(f"Removed {len(items_to_remove_ids)} items from ScrapingQueue memory (state changed in DB).")
+        # --- Synchronization Logic --- 
+        new_items_list = []
+        updated_item_ids_this_cycle = set()
+        removed_item_ids_this_cycle = set()
 
-        # Add items that are now in 'Scraping' state in DB but not yet in memory
-        if items_to_add_ids:
-            for item_id in items_to_add_ids:
-                # It's possible the item was added via add_item just before update ran.
-                # Double-check if it's already in memory before adding again.
-                if item_id not in self._item_ids:
-                    item_data = db_items_dict.get(item_id)
-                    if item_data:
-                        self.items.append(item_data)
-                        self._item_ids.add(item_id)
-                    else:
-                        # This case should be rare if db_items_dict is built correctly
-                        logging.warning(f"Item ID {item_id} was in db_item_ids but not found in db_items_dict during ScrapingQueue update.")
-            logging.debug(f"Added {len(items_to_add_ids)} items to ScrapingQueue memory (found in DB).")
+        # 1. Iterate through current in-memory items (self.items)
+        for index, mem_item in enumerate(self.items):            
+            mem_item_id = mem_item.get('id')
+            if mem_item_id in db_items_dict: 
+                # Item is in memory AND still in DB as 'Scraping'. Refresh its data.
+                fresh_db_data = db_items_dict[mem_item_id]
+                new_items_list.append(fresh_db_data) # Use the fresh data
+                updated_item_ids_this_cycle.add(mem_item_id)
+                if str(mem_item_id) == DEBUG_ITEM_ID_UPDATE:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] REFRESHED in-memory item with DB data. New force_priority for sorting: {fresh_db_data.get('force_priority')}")
+            else:
+                # Item was in memory but is NO LONGER in DB as 'Scraping'. It will be dropped.
+                removed_item_ids_this_cycle.add(mem_item_id)
+                if str(mem_item_id) == DEBUG_ITEM_ID_UPDATE:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] To be REMOVED from memory (no longer in DB as Scraping).")
 
-        # Optional: Update existing in-memory items with latest DB data (if needed)
-        # for i, item in enumerate(self.items):
-        #     if item['id'] in db_items_dict:
-        #         # Merge or replace with db_items_dict[item['id']] if necessary
-        #         # For now, assume items added via add_item are up-to-date enough
-        #         pass
+        # 2. Add items that are in DB as 'Scraping' but were not previously in memory.
+        for db_item_id, db_item_data in db_items_dict.items():
+            if db_item_id not in updated_item_ids_this_cycle and db_item_id not in removed_item_ids_this_cycle:
+                # This means it was not in self.items before, so it's a truly new add to memory
+                new_items_list.append(db_item_data)
+                if str(db_item_id) == DEBUG_ITEM_ID_UPDATE:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] ADDED to memory (was in DB as Scraping but not in memory). Force_priority for sorting: {db_item_data.get('force_priority')}")
+        
+        self.items = new_items_list
+        self._item_ids = {item.get('id') for item in self.items} # Rebuild the ID set
+
+        if removed_item_ids_this_cycle:
+            logging.debug(f"Removed {len(removed_item_ids_this_cycle)} items from ScrapingQueue memory (state changed in DB or item deleted).")
+        added_count = len(self._item_ids) - (len(updated_item_ids_this_cycle) + len(removed_item_ids_this_cycle) - len(removed_item_ids_this_cycle.intersection(updated_item_ids_this_cycle)) ) # complex way to say newly added
+        truly_added_ids = set(db_items_dict.keys()) - (updated_item_ids_this_cycle | removed_item_ids_this_cycle)
+
+        if truly_added_ids:
+            logging.debug(f"Added {len(truly_added_ids)} new items to ScrapingQueue memory (found in DB). Example ID: {next(iter(truly_added_ids)) if truly_added_ids else 'N/A'}")
+        if updated_item_ids_this_cycle:
+             logging.debug(f"Refreshed {len(updated_item_ids_this_cycle)} existing items in ScrapingQueue memory with latest DB data.")
 
         # --- Sorting Logic (applied after synchronization) ---
         # Get the queue sort order setting
@@ -105,7 +124,7 @@ class ScrapingQueue:
             # Sort by release date, newest first. Unknown dates are handled by date.min
             self.items.sort(key=get_release_date_key, reverse=True)
 
-        # Final sort: Ensure episodes are processed in order (S/E ascending) within their priority groups
+        # Sort: Ensure episodes are processed in order (S/E ascending) within their priority groups
         self.items.sort(key=lambda item: (
             # Preserve primary sort orders (source priority, type, release date implicitly handled by sorting earlier)
             # Then sort episodes explicitly by show/season/episode
@@ -113,6 +132,29 @@ class ScrapingQueue:
             item.get('season_number') if item.get('type') == 'episode' and item.get('season_number') is not None else float('inf'), # Sort episodes by season (handle None)
             item.get('episode_number') if item.get('type') == 'episode' and item.get('episode_number') is not None else float('inf') # Then by episode number (handle None)
         ))
+
+        # --- Force Priority Sorting (NEW) ---
+        # This sort should be last to ensure forced items are at the very top,
+        # overriding other sorting criteria for their position at the front.
+        # Assumes force_priority is a boolean or integer (0/1).
+        # `not item.get('force_priority', False)` makes True values (forced) sort before False values.
+        self.items.sort(key=lambda item: not item.get('force_priority', False))
+
+        logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] After all sorting in ScrapingQueue.update():")
+        if self.items:
+            # Correctly create a list of IDs for the f-string
+            first_three_ids = [it.get('id') for it in self.items[:3]]
+            logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] First 3 items in self.items: {first_three_ids}")
+            found_debug_item_in_sorted_list = False
+            for i, s_item in enumerate(self.items):
+                if str(s_item.get('id')) == DEBUG_ITEM_ID_UPDATE:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] Found in self.items at index {i}. Its force_priority: {s_item.get('force_priority')}")
+                    found_debug_item_in_sorted_list = True
+                    break
+            if not found_debug_item_in_sorted_list:
+                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] NOT found in self.items after sorting.")
+        else:
+            logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID_UPDATE}] self.items is EMPTY after sorting.")
 
     def get_contents(self):
         return self.items
@@ -161,6 +203,9 @@ class ScrapingQueue:
         today = date.today()
         processed_an_item_this_cycle = False # Flag to indicate if we attempted processing
 
+        # Specific ID for debugging
+        DEBUG_ITEM_ID = '177245'
+
         if self.items:
             # Peek at the first item instead of popping immediately
             item_to_process = self.items[0]
@@ -168,28 +213,51 @@ class ScrapingQueue:
             item_identifier = queue_manager.generate_identifier(item_to_process)
             processed_successfully_or_moved = False # Flag to track if item was moved/handled
 
+            if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Now being processed at the start of ScrapingQueue.process(). Force_priority: {item_to_process.get('force_priority', False)}")
+
             # --- Alternate scrape time strategy ---
-            if not self._is_within_alternate_scrape_window(item_to_process, datetime.now()):
+            if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Checking alternate scrape window. Item date: {item_to_process.get('release_date')}, Airtime: {item_to_process.get('airtime')}")
+            alt_scrape_check_result = self._is_within_alternate_scrape_window(item_to_process, datetime.now())
+            if not alt_scrape_check_result:
+                if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] FAILED alternate scrape window check. Moving to Wanted.")
                 logging.info(f"{item_identifier} is not within the alternate scrape window. Moving back to Wanted queue.")
                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                 self.remove_item(item_to_process)
                 return True
+            elif str(item_id_being_processed) == DEBUG_ITEM_ID:
+                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED alternate scrape window check.")
 
             # --- START: Check if related item is in Adding Queue --- 
             item_imdb_id = item_to_process.get('imdb_id')
             if item_imdb_id: # Only check if IMDb ID exists
+                if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Checking if related item (IMDb: {item_imdb_id}) is in Adding Queue.")
                 try:
                     adding_queue = queue_manager.queues.get("Adding")
                     if adding_queue and adding_queue.get_contents(): # Check if Adding queue exists and has items
                         is_in_adding = any(adding_item.get('imdb_id') == item_imdb_id for adding_item in adding_queue.get_contents())
                         if is_in_adding:
+                            if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] DEFERRED - related item found in Adding Queue.")
                             logging.info(f"Deferring processing for {item_identifier} (IMDb: {item_imdb_id}) - related item found in Adding Queue.")
                             return False # Defer processing, keep item in queue
+                        elif str(item_id_being_processed) == DEBUG_ITEM_ID:
+                            logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED Adding Queue check (no related item found).")
                 except Exception as e:
+                    if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                        logging.error(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Error checking Adding Queue: {e}")
                     logging.error(f"Error checking Adding Queue for {item_identifier}: {e}")
+            elif str(item_id_being_processed) == DEBUG_ITEM_ID:
+                logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] SKIPPED Adding Queue check (no IMDb ID).")
             # --- END: Check if related item is in Adding Queue ---
 
             try:
+                if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Entering main try block for scraping. Item details: EarlyRelease={item_to_process.get('early_release', False)}, ContentSource={item_to_process.get('content_source')}, ReleaseDate='{item_to_process.get('release_date')}'")
+
                 logging.info(f"Starting to process scraping results for {item_identifier}")
                 processed_an_item_this_cycle = True # Mark that we started processing
 
@@ -200,16 +268,18 @@ class ScrapingQueue:
                 # Check release date logic - skip for early release items AND magnet assigned items
                 # --- Use item_to_process instead of item throughout ---
                 if not item_to_process.get('early_release', False) and not is_magnet_assigned: # <-- Added is_magnet_assigned check
+                    if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                        logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Evaluating standard release date logic. EarlyRelease={item_to_process.get('early_release', False)}, IsMagnetAssigned={is_magnet_assigned}")
                     if item_to_process['release_date'] == 'Unknown':
+                        if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                            logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Release date is 'Unknown'. Moving to Wanted.")
                         logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
                         queue_manager.move_to_wanted(item_to_process, "Scraping")
                         processed_successfully_or_moved = True # Handled by move
                         processed_count += 1
                         # No return here, let finally handle removal check if needed
-                # --- START EDIT: Add logging for skipped date check ---
                 elif is_magnet_assigned:
                     logging.info(f"Processing Magnet Assigned item {item_identifier} regardless of release date")
-                # --- END EDIT ---
                 elif item_to_process.get('early_release', False): # Existing early release logic
                     logging.info(f"Processing early release item {item_identifier} regardless of release date")
 
@@ -228,18 +298,26 @@ class ScrapingQueue:
 
                             # If physical release is required for a MOVIE, use that date instead
                             if item_to_process.get('type') == 'movie' and require_physical and physical_release_date:
+                                if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Movie requires physical. Physical date: {physical_release_date}. Today: {today}.")
                                 try:
                                     physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
                                     if physical_date > today:
+                                        if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                            logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Movie physical release date {physical_date} is in future. Moving to Wanted.")
                                         logging.info(f"Movie {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
                                         queue_manager.move_to_wanted(item_to_process, "Scraping")
                                         processed_successfully_or_moved = True
                                         processed_count += 1
                                         # Removed return
                                 except ValueError:
+                                    if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                        logging.warning(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Invalid physical release date format: {physical_release_date}")
                                     logging.warning(f"Invalid physical release date format for movie {item_identifier}: {physical_release_date}")
                             # If physical release is required for a MOVIE but no date available, move back to Wanted
                             elif item_to_process.get('type') == 'movie' and require_physical and not physical_release_date:
+                                if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Movie requires physical, no date available. Moving to Wanted.")
                                 logging.info(f"Movie {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
@@ -247,6 +325,8 @@ class ScrapingQueue:
                                 # Removed return
                             # Otherwise check normal release timing (this path is now only reached if not early_release and not magnet_assigned)
                             elif release_date > today: # <-- Removed the early_release check here as it's handled above
+                                if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                    logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Normal release date {release_date} is in future. Moving to Wanted.")
                                 logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
@@ -256,13 +336,17 @@ class ScrapingQueue:
                          # --- START EDIT: Add content source check ---
                         # Only move back if not magnet assigned and date is bad
                         if not is_magnet_assigned:
-                             logging.warning(f"Item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Moving back to Wanted queue.")
-                             queue_manager.move_to_wanted(item_to_process, "Scraping")
-                             processed_successfully_or_moved = True
-                             processed_count += 1
+                            if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                logging.warning(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Invalid release date format: {item_to_process['release_date']}. Moving to Wanted.")
+                            logging.warning(f"Item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Moving back to Wanted queue.")
+                            queue_manager.move_to_wanted(item_to_process, "Scraping")
+                            processed_successfully_or_moved = True
+                            processed_count += 1
                         else:
-                             # Log but allow Magnet Assigned items to proceed
-                             logging.warning(f"Magnet Assigned item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Proceeding anyway.")
+                            if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                logging.warning(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Magnet Assigned. Invalid release date format: {item_to_process['release_date']}. Proceeding.")
+                            # Log but allow Magnet Assigned items to proceed
+                            logging.warning(f"Magnet Assigned item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Proceeding anyway.")
                         # --- END EDIT ---
                         # Removed return
 
@@ -270,6 +354,10 @@ class ScrapingQueue:
                 if not processed_successfully_or_moved:
                     # --- Multi-pack check logic ---
                     is_multi_pack = False # Default to false
+
+                    if str(item_id_being_processed) == DEBUG_ITEM_ID and not processed_successfully_or_moved:
+                        logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Passed all preliminary checks. Proceeding to multi-pack logic and scraping attempts.")
+
                     can_attempt_multi_pack = False # Assume false unless it's a valid episode case
 
                     if item_to_process['type'] == 'episode':
