@@ -982,15 +982,74 @@ h2 {
 /* Mobile-specific styles */
 @media (max-width: 1045px) {
     .task-monitor-container {
-        display: none;
+        /* Override desktop positioning */
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        
+        /* Keep flex, but change direction for bottom alignment */
+        flex-direction: column-reverse; /* Dropdown will be on top of display */
+        align-items: stretch; /* Make children full-width */
+        
+        /* Override desktop transform for hiding */
+        transform: translateY(100%); /* Hidden at the bottom */
+        transform-origin: bottom;
+
+        /* Adjust other properties for mobile */
+        font-size: 0.9em;
+        line-height: 1.2;
+        right: 0; /* Override desktop right property */
+    }
+
+    .task-monitor-container.visible {
+        transform: translateY(0); 
+    }
+    
+    .task-monitor-container.visible + .task-monitor-toggle {
+        bottom: 55px; /* Position it above the taller task display bar */
+    }
+    
+    .task-monitor-container.hidden {
+        transform: translateY(100%); 
+    }
+
+    .task-monitor-toggle {
+        display: flex !important; /* Make it visible, overriding any other display:none */
+        top: auto;
+        bottom: 25px; /* Lowered by 30px when monitor is hidden */
+        right: 15px;
+        left: auto;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        background-color: #2c2c2c;
+        box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    }
+
+    .current-task-display {
+        border-radius: 4px 4px 0 0;
+        margin-right: 0; /* Remove desktop margin */
+        min-width: 100%;
+        box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+        /* Make taller and align content to top on mobile */
+        padding-bottom: 10px; /* Original from base is 10px, this adds 15px height */
+        align-items: flex-start; /* Aligns text spans to the top */
+    }
+    
+    .task-monitor-dropdown {
+        width: 100%;
+        border-radius: 8px 8px 0 0;
+        margin-bottom: 5px;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        right: 0;
     }
 
     .rate-limits-section-toggle {
         display: none;
-    }
-
-    .task-monitor-toggle {
-        display: none !important;
     }
     
     .current-task-display,
@@ -1408,10 +1467,73 @@ h2 {
 
 @media (max-width: 1045px) {
     .task-monitor-container {
-        display: none;
+        /* Override desktop positioning */
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        
+        /* Keep flex, but change direction for bottom alignment */
+        flex-direction: column-reverse; /* Dropdown will be on top of display */
+        align-items: stretch; /* Make children full-width */
+        
+        /* Override desktop transform for hiding */
+        transform: translateY(100%); /* Hidden at the bottom */
+        transform-origin: bottom;
+
+        /* Adjust other properties for mobile */
+        font-size: 0.9em;
+        line-height: 1.2;
+        right: 0; /* Override desktop right property */
+    }
+
+    .task-monitor-container.visible {
+        transform: translateY(0); 
+    }
+    
+    .task-monitor-container.visible + .task-monitor-toggle {
+        bottom: 55px; /* Position it above the taller task display bar */
+    }
+    
+    .task-monitor-container.hidden {
+        transform: translateY(100%); 
     }
 
     .task-monitor-toggle {
+        display: flex !important; /* Make it visible, overriding any other display:none */
+        top: auto;
+        bottom: 25px; /* Lowered by 30px when monitor is hidden */
+        right: 15px;
+        left: auto;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        background-color: #2c2c2c;
+        box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    }
+
+    .current-task-display {
+        border-radius: 4px 4px 0 0;
+        margin-right: 0; /* Remove desktop margin */
+        min-width: 100%;
+        box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+        /* Make taller and align content to top on mobile */
+        padding-bottom: 10px; /* Original from base is 10px, this adds 15px height */
+        align-items: flex-start; /* Aligns text spans to the top */
+    }
+    
+    .task-monitor-dropdown {
+        width: 100%;
+        border-radius: 8px 8px 0 0;
+        margin-bottom: 5px;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        right: 0;
+    }
+
+    .rate-limits-section-toggle {
         display: none;
     }
     
@@ -1423,19 +1545,6 @@ h2 {
 
 /* Update this media query to include all task monitor mobile styles */
 @media (max-width: 1045px) {
-    .task-monitor-container {
-        display: none;
-    }
-
-    .task-monitor-toggle {
-        display: none;
-    }
-    
-    .current-task-display,
-    .task-monitor-dropdown {
-        width: auto;
-    }
-    
     .task-monitor-button {
         min-width: 40px;
         min-height: 40px;
@@ -2585,4 +2694,30 @@ body.modal-open {
 }
 .day-events-modal-body::-webkit-scrollbar-thumb:hover {
     background: #555;
+}
+
+/* PWA-specific adjustments for mobile task monitor */
+@media all and (display-mode: standalone) and (max-width: 1045px) {
+    .task-monitor-container {
+        bottom: 40px;
+    }
+
+    .task-monitor-container.visible::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 100%;
+        bottom: -40px; 
+        background: linear-gradient(to bottom, #1a1a1a, black);
+        z-index: -1;
+    }
+
+    .task-monitor-toggle {
+        bottom: 45px; /* 95px - 30px */
+    }
+
+    .task-monitor-container.visible + .task-monitor-toggle {
+        bottom: 95px;
+    }
 }

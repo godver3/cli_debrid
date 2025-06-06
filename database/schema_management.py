@@ -264,6 +264,22 @@ def migrate_schema():
             conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_imdb_type_state_title ON media_items(imdb_id, type, state, title COLLATE NOCASE);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_imdb_type_state_title.")
 
+        # New index for get_collected_counts (shows)
+        if 'idx_media_items_type_state_imdb' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_type_state_imdb...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_type_state_imdb ON media_items(type, state, imdb_id);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_type_state_imdb.")
+
+        # New index for get_upcoming_releases
+        if 'idx_media_items_upcoming_releases' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_upcoming_releases...")
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_media_items_upcoming_releases
+                ON media_items(type, release_date)
+                WHERE state = 'Wanted'
+            ''')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_upcoming_releases.")
+
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
         if not cursor.fetchone():
@@ -649,24 +665,21 @@ def create_statistics_summary_table():
         # Dropping old indexes if they exist with the old structure, to ensure recreation with new structure.
         # Note: This might be better handled in a dedicated migration script for existing complex deployments.
         cursor.execute('DROP INDEX IF EXISTS idx_media_items_recent_movies')
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_recent_episodes')
+
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_recently_added')
         cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_media_items_recent_movies
-            ON media_items(type, upgraded, state, collected_at DESC)
-            WHERE collected_at IS NOT NULL
+            CREATE INDEX IF NOT EXISTS idx_media_items_recently_added ON media_items(type, collected_at DESC)
+            WHERE
+                upgraded = 0 AND
+                state IN ('Collected', 'Upgrading')
         ''')
         
-        cursor.execute('DROP INDEX IF EXISTS idx_media_items_recent_episodes')
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_media_items_recent_episodes
-            ON media_items(type, upgraded, state, collected_at DESC)
-            WHERE collected_at IS NOT NULL
-        ''')
-
         cursor.execute('DROP INDEX IF EXISTS idx_media_items_upgraded_collected_at')
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_media_items_upgraded_collected_at
-            ON media_items(upgraded, collected_at DESC)
-            WHERE collected_at IS NOT NULL
+            ON media_items(collected_at DESC)
+            WHERE collected_at IS NOT NULL AND upgraded = 1
         ''')
         
         conn.commit()

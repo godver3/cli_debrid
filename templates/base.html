@@ -533,6 +533,37 @@
             color: #ddd;
             text-align: center;
         }
+
+        /* "Hacked" Easter Egg Styles */
+        #hack-overlay {
+            position: fixed;
+            top: -2.5%; /* Adjust for oversized dimension */
+            left: -2.5%; /* Adjust for oversized dimension */
+            width: 105%; /* Expand to hide edges during shake */
+            height: 105%; /* Expand to hide edges during shake */
+            background: #000; /* Solid black for full effect */
+            z-index: 9998;
+            display: none; /* Initially hidden, will be set to 'flex' by JS */
+            justify-content: center;
+            align-items: center;
+        }
+        #hack-text {
+            width: 90%; /* Prevent text from hitting screen edges */
+            font-size: 2em;
+            text-shadow: 0 0 5px #0f0, 0 0 15px #0f0; /* Enhanced glow effect */
+            white-space: pre-wrap;
+            color: #0f0;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+        }
+        .screen-shake {
+            animation: shake 0.4s infinite;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translate(0, 0); }
+            10%, 30%, 50%, 70%, 90% { transform: translate(calc(-1 * var(--shake-intensity)), var(--shake-intensity)); }
+            20%, 40%, 60%, 80% { transform: translate(var(--shake-intensity), calc(-1 * var(--shake-intensity))); }
+        }
     </style>
     
     {% block head %}{% endblock %}
@@ -936,47 +967,72 @@
             }
             // --- End Release Notes Modal Event Listeners ---
 
-            // --- Easter Egg Modal Logic ---
-            const easterEggModal = document.getElementById('easterEggModal');
-            const easterEggModalClose = document.getElementById('easterEggModalClose');
+            // --- "Hacked" Easter Egg ---
+            const headerElement = document.querySelector('header');
+            let headerClickCount = 0;
+            let hackInProgress = false;
 
-            if (easterEggModal && easterEggModalClose) {
-                easterEggModalClose.addEventListener('click', function() {
-                    easterEggModal.style.display = 'none';
-                    document.body.classList.remove('modal-open');
+            if (headerElement) {
+                headerElement.addEventListener('click', (e) => {
+                    // Only trigger if the click is on the header's background, not on interactive elements.
+                    if (e.target.closest('a, button, input, .hamburger-menu, .group-title')) {
+                        return;
+                    }
+
+                    if (hackInProgress) return;
+
+                    headerClickCount++;
+
+                    if (headerClickCount >= 15) {
+                        headerClickCount = 0; // Reset
+                        triggerHackEffect();
+                    }
                 });
-            } else {
-                console.warn('Easter egg modal elements not found.');
             }
 
-            // Konami Code
-            const konamiSequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
-            let konamiCurrentIndex = 0;
+            function sleep(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
 
-            document.addEventListener('keydown', (e) => {
-                if (!easterEggModal) return; // Do nothing if modal element isn't there
+            function nextFrame() {
+                return new Promise(resolve => requestAnimationFrame(resolve));
+            }
 
-                const key = e.key.toLowerCase();
-                const expectedKey = konamiSequence[konamiCurrentIndex].toLowerCase();
+            async function triggerHackEffect() {
+                const overlay = document.getElementById('hack-overlay');
+                const textElement = document.getElementById('hack-text');
+                const body = document.body;
 
-                if (key === expectedKey) {
-                    konamiCurrentIndex++;
-                    if (konamiCurrentIndex === konamiSequence.length) {
-                        easterEggModal.style.display = 'block';
-                        document.body.classList.add('modal-open');
-                        konamiCurrentIndex = 0; // Reset for next time
-                    }
-                } else {
-                    // If the pressed key is the first in the sequence, restart from the second char
-                    if (key === konamiSequence[0].toLowerCase()) {
-                        konamiCurrentIndex = 1;
-                    } else {
-                        // Otherwise, completely reset
-                        konamiCurrentIndex = 0;
-                    }
+                if (!overlay || !textElement || hackInProgress) return;
+
+                hackInProgress = true;
+                body.classList.add('modal-open'); // Disable scrolling
+                overlay.style.display = 'flex';
+                overlay.classList.add('screen-shake'); // Apply shake to the overlay
+
+                const messages = [
+                    { text: "ACCESSING MAINFRAME...", delay: 1200, intensity: '1px' },
+                    { text: "BYPASSING FIREWALL...", delay: 1200, intensity: '2px' },
+                    { text: "COMPILING MALWARE...", delay: 1500, intensity: '2px' },
+                    { text: "!!! ACCESS GRANTED !!!", delay: 800, intensity: '2px' },
+                    { text: "YOU JUST GOT HACKED!!????", delay: 3000, intensity: '1px' },
+                    { text: "....kidding.", delay: 3500, intensity: '0px' }
+                ];
+
+                for (const message of messages) {
+                    overlay.style.setProperty('--shake-intensity', message.intensity);
+                    textElement.textContent = message.text;
+                    await nextFrame(); // Wait for the browser to render the change
+                    await sleep(message.delay);
                 }
-            });
-            // --- End Easter Egg Modal Logic ---
+
+                // End of sequence
+                overlay.style.display = 'none';
+                overlay.classList.remove('screen-shake'); // Remove shake from the overlay
+                body.classList.remove('modal-open'); // Re-enable scrolling
+                hackInProgress = false; // Allow it to be triggered again
+            }
+            // --- End "Hacked" Easter Egg ---
         });
     </script>
 </head>
@@ -1255,7 +1311,7 @@
         </div>
     </div>
     <button class="task-monitor-toggle" id="taskMonitorToggle">
-        <i class="fas fa-tasks"></i>
+        <i class="fas"></i>
     </button>
     <button class="rate-limits-section-toggle" id="rateLimitsSectionToggle">
         <i class="fas fa-chart-line"></i>
@@ -1278,6 +1334,11 @@
                 <p>Who's awesome? You are!</p>
             </div>
         </div>
+    </div>
+
+    <!-- "Hacked" Easter Egg Overlay -->
+    <div id="hack-overlay">
+        <div id="hack-text"></div>
     </div>
 
     <!-- Release notes popup -->
@@ -1342,3 +1403,4 @@
     {% block scripts %}{% endblock %}
 </body>
 </html>
+

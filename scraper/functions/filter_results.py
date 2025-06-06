@@ -69,8 +69,8 @@ def filter_results(
     # we only care if the *overall query* might be for anime (which has a low threshold).
     # If it's not anime, apply dynamic threshold for short titles.
     similarity_threshold = base_similarity_threshold
+    query_title_len = len(normalized_query_title)
     if not is_anime: # Only apply dynamic scaling if not anime (UFC check is per-result)
-        query_title_len = len(normalized_query_title)
         if query_title_len < 5:
             similarity_threshold = 1.0
         elif query_title_len < 6:
@@ -774,6 +774,7 @@ def filter_results(
                 logging.info(f"  size_gb_for_filter (to be assigned to result['size']): {size_gb_for_filter:.4f}")
             # --- END ADDED DEBUG LOGGING ---
             result['size'] = size_gb_for_filter 
+            result['total_size_gb'] = total_size_gb
             
             # --- Bitrate Calculation Prep ---
             # 'num_episodes_in_pack' at this point has its final value after considering pack type, API fallbacks.
