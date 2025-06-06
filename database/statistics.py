@@ -359,21 +359,16 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         
         # Get most recent movies
         movie_query = """
-        SELECT DISTINCT
-            title,
-            year,
-            'movie' as type,
-            collected_at,
-            imdb_id,
-            tmdb_id,
-            version,
-            filled_by_title,
-            filled_by_file
-        FROM media_items
-        WHERE type = 'movie'
-          AND collected_at IS NOT NULL 
-          AND state IN ('Collected', 'Upgrading')
-          AND upgraded = 0  -- Exclude upgraded items
+        SELECT * FROM (
+            SELECT
+                title, year, 'movie' as type, collected_at, imdb_id, tmdb_id,
+                version, filled_by_title, filled_by_file
+            FROM media_items
+            WHERE type = 'movie' AND upgraded = 0 AND state IN ('Collected', 'Upgrading')
+            ORDER BY collected_at DESC
+            LIMIT 50
+        )
+        GROUP BY title, year
         ORDER BY collected_at DESC
         LIMIT ?
         """
@@ -383,26 +378,16 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         
         # Get most recent TV shows (using first episode as representative)
         show_query = """
-        SELECT DISTINCT
-            title,
-            year,
-            'episode' as type,
-            collected_at,
-            imdb_id,
-            tmdb_id,
-            version,
-            filled_by_title,
-            filled_by_file,
-            season_number,
-            episode_number
-        FROM media_items
-        WHERE type = 'episode'
-          AND collected_at IS NOT NULL
-          AND upgraded = 0  -- Exclude items that are the result of an upgrade
-          AND (
-              state = 'Collected' OR
-              (state = 'Upgrading' AND upgrading_from IS NULL)
-          )
+        SELECT * FROM (
+            SELECT
+                title, year, 'episode' as type, collected_at, imdb_id, tmdb_id,
+                version, filled_by_title, filled_by_file, season_number, episode_number
+            FROM media_items
+            WHERE type = 'episode' AND upgraded = 0 AND state = 'Collected'
+            ORDER BY collected_at DESC
+            LIMIT 50
+        )
+        GROUP BY title, season_number
         ORDER BY collected_at DESC
         LIMIT ?
         """
@@ -534,24 +519,17 @@ async def get_recently_upgraded_items(upgraded_limit=5):
         # Simplified query for upgrades - directly get the most recent upgrades
         query_start = time.perf_counter()
         upgraded_query = """
-        SELECT 
-            title,
-            year,
-            type,
-            imdb_id,
-            tmdb_id,
-            version,
-            filled_by_title,
-            filled_by_file,
-            upgrading_from,
-            last_updated,
-            collected_at,
-            original_collected_at,
-            season_number,
-            episode_number
-        FROM media_items
-        WHERE upgraded = 1
-          AND collected_at IS NOT NULL
+        SELECT * FROM (
+            SELECT 
+                title, year, type, imdb_id, tmdb_id, version,
+                filled_by_title, filled_by_file, upgrading_from,
+                last_updated, collected_at, original_collected_at,
+                season_number, episode_number
+            FROM media_items
+            WHERE upgraded = 1 AND collected_at IS NOT NULL
+            ORDER BY collected_at DESC
+            LIMIT 50
+        )
         GROUP BY 
             CASE 
                 WHEN type = 'movie' THEN title || year

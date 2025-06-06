@@ -1,7 +1,52 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 {% block content %}
+{% if posters %}
+<div class="background-posters">
+    {% for poster in posters %}
+    <img src="{{ poster.url }}" class="floating-poster" onerror="this.style.display='none';" style="{{ poster.style }}">
+    {% endfor %}
+</div>
+{% endif %}
 <style>
+    .background-posters {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        z-index: -1;
+    }
+
+    .floating-poster {
+        position: absolute;
+        /* opacity, height, and animation properties are set inline for randomness */
+        animation-iteration-count: infinite;
+        animation-timing-function: linear;
+        width: auto;
+        border-radius: 8px;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+    }
+
+    @keyframes float-lr {
+        0% {
+            transform: translateX(-100%);
+        }
+        100% {
+            transform: translateX(100vw);
+        }
+    }
+
+    @keyframes float-rl {
+        0% {
+            transform: translateX(100vw);
+        }
+        100% {
+            transform: translateX(-100%);
+        }
+    }
+
     .login-reminder {
         font-size: 0.9em;
         color: #666;
@@ -19,9 +64,13 @@
         max-width: 300px;
         margin: 50px auto;
         padding: 20px;
-        background-color: #2a2a2a;
+        background-color: rgba(42, 42, 42, 0.85);
         border-radius: 5px;
         box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        position: relative;
+        z-index: 1;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
     }
 
     .auth-form h2 {
@@ -29,8 +78,6 @@
         color: #f4f4f4;
         margin-bottom: 20px;
     }
-
-
 
     /* Update the input styles to include password fields and override autofill styles */
     .auth-form input[type="text"],

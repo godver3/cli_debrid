@@ -109,6 +109,10 @@ class BlacklistedQueue:
             else:
                 logging.warning(f"Could not retrieve current state for item {item_identifier} (ID: {item_id}) from DB. Proceeding with blacklist logic.")
 
+        if current_state == 'Blacklisted':
+            logging.info(f"Item {item_identifier} (ID: {item_id}) is already in 'Blacklisted' state. Skipping blacklist.")
+            return
+
         if current_state == 'Collected':
             logging.info(f"Item {item_identifier} (ID: {item_id}) is already in 'Collected' state. Skipping blacklist.")
             return

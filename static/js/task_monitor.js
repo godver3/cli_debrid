@@ -322,8 +322,16 @@ function toggleTaskMonitor() {
 
     // Update toggle icon if it exists
     if (icon) {
-        icon.classList.toggle('fa-chevron-down', !isTaskMonitorVisible); 
-        icon.classList.toggle('fa-chevron-up', isTaskMonitorVisible); 
+        const isMobile = window.innerWidth <= 1045;
+        if (isMobile) {
+            // For bottom bar: UP to show, DOWN to hide
+            icon.classList.toggle('fa-chevron-up', !isTaskMonitorVisible);
+            icon.classList.toggle('fa-chevron-down', isTaskMonitorVisible);
+        } else {
+            // For top bar: DOWN to show, UP to hide
+            icon.classList.toggle('fa-chevron-down', !isTaskMonitorVisible);
+            icon.classList.toggle('fa-chevron-up', isTaskMonitorVisible);
+        }
     }
     
     // Call the global body padding update function
@@ -404,8 +412,16 @@ export function initializeTaskMonitor() {
     // Update icon based on initial state
     const initialIcon = taskMonitorToggle.querySelector('i');
     if(initialIcon){
-        initialIcon.classList.toggle('fa-chevron-down', !isTaskMonitorVisible); 
-        initialIcon.classList.toggle('fa-chevron-up', isTaskMonitorVisible); 
+        const isMobile = window.innerWidth <= 1045;
+        if (isMobile) {
+            // For bottom bar: UP to show, DOWN to hide
+            initialIcon.classList.toggle('fa-chevron-up', !isTaskMonitorVisible);
+            initialIcon.classList.toggle('fa-chevron-down', isTaskMonitorVisible);
+        } else {
+            // For top bar: DOWN to show, UP to hide
+            initialIcon.classList.toggle('fa-chevron-down', !isTaskMonitorVisible); 
+            initialIcon.classList.toggle('fa-chevron-up', isTaskMonitorVisible); 
+        }
     }
     // --- END: Load initial visibility state ---
 

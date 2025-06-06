@@ -58,7 +58,7 @@ def get_tmdb_metadata(tmdb_id: str, media_type: str) -> Optional[Dict[str, Any]]
             'year': int(data.get('release_date', '')[:4]) if data.get('release_date') else 
                    int(data.get('first_air_date', '')[:4]) if data.get('first_air_date') else None,
             'genres': [genre['name'] for genre in data.get('genres', [])],
-            'runtime': data.get('runtime') or data.get('episode_run_time', [None])[0],
+            'runtime': data.get('runtime') or (data.get('episode_run_time') or [None])[0],
             'release_date': data.get('release_date') or data.get('first_air_date'),
             'overview': data.get('overview'),
             'original_language': data.get('original_language'),
