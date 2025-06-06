@@ -345,7 +345,7 @@ def get_collected_counts():
     finally:
         conn.close()
 
-@cache_for_seconds(300) # Cache for 5 minutes
+@cache_for_seconds(60) # Cache for 5 minutes
 async def get_recently_added_items(movie_limit=5, show_limit=5):
     import time
     overall_start = time.perf_counter()
@@ -383,7 +383,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
                 title, year, 'episode' as type, collected_at, imdb_id, tmdb_id,
                 version, filled_by_title, filled_by_file, season_number, episode_number
             FROM media_items
-            WHERE type = 'episode' AND upgraded = 0 AND state = 'Collected'
+            WHERE type = 'episode' AND upgraded = 0 AND state IN ('Collected', 'Upgrading')
             ORDER BY collected_at DESC
             LIMIT 50
         )
@@ -507,7 +507,7 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
     finally:
         conn.close()
 
-@cache_for_seconds(300) # Cache for 5 minutes
+@cache_for_seconds(60) # Cache for 5 minutes
 async def get_recently_upgraded_items(upgraded_limit=5):
     import time
     overall_start = time.perf_counter()

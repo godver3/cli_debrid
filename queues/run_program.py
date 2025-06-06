@@ -231,9 +231,9 @@ class ProgramRunner:
         # Base Task Intervals
         self.task_intervals = {
             # Queue Processing Tasks (intervals for individual queues are less critical now)
-            'Wanted': 10,             # Increased from 5
-            'Scraping': 10,           # Increased from 5
-            'Adding': 10,             # Increased from 5
+            'Wanted': 1,             # Increased from 5
+            'Scraping': 1,           # Increased from 5
+            'Adding': 1,             # Increased from 5
             'Checking': 180,
             'Sleeping': 300,
             'Unreleased': 300,
@@ -3990,7 +3990,8 @@ class ProgramRunner:
         log_prefix = f"APScheduler event for task '{task_id_for_log}':"
 
         if event_code == EVENT_JOB_SUBMITTED:
-            logging.info(f"{log_prefix} Job Submitted.")
+            if task_id_for_log != 'Wanted' and task_id_for_log != 'Scraping' and task_id_for_log != 'Adding':
+                logging.info(f"{log_prefix} Job Submitted.")
             if is_manual_task:
                 with self._running_task_lock: # Lock for modifying manual_tasks
                     self.manual_tasks.add(task_id_for_log)
@@ -3998,7 +3999,8 @@ class ProgramRunner:
             return # Submitted jobs don't proceed to interval adjustment logic
 
         elif event_code == EVENT_JOB_EXECUTED: # Successful completion
-            logging.info(f"{log_prefix} Job Executed Successfully.")
+            if task_id_for_log != 'Wanted' and task_id_for_log != 'Scraping' and task_id_for_log != 'Adding':
+                logging.info(f"{log_prefix} Job Executed Successfully.")
             if is_manual_task:
                 with self._running_task_lock: # Lock for modifying manual_tasks
                     self.manual_tasks.discard(task_id_for_log)
@@ -4068,14 +4070,16 @@ class ProgramRunner:
         # --- START EDIT: Manage currently_executing_tasks ---
         with self._running_task_lock:
             self.currently_executing_tasks.add(actual_job_id_from_scheduler)
-            logging.info(f"Task '{log_display_name}' started execution, added to currently_executing_tasks.")
+            if log_display_name != 'Wanted' and log_display_name != 'Scraping' and log_display_name != 'Adding':
+                logging.info(f"Task '{log_display_name}' started execution, added to currently_executing_tasks.")
         # --- END EDIT ---
 
         # Record start time for UI stifling
         # 'start_time' is already time.monotonic() from the beginning of this function
         with self._executing_task_start_times_lock:
             self.executing_task_start_times[actual_job_id_from_scheduler] = start_time 
-        logging.debug(f"Task '{log_display_name}' start time {start_time:.3f} recorded for UI stifling.")
+        if log_display_name != 'Wanted' and log_display_name != 'Scraping' and log_display_name != 'Adding':
+            logging.debug(f"Task '{log_display_name}' start time {start_time:.3f} recorded for UI stifling.")
 
         # Determine if we should sample this execution
         # Check if enabled AND available AND actually tracing
@@ -4171,16 +4175,17 @@ class ProgramRunner:
             # --- START EDIT: Manage currently_executing_tasks ---
             with self._running_task_lock:
                 self.currently_executing_tasks.discard(actual_job_id_from_scheduler)
-                logging.info(f"Task '{log_display_name}' finished execution, removed from currently_executing_tasks.")
+                if log_display_name != 'Wanted' and log_display_name != 'Scraping' and log_display_name != 'Adding':
+                    logging.info(f"Task '{log_display_name}' finished execution, removed from currently_executing_tasks.")
             # --- END EDIT ---
             
             # Clear start time for UI stifling
             with self._executing_task_start_times_lock:
                 removed_start_time = self.executing_task_start_times.pop(actual_job_id_from_scheduler, None)
-            if removed_start_time is not None:
-                logging.debug(f"Task '{log_display_name}' start time removed for UI stifling.")
-            else:
+            if removed_start_time is None:
                 logging.warning(f"Task '{log_display_name}' was not found in executing_task_start_times upon completion/error for UI stifling.")
+            elif log_display_name not in ['Wanted', 'Scraping', 'Adding']:
+                logging.debug(f"Task '{log_display_name}' start time removed for UI stifling.")
             # --- Release heavy task lock if acquired ---
             # if lock_acquired: # REVERTED
                 # try: # REVERTED

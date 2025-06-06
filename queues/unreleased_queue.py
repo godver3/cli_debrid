@@ -109,50 +109,43 @@ class UnreleasedQueue:
                     items_to_move.append(item)
                     continue
 
-                release_date_str = item.get('release_date')
-                version = item.get('version')
-                airtime_str = item.get('airtime')
-
-                if item.get('early_release', False):
-                    if not release_date_str or release_date_str.lower() == 'unknown':
-                        logging.info(f"Early release item {item_identifier} with no release date. Moving to Wanted queue immediately.")
-                        items_to_move.append(item)
-                        continue
-                    else:
-                        logging.info(f"Early release item {item_identifier}. Moving to Wanted queue immediately.")
-                        items_to_move.append(item)
-                        continue
-
-                if not release_date_str or release_date_str.lower() == 'unknown':
-                    continue
-
                 try:
+                    release_date_str = item.get('release_date')
+                    version = item.get('version')
+                    airtime_str = item.get('airtime')
+
+                    # Determine the base date string, considering physical release requirements first.
                     base_date_str = release_date_str
                     is_physical = False
-                    
                     scraping_versions = get_setting('Scraping', 'versions', {})
                     version_settings = scraping_versions.get(version, {})
                     require_physical = version_settings.get('require_physical_release', False)
-                    physical_release_date_str = item.get('physical_release_date')
                     
                     if item.get('type') == 'movie' and require_physical:
+                        physical_release_date_str = item.get('physical_release_date')
                         is_physical_date_invalid = not physical_release_date_str or \
                                                    (isinstance(physical_release_date_str, str) and physical_release_date_str.lower() == 'none')
 
                         if is_physical_date_invalid:
-                            logging.info(f"Movie {item_identifier} requires physical release date but it is missing or invalid ('{physical_release_date_str}'). Keeping in Unreleased state (DB).")
-                            continue
+                            logging.info(f"Movie {item_identifier} requires a physical release date, but it is missing or invalid. Keeping in Unreleased state.")
+                            continue # Keep in Unreleased, do not process further.
                         else:
                             base_date_str = physical_release_date_str
                             is_physical = True
-                    
+
+                    if item.get('early_release', False):
+                        # The physical check has already passed if we are here.
+                        logging.info(f"Early release item {item_identifier}. Moving to Wanted queue immediately.")
+                        items_to_move.append(item)
+                        continue
+
+                    if not base_date_str or (isinstance(base_date_str, str) and base_date_str.lower() in ['unknown', 'none']):
+                        continue
+
                     try:
-                        if not base_date_str or (isinstance(base_date_str, str) and base_date_str.lower() in ['unknown', 'none']):
-                             logging.warning(f"Skipping item {item_identifier} due to invalid base_date_str before parsing: {base_date_str}")
-                             continue
                         base_date = datetime.strptime(base_date_str, '%Y-%m-%d').date()
                     except ValueError:
-                        logging.warning(f"Invalid date format encountered for item {item_identifier} despite checks: {base_date_str}")
+                        logging.warning(f"Invalid date format encountered for item {item_identifier}: {base_date_str}")
                         continue
 
                     if airtime_str:
