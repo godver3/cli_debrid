@@ -198,6 +198,17 @@
                 }, 5000);
             });
         }
+
+        var rememberMeCheckbox = document.getElementById('remember_me');
+        if (rememberMeCheckbox) {
+            if (localStorage.getItem('rememberMe') === 'true') {
+                rememberMeCheckbox.checked = true;
+            }
+
+            rememberMeCheckbox.addEventListener('change', function() {
+                localStorage.setItem('rememberMe', this.checked);
+            });
+        }
     });
 </script>
 

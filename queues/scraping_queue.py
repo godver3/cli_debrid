@@ -309,57 +309,41 @@ class ScrapingQueue:
                 # Proceed only if the item wasn't immediately moved back to Wanted
                 if not processed_successfully_or_moved:
                     try:
-                        # Only check release date for non-early release AND non-magnet-assigned items
-                        if not item_to_process.get('early_release', False) and not is_magnet_assigned and item_to_process['release_date'] != 'Unknown': # <-- Added is_magnet_assigned check
-                            release_date = datetime.strptime(item_to_process['release_date'], '%Y-%m-%d').date()
+                        # --- Physical Release Check (always runs for movies that require it) ---
+                        scraping_versions = get_setting('Scraping', 'versions', {})
+                        version_settings = scraping_versions.get(item_to_process.get('version', ''), {})
+                        require_physical = version_settings.get('require_physical_release', False)
 
-                            # Check if version requires physical release
-                            scraping_versions = get_setting('Scraping', 'versions', {})
-                            version_settings = scraping_versions.get(item_to_process.get('version', ''), {})
-                            require_physical = version_settings.get('require_physical_release', False)
+                        if not is_magnet_assigned and item_to_process.get('type') == 'movie' and require_physical:
                             physical_release_date = item_to_process.get('physical_release_date')
-
-                            # If physical release is required for a MOVIE, use that date instead
-                            if item_to_process.get('type') == 'movie' and require_physical and physical_release_date:
-                                if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                                    # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Movie requires physical. Physical date: {physical_release_date}. Today: {today}.")
-                                    pass
+                            if physical_release_date:
                                 try:
                                     physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
                                     if physical_date > today:
-                                        if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                                            # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Movie physical release date {physical_date} is in future. Moving to Wanted.")
-                                            pass
-                                        # logging.info(f"Movie {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
+                                        logging.info(f"Movie {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
                                         queue_manager.move_to_wanted(item_to_process, "Scraping")
                                         processed_successfully_or_moved = True
-                                        processed_count += 1
-                                        # Removed return
                                 except ValueError:
-                                    if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                                        # logging.warning(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Invalid physical release date format: {physical_release_date}")
-                                        pass
-                                    # logging.warning(f"Invalid physical release date format for movie {item_identifier}: {physical_release_date}")
-                            # If physical release is required for a MOVIE but no date available, move back to Wanted
-                            elif item_to_process.get('type') == 'movie' and require_physical and not physical_release_date:
-                                if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                                    # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Movie requires physical, no date available. Moving to Wanted.")
-                                    pass
-                                # logging.info(f"Movie {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
+                                    logging.warning(f"Invalid physical release date format for movie {item_identifier}: {physical_release_date}")
+                            else: # No physical date available
+                                logging.info(f"Movie {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
-                                processed_count += 1
-                                # Removed return
-                            # Otherwise check normal release timing (this path is now only reached if not early_release and not magnet_assigned)
-                            elif release_date > today: # <-- Removed the early_release check here as it's handled above
-                                if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                                    # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Normal release date {release_date} is in future. Moving to Wanted.")
-                                    pass
-                                # logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
+                        
+                        # --- Digital Release Check (bypassed by early_release, magnet_assigner, or if already moved) ---
+                        if not processed_successfully_or_moved and not item_to_process.get('early_release', False) and not is_magnet_assigned:
+                            release_date_str = item_to_process.get('release_date')
+                            if release_date_str == 'Unknown':
+                                logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
-                                processed_count += 1
-                                # Removed return
+                            else:
+                                release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+                                if release_date > today:
+                                    logging.info(f"Item {item_identifier} has a future release date ({release_date}). Moving back to Wanted queue.")
+                                    queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                    processed_successfully_or_moved = True
+
                     except ValueError:
                          # --- START EDIT: Add content source check ---
                         # Only move back if not magnet assigned and date is bad
@@ -370,7 +354,6 @@ class ScrapingQueue:
                             # logging.warning(f"Item {item_identifier} has an invalid release date format: {item_to_process['release_date']}. Moving back to Wanted queue.")
                             queue_manager.move_to_wanted(item_to_process, "Scraping")
                             processed_successfully_or_moved = True
-                            processed_count += 1
                         else:
                             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                                 # logging.warning(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Magnet Assigned. Invalid release date format: {item_to_process['release_date']}. Proceeding.")

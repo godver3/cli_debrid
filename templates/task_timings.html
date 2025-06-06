@@ -597,12 +597,12 @@ function saveIntervalStates() {
         const taskName = tile.dataset.taskName;
         const input = tile.querySelector('.interval-input');
         if (input) {
-            const defaultIntervalSeconds = parseInt(input.dataset.defaultIntervalSeconds, 10);
+            const defaultIntervalSeconds = parseInt(input.dataset.defaultIntervalSeconds, 1);
             const currentValueStr = input.value.trim();
             if (currentValueStr === '') {
                 taskIntervalsSeconds[taskName] = null;
             } else {
-                const currentValueInt = parseInt(currentValueStr, 10);
+                const currentValueInt = parseInt(currentValueStr, 1);
                 if (!isNaN(currentValueInt)) {
                     if (currentValueInt !== defaultIntervalSeconds) {
                         taskIntervalsSeconds[taskName] = currentValueStr;

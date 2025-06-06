@@ -396,7 +396,7 @@ document.addEventListener('DOMContentLoaded', function() {
         row.className = 'filter-row';
 
         // Column select - use templateData.all_columns but filter out 'size' for filtering
-        const filterableColumns = templateData.all_columns.filter(col => col !== 'size');
+        const filterableColumns = templateData.all_columns.filter(col => col !== 'size').sort();
         const columnSelect = document.createElement('select');
         columnSelect.className = 'filter-column';
         columnSelect.innerHTML = `
@@ -1188,7 +1188,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
 
                 // Update existing filter dropdowns with new columns (excluding 'size' for filter column selection)
-                const filterableColumns = data.all_columns.filter(col => col !== 'size');
+                const filterableColumns = data.all_columns.filter(col => col !== 'size').sort();
                 document.querySelectorAll('.filter-row').forEach(row => {
                     const columnSelect = row.querySelector('.filter-column');
                     const valueContainer = row.querySelector('.filter-value-container');

@@ -138,7 +138,20 @@ class WantedQueue:
                 remove_from_media_items(item_id)
                 return {'status': 'reconciled', 'item_data': item, 'message': f"Reconciled and removed {item_identifier}"}
 
-            # Handle early release first
+            is_magnet_assigned = item.get('content_source') == 'Magnet_Assigner'
+            version = item.get('version')
+            scraping_versions = get_setting('Scraping', 'versions', {})
+            version_settings = scraping_versions.get(version, {})
+            require_physical = version_settings.get('require_physical_release', False)
+            physical_release_date_str = item.get('physical_release_date')
+
+            # Check for physical release requirement first, as it's a hard gate.
+            if not is_magnet_assigned and item.get('type') == 'movie' and require_physical and not physical_release_date_str:
+                logging.info(f"Movie {item_identifier} requires physical release date but none available. Moving to Unreleased.")
+                queue_manager.move_to_unreleased(item, "Wanted")
+                return {'status': 'unreleased', 'item_data': item, 'message': f"{item_identifier} moved to Unreleased (missing physical date)."}
+
+            # Handle early release
             is_early_release = item.get('early_release', False)
             if is_early_release:
                 # No capacity check here, just readiness. Capacity is handled in the main process() loop.
@@ -176,19 +189,9 @@ class WantedQueue:
             # Check 2: Release Date & Time Logic (adapted from original process loop)
             release_date_str = item.get('release_date')
             airtime_str = item.get('airtime')
-            version = item.get('version')
-            is_magnet_assigned = item.get('content_source') == 'Magnet_Assigner'
-
-            scraping_versions = get_setting('Scraping', 'versions', {}) # Consider caching this if called often per cycle
-            version_settings = scraping_versions.get(version, {})
-            require_physical = version_settings.get('require_physical_release', False)
-            physical_release_date_str = item.get('physical_release_date')
-
-            # Move to Unreleased if physical required but missing (and not magnet assigned)
-            if not is_magnet_assigned and require_physical and not physical_release_date_str and item.get('type') != 'episode':
-                logging.info(f"Item {item_identifier} requires physical release date but none available. Moving to Unreleased.")
-                queue_manager.move_to_unreleased(item, "Wanted")
-                return {'status': 'unreleased', 'item_data': item, 'message': f"{item_identifier} moved to Unreleased (missing physical date)."}
+            
+            # Note: `version`, `is_magnet_assigned`, `scraping_versions`, `version_settings`, 
+            # `require_physical`, and `physical_release_date_str` are already defined above.
 
             release_date = None
             # Determine the effective release date to use (normal or physical)
@@ -293,7 +296,7 @@ class WantedQueue:
                 logging.error(f"Error moving manually blacklisted items: {e_blacklist}", exc_info=True)
 
             # 1. Process Force Priority Items (NEW SECTION)
-            logging.info("Starting processing of force-prioritized items.")
+            # logging.info("Starting processing of force-prioritized items.")
             conn_force = None
             try:
                 conn_force = get_db_connection()
@@ -315,15 +318,13 @@ class WantedQueue:
                             moved_to_scraping_count += 1 # Increment general counter as well
                         except Exception as e_move_forced:
                             logging.error(f"Error moving force-prioritized item {item_identifier_log} to scraping: {e_move_forced}", exc_info=True)
-                else:
-                    logging.info("No force-prioritized items found in Wanted state.")
 
             except Exception as e_force:
                 logging.error(f"Error fetching or processing force-prioritized items: {e_force}", exc_info=True)
             finally:
                 if conn_force:
                     conn_force.close()
-            logging.info(f"Finished processing force-prioritized items. Moved {forced_items_moved_count} items directly to scraping.")
+            # logging.info(f"Finished processing force-prioritized items. Moved {forced_items_moved_count} items directly to scraping.")
 
             # 2. Check Throttling (for REGULAR items)
             ignore_throttling = get_setting("Debug", "ignore_wanted_queue_throttling", False)
