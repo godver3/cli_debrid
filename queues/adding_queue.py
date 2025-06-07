@@ -482,12 +482,14 @@ class AddingQueue:
                 # --- Process Related Items using Parsed Files ---
                 if item.get('type') == 'episode':
                     # Pass the pre-parsed files to find_related_items
-                    # TODO: How should XEM affect related item matching? Currently uses item's absolute S/E.
+                    # The XEM mapping, derived from the torrent title, is passed to ensure that if a pack
+                    # is for a specific season, related item matching is restricted to that season.
                     related_matches = self.media_matcher.find_related_items(
                         parsed_torrent_files,
                         scraping_items, # Fetched before loop
                         wanted_items,   # Fetched before loop
-                        item            # Original item for context
+                        item,           # Original item for context
+                        xem_mapping=xem_mapping # Pass XEM mapping for season context
                     )
 
                     if related_matches:
