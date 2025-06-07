@@ -266,7 +266,7 @@ class MediaMatcher:
                 return None # No file with "session" found for this F1 item by this rule
 
             # Determine if relaxed matching should be used (copied from original _match_tv_content)
-            genres = item.get('genres', [])
+            genres = item.get('genres') or []
             if isinstance(genres, str):
                 genres = [genres]
             is_anime = any('anime' in genre.lower() for genre in genres)
@@ -423,7 +423,7 @@ class MediaMatcher:
              return abs(int(item_year) - int(parsed_year)) <= 1
         return True # Acceptable if one or both years are missing
 
-    def find_related_items(self, parsed_torrent_files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], wanted_items: List[Dict[str, Any]], original_item: Dict[str, Any]) -> List[Tuple[Dict[str, Any], str]]:
+    def find_related_items(self, parsed_torrent_files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], wanted_items: List[Dict[str, Any]], original_item: Dict[str, Any], xem_mapping: Optional[Dict[str, int]] = None) -> List[Tuple[Dict[str, Any], str]]:
         """
         Find items in the scraping and wanted queues that match pre-parsed files in the torrent.
 
@@ -432,6 +432,7 @@ class MediaMatcher:
             scraping_items: List of items currently in scraping state.
             wanted_items: List of items currently in wanted state.
             original_item: The original item being processed, used to match version/title.
+            xem_mapping: Optional dictionary with 'season' from PTT of the torrent title, to enforce season-matching for packs.
 
         Returns:
             List of tuples, where each tuple contains (related_item_dict, matching_filepath_basename).
@@ -446,8 +447,13 @@ class MediaMatcher:
 
         logging.debug(f"Checking {len(all_candidate_items)} candidate items against {len(parsed_torrent_files)} parsed files.")
 
+        # If the torrent was parsed as a specific season (pack), enforce matching only that season
+        pack_season = xem_mapping.get('season') if xem_mapping else None
+        if pack_season is not None:
+            logging.info(f"Torrent pack identified as Season {pack_season}. Related item matching will be restricted to this season.")
+
         # Determine relaxed matching based on original item (assuming related items follow same logic)
-        genres = original_item.get('genres', [])
+        genres = original_item.get('genres') or []
         if isinstance(genres, str):
             genres = [genres]
         is_anime = any('anime' in genre.lower() for genre in genres)
@@ -461,6 +467,12 @@ class MediaMatcher:
             item_id = item.get('id')
             if not item_id or item_id in processed_item_ids:
                 continue
+
+            # If a pack season is identified, skip items from other seasons
+            if pack_season is not None:
+                item_season = item.get('season') or item.get('season_number')
+                if item_season != pack_season:
+                    continue
 
             # Basic filtering for relevance
             item_title_to_check = item.get('series_title') or item.get('title')
