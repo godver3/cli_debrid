@@ -523,6 +523,12 @@
     .db-status-processing {
         background-color: #f39c12; /* Yellow/Orange */
     }
+
+    /* New: partially collected (mix) */
+    .db-status-partial {
+        background-color: #2196F3; /* Blue */
+        color: white;
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" onsubmit="return false;">
@@ -620,6 +626,20 @@
                 <div class="version-modal-buttons">
                     <button id="confirmVersions">Request</button>
                     <button id="cancelVersions">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scrape Version Selection Modal -->
+        <div id="scrapeVersionModal" class="version-modal">
+            <div class="version-modal-content">
+                <h3>Select Scrape Version</h3>
+                <div id="scrapeVersionRadios">
+                    <!-- Version radio buttons will be dynamically inserted here -->
+                </div>
+                <div class="version-modal-buttons">
+                    <button id="confirmScrapeVersion">Scrape</button>
+                    <button id="cancelScrapeVersion">Cancel</button>
                 </div>
             </div>
         </div>

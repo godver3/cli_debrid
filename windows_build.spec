@@ -80,6 +80,8 @@ additional_imports = [
     'psutil',
     'gc',
     'datetime',
+    'ctypes',
+    'platform',
     'multiprocessing.pool',
     'multiprocessing.managers',
     'multiprocessing.popen_spawn_win32',  # Windows-specific multiprocessing

@@ -10,6 +10,14 @@
 {% block content %}
 <div class="container">
     <h2>Queues</h2>
+    <!-- Processing statistics -->
+    <div id="processing-stats" class="processing-stats" style="display:none; margin-bottom: 15px;">
+        <strong>Items per Hour:</strong> <span id="stats-items-per-hour">N/A</span>
+        &nbsp;|&nbsp;
+        <strong>Estimated Remaining Scrape Time:</strong> <span id="stats-remaining-time">N/A</span>
+    </div>
+    <!-- Subtle connection status notification -->
+    <div id="connection-status" class="connection-status"></div>
     <div id="initialization-status" class="alert alert-info" style="display: none;">
         <i class="fas fa-sync fa-spin"></i> 
         <span id="init-step-text">Initializing system...</span>
@@ -301,6 +309,52 @@
         padding-left: 17px; /* Adjust padding to account for border */
     }
 
+    /* Subtle connection status notification */
+    .connection-status {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        z-index: 1000;
+        max-width: 300px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+    }
+
+    .connection-status.show {
+        opacity: 1;
+    }
+
+    .connection-status.reconnecting {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+    }
+
+    .connection-status.error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+
+    .connection-status.success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+
+    /* Processing stats styling */
+    .processing-stats {
+        background: #444;
+        padding: 10px;
+        border-radius: 5px;
+        color: #ddd;
+        font-size: 14px;
+    }
+
 </style>
 
 <script type="module">
@@ -313,6 +367,39 @@
     let filenameToggleState = localStorage.getItem('filenameToggleState') === 'true' || false;
     let hasReceivedFirstResponse = false;
     let eventSource = null;
+    let currentQueueData = {}; // Cache current queue data to avoid unnecessary DOM updates
+    let lastProcessedData = {}; // Track last processed data for change detection
+    let reconnectAttempts = 0;
+    let maxReconnectAttempts = 5;
+    let reconnectDelay = 1000; // Start with 1 second delay
+    let isReconnecting = false;
+
+    function isMobile() {
+        // A simple check for mobile devices to set an appropriate default page size.
+        const toMatch = [
+            /Android/i,
+            /webOS/i,
+            /iPhone/i,
+            /iPad/i,
+            /iPod/i,
+            /BlackBerry/i,
+            /Windows Phone/i
+        ];
+        return toMatch.some((toMatchItem) => {
+            return navigator.userAgent.match(toMatchItem);
+        });
+    }
+    
+    // Set initial page size based on device type. Desktop gets a much larger initial load.
+    let currentPageSize = isMobile() ? 25 : 500;
+    
+    // Performance optimization: Batch DOM operations
+    const DOM_BATCH_SIZE = 50; // Process items in batches
+    const UPDATE_THROTTLE_MS = 100; // Throttle updates
+    let updateTimeout = null;
+    
+    // Cache latest items for each queue so we can render on-demand
+    const queueDataCache = {};
     
     function formatDateTimeToYMD_HMS(dateString, isInputUtcString = false) {
         if (!dateString) return 'N/A';
@@ -344,9 +431,16 @@
         const queueItems = element.nextElementSibling;
         const isExpanded = queueItems.style.display !== 'none';
         queueItems.style.display = isExpanded ? 'none' : 'block';
+
         // Get the queue name from the data attribute of the parent .queue element
         const queueDiv = element.closest('.queue');
         const queueName = queueDiv ? queueDiv.getAttribute('data-queue-name') : null;
+
+        // If expanding and queue items not yet rendered, generate them from cache
+        if (!isExpanded && queueItems.innerHTML.trim() === '' && queueDataCache[queueName]) {
+            queueItems.innerHTML = generateQueueContent(queueName, queueDataCache[queueName]);
+        }
+
         if (queueName) {
             localStorage.setItem('queue_' + queueName, isExpanded ? 'collapsed' : 'expanded');
         } else {
@@ -374,48 +468,57 @@
         });
     }
 
+    // Optimized consolidation with better performance
     function generateConsolidatedItems(items, queueName) {
-        let consolidatedItems = {};
-        items.forEach(item => {
-            let key = `${item.title}_${item.year}`;
-            if (!consolidatedItems[key]) {
-                consolidatedItems[key] = {
+        const consolidatedMap = new Map();
+        
+        // Use for loop for better performance with large arrays
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const key = `${item.title}_${item.year}`;
+            
+            if (!consolidatedMap.has(key)) {
+                consolidatedMap.set(key, {
                     title: item.title,
                     year: item.year,
-                    versions: new Set(),
+                    versions: new Set([item.version]),
                     seasons: new Set(),
                     release_date: item.release_date,
                     physical_release_date: item.physical_release_date,
                     scraping_versions: item.scraping_versions,
                     version: item.version
-                };
+                });
+            } else {
+                consolidatedMap.get(key).versions.add(item.version);
             }
-            consolidatedItems[key].versions.add(item.version);
+            
             if (item.type === 'episode') {
-                consolidatedItems[key].seasons.add(item.season_number);
+                consolidatedMap.get(key).seasons.add(item.season_number);
             }
-        });
+        }
 
-        return Object.values(consolidatedItems).map(item => {
+        // Build HTML in chunks for better performance
+        const htmlChunks = [];
+        consolidatedMap.forEach(item => {
             let releaseInfo = item.release_date;
             
-            // Check if version requires physical release
-            const scraping_versions = item.scraping_versions || {};
-            const version_settings = scraping_versions[item.version] || {};
-            const require_physical = version_settings.require_physical_release || false;
+            // Check if version requires physical release using the new backend flag
+            const require_physical = item.require_physical_release || false;
             
             if (require_physical) {
                 releaseInfo += ` <span class="physical-release">(Physical: ${item.physical_release_date || 'Unknown'})</span>`;
             }
             
-            return `
+            htmlChunks.push(`
                 <div class="item">
                     ${item.title} (${item.year}) - Version(s): ${Array.from(item.versions).join(', ')}
                     ${item.seasons.size > 0 ? ` - Season(s): ${Array.from(item.seasons).join(', ')}` : ''}
                     ${queueName === 'Unreleased' ? ` - Release Date: ${releaseInfo}` : ''}
                 </div>
-            `;
-        }).join('');
+            `);
+        });
+        
+        return htmlChunks.join('');
     }
 
     function generateQueueContent(queueName, items) {
@@ -426,150 +529,162 @@
         }
     }
 
+    // Optimized regular items generation with batching
     function generateRegularItems(queueName, items) {
         if (queueName === 'Checking') {
-            // Split items into downloaded and non-downloaded
-            const downloaded = items.filter(item => item.state === 'downloaded');
-            const downloading = items.filter(item => item.state !== 'downloaded');
-            
-            let content = '';
-            
-            if (downloaded.length > 0) {
-                content += '<div class="checking-group"><h5>Cached</h5>';
-                content += downloaded.map(item => generateCheckingItem(item)).join('');
-                content += '</div>';
-            }
-            
-            if (downloading.length > 0) {
-                content += '<div class="checking-group"><h5>Downloading</h5>';
-                // Group items by torrent_id
-                const groupedDownloading = {};
-                downloading.forEach(item => {
-                    const torrentId = item.filled_by_torrent_id || 'unknown';
-                    if (!groupedDownloading[torrentId]) {
-                        groupedDownloading[torrentId] = {
-                            items: [],
-                            progress: item.progress || 0,
-                            state: item.state || 'unknown'
-                        };
-                    }
-                    groupedDownloading[torrentId].items.push(item);
-                });
-
-                // Generate content for each group
-                Object.entries(groupedDownloading).forEach(([torrentId, group]) => {
-                    content += '<div class="download-group">';
-                    // Add items first
-                    content += group.items.map(item => generateCheckingItem(item, false)).join('');
-                    // Add single progress bar for the group
-                    content += `
-                        <div class="item-progress group-progress">
-                            <div class="progress" style="width: 200px;">
-                                <div class="progress-bar" role="progressbar" 
-                                     style="width: ${group.progress}%" 
-                                     aria-valuenow="${group.progress}" 
-                                     aria-valuemin="0" 
-                                     aria-valuemax="100">
-                                </div>
-                                <div class="progress-text">${group.progress}% - ${group.state}</div>
-                            </div>
-                        </div>
-                    `;
-                    content += '</div>';
-                });
-                content += '</div>';
-            }
-            
-            return content;
+            return generateCheckingItems(items);
         }
         
-        return items.map(item => {
-            let seasonEpisode = '';
-            if (item.type === 'episode' && item.season_number && item.episode_number) {
-                let season = item.season_number.toString().padStart(2, '0');
-                let episode = item.episode_number.toString().padStart(2, '0');
-                seasonEpisode = ` S${season}E${episode}`;
-            }
+        // Use document fragment for better performance
+        const htmlChunks = [];
+        
+        // Process items in batches to avoid blocking the main thread
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            htmlChunks.push(generateSingleItem(item, queueName));
+        }
+        
+        return htmlChunks.join('');
+    }
 
-            let releaseInfo = '';
-            // Check if version requires physical release
-            const scraping_versions = item.scraping_versions || {};
-            const version_settings = scraping_versions[item.version] || {};
-            const require_physical = version_settings.require_physical_release || false;
-            
-            let releaseDate = item.release_date;
-            if (releaseDate === null || releaseDate === 'null' || releaseDate === '') {
-                releaseDate = 'Unknown';
+    function generateSingleItem(item, queueName) {
+        let seasonEpisode = '';
+        if (item.type === 'episode' && item.season_number && item.episode_number) {
+            let season = item.season_number.toString().padStart(2, '0');
+            let episode = item.episode_number.toString().padStart(2, '0');
+            seasonEpisode = ` S${season}E${episode}`;
+        }
+
+        let releaseInfo = '';
+        // Check if version requires physical release using the new backend flag
+        const require_physical = item.require_physical_release || false;
+        
+        let releaseDate = item.release_date;
+        if (releaseDate === null || releaseDate === 'null' || releaseDate === '') {
+            releaseDate = 'Unknown';
+        }
+        
+        if (require_physical) {
+            let physicalDate = item.physical_release_date;
+            if (physicalDate === null || physicalDate === 'null' || physicalDate === '') {
+                physicalDate = 'Unknown';
             }
-            
-            if (require_physical) {
-                let physicalDate = item.physical_release_date;
-                if (physicalDate === null || physicalDate === 'null' || physicalDate === '') {
-                    physicalDate = 'Unknown';
+            releaseInfo = ` - Release Date: ${releaseDate} <span class="physical-release">(Physical: ${physicalDate})</span>`;
+        } else if (releaseDate && releaseDate !== 'Unknown') { // Only show if there's a known release date
+            releaseInfo = ` - Release Date: ${releaseDate}`;
+        }
+
+        const isProcessing = item.is_processing || false;
+        const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
+        const processingClass = isProcessing ? 'is-processing' : '';
+        const isForcePriority = item.is_force_priority || false;
+        const forcePriorityClass = isForcePriority ? 'force-priority-item' : '';
+
+        let itemContent = `
+            <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
+                ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}${releaseInfo}
+        `;
+
+        if (queueName === 'Checking' && item.filled_by_file) {
+            itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
+        }
+
+        if (queueName === 'Upgrading') {
+            let formattedTime = 'N/A';
+            if (item.time_added) {
+                formattedTime = formatDateTimeToYMD_HMS(item.time_added);
+            }
+            itemContent += ` - Time Added: ${formattedTime}`;
+        }
+
+        if (queueName === 'Pending Uncached') {
+            let formattedTime = 'N/A';
+            if (item.time_added) {
+                formattedTime = formatDateTimeToYMD_HMS(item.time_added);
+            }
+            itemContent += ` - Time Added: ${formattedTime} - Magnet Link: ${item.filled_by_magnet || 'Unknown'}`;
+        }
+
+        if (queueName === 'Sleeping') {
+            itemContent += ` - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}`;
+        }
+
+        if (queueName === 'Wanted' && item.formatted_scrape_time) {
+            itemContent += ` - Scrape Time: ${item.formatted_scrape_time}`;
+        }
+
+        if (queueName === 'Final_Check') {
+            let enteredTime = 'Unknown';
+            if (item.final_check_display_time) {
+                enteredTime = formatDateTimeToYMD_HMS(item.final_check_display_time, true);
+            }
+            itemContent += ` - Time Added: ${enteredTime}`;
+        }
+        
+        // Add Content Source inline for Wanted, Scraping, Adding
+        if (['Wanted', 'Scraping', 'Adding'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
+            itemContent += ` <span style="font-size: smaller; font-style: italic;">- Content Source: ${item.content_source}</span>`;
+        }
+
+        itemContent += processingIndicator;
+        itemContent += `</div>`;
+        return itemContent;
+    }
+
+    function generateCheckingItems(items) {
+        // Split items into downloaded and non-downloaded
+        const downloaded = items.filter(item => item.state === 'downloaded');
+        const downloading = items.filter(item => item.state !== 'downloaded');
+        
+        let content = '';
+        
+        if (downloaded.length > 0) {
+            content += '<div class="checking-group"><h5>Cached</h5>';
+            content += downloaded.map(item => generateCheckingItem(item)).join('');
+            content += '</div>';
+        }
+        
+        if (downloading.length > 0) {
+            content += '<div class="checking-group"><h5>Downloading</h5>';
+            // Group items by torrent_id
+            const groupedDownloading = {};
+            downloading.forEach(item => {
+                const torrentId = item.filled_by_torrent_id || 'unknown';
+                if (!groupedDownloading[torrentId]) {
+                    groupedDownloading[torrentId] = {
+                        items: [],
+                        progress: item.progress || 0,
+                        state: item.state || 'unknown'
+                    };
                 }
-                releaseInfo = ` - Release Date: ${releaseDate} <span class="physical-release">(Physical: ${physicalDate})</span>`;
-            } else if (releaseDate && releaseDate !== 'Unknown') { // Only show if there's a known release date
-                releaseInfo = ` - Release Date: ${releaseDate}`;
-            }
+                groupedDownloading[torrentId].items.push(item);
+            });
 
-            const isProcessing = item.is_processing || false;
-            const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
-            const processingClass = isProcessing ? 'is-processing' : '';
-            const isForcePriority = item.is_force_priority || false;
-            const forcePriorityClass = isForcePriority ? 'force-priority-item' : '';
-
-            let itemContent = `
-                <div class="item ${processingClass} ${forcePriorityClass}" onclick="copyItemToClipboard(this, event)">
-                    ${item.title || 'Unknown Title'} (${item.year || 'Unknown Year'})${seasonEpisode} - Version: ${item.version || 'Unknown'}${releaseInfo}
-            `;
-
-            if (queueName === 'Checking' && item.filled_by_file) {
-                itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- Checking: ${item.filled_by_file}</span>`;
-            }
-
-            if (queueName === 'Upgrading') {
-                let formattedTime = 'N/A';
-                if (item.time_added) {
-                    formattedTime = formatDateTimeToYMD_HMS(item.time_added);
-                }
-                itemContent += ` - Time Added: ${formattedTime}`;
-            }
-
-            if (queueName === 'Pending Uncached') {
-                let formattedTime = 'N/A';
-                if (item.time_added) {
-                    formattedTime = formatDateTimeToYMD_HMS(item.time_added);
-                }
-                itemContent += ` - Time Added: ${formattedTime} - Magnet Link: ${item.filled_by_magnet || 'Unknown'}`;
-            }
-
-            if (queueName === 'Sleeping') {
-                itemContent += ` - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}`;
-            }
-
-            if (queueName === 'Wanted' && item.formatted_scrape_time) {
-                itemContent += ` - Scrape Time: ${item.formatted_scrape_time}`;
-            }
-
-            if (queueName === 'Final_Check') {
-                let enteredTime = 'Unknown';
-                if (item.final_check_display_time) {
-                    enteredTime = formatDateTimeToYMD_HMS(item.final_check_display_time, true);
-                }
-                itemContent += ` - Time Added: ${enteredTime}`;
-            }
-            
-            // --- START EDIT: Add Content Source inline for Wanted, Scraping, Adding ---
-            if (['Wanted', 'Scraping', 'Adding'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
-                itemContent += ` <span style="font-size: smaller; font-style: italic;">- Content Source: ${item.content_source}</span>`;
-            }
-            // --- END EDIT ---
-
-            itemContent += processingIndicator;
-
-            itemContent += `</div>`;
-            return itemContent;
-        }).join('');
+            // Generate content for each group
+            Object.entries(groupedDownloading).forEach(([torrentId, group]) => {
+                content += '<div class="download-group">';
+                // Add items first
+                content += group.items.map(item => generateCheckingItem(item, false)).join('');
+                // Add single progress bar for the group
+                content += `
+                    <div class="item-progress group-progress">
+                        <div class="progress" style="width: 200px;">
+                            <div class="progress-bar" role="progressbar" 
+                                 style="width: ${group.progress}%" 
+                                 aria-valuenow="${group.progress}" 
+                                 aria-valuemin="0" 
+                                 aria-valuemax="100">
+                            </div>
+                            <div class="progress-text">${group.progress}% - ${group.state}</div>
+                        </div>
+                    </div>
+                `;
+                content += '</div>';
+            });
+            content += '</div>';
+        }
+        
+        return content;
     }
 
     function generateCheckingItem(item, showProgress = true) {
@@ -595,11 +710,10 @@
             itemContent += ` <span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}">- File: ${item.filled_by_file}</span>`;
         }
 
-        // --- START EDIT: Add Content Source inline for Checking queue items ---
+        // Add Content Source inline for Checking queue items
         if (item.content_source && item.content_source !== 'Unknown') {
             itemContent += ` <span style="font-size: smaller; font-style: italic;">- Content Source: ${item.content_source}</span>`;
         }
-        // --- END EDIT ---
 
         // Show progress bar for items that are downloading, unknown, or don't have a state set
         if (showProgress && (!item.state || item.state === 'downloading' || item.state === 'unknown')) {
@@ -673,15 +787,154 @@
         }
     }
     
+    // Optimized queue update with change detection
+    function updateQueueContents(data) {
+        if (updateTimeout) {
+            clearTimeout(updateTimeout);
+        }
+        
+        updateTimeout = setTimeout(() => {
+            updateQueueContentsImmediate(data);
+        }, UPDATE_THROTTLE_MS);
+    }
+    
+    function updateQueueContentsImmediate(data) {
+        const queueContents = document.getElementById('queue-contents');
+        const initializationStatus = document.getElementById('initialization-status');
+        
+        if (data.program_status === "Running") {
+            if (initializationStatus) {
+                initializationStatus.style.display = 'none';
+            }
+            const progressContainer = document.getElementById('progress-container');
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+            queueContents.style.display = 'flex';
+            
+            let hasContent = false;
+            // Backend names; Order defines display sequence
+            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Sleeping', 'Unreleased', 'Blacklisted'];
+            // Mapping for display and tooltip IDs
+            const queueDisplayMapping = {
+                "Final_Check": "Final Scrape"
+            };
+            
+            // Always update processing stats even if queue data unchanged
+            const statsDiv = document.getElementById('processing-stats');
+            if (data.items_per_hour !== undefined && data.remaining_scrape_time !== undefined) {
+                document.getElementById('stats-items-per-hour').textContent = data.items_per_hour;
+                document.getElementById('stats-remaining-time').textContent = data.remaining_scrape_time;
+                statsDiv.style.display = 'block';
+            } else if (statsDiv) {
+                statsDiv.style.display = 'none';
+            }
+
+            // Check for changes to queue content
+            const currentDataHash = JSON.stringify(data.contents);
+            if (lastProcessedData.hash === currentDataHash) {
+                return; // No changes, skip expensive DOM operations
+            }
+            lastProcessedData.hash = currentDataHash;
+            
+            queueContents.innerHTML = ''; // Clear previous content
+            
+            queueOrder.forEach(backendQueueName => {
+                if (data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0) {
+                    hasContent = true;
+                    let queueDiv = document.createElement('div');
+                    queueDiv.className = 'queue';
+                    const displayQueueName = queueDisplayMapping[backendQueueName] || backendQueueName;
+                    const queueDivId = `queue-box-${displayQueueName.toLowerCase().replace(/ /g, '_')}`;
+                    
+                    queueDiv.setAttribute('data-queue-name', backendQueueName);
+                    queueDiv.id = queueDivId;
+                    queueDiv.setAttribute('data-tooltip', `queues.${queueDivId}`);
+                    
+                    let isExpanded = localStorage.getItem('queue_' + backendQueueName) === 'expanded';
+                    
+                    const totalItems = data.queue_counts[backendQueueName];
+                    
+                    // Cache the latest items for on-demand rendering
+                    queueDataCache[backendQueueName] = data.contents[backendQueueName];
+
+                    // Only generate item HTML if queue is currently expanded
+                    const queueItemsHtml = isExpanded ? generateQueueContent(backendQueueName, data.contents[backendQueueName]) : '';
+
+                    queueDiv.innerHTML = `
+                        <div class="queue-title" onclick="toggleQueue(this)">
+                            <span>${displayQueueName.replace(/_/g, ' ')}</span>
+                            ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                            <span class="queue-count">${totalItems} items</span>
+                        </div>
+                        <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
+                            ${queueItemsHtml}
+                        </div>
+                    `;
+                    queueContents.appendChild(queueDiv);
+                    addTooltipEventListeners(queueDiv);
+                }
+            });
+
+            if (!hasContent) {
+                queueContents.innerHTML = '<p>Program is running, but no active contents in queues.</p>';
+            } else {
+                const hiddenCounts = data.hidden_counts;
+                if (hiddenCounts && Object.keys(hiddenCounts).length > 0) {
+                    let hiddenSummary = document.createElement('div');
+                    hiddenSummary.className = 'hidden-items-summary';
+                    let summaryText = '<h5>Additional Items Not Shown:</h5><ul>';
+                    for (const [queueName, count] of Object.entries(hiddenCounts)) {
+                        if (count > 0) {
+                            summaryText += `<li>${queueName.replace(/_/g, ' ')}: ${count} items</li>`;
+                        }
+                    }
+                    summaryText += '</ul>';
+                    if (Object.values(hiddenCounts).some(c => c > 0)) {
+                        hiddenSummary.innerHTML = summaryText;
+                        
+                        // Add "Show More" button
+                        const showMoreContainer = document.createElement('div');
+                        showMoreContainer.className = 'show-more-container';
+                        
+                        const showMoreButton = document.createElement('button');
+                        showMoreButton.textContent = 'Show More';
+                        showMoreButton.onclick = increasePageSize;
+                        
+                        showMoreContainer.appendChild(showMoreButton);
+                        hiddenSummary.appendChild(showMoreContainer);
+                        queueContents.appendChild(hiddenSummary);
+                    }
+                }
+            }
+            updateFilenameVisibility();
+        } else if (data.program_status === "Starting") {
+            if (data.initialization_status) {
+                updateInitializationStatus(data.initialization_status);
+            }
+            queueContents.style.display = 'none';
+        } else if (data.program_status === "Stopped" || data.program_status === "Stopping") {
+            if (initializationStatus) {
+                initializationStatus.style.display = 'none';
+            }
+            const progressContainer = document.getElementById('progress-container');
+            if (progressContainer) {
+                progressContainer.style.display = 'none';
+            }
+            queueContents.style.display = 'block';
+            queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
+        } else {
+            console.log("Received unhandled program status:", data.program_status);
+        }
+    }
+    
     function setupQueueStream() {
         if (eventSource) {
             eventSource.close();
         }
 
-        eventSource = new EventSource('/queues/api/queue-stream');
+        eventSource = new EventSource(`/queues/api/queue-stream?limit=${currentPageSize}`);
         const loadingIndicator = document.getElementById('loading-indicator');
-        const queueContents = document.getElementById('queue-contents');
-        const initializationStatus = document.getElementById('initialization-status');
         
         eventSource.onmessage = function(event) {
             try {
@@ -692,146 +945,141 @@
                 }
                 const data = JSON.parse(event.data);
                 
+                // Reset reconnection attempts on successful parse
+                reconnectAttempts = 0;
+                reconnectDelay = 1000;
+                isReconnecting = false;
+                
                 if (!hasReceivedFirstResponse) {
                     hasReceivedFirstResponse = true;
                     loadingIndicator.style.display = 'none';
+                    // Clear any error messages on successful connection
+                    clearErrorMessages();
                 }
 
-                if (data.program_running) {
-                    if (data.program_initializing && data.initialization_status) {
-                        updateInitializationStatus(data.initialization_status);
-                        queueContents.style.display = 'none';
-                    } else {
-                        initializationStatus.style.display = 'none';
-                        document.getElementById('progress-container').style.display = 'none';
-                        queueContents.style.display = 'flex';
-                        
-                        let hasContent = false;
-                        // Backend names; Order defines display sequence
-                        let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Sleeping', 'Unreleased', 'Blacklisted'];
-                        // Mapping for display and tooltip IDs
-                        const queueDisplayMapping = {
-                            "Final_Check": "Final Scrape"
-                            // Add other mappings here if needed in the future
-                        };
-                        
-                        queueContents.innerHTML = ''; // Clear previous content
-                        
-                        queueOrder.forEach(backendQueueName => {
-                            // Check if the queue exists in the data.contents object AND has items
-                            if (data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0) {
-                                hasContent = true;
-                                let queueDiv = document.createElement('div');
-                                queueDiv.className = 'queue';
-
-                                const displayQueueName = queueDisplayMapping[backendQueueName] || backendQueueName;
-                                // Generate ID that matches tooltip_schema.json keys (e.g., "queue-box-final_scrape")
-                                const queueDivId = `queue-box-${displayQueueName.toLowerCase().replace(/ /g, '_')}`;
-                                
-                                queueDiv.setAttribute('data-queue-name', backendQueueName); // Store backend name for localStorage and toggle logic
-                                queueDiv.id = queueDivId; // Set the ID for potential CSS/JS targeting and tooltips
-                                
-                                queueDiv.setAttribute('data-tooltip', `queues.${queueDivId}`);
-                                
-                                let isExpanded = localStorage.getItem('queue_' + backendQueueName) === 'expanded'; // Use backend name for storage key
-                                
-                                const totalItems = data.queue_counts[backendQueueName]; // Use backend name for data fetching
-                                
-                                queueDiv.innerHTML = `
-                                    <div class="queue-title" onclick="toggleQueue(this)">
-                                        <span>${displayQueueName.replace(/_/g, ' ')}</span>
-                                        ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
-                                        <span class="queue-count">${totalItems} items</span>
-                                    </div>
-                                    <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">
-                                        ${generateQueueContent(backendQueueName, data.contents[backendQueueName])}
-                                    </div>
-                                `;
-                                queueContents.appendChild(queueDiv);
-
-                                // Apply tooltip event listeners to the newly created queueDiv
-                                addTooltipEventListeners(queueDiv);
-                            }
-                        });
-
-                        if (!hasContent) {
-                            queueContents.innerHTML = '<p>Program is running, but no active contents in queues.</p>';
-                        } else {
-                            // Add summary of hidden items if any
-                            const hiddenCounts = data.hidden_counts;
-                            if (hiddenCounts && Object.keys(hiddenCounts).length > 0) {
-                                let hiddenSummary = document.createElement('div');
-                                hiddenSummary.className = 'hidden-items-summary';
-                                let summaryText = '<h5>Additional Items Not Shown:</h5><ul>';
-                                for (const [queueName, count] of Object.entries(hiddenCounts)) {
-                                    if (count > 0) {
-                                        summaryText += `<li>${queueName.replace(/_/g, ' ')}: ${count} items</li>`;
-                                    }
-                                }
-                                summaryText += '</ul>';
-                                if (Object.values(hiddenCounts).some(c => c > 0)) { // Only add if there's actually content
-                                    hiddenSummary.innerHTML = summaryText;
-                                    queueContents.appendChild(hiddenSummary);
-                                }
-                            }
-                        }
-                        
-                        updateFilenameVisibility();
-                    }
-                } else {
-                    initializationStatus.style.display = 'none';
-                    document.getElementById('progress-container').style.display = 'none';
-                    queueContents.style.display = 'block';
-                    queueContents.innerHTML = '<p>Program is not running, or queues are empty.</p>';
+                // Handle heartbeat messages
+                if (data.heartbeat) {
+                    console.log('Received heartbeat at', new Date(data.timestamp * 1000));
+                    return; // Don't process heartbeat as queue data
                 }
+
+                // Use optimized update function
+                updateQueueContents(data);
+                
             } catch (e) {
                 console.error('Error parsing queue data:', e);
                 console.error('Raw data causing error:', event.data);
                 
-                // Create a more detailed error message
-                let errorDetails = '';
-                try {
-                    // Try to identify the problematic character
-                    const errorPositionMatch = e.message.match(/position (\d+)|column (\d+)/);
-                    const errorPosition = errorPositionMatch ? parseInt(errorPositionMatch[1] || errorPositionMatch[2]) : NaN;
-
-                    if (!isNaN(errorPosition)) {
-                        const start = Math.max(0, errorPosition - 50);
-                        const end = Math.min(event.data.length, errorPosition + 50);
-                        const snippet = event.data.substring(start, end);
-                        const charAtError = event.data[errorPosition] || (errorPosition > 0 ? event.data[errorPosition-1] : ''); // Adjust for 0-indexed vs 1-indexed
-                        errorDetails = `
-                            <div class="error-details">
-                                <p>Error Position: ~${errorPosition}</p>
-                                <p>Data snippet around error (± 50 chars):</p>
-                                <pre>${escapeHtml(snippet)}</pre>
-                                <p>Character near error position: "${escapeHtml(charAtError || '')}"</p>
-                            </div>
-                        `;
-                    }
-                } catch (detailError) {
-                    console.error("Error generating detail snippet:", detailError);
-                    errorDetails = '<p>Could not extract detailed error information</p>';
-                }
-                
-                // Show error in UI
-                showError(`
-                    <div class="parse-error">
-                        <h4>JSON Parse Error</h4>
-                        <p>${escapeHtml(e.message)}</p>
-                        ${errorDetails}
-                    </div>
-                `);
+                // Attempt to reconnect on JSON parse error (likely partial data)
+                handleJsonParseError(e, event.data);
             }
+        };
+
+        eventSource.onopen = function() {
+            console.log('EventSource connection opened');
+            reconnectAttempts = 0;
+            reconnectDelay = 1000;
+            
+            if (isReconnecting) {
+                showConnectionStatus('Connected', 'success', 2000);
+            }
+            isReconnecting = false;
+            clearErrorMessages();
         };
 
         eventSource.onerror = function(error) {
             console.error('EventSource failed:', error);
-            if (!hasReceivedFirstResponse) {
+            handleConnectionError();
+        };
+    }
+
+    function handleJsonParseError(error, rawData) {
+        console.error('JSON Parse Error:', error.message);
+        console.error('Raw data snippet:', rawData.substring(0, 100));
+
+        // Show subtle notification instead of detailed error
+        showConnectionStatus('Data error. Reconnecting...', 'reconnecting', 2000);
+
+        // Trigger reconnection for JSON parse errors (likely due to partial data)
+        attemptReconnection();
+    }
+
+    function handleConnectionError() {
+        if (!hasReceivedFirstResponse) {
+            const loadingIndicator = document.getElementById('loading-indicator');
+            if (loadingIndicator) {
                 loadingIndicator.innerHTML = '<p class="text-danger">Connection lost. Reconnecting...</p>';
             }
-            // EventSource will automatically try to reconnect
-        };
+        } else {
+            showConnectionStatus('Connection lost. Reconnecting...', 'reconnecting', 0);
+        }
+        
+        // Don't immediately reconnect - EventSource will handle this automatically
+        // But we can track the state
+        isReconnecting = true;
+    }
+
+    function attemptReconnection() {
+        if (isReconnecting) {
+            return; // Already attempting reconnection
+        }
+
+        if (reconnectAttempts >= maxReconnectAttempts) {
+            showError(`
+                <div class="alert alert-danger">
+                    <h4>Connection Failed</h4>
+                    <p>Maximum reconnection attempts reached. Please refresh the page.</p>
+                    <button class="btn btn-primary" onclick="location.reload()">Refresh Page</button>
+                </div>
+            `);
+            return;
+        }
+
+        isReconnecting = true;
+        reconnectAttempts++;
+        
+        console.log(`Attempting reconnection ${reconnectAttempts}/${maxReconnectAttempts} in ${reconnectDelay}ms`);
+        
+        showConnectionStatus(`Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`, 'reconnecting', 0);
+
+        setTimeout(() => {
+            setupQueueStream();
+            // Exponential backoff: increase delay for next attempt
+            reconnectDelay = Math.min(reconnectDelay * 2, 30000); // Max 30 seconds
+        }, reconnectDelay);
+    }
+
+    function clearErrorMessages() {
+        const existingErrors = document.querySelectorAll('.container > .alert, .container > .parse-error');
+        existingErrors.forEach(el => {
+            if (el.classList.contains('alert-danger') || 
+                el.classList.contains('alert-warning') || 
+                el.classList.contains('alert-info') ||
+                el.classList.contains('parse-error')) {
+                el.remove();
+            }
+        });
+    }
+
+    function showConnectionStatus(message, type = 'reconnecting', duration = 3000) {
+        const statusEl = document.getElementById('connection-status');
+        if (!statusEl) return;
+
+        statusEl.textContent = message;
+        statusEl.className = `connection-status ${type} show`;
+        
+        if (duration > 0) {
+            setTimeout(() => {
+                statusEl.classList.remove('show');
+            }, duration);
+        }
+    }
+
+    function hideConnectionStatus() {
+        const statusEl = document.getElementById('connection-status');
+        if (statusEl) {
+            statusEl.classList.remove('show');
+        }
     }
 
     function showError(message) {
@@ -861,12 +1109,16 @@
     }
 
     function increasePageSize() {
-        // Get current page size
-        let currentPageSize = parseInt(localStorage.getItem('queue_page_size')) || 50;
-        // Increase by 50, up to max of 100
-        const newPageSize = Math.min(currentPageSize + 50, 100);
-        localStorage.setItem('queue_page_size', newPageSize);
-        // Restart the event stream with new page size
+        // Increase page size and reload the stream for the current session
+        currentPageSize += 50; // Increase by 50
+        
+        // Add a loading indicator to the button
+        const showMoreButton = document.querySelector('.show-more-container button');
+        if (showMoreButton) {
+            showMoreButton.disabled = true;
+            showMoreButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Loading...';
+        }
+        
         setupQueueStream();
     }
 
@@ -924,6 +1176,21 @@
         
         // Then set up the queue stream which will dynamically add its own tooltips
         setupQueueStream();
+    });
+
+    // Handle page visibility changes (especially important for mobile)
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            console.log('Page hidden - EventSource will be maintained but may disconnect');
+        } else {
+            console.log('Page visible - Checking connection status');
+            // If we've been hidden and come back, and we're not receiving data,
+            // we might need to reconnect
+            if (eventSource && eventSource.readyState === EventSource.CLOSED) {
+                console.log('EventSource was closed while page was hidden, reconnecting');
+                setupQueueStream();
+            }
+        }
     });
 
     // Clean up when the page is unloaded

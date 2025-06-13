@@ -748,18 +748,22 @@ class RealDebridProvider(DebridProvider):
             except Exception as e:
                 logging.warning(f"Could not get torrent info before removal: {str(e)}")
 
-            # Make the deletion request (retries handled by make_request)
-            # Use the api_key property
-            try:
-                removal_response = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
-            except ProviderUnavailableError as e:
-                # Check if this is a rate limit error (429)
-                if "429" in str(e):
-                    logging.warning(f"Rate limit hit when removing torrent {torrent_id}. Will mark as removed anyway.")
-                    # Continue with the function as if removal succeeded
-                else:
-                    # Re-raise other provider errors
-                    raise
+            # Make the deletion request with retries for rate limiting
+            max_retries = 3
+            retry_delay = 5  # Start with 5 seconds delay
+            for retry_attempt in range(max_retries):
+                try:
+                    # Use the api_key property
+                    make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
+                    break  # Success, exit retry loop
+                except ProviderUnavailableError as e:
+                    if "429" in str(e) and retry_attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                        logging.warning(f"Rate limit (429) hit when removing torrent {torrent_id}. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                        time.sleep(wait_time)
+                    else:
+                        # Re-raise if it's not a 429 error or we've exhausted retries
+                        raise
 
             # Update status and tracking
             self.update_status(torrent_id, TorrentStatus.REMOVED)

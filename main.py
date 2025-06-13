@@ -13,6 +13,7 @@ import socket
 import sqlite3
 from datetime import datetime
 import json
+import tracemalloc
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -364,6 +365,15 @@ def setup_tray_icon():
         minimize_to_tray()
 
     def on_exit(icon, item):
+        print("Exit initiated. Generating memory usage report...")
+        
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics('lineno')
+
+        print("\n[ Top 10 memory consuming locations ]")
+        for stat in top_stats[:10]:
+            print(stat)
+
         logging.info("Exit option selected from system tray")
         icon.stop()
         # Stop all processes
@@ -508,6 +518,15 @@ def check_localhost_binding(port=5000):
 
 # Modify the stop_program function
 def stop_program(from_signal=False):
+    print("Exit initiated. Generating memory usage report...")
+    
+    snapshot = tracemalloc.take_snapshot()
+    top_stats = snapshot.statistics('lineno')
+
+    print("\n[ Top 10 memory consuming locations ]")
+    for stat in top_stats[:10]:
+        print(stat)
+
     # Access ProgramRunner singleton directly
     from queues.run_program import ProgramRunner
     program_runner_instance = ProgramRunner() # Get singleton instance
@@ -917,6 +936,61 @@ def migrate_task_toggles():
     except Exception as e:
         logging.error(f"Unexpected error during task toggles migration check: {e}")
 
+def migrate_content_source_versions():
+    """
+    Verifies that all versions assigned to content sources are still active
+    in the main Scraping versions list. Removes any inactive versions.
+    """
+    try:
+        from queues.config_manager import load_config, save_config
+        config = load_config()
+        config_updated = False
+
+        # Get the set of currently active/defined version names
+        active_versions = set(config.get('Scraping', {}).get('versions', {}).keys())
+        
+        if not active_versions:
+            logging.debug("No active scraping versions found. Skipping content source version migration.")
+            return
+
+        if 'Content Sources' in config and isinstance(config.get('Content Sources'), dict):
+            content_sources = config['Content Sources']
+            
+            # Iterate over a copy of items as we might modify the dict
+            for source_id, source_config in list(content_sources.items()):
+                if isinstance(source_config, dict) and 'versions' in source_config:
+                    source_versions = source_config['versions']
+                    
+                    # Handle dictionary format {version_name: enabled_boolean}
+                    if isinstance(source_versions, dict):
+                        # Find versions in the content source that are no longer active
+                        inactive_keys = [key for key in source_versions if key not in active_versions]
+                        if inactive_keys:
+                            config_updated = True
+                            for key in inactive_keys:
+                                del source_versions[key]
+                                logging.info(f"Migration: Removed inactive version '{key}' from Content Source '{source_id}'.")
+                    
+                    # Handle list format [version_name, ...]
+                    elif isinstance(source_versions, list):
+                        original_count = len(source_versions)
+                        # Filter the list to keep only active versions
+                        active_source_versions = [v for v in source_versions if v in active_versions]
+                        if len(active_source_versions) < original_count:
+                            config_updated = True
+                            source_config['versions'] = active_source_versions
+                            removed_count = original_count - len(active_source_versions)
+                            logging.info(f"Migration: Removed {removed_count} inactive version(s) from Content Source '{source_id}'.")
+
+        if config_updated:
+            save_config(config)
+            logging.info("Successfully migrated Content Sources to remove inactive versions.")
+        else:
+            logging.info("Content source versions are all active. No migration needed.")
+
+    except Exception as e:
+        logging.error(f"Unexpected error during content source version migration: {e}", exc_info=True)
+
 def main():
     # Remove global program_runner from here as well
     global metadata_process 
@@ -982,6 +1056,9 @@ def main():
     except Exception as e:
         logging.critical(f"Database verification/migration failed: {e}", exc_info=True)
         return # Stop if DB setup fails
+
+    # Run content source version migration after main schema is ready
+    migrate_content_source_versions()
 
     # Initialize statistics tables/indexes AFTER main schema is verified
     try:
@@ -1720,6 +1797,7 @@ def print_version():
         print("Version: Unknown\n")
 
 if __name__ == "__main__":
+    tracemalloc.start()
     try:
         if len(sys.argv) > 1 and sys.argv[1] == "--package":
             package_main()
@@ -1762,6 +1840,15 @@ if __name__ == "__main__":
             print(f"The web UI is available at http://localhost:{port}")
             main() 
     except KeyboardInterrupt:
+        print("KeyboardInterrupt received. Generating memory usage report...")
+        
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics('lineno')
+
+        print("\n[ Top 10 memory consuming locations ]")
+        for stat in top_stats[:10]:
+            print(stat)
+
         stop_global_profiling()
         print("Program stopped by KeyboardInterrupt in __main__.")
     except Exception as e_main_startup:

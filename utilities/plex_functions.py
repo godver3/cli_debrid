@@ -16,6 +16,7 @@ from plexapi.library import LibrarySection
 from database.database_reading import get_media_item_by_id
 import requests
 from plexapi.exceptions import NotFound
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -1158,24 +1159,53 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
             logger.warning("Plex URL or token not configured for symlink updates.")
             return False
             
-        plex = PlexServer(plex_url, plex_token, timeout=30)
-        
+        # Initialise Plex client (timeout on connection itself)
+        try:
+            plex = PlexServer(plex_url, plex_token, timeout=30)
+        except Exception as conn_err:
+            logger.error(f"Could not connect to Plex server at '{plex_url}': {conn_err}")
+            return False
+
+        # Determine the directory we want Plex to rescan
         file_location = item.get('full_path') or item.get('location_on_disk') or item.get('location')
         if not file_location:
             logger.error(f"Cannot trigger update: No file location found for item: {item.get('title', 'Unknown')}")
             return False
-            
+
         directory = os.path.dirname(file_location)
-        
+
+        # Obtain timeout from settings (seconds). Fallback to 60 s.
+        try:
+            plex_update_timeout = int(get_setting('File Management', 'plex_section_update_timeout', 1))
+        except (TypeError, ValueError):
+            plex_update_timeout = 60
+            logger.warning(f"Invalid plex_section_update_timeout value; defaulting to {plex_update_timeout}s")
+
+        def _update_section_with_timeout(sec, dir_path) -> bool:
+            """Run `sec.update(path=dir_path)` in a background thread with a hard timeout."""
+            section_name = getattr(sec, 'title', 'Unknown')
+            logger.debug(f"Starting Plex section.update for '{section_name}' on '{dir_path}' (timeout {plex_update_timeout}s)")
+            try:
+                with ThreadPoolExecutor(max_workers=1) as _executor:
+                    future = _executor.submit(sec.update, path=dir_path)
+                    future.result(timeout=plex_update_timeout)
+                logger.debug(f"Completed Plex section.update for '{section_name}' on '{dir_path}'")
+                return True
+            except TimeoutError:
+                logger.error(f"Plex section.update timed out after {plex_update_timeout}s for section '{section_name}' on '{dir_path}'")
+            except Exception as ex:
+                logger.error(f"Error during Plex section.update for '{section_name}' on '{dir_path}': {ex}")
+            return False
+
         found_matching_section = False
         for section in plex.library.sections():
             try:
                 for location in section.locations:
                     if directory.startswith(location):
                         logger.info(f"Found matching section {section.title}, scanning directory: {directory}")
-                        section.update(path=directory)
-                        found_matching_section = True
-                        return True  # Exit after finding and updating the first matching section
+                        if _update_section_with_timeout(section, directory):
+                            found_matching_section = True
+                            return True  # Exit after successful update
             except Exception as e:
                 logger.error(f"Error checking section {section.title}: {str(e)}")
                 continue
@@ -1186,9 +1216,8 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
             for section in plex.library.sections():
                 try:
                     logger.info(f"Attempting update on section {section.title} for directory: {directory}")
-                    section.update(path=directory)
-                    any_section_updated = True # If any update call succeeds, mark as true.
-                                               # We don't return immediately to try all sections.
+                    if _update_section_with_timeout(section, directory):
+                        any_section_updated = True  # Mark true only on success.
                 except Exception as e:
                     logger.error(f"Error updating section {section.title} with path {directory}: {str(e)}")
                     continue

@@ -344,7 +344,6 @@
         .version-container {
             display: flex;
             align-items: center;
-            gap: 8px;
         }
 
         .version-info {
@@ -1073,12 +1072,59 @@
                 hackInProgress = false; // Allow it to be triggered again
             }
             // --- End "Hacked" Easter Egg ---
+
+            /* --- Version 666 Blood Drip Randomizer --- */
+            (function() {
+                const evilVersionEl = document.querySelector('.version-info.version-evil');
+                if (!evilVersionEl) return;
+
+                function randomizeDripDelays() {
+                    // Generate random delays between 4s and 10s
+                    const delay1 = (Math.random() * 6 + 4).toFixed(2) + 's';
+                    const delay2 = (Math.random() * 6 + 4).toFixed(2) + 's';
+                    // Each full drip cycle now lasts 4-10 seconds to ensure a pause between drips
+                    const duration = (Math.random() * 6 + 4).toFixed(2) + 's'; // 4-10 s cycle
+                    evilVersionEl.style.setProperty('--drip-delay1', delay1);
+                    evilVersionEl.style.setProperty('--drip-delay2', delay2);
+                    evilVersionEl.style.setProperty('--drip-duration', duration);
+                }
+
+                // Initial randomization
+                randomizeDripDelays();
+
+                // Re-randomize approximately every 12 seconds
+                setInterval(randomizeDripDelays, 12000);
+            })();
+            /* --- End Version 666 Blood Drip Randomizer --- */
+
+            /* --- Disable Evil Version Button Logic --- */
+            (function() {
+                const btn = document.getElementById('disableEvilButton');
+                const versionEl = document.getElementById('versionInfo');
+                if (!btn || !versionEl) return;
+
+                // If previously disabled, immediately remove class & hide button
+                if (localStorage.getItem('disableEvilVersion') === 'true') {
+                    versionEl.classList.remove('version-evil');
+                    btn.style.display = 'none';
+                    return;
+                }
+
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    localStorage.setItem('disableEvilVersion', 'true');
+                    versionEl.classList.remove('version-evil');
+                    btn.style.display = 'none';
+                });
+            })();
+            /* --- End Disable Evil Version Button Logic --- */
         });
     </script>
 </head>
 
 <body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" 
-      data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}" 
+      data-program-status="{{ get_program_status() }}" 
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
       data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"
       data-notifications-disabled="false">
@@ -1089,8 +1135,13 @@
                 <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid icon" class="header-icon">
                 <div class="title-version">
                     <h1>cli_debrid</h1>
+                    {% set version_str = get_version_with_branch() %}
+                    {% set evil = version_str.count('6') >= 3 %}
                     <div class="version-container">
-                        <span class="version-info">v{{ get_version_with_branch() }}</span>
+                        <a href="https://github.com/godver3/cli_debrid" target="_blank" class="version-info{% if evil %} version-evil{% endif %}" id="versionInfo">v{{ version_str }}</a>
+                        {% if evil %}
+                        <button id="disableEvilButton" class="disable-evil-btn" title="Disable spooky effects">✖</button>
+                        {% endif %}
                         <i class="fas fa-download update-indicator hidden" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
                     </div>
                 </div>
@@ -1110,6 +1161,9 @@
                     </a>
                     <a href="https://ko-fi.com/godver3" target="_blank" class="support-icon-link kofi" title="Support on Ko-fi">
                         <i class="fas fa-mug-hot"></i>
+                    </a>
+                    <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" class="support-icon-link discord" title="Join our Discord">
+                        <i class="fab fa-discord"></i>
                     </a>
                 </div>
                 {% endif %}
@@ -1227,9 +1281,10 @@
                             <span class="button-text">Logout</span>
                         </button>                        
                         {% if current_user.role == 'admin' %}
-                            <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
-                                <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
-                                <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
+                            {% set program_status = get_program_status() %}
+                            <button id="programControlButton" class="icon-button {% if program_status == 'Running' %}stop-program{% elif program_status == 'Starting' %}starting-program{% elif program_status == 'Stopping' %}stopping-program{% else %}start-program{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
+                                <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
+                                <span class="button-text">{% if program_status == 'Running' %}Stop Program{% elif program_status == 'Starting' %}Starting...{% elif program_status == 'Stopping' %}Stopping...{% else %}Start Program{% endif %}</span>
                             </button>
                         {% endif %}
                         <button class="icon-button" id="notifications_button" role="button" data-tooltip="global.notificationsButton">
@@ -1242,9 +1297,10 @@
                 {% endif %}
             {% else %}
                 <div class="action-controls">
-                    <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
-                        <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
-                        <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
+                    {% set program_status = get_program_status() %}
+                    <button id="programControlButton" class="icon-button {% if program_status == 'Running' %}stop-program{% elif program_status == 'Starting' %}starting-program{% elif program_status == 'Stopping' %}stopping-program{% else %}start-program{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
+                        <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
+                        <span class="button-text">{% if program_status == 'Running' %}Stop Program{% elif program_status == 'Starting' %}Starting...{% elif program_status == 'Stopping' %}Stopping...{% else %}Start Program{% endif %}</span>
                     </button>
                     <button class="icon-button" id="notifications_button" role="button" data-tooltip="global.notificationsButton">
                         <i class="fas fa-bell" style="color: white;"></i>
@@ -1432,6 +1488,9 @@
                         <a href="https://ko-fi.com/godver3" target="_blank" class="patreon-button" style="background-color: #29ABE0; margin-top: 10px;">
                             <i class="fas fa-mug-hot"></i>
                             Support on Ko-fi
+                        </a>
+                        <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" class="support-icon-link discord" title="Join our Discord">
+                            <i class="fab fa-discord"></i>
                         </a>
                         <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
                     </div>

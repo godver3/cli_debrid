@@ -1448,3 +1448,11 @@ tr.filtered-out-item:hover {
     background-color: rgba(255, 255, 255, 0.05); /* Or your default hover color */
 }
 
+#version-select {
+    display: none;
+}
+
+.db-status-partial {
+    background-color: #2196F3;
+    color: white;
+}

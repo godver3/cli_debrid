@@ -109,6 +109,15 @@ def normalize_title(title: str) -> str:
     if '&' in title:
         title = title.replace('&039;', "'").replace('&039s', "'s").replace('&#39;', "'")
     
+    # Convert superscript and subscript unicode digits to normal digits to improve matching (e.g., '²' -> '2')
+    supersub_digit_map = str.maketrans({
+        '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4',
+        '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9',
+        '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4',
+        '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9'
+    })
+    title = title.translate(supersub_digit_map)
+    
     # Handle percentage signs early if present
     if '%' in title:
         title = title.replace('1%', '1.percent').replace('1.%', '1.percent')
@@ -131,6 +140,10 @@ def normalize_title(title: str) -> str:
     # Add periods around standalone letters (like 'TS') that should be matched
     normalized = re.sub(r'(?<=[^.\w])(\w)(?=[^.\w])', r'.\1.', normalized)
     normalized = _MULTI_PERIOD_PATTERN.sub('.', normalized)  # Clean up any double periods from the previous step
+    
+    # Insert a period between letter-digit and digit-letter boundaries (e.g., 'accountant2' -> 'accountant.2')
+    normalized = re.sub(r'(?<=\d)(?=[a-zA-Z])|(?<=[a-zA-Z])(?=\d)', '.', normalized)
+    normalized = _MULTI_PERIOD_PATTERN.sub('.', normalized)  # Clean up if new double periods were created
     
     # Efficient character filtering using a single pass
     chars = []

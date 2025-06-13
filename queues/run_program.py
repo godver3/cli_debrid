@@ -5,6 +5,9 @@ import os
 import sqlite3
 import plexapi # Added import
 import uuid
+import ctypes
+import platform
+import gc
 # *** START EDIT: Import tracemalloc ***
 try:
     import tracemalloc
@@ -251,7 +254,7 @@ class ProgramRunner:
             'task_update_statistics_summary': 300, # Run every 5 minutes
             'task_refresh_download_stats': 300,    # Run every 5 minutes
             'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
-            'task_verify_symlinked_files': 900,    # Run every 15 minutes (if enabled)
+            'task_verify_symlinked_files': 1800,    # Run every 30 minutes (if enabled)
             'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled)
             'task_reconcile_queues': 3600,         # Run every 1 hour
             'task_check_database_health': 3600,    # Run every hour
@@ -336,7 +339,7 @@ class ProgramRunner:
                                 logging.debug(f"Parsed custom interval for '{normalized_name}' as {interval_sec_int} seconds.")
                                 # --- END EDIT ---
 
-                                MIN_INTERVAL_SECONDS = 10 # Define or import this constant
+                                MIN_INTERVAL_SECONDS = 1 # Define or import this constant
                                 if interval_sec_int >= MIN_INTERVAL_SECONDS:
                                     # --- START EDIT: Log comparison ---
                                     # Compare with current effective, not original_task_intervals necessarily
@@ -975,13 +978,43 @@ class ProgramRunner:
         # *** START EDIT: Add psutil memory logging ***
         if psutil:
             try:
+                # 1. Explicitly run garbage collection
+                gc.collect()
+                logging.debug("Explicitly ran gc.collect()")
+
+                # 2. Log memory before trim
                 process = psutil.Process(os.getpid())
-                mem_info = process.memory_info()
-                rss_mb = mem_info.rss / (1024 * 1024)
-                vms_mb = mem_info.vms / (1024 * 1024)
-                logging.info(f"[Memory Usage] RSS: {rss_mb:.2f}MB | VMS: {vms_mb:.2f}MB")
+                mem_info_before = process.memory_info()
+                rss_mb_before = mem_info_before.rss / (1024 * 1024)
+                vms_mb_before = mem_info_before.vms / (1024 * 1024)
+                
+                log_message = f"[Memory Usage] Before: RSS={rss_mb_before:.2f}MB, VMS={vms_mb_before:.2f}MB."
+
+                # 3. Attempt to release memory to OS
+                system = platform.system()
+                if system == "Linux":
+                    try:
+                        ctypes.CDLL('libc.so.6').malloc_trim(0)
+                        logging.debug("malloc_trim(0) called on Linux.")
+                    except Exception as e:
+                        logging.warning(f"Failed to call malloc_trim(0): {e}")
+                elif system == "Windows":
+                    try:
+                        ctypes.CDLL('msvcrt')._heapmin()
+                        logging.debug("_heapmin() called on Windows.")
+                    except Exception as e:
+                        logging.warning(f"Failed to call _heapmin(): {e}")
+                
+                # 4. Log memory after trim
+                mem_info_after = process.memory_info()
+                rss_mb_after = mem_info_after.rss / (1024 * 1024)
+                vms_mb_after = mem_info_after.vms / (1024 * 1024)
+                
+                log_message += f" After: RSS={rss_mb_after:.2f}MB, VMS={vms_mb_after:.2f}MB."
+                logging.info(log_message)
+
             except Exception as e:
-                logging.error(f"Error getting memory usage with psutil: {e}")
+                logging.error(f"Error in heartbeat memory management: {e}")
         else:
             # Log less frequently if psutil is missing
             if random_number < 10: # Log warning occasionally
@@ -1091,15 +1124,66 @@ class ProgramRunner:
 
         return self.content_sources
         
+    def force_connectivity_check(self):
+        """Force an immediate connectivity check and handle recovery if services are back"""
+        from routes.program_operation_routes import check_service_connectivity
+        
+        logging.info("[Force Connectivity Check] Manually triggered connectivity check")
+        
+        connectivity_ok, failed_services = check_service_connectivity()
+        
+        if connectivity_ok and self.connectivity_failure_time:
+            # Services are back!
+            logging.info("[Force Connectivity Check] Services restored! Clearing failure state and resuming queue.")
+            self.connectivity_failure_time = None
+            self.connectivity_retry_count = 0
+            self.pause_info = {
+                "reason_string": None, "error_type": None, "service_name": None,
+                "status_code": None, "retry_count": 0
+            }
+            self.resume_queue()
+            return True
+        elif not connectivity_ok:
+            logging.warning(f"[Force Connectivity Check] Services still unavailable: {[s.get('service') for s in failed_services]}")
+            return False
+        else:
+            logging.info("[Force Connectivity Check] All services operational")
+            return True
+    
     def task_check_service_connectivity(self):
         """Check connectivity to required services"""
         from routes.program_operation_routes import check_service_connectivity
-        connectivity_ok, failed_services = check_service_connectivity()
-        if connectivity_ok:
-            logging.debug("Service connectivity check passed")
+        
+        # Log current state before checking
+        if self.connectivity_failure_time:
+            time_since_failure = time.time() - self.connectivity_failure_time
+            logging.info(f"[Connectivity Check Task] Running scheduled check. Previous failure detected {time_since_failure:.0f}s ago")
         else:
-            logging.error("Service connectivity check failed")
-            self.handle_connectivity_failure(failed_services)
+            logging.debug("[Connectivity Check Task] Running routine connectivity check")
+            
+        connectivity_ok, failed_services = check_service_connectivity()
+        
+        if connectivity_ok:
+            if self.connectivity_failure_time:
+                # We're recovering from a previous failure
+                logging.info("[Connectivity Check Task] Service connectivity RESTORED via scheduled task")
+                self.connectivity_failure_time = None
+                self.connectivity_retry_count = 0
+                self.pause_info = {
+                    "reason_string": None, "error_type": None, "service_name": None,
+                    "status_code": None, "retry_count": 0
+                }
+                self.resume_queue()
+            else:
+                logging.debug("[Connectivity Check Task] Service connectivity check passed")
+        else:
+            if self.connectivity_failure_time:
+                # Already in failure state, just log
+                logging.warning(f"[Connectivity Check Task] Services still unavailable: {[s.get('service') for s in failed_services]}")
+            else:
+                # New failure detected
+                logging.error(f"[Connectivity Check Task] Service connectivity check failed: {[s.get('service') for s in failed_services]}")
+                self.handle_connectivity_failure(failed_services)
 
     def handle_connectivity_failure(self, failed_services_details=None): # MODIFIED: expects detailed list
         from routes.program_operation_routes import check_service_connectivity # Keep this for potential re-check logic
@@ -1161,8 +1245,20 @@ class ProgramRunner:
             
         # Use the legacy self.connectivity_retry_count for retry timing logic
         time_since_failure = time.time() - self.connectivity_failure_time
-        if time_since_failure >= 60 * (self.connectivity_retry_count + 1):
+        
+        # Check every 30 seconds for first 2 minutes, then every 60 seconds
+        if time_since_failure <= 120:  # First 2 minutes
+            retry_interval = 30
+        else:
+            retry_interval = 60
+            
+        # Calculate if it's time for next retry
+        time_since_last_retry = time_since_failure - (self.connectivity_retry_count * retry_interval)
+        
+        if time_since_last_retry >= retry_interval:
             self.connectivity_retry_count += 1 # Increment legacy counter for timing
+            
+            logging.info(f"Checking service connectivity (attempt {self.connectivity_retry_count}, {time_since_failure:.0f}s since failure)")
             
             try:
                 connectivity_ok, failed_services_details = check_service_connectivity()
@@ -1232,8 +1328,17 @@ class ProgramRunner:
             logging.debug(f"Pausing all running jobs. Total jobs found: {len(all_jobs)}")
             logging.debug(f"Jobs already tracked as paused by this mechanism: {sorted(list(self.paused_jobs_by_queue))}")
 
+            # Define tasks that should never be paused (essential monitoring tasks)
+            never_pause_tasks = {'task_check_service_connectivity', 'task_heartbeat'}
+
             for job in all_jobs:
                 job_id = job.id
+                
+                # Skip pausing essential monitoring tasks
+                if job_id in never_pause_tasks:
+                    logging.debug(f"Skipping pause for essential task: {job_id}")
+                    continue
+                
                 # Only pause if the job is scheduled to run (not already paused indefinitely)
                 # and not already tracked by this mechanism
                 if job.next_run_time is not None and job_id not in self.paused_jobs_by_queue:
@@ -1263,11 +1368,13 @@ class ProgramRunner:
         self.queue_paused = True
         # --- START EDIT: Log using pause_info ---
         log_reason = self.pause_info.get('reason_string', 'Unknown') if self.pause_info else 'Unknown'
-        logging.info(f"Queue paused. Attempted to pause all running jobs... Reason: {log_reason}")
+        logging.info(f"Queue paused. Attempted to pause all running jobs (except essential monitoring tasks)... Reason: {log_reason}")
         # --- END EDIT ---
 
     def resume_queue(self):
         # *** START EDIT: Resume logic remains the same, but update log context ***
+        logging.info(f"[Resume Queue] Starting resume process. Queue paused: {self.queue_paused}, Pause type: {self.pause_info.get('error_type') if self.pause_info else 'None'}")
+        
         with self.scheduler_lock:
             if self.scheduler.state != 1: # 1 = STATE_RUNNING
                 logging.warning("Scheduler is not running, cannot resume jobs.")
@@ -1313,14 +1420,17 @@ class ProgramRunner:
         from queues.queue_manager import QueueManager
         QueueManager().resume_queue()
 
+        # Clear all pause-related state
         self.queue_paused = False
+        self.connectivity_failure_time = None
+        self.connectivity_retry_count = 0
         # --- START EDIT: Clear pause_info ---
         self.pause_info = {
             "reason_string": None, "error_type": None, "service_name": None,
             "status_code": None, "retry_count": 0
         }
         # --- END EDIT ---
-        logging.info(f"Queue resumed. Attempted to resume ... tracked jobs...") # Keep existing log details
+        logging.info(f"[Resume Queue] Queue resumed successfully. Resumed {resumed_count} jobs.")  # Better log message
 
     def task_plex_full_scan(self):
         get_and_add_all_collected_from_plex()
@@ -1603,9 +1713,9 @@ class ProgramRunner:
                                         # If we can't parse the date, allow the item through
                                         items_filtered_date.append(item)
                                         logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
-                                all_items = items_filtered_date
-                                if cutoff_date_skipped > 0:
-                                    logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
+                                    all_items = items_filtered_date
+                                    if cutoff_date_skipped > 0:
+                                        logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
 
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
@@ -1695,8 +1805,11 @@ class ProgramRunner:
                 self._initializing = False # Ensure initializing is reset
                 return
 
-            self._running = True
-            # self._initializing = False # Moved to finally
+            # _running will now be set inside run(), after it passes its own guard.
+
+            # Clear the initializing flag *before* entering the main run loop so run() doesn't
+            # mistakenly believe initialization is still underway.
+            self._initializing = False
             self.update_heartbeat() 
             logging.info("ProgramRunner: Started successfully.")
             # self.run() # The run loop should be started by the external caller if this is a thread target.
@@ -1766,8 +1879,7 @@ class ProgramRunner:
 
 
     def is_running(self):
-        return self._running and self.scheduler is not None and self.scheduler.running
-        
+        return self._running
 
     def is_initializing(self): 
         return self._initializing
@@ -1775,7 +1887,26 @@ class ProgramRunner:
     def is_stopping(self): 
         return self._stopping
 
+    def get_status(self):
+        """Returns the current status of the program as a string."""
+        if self.is_initializing():
+            return "Starting"
+        if self.is_stopping():
+            return "Stopping"
+        if self.is_running():
+            return "Running"
+        return "Stopped"
+
     def run(self):
+        # Guard against duplicate starts. We only consider the running flag now.
+        if self._running:
+            logging.warning("Attempted to start program, but it's already running.")
+            return
+        
+        # Mark as running. The dedicated initialization routine below will toggle the
+        # _initializing flag as needed.
+        self._running = True
+
         try:
             logging.info("Starting program run loop (monitoring scheduler state)")
             self._running = True  # Make sure running flag is set
@@ -1795,7 +1926,13 @@ class ProgramRunner:
             
                     # Perform checks that still need to run outside scheduled tasks
                     # e.g., connectivity checks that might pause/resume scheduler jobs
-                    self.check_connectivity_status()
+                    if self.connectivity_failure_time or self.queue_paused:
+                        # If we're in a failure state, check more aggressively
+                        self.check_connectivity_status()
+
+                    # Fail-safe: if connectivity recovery logic never resumes the queue,
+                    # kick a watchdog that will forcibly resume after a timeout.
+                    self._fail_safe_resume_if_stuck()
 
                     is_scheduled_pause = self._is_within_pause_schedule()
                     current_pause_type = self.pause_info.get("error_type") if self.pause_info else None
@@ -2541,8 +2678,16 @@ class ProgramRunner:
         with self.scheduler_lock:
             if self.scheduler.state != 1: return # Not running
 
+            # Define tasks that should never be paused (essential monitoring tasks)
+            never_pause_tasks = {'task_check_service_connectivity', 'task_heartbeat'}
+
             paused_count = 0
             for job_id in debrid_related_ids:
+                 # Skip pausing essential monitoring tasks
+                 if job_id in never_pause_tasks:
+                     logging.debug(f"Rate Limit: Skipping pause for essential task: {job_id}")
+                     continue
+                     
                  try:
                      job = self.scheduler.get_job(job_id)
                      if job and job.next_run_time is not None: # Only pause if running
@@ -2632,7 +2777,7 @@ class ProgramRunner:
             from utilities.local_library_scan import local_library_scan
             
             # Get all items in Checking state
-            items = get_all_media_items(state="Checking")
+            items = list(get_all_media_items(state="Checking"))
             if items:
                 logging.info(f"Running local library scan for {len(items)} items in Checking state")
                 found_items = local_library_scan(items)
@@ -3459,7 +3604,7 @@ class ProgramRunner:
 
             # Run the verification scan
             verified_count, total_processed = run_plex_verification_scan(
-                max_files=50,
+                max_files=500,
                 recent_only=not do_full_scan
             )
 
@@ -4210,7 +4355,7 @@ class ProgramRunner:
             return False
 
         # --- START EDIT: Define minimum seconds ---
-        MIN_INTERVAL_SECONDS = 10 # Must match validation
+        MIN_INTERVAL_SECONDS = 1 # Must match validation
         # --- END EDIT ---
 
         target_interval_seconds = 0
@@ -4335,6 +4480,83 @@ class ProgramRunner:
         
         logging.info(f"'{task_name}' has finished sleeping and is now complete.")
     # *** END EDIT ***
+
+    def _fail_safe_resume_if_stuck(self):
+        """Force-resume the queue if it has been paused due to connectivity issues for too long.
+
+        The normal resume flow relies on periodic connectivity checks.  If, for any
+        reason, those checks fail to un-pause the queue even after connectivity is
+        restored (for example because the check itself is failing), this method
+        will act as a watchdog.  Once the pause has lasted longer than
+        `Queue -> connectivity_fail_safe_minutes` (defaults to 3 minutes) it
+        will clear the pause state and invoke `resume_queue()` unconditionally.
+        """
+        try:
+            # Only act when the queue is actually paused
+            if not self.queue_paused:
+                return
+                
+            # Check all pause types, not just CONNECTION_ERROR
+            current_pause_type = self.pause_info.get("error_type") if self.pause_info else None
+            
+            # For scheduled pauses, don't use fail-safe
+            if current_pause_type == "SYSTEM_SCHEDULED":
+                return
+
+            # How long has it been since the connectivity failure was first detected?
+            if not self.connectivity_failure_time:
+                # If we're paused but don't have a failure time, something's wrong
+                if self.queue_paused and current_pause_type in ["CONNECTION_ERROR", "UNAUTHORIZED", "FORBIDDEN", "DB_HEALTH"]:
+                    logging.warning(f"Queue is paused ({current_pause_type}) but no failure time tracked. Setting failure time now.")
+                    self.connectivity_failure_time = time.time()
+                return
+
+            elapsed = time.time() - self.connectivity_failure_time
+            from utilities.settings import get_setting  # Local import to avoid cycles
+            try:
+                threshold_minutes = float(get_setting('Queue', 'connectivity_fail_safe_minutes', 3))
+            except (ValueError, TypeError):
+                threshold_minutes = 3.0
+            threshold_seconds = threshold_minutes * 60
+
+            # Log periodically that we're still stuck
+            if not hasattr(self, '_last_failsafe_log_time'):
+                self._last_failsafe_log_time = 0
+                
+            if elapsed > 60 and time.time() - self._last_failsafe_log_time > 60:
+                logging.warning(
+                    f"[Fail-safe] Queue has been paused for {elapsed/60:.1f} minutes "
+                    f"(threshold: {threshold_minutes} minutes). Type: {current_pause_type}"
+                )
+                self._last_failsafe_log_time = time.time()
+
+            if elapsed < threshold_seconds:
+                return  # Still within grace period – keep waiting
+
+            logging.warning(
+                f"[Fail-safe] WATCHDOG TRIGGERED: Queue has been paused for "
+                f"{elapsed/60:.1f} minutes (>{threshold_minutes} minute threshold). "
+                f"Pause type: {current_pause_type}. Forcibly resuming!"
+            )
+
+            # Clear connectivity tracking and pause info before resuming
+            self.connectivity_failure_time = None
+            self.connectivity_retry_count = 0
+            self.pause_info = {
+                "reason_string": None,
+                "error_type": None,
+                "service_name": None,
+                "status_code": None,
+                "retry_count": 0,
+            }
+            self._last_failsafe_log_time = 0
+            
+            # Attempt to resume irrespective of the current connectivity check result
+            self.resume_queue()
+            
+            logging.info("[Fail-safe] Queue forcibly resumed by watchdog. Services may still be unavailable.")
+        except Exception as e:
+            logging.error(f"Error in fail-safe resume logic: {e}", exc_info=True)
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

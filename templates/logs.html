@@ -74,7 +74,25 @@
         #goto-container {
             width: 100%;
         }
+
+        /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
+        body.has-bottom-overlay .log-container {
+            height: calc(100vh - 160px - 60px); /* existing offset + overlay */
+        }
     }
+
+    /* Standalone/Fullscreen PWA override */
+    @media screen and (max-width: 768px) and (display-mode: standalone),
+           screen and (max-width: 768px) and (display-mode: fullscreen) {
+        .log-container {
+            /* existing override remains */
+        }
+        /* --- START EDIT: Adjust height for overlay in standalone/fullscreen --- */
+        body.has-bottom-overlay .log-container {
+            height: calc(100vh - 70px - 70px); /* existing offset + overlay */
+        }
+    }
+    /* --- END EDIT --- */
 
     .log-controls {
         padding: 5px 10px;

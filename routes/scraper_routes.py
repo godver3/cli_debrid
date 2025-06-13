@@ -4,7 +4,7 @@ from debrid import get_debrid_provider
 from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from utilities.settings import get_setting, get_all_settings, load_config, save_config
-from database.database_reading import get_all_season_episode_counts, get_media_item_presence
+from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall
 from utilities.web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
 from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
@@ -645,7 +645,7 @@ def add_torrent_to_debrid():
 def movies_trending():
     from utilities.web_scraper import get_available_versions
     # --- Import database reading function ---
-    from database.database_reading import get_media_item_presence
+    from database.database_reading import get_media_item_presence_overall
     # --- End import ---
 
     versions = get_available_versions()
@@ -660,13 +660,15 @@ def movies_trending():
                 if tmdb_id:
                     try:
                         tmdb_id_int = int(tmdb_id)
-                        db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                        db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
                     except (ValueError, TypeError):
                         db_state = 'Missing'
 
                     # Map state to frontend status
                     if db_state == 'Collected':
                         item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
                     elif db_state == 'Blacklisted':
                         item['db_status'] = 'blacklisted'
                     elif db_state not in ['Missing', 'Ignored', None]: 
@@ -703,13 +705,15 @@ def shows_trending():
                 if tmdb_id:
                     try:
                         tmdb_id_int = int(tmdb_id)
-                        db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                        db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
                     except (ValueError, TypeError):
                          db_state = 'Missing'
                          
                     # Map state to frontend status
                     if db_state == 'Collected':
                         item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
                     elif db_state == 'Blacklisted':
                         item['db_status'] = 'blacklisted'
                     elif db_state not in ['Missing', 'Ignored', None]: 
@@ -759,13 +763,15 @@ def index():
                         try:
                             # Ensure tmdb_id is integer if needed by the function
                             tmdb_id_int = int(tmdb_id) 
-                            db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                            db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
                         except (ValueError, TypeError):
                              db_state = 'Missing' # Handle cases where ID might not be numeric
                         
                         # Map state to frontend status
                         if db_state == 'Collected':
                             item['db_status'] = 'collected'
+                        elif db_state == 'Partial':
+                            item['db_status'] = 'partial'
                         elif db_state == 'Blacklisted':
                             item['db_status'] = 'blacklisted'
                         elif db_state not in ['Missing', 'Ignored', None]: 
@@ -1778,13 +1784,14 @@ def lookup_by_id(): # This remains synchronous
         if tmdb_id_val:
             try:
                 tmdb_id_int = int(tmdb_id_val)
-                db_state = get_media_item_presence(tmdb_id=tmdb_id_int)
+                db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
             except (ValueError, TypeError):
                 logging.warning(f"Could not parse tmdb_id_val for db_state check: {tmdb_id_val}")
                 db_state = 'Missing'
 
         item['db_status'] = {
             'Collected': 'collected',
+            'Partial': 'partial',
             'Blacklisted': 'blacklisted'
         }.get(db_state, 'processing' if db_state not in ['Missing', 'Ignored', None] else 'missing')
 

@@ -33,9 +33,24 @@ except ImportError:
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
 
-def convert_anime_episode_format(season: int, episode: int, total_episodes: int) -> Dict[str, str]:
-    """Convert anime episode numbers into different formats."""
-    logging.info(f"Converting anime episode format - Season: {season}, Episode: {episode}, Total Episodes: {total_episodes}")
+def convert_anime_episode_format(season: int, episode: int, season_episode_counts: Dict[int, int]) -> Dict[str, str]:
+    """Convert anime episode numbers into different formats, including correctly padded absolute numbers."""
+    logging.info(f"Converting anime episode format - Season: {season}, Episode: {episode}, Counts: {season_episode_counts}")
+
+    # --- Calculate Absolute Episode Number ---
+    absolute_episode = 0
+    # Sort seasons to ensure correct order
+    # Ensure keys are integers and handle potential non-integer keys from bad metadata
+    sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < season])
+    for s_num in sorted_seasons:
+        absolute_episode += season_episode_counts.get(s_num, 0)
+    absolute_episode += episode
+    logging.info(f"Calculated absolute episode number: {absolute_episode}")
+
+    # --- Determine Padding for Absolute Number ---
+    total_show_episodes = sum(season_episode_counts.values()) if season_episode_counts else 0
+    padding = 4 if total_show_episodes > 999 else 3
+    logging.info(f"Total show episodes: {total_show_episodes}, using padding: {padding}")
     
     # No leading zeros format (x)
     no_zeros_format = f"{episode}"
@@ -45,27 +60,32 @@ def convert_anime_episode_format(season: int, episode: int, total_episodes: int)
     regular_format = f"S{season:02d}E{episode:02d}"
     logging.info(f"Regular format: {regular_format}")
     
-    # Absolute episode format with E (EXXX)
-    absolute_episode = ((season - 1) * total_episodes) + episode
-    absolute_format_with_e = f"E{absolute_episode:03d}"
+    # Absolute episode format with E (EXXX or EXXXX)
+    absolute_format_with_e = f"E{absolute_episode:0{padding}d}"
     logging.info(f"Absolute format with E: {absolute_format_with_e}")
     
-    # Absolute episode format without E (XXX)
-    absolute_format = f"{absolute_episode:03d}"
+    # Absolute episode format without E (XXX or XXXX)
+    absolute_format = f"{absolute_episode:0{padding}d}"
     logging.info(f"Absolute format without E: {absolute_format}")
     
-    # Combined format (SXXEXXX)
-    combined_format = f"S{season:02d}E{absolute_episode:03d}"
+    # Combined format (SXXEXXX or SXXEXXXX)
+    combined_format = f"S{season:02d}E{absolute_episode:0{padding}d}"
     logging.info(f"Combined format: {combined_format}")
-
     
-    return {
+    formats = {
         'no_zeros': no_zeros_format,
         'regular': regular_format,
         'absolute_with_e': absolute_format_with_e,
         'absolute': absolute_format,
         'combined': combined_format
     }
+
+    # For very long running shows, also add a simple absolute episode search
+    # This helps catch formats like "One Piece 1071" vs "One Piece 01071"
+    if padding == 4:
+        formats['absolute_no_padding'] = str(absolute_episode)
+
+    return formats
 
 def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str, version: str, season: int = None, episode: int = None, multi: bool = False, genres: List[str] = None, skip_cache_check: bool = False, check_pack_wantedness: bool = False) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     from metadata.metadata import get_tmdb_id_and_media_type, get_metadata, get_media_country_code
@@ -141,13 +161,20 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         genres = filter_genres(genres)
         is_anime = genres and any('anime' in g.lower() for g in genres)
         episode_formats = None
-        if is_anime and content_type.lower() == 'episode' and season is not None and episode is not None:
+        if is_anime and content_type.lower() == 'episode' and season is not None:
+            # For season packs (multi=True), we don't have an episode number, but we need to generate
+            # formats to find the pack. We'll use episode 1 of the requested season as a proxy.
+            # For single episodes, the episode number will be present.
+            target_episode = episode if episode is not None else 1
+
             logging.info(f"Detected anime content: {title}")
             season_episode_counts = get_all_season_episode_counts(tmdb_id)
-            total_episodes = season_episode_counts.get(season, 13)  # Default to 13 if unknown
-            logging.info(f"Total episodes for season {season}: {total_episodes}")
-            episode_formats = convert_anime_episode_format(season, episode, total_episodes)
-            logging.info(f"Generated episode formats for anime: {episode_formats}")
+            episode_formats = convert_anime_episode_format(season, target_episode, season_episode_counts)
+            
+            if multi:
+                logging.info(f"Generated episode formats for anime season pack search (using E{target_episode}): {episode_formats}")
+            else:
+                logging.info(f"Generated episode formats for anime episode: {episode_formats}")
 
         # --- XEM Mapping Lookup ---
         target_air_date = None # Initialize target air date
@@ -520,7 +547,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 genres=genres,
                 episode_formats=episode_formats,
                 tmdb_id=tmdb_id,
-                is_translated_search=is_translated # Pass the flag here
+                is_translated_search=is_translated, # Pass the flag here
+                is_anime=is_anime # Pass the is_anime flag
             )
             task_timings['scraping'] = time.time() - task_start
             logging.debug(f"[_do_scrape] scraper_manager.scrape_all for '{search_title}' returned: {len(all_results)} raw items.")
@@ -585,6 +613,11 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 normalized_result['parsed_title'] = parsed_info.get('title', original_title)  # Store parsed title separately
                 normalized_result['resolution'] = parsed_info.get('resolution', 'Unknown')
                 normalized_result['parsed_info'] = parsed_info
+                # --- Pass through original target absolute episode (for anime XEM reverse look-up) ---
+                if episode_formats and isinstance(episode_formats, dict):
+                    abs_str = episode_formats.get('absolute_no_padding') or episode_formats.get('absolute')
+                    if abs_str and str(abs_str).isdigit():
+                        normalized_result['target_abs_episode'] = int(abs_str.lstrip('0') or '0')
                 if is_alias:
                     normalized_result['alias_country'] = alias_country
                 normalized_results.append(normalized_result)
@@ -628,23 +661,30 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         titles_to_try = []
         tried_titles_lower = set()
 
-        # Prioritize translated title if available and different
-        if translated_title and translated_title.lower() != title.lower():
-            logging.info(f"Prioritizing translated title: {translated_title}")
+        # 1. Add original title
+        logging.info(f"Adding original title for scraping: {title}")
+        titles_to_try.append(('original', title))
+        tried_titles_lower.add(title.lower())
+
+        # 2. Add translated title
+        if translated_title and translated_title.lower() not in tried_titles_lower:
+            logging.info(f"Adding translated title: {translated_title}")
             titles_to_try.append(('translated_title', translated_title))
             tried_titles_lower.add(translated_title.lower())
-        else:
-            # Use original title if no valid translated title
-            logging.info("Using original title for scraping.")
-            titles_to_try.append(('original', title))
-            tried_titles_lower.add(title.lower())
 
-            # Add preferred alias if not disabled, exists, and hasn't been tried
-            if not aliases_disabled and preferred_alias:
-                if preferred_alias.lower() not in tried_titles_lower:
-                    logging.info(f"Adding preferred alias: {preferred_alias}")
-                    titles_to_try.append(('preferred_alias', preferred_alias))
-                    tried_titles_lower.add(preferred_alias.lower())
+        # 3. Add preferred alias
+        if not aliases_disabled and preferred_alias and preferred_alias.lower() not in tried_titles_lower:
+            logging.info(f"Adding preferred alias: {preferred_alias}")
+            titles_to_try.append(('preferred_alias', preferred_alias))
+            tried_titles_lower.add(preferred_alias.lower())
+
+        # 4. Add all other matching country aliases
+        if not aliases_disabled and matching_aliases:
+            for alias in matching_aliases:
+                if alias.lower() not in tried_titles_lower:
+                    logging.info(f"Adding country alias: {alias}")
+                    titles_to_try.append(('country_alias', alias))
+                    tried_titles_lower.add(alias.lower())
 
         # Execute scraping based on the determined titles
         for source, search_title in titles_to_try:
@@ -686,64 +726,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             if filtered_out_results: # Ensure filtered_out_results is not None
                 all_filtered_out_results.extend(filtered_out_results)
             logging.debug(f"[scrape_main] After '{search_title}' scrape: all_filtered_results: {len(all_filtered_results)}, all_filtered_out_results: {len(all_filtered_out_results)}")
-
-        # If no results from first pass, try aliases
-        if not aliases_disabled and not all_filtered_results and matching_aliases:
-            logging.info("No results from first pass, trying aliases...")
-            best_alias = None
-            best_alias_results = []
-            
-            # Get the set of titles already tried to avoid retrying them as aliases
-            tried_titles_lower = {t.lower() for _, t in titles_to_try}
-
-            for alias in matching_aliases:
-                # Skip if this alias was already tried (original, preferred, or translated) or is same as original
-                if alias.lower() not in tried_titles_lower and alias.lower() != title.lower():
-                    logging.info(f"Trying alias: {alias}")
-                    filtered_results, filtered_out_results, task_timings = _do_scrape(
-                        search_title=alias,
-                        original_media_title=title, # Pass original title
-                        content_type=content_type,
-                        version=version,
-                        version_settings=version_settings,
-                        season=scene_season if xem_applied else original_season, # Pass final season used for scraping
-                        episode=scene_episode if xem_applied else original_episode, # Pass final episode used for scraping
-                        multi=multi,
-                        genres=genres,
-                        episode_formats=episode_formats,
-                        is_anime=is_anime,
-                        imdb_id_for_fallback=imdb_id,
-                        direct_api_instance=direct_api,
-                        is_alias=True,
-                        alias_country=media_country_code,
-                        preferred_language=preferred_language,
-                        translated_title=translated_title, # Always pass translation
-                        target_air_date=target_air_date, # Pass target_air_date here
-                        # Pass the determined scene mapping (or None) to _do_scrape
-                        scene_season_map=scene_season, 
-                        scene_episode_map=scene_episode,
-                        check_pack_wantedness=check_pack_wantedness # Pass parameter
-                    )
-                    logging.debug(f"[scrape_main] _do_scrape for alias '{alias}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
-                    
-                    if filtered_results and len(filtered_results) > len(best_alias_results):
-                        logging.info(f"New best alias found: {alias} with {len(filtered_results)} results")
-                        best_alias = alias
-                        best_alias_results = filtered_results
-                        if filtered_out_results: # Ensure filtered_out_results is not None
-                            all_filtered_out_results.extend(filtered_out_results)
-                        logging.debug(f"[scrape_main] After alias '{alias}' scrape: all_filtered_results (from best alias): {len(best_alias_results)}, all_filtered_out_results (cumulative): {len(all_filtered_out_results)}")
-
-            # If we found a better alias, update it as preferred and add its results
-            if best_alias and best_alias_results:
-                logging.info(f"Setting new preferred alias: {best_alias}")
-                # Ensure alias update function exists and handles None season
-                try:
-                    update_preferred_alias(tmdb_id, imdb_id, best_alias, content_type, scene_season if xem_applied else original_season)
-                except Exception as alias_update_err:
-                    logging.error(f"Error updating preferred alias: {alias_update_err}")
-                all_filtered_results.extend(best_alias_results)
-                logging.debug(f"[scrape_main] Extended with best alias results: all_filtered_results: {len(all_filtered_results)}")
 
         # Deduplicate final results while preserving order
         logging.debug(f"[scrape_main] Before final deduplication: all_filtered_results: {len(all_filtered_results)}")

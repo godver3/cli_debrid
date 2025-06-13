@@ -273,21 +273,86 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
             
     return None
 
-def fetch_items_from_trakt(endpoint: str, headers=None) -> List[Dict[str, Any]]:
-    """Fetch items from Trakt API"""
+def fetch_items_from_trakt(
+    endpoint: str,
+    headers: Dict[str, str] | None = None,
+    max_retries: int = 5,
+    initial_delay: int = DEFAULT_INITIAL_RETRY_DELAY,
+) -> List[Dict[str, Any]]:
+    """Fetch items from Trakt API with retry and exponential back-off.
+
+    Args:
+        endpoint: The Trakt API endpoint (e.g. "/search/imdb/tt1234567").
+        headers: Optional custom headers. Falls back to :func:`get_trakt_headers`.
+        max_retries: Maximum number of retry attempts before giving up.
+        initial_delay: Initial delay (seconds) for the exponential back-off.
+
+    Returns:
+        A list of dictionaries returned from the Trakt API, or an empty list
+        if all retry attempts fail.
+    """
+
     if headers is None:
         headers = get_trakt_headers()
-    
+
+    # If header retrieval failed, exit early.
+    if not headers:
+        return []
+
     url = f"{TRAKT_API_URL}{endpoint}"
     logging.debug(f"Fetching items from Trakt API: {url}")
-    
-    try:
-        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        logging.error(f"Error fetching items from Trakt API: {str(e)}")
-        return []
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+            # Detect HTML responses that sometimes appear instead of JSON
+            content_type = response.headers.get("content-type", "")
+            if "html" in content_type.lower():
+                raise ValueError("Received HTML response instead of JSON from Trakt API")
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.exceptions.HTTPError as http_err:
+            status_code = http_err.response.status_code if http_err.response else "N/A"
+
+            if status_code == 429:  # Too Many Requests – rate-limited
+                retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
+                delay = (
+                    retry_after
+                    if retry_after > 0
+                    else initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                )
+                logging.warning(
+                    f"Rate limit hit (429). Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}"
+                )
+
+            elif status_code in (502, 504):  # Temporary gateway issues
+                delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                logging.warning(
+                    f"Temporary Trakt API error {status_code}. Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}"
+                )
+
+            else:
+                logging.error(
+                    f"Unrecoverable HTTP error {status_code} when fetching items from Trakt API: {http_err}"
+                )
+                return []
+
+        except (requests.exceptions.RequestException, ValueError) as req_err:
+            # Network problem or unexpected content-type
+            delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+            logging.warning(
+                f"Request failed ({req_err}). Retrying in {delay:.2f} seconds. Attempt {attempt + 1}/{max_retries}"
+            )
+
+        # If this was the last attempt, break out of the loop; otherwise sleep and retry.
+        if attempt < max_retries - 1:
+            sleep(delay)
+
+    logging.error(f"Failed to fetch items from Trakt API after {max_retries} attempts: {url}")
+    return []
 
 def assign_media_type(item: Dict[str, Any]) -> str:
     if 'movie' in item:  # Item is a wrapper e.g. {"movie": {...}}

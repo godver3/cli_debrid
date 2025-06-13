@@ -9,7 +9,7 @@ from datetime import datetime # Added for strptime if needed, though arrow might
 
 from cli_battery.app.direct_api import DirectAPI
 from utilities.settings import load_config
-from database.database_reading import get_distinct_library_shows, get_collected_episodes_count
+from database.database_reading import get_distinct_library_shows, get_collected_episodes_count, get_collected_episode_numbers
 import logging
 from .models import admin_required # Import admin_required from models
 
@@ -141,30 +141,31 @@ def library_shows_overview_page():
 def get_library_show_details(imdb_id):
     """
     API endpoint to fetch detailed collection status for a single show.
+    This now includes finding the next missing episode for incomplete collections.
     """
     try:
         config = load_config()
         version_names = list(config.get('Scraping', {}).get('versions', {}).keys())
-        today = arrow.utcnow().date() # Get today's date
+        today = arrow.utcnow().date()
         logging.info(f"API: Called get_library_show_details for IMDb ID: {imdb_id}. Today's date: {today}")
 
-        # Fetch detailed metadata from DirectAPI (primarily for total episode count)
-        # Also get the title from DirectAPI to ensure it's the most up-to-date canonical one for details display
         metadata, source = DirectAPI.get_show_metadata(imdb_id)
         
         show_details = {
             "imdb_id": imdb_id,
-            "title": f"Details for IMDb: {imdb_id}", # Fallback title
+            "title": f"Details for IMDb: {imdb_id}",
             "error": None,
             "versions_details": [],
             "total_show_episodes": 0
         }
 
+        aired_episodes_list = [] # List of (season, episode) tuples
+
         if not metadata:
             logging.warning(f"API: Could not retrieve metadata via DirectAPI for IMDb ID: {imdb_id} in details endpoint.")
-            show_details["error"] = "Failed to load full metadata from API; total episode count may be inaccurate."
+            show_details["error"] = "Failed to load full metadata; total episode count may be inaccurate."
         else:
-            show_details["title"] = metadata.get('title', show_details["title"]) # Prefer API title for details
+            show_details["title"] = metadata.get('title', show_details["title"])
             total_episodes_from_api = 0
             seasons_map = metadata.get('seasons')
 
@@ -175,86 +176,90 @@ def get_library_show_details(imdb_id):
                         if isinstance(episodes_dict, dict):
                             for episode_id, episode_data in episodes_dict.items():
                                 if isinstance(episode_data, dict):
-                                    first_aired_str = episode_data.get('first_aired') # Use 'first_aired' from raw API output
+                                    first_aired_str = episode_data.get('first_aired')
                                     
-                                    parsed_episode_date_utc = None # Initialize
+                                    parsed_episode_date_utc = None
 
-                                    if first_aired_str and isinstance(first_aired_str, str): # Ensure it's a non-empty string
+                                    if first_aired_str and isinstance(first_aired_str, str):
                                         try:
                                             arrow_dt = None
-                                            # Attempt to parse with arrow.get.
-                                            # If first_aired_str is naive (no 'Z' or offset), arrow.get(naive_str) makes it local.
-                                            # We need to explicitly provide timezone for naive strings.
-                                            
-                                            # Try parsing as a full ISO string first. If it has offset, arrow.get() is fine.
                                             try:
                                                 dt_attempt = arrow.get(first_aired_str)
-                                                # Check if the parsed datetime is timezone-aware
                                                 if dt_attempt.tzinfo is not None and dt_attempt.tzinfo.utcoffset(dt_attempt) is not None:
-                                                    arrow_dt = dt_attempt # It was aware
+                                                    arrow_dt = dt_attempt
                                                 else:
-                                                    # It parsed but was naive (arrow made it local). This isn't what we want for source data.
-                                                    # Force re-interpretation with explicit timezone.
                                                     raise arrow.parser.ParserError("Handled as naive, needs explicit TZ")
                                             except arrow.parser.ParserError:
-                                                # This means it's either truly unparsable or a naive string that arrow.get() couldn't make aware automatically.
-                                                show_timezone_str = metadata.get('airs', {}).get('timezone') # e.g., 'Asia/Tokyo'
+                                                show_timezone_str = metadata.get('airs', {}).get('timezone')
                                                 
                                                 if show_timezone_str:
                                                     try:
                                                         arrow_dt = arrow.get(first_aired_str, show_timezone_str)
-                                                    except Exception as e_show_tz: # Catch if show_timezone_str is invalid or parse fails
+                                                    except Exception as e_show_tz:
                                                         logging.warning(f"Failed to parse '{first_aired_str}' with show_timezone '{show_timezone_str}': {e_show_tz}. Falling back to UTC assumption.")
-                                                        arrow_dt = arrow.get(first_aired_str, 'UTC') # Fallback: assume naive is UTC
+                                                        arrow_dt = arrow.get(first_aired_str, 'UTC')
                                                 else:
                                                     logging.warning(f"Show timezone missing for {imdb_id}. Assuming UTC for naive 'first_aired' string '{first_aired_str}'.")
-                                                    arrow_dt = arrow.get(first_aired_str, 'UTC') # Fallback: assume naive is UTC
+                                                    arrow_dt = arrow.get(first_aired_str, 'UTC')
                                             
                                             if arrow_dt:
                                                 parsed_episode_date_utc = arrow_dt.to('utc').date()
 
-                                        except arrow.parser.ParserError as ape:
-                                            logging.warning(f"API: Episode {imdb_id} S{season_number}E{episode_id} - Final Arrow ParserError for 'first_aired' string '{first_aired_str}': {ape}. Not counting.")
-                                        except ValueError as ve: # Catches strptime issues if arrow internally uses it or for other parsing logic
-                                            logging.warning(f"API: Episode {imdb_id} S{season_number}E{episode_id} - ValueError parsing 'first_aired' string '{first_aired_str}': {ve}. Not counting.")
-                                        except Exception as e_date: # Catch any other unexpected error during parsing
+                                        except (arrow.parser.ParserError, ValueError) as e_parse:
+                                            logging.warning(f"API: Episode {imdb_id} S{season_number}E{episode_id} - Could not parse 'first_aired' string '{first_aired_str}': {e_parse}. Not counting.")
+                                        except Exception as e_date:
                                             logging.error(f"API: Episode {imdb_id} S{season_number}E{episode_id} - Unexpected error processing 'first_aired' string '{first_aired_str}': {e_date}. Not counting.", exc_info=True)
                                     
                                     if parsed_episode_date_utc:
                                         if parsed_episode_date_utc <= today:
                                             total_episodes_from_api += 1
+                                            try:
+                                                s_num = int(season_number)
+                                                e_num = int(episode_id)
+                                                if s_num >= 0 and e_num >= 0:
+                                                    aired_episodes_list.append((s_num, e_num))
+                                            except ValueError:
+                                                logging.warning(f"Could not convert season '{season_number}' or episode '{episode_id}' to int for {imdb_id}.")
                                 else:
-                                    logging.warning(f"API: For IMDb ID {imdb_id}, Season {season_number}, episode data for E'{episode_id}' is not a dictionary (type: {type(episode_data)}). Cannot check release date. Not counting.")
-                        else:
-                            if episodes_dict is not None:
-                                logging.warning(f"API: For IMDb ID {imdb_id}, Season {season_number}, 'episodes' field is not a dictionary (type: {type(episodes_dict)}). Cannot count episodes for this season.")
-                            else:
-                                logging.warning(f"API: For IMDb ID {imdb_id}, Season {season_number}, 'episodes' field is missing. Cannot count episodes for this season.")
-                    else:
-                        logging.warning(f"API: For IMDb ID {imdb_id}, data for season {season_number} is not a dictionary (type: {type(season_data)}).")
+                                    logging.warning(f"API: For IMDb ID {imdb_id}, Season {season_number}, episode data for E'{episode_id}' is not a dictionary (type: {type(episode_data)}).")
+                        elif episodes_dict is not None:
+                            logging.warning(f"API: For IMDb ID {imdb_id}, Season {season_number}, 'episodes' field is not a dictionary (type: {type(episodes_dict)}).")
             elif seasons_map is not None:
                 logging.warning(f"API: For IMDb ID {imdb_id}, 'seasons' field is not a dictionary (type: {type(seasons_map)}).")
             else:
-                logging.warning(f"API: For IMDb ID {imdb_id}, 'seasons' field is missing. Total episodes will be 0 from API.")
+                logging.warning(f"API: For IMDb ID {imdb_id}, 'seasons' field is missing.")
             
             show_details["total_show_episodes"] = total_episodes_from_api
+            aired_episodes_list.sort() # Sorts by season, then episode
 
         current_versions_details = []
         total_episodes_for_status = show_details["total_show_episodes"]
 
         for version_name in version_names:
             collected_count = get_collected_episodes_count(imdb_id, version_name)
-            current_versions_details.append({
+            
+            version_detail = {
                 "name": version_name,
                 "collected_episodes": collected_count,
                 "total_episodes_for_version": total_episodes_for_status,
-                "status_text": f"{collected_count}/{total_episodes_for_status if total_episodes_for_status > 0 else 'N/A'}"
-            })
+                "status_text": f"{collected_count}/{total_episodes_for_status if total_episodes_for_status > 0 else 'N/A'}",
+                "next_missing": None
+            }
+
+            if total_episodes_for_status > 0 and collected_count < total_episodes_for_status:
+                collected_episodes_set = get_collected_episode_numbers(imdb_id, version_name)
+                
+                for season_num, episode_num in aired_episodes_list:
+                    if (season_num, episode_num) not in collected_episodes_set:
+                        version_detail["next_missing"] = {"season": season_num, "episode": episode_num}
+                        break # Found the first missing one for this version
+            
+            current_versions_details.append(version_detail)
+
         show_details["versions_details"] = current_versions_details
         
         return jsonify(show_details)
 
     except Exception as e:
         logging.error(f"Error fetching details for show {imdb_id}: {e}", exc_info=True)
-        # Ensure a 500 error response in case of unexpected failure
         return jsonify({"error": "An unexpected server error occurred", "imdb_id": imdb_id, "details": str(e)}), 500

@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 from routes.template_utils import render_settings, render_content_sources
 import json
-from routes.program_operation_routes import program_is_running, start_server
+from routes.program_operation_routes import program_is_running, start_server, get_program_status
 from sqlalchemy import inspect
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
@@ -49,7 +49,7 @@ register_blueprints(app)
 
 @app.context_processor
 def inject_program_status():
-    return dict(program_is_running=program_is_running)
+    return dict(program_is_running=program_is_running, get_program_status=get_program_status)
 
 @app.context_processor
 def inject_logo_selection():

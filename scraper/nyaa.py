@@ -192,7 +192,7 @@ def _scrape_nyaa_with_format(title: str, year: int, format_pattern: str, is_tran
     
     # Set up default settings
     settings = {
-        "categories": "1_2",  # Use anime category
+        "categories": "1_0",  # Use anime category (all subcategories)
         "filter": "0",
         "sort": "seeders",
         "order": "desc"
@@ -214,14 +214,14 @@ def scrape_nyaa(title: str, year: int, content_type: str = 'movie', season: Opti
     if content_type.lower() == 'episode' and tmdb_id:
         if multi:
             # For multi-episode requests, search for season packs instead of individual episodes
-            return scrape_nyaa_anime_season(title, year, season, tmdb_id, is_translated_search)
+            return scrape_nyaa_anime_season(title, year, season, tmdb_id, episode_formats, is_translated_search)
         elif episode_formats:
             # For single episode requests with format info
             return scrape_nyaa_anime_episode(title, year, season, episode, episode_formats, tmdb_id, is_translated_search)
     
     # Set up default settings
     settings = {
-        "categories": "1_2" if content_type.lower() == 'episode' else "1_0", # Default category based on content type
+        "categories": "1_0", # Default category to all anime
         "filter": "0",
         "sort": "seeders",
         "order": "desc"
@@ -239,18 +239,13 @@ def scrape_nyaa(title: str, year: int, content_type: str = 'movie', season: Opti
         logging.error(f"Error scraping Nyaa: {str(e)}")
         return []
 
-def scrape_nyaa_anime_season(title: str, year: int, season: int, tmdb_id: str, is_translated_search: bool = False) -> List[Dict[str, Any]]:
+def scrape_nyaa_anime_season(title: str, year: int, season: int, tmdb_id: str, episode_formats: Dict[str, str], is_translated_search: bool = False) -> List[Dict[str, Any]]:
     """Scrape Nyaa for anime season packs."""
     
-    # Instead of using specific season pack patterns, use episode format 1
-    # This will catch season packs that contain episode 1, and filtering will sort it out
-    episode_formats = {
-        'no_zeros': "1",
-        'regular': f"S{season:02d}E01",
-        'absolute_with_e': "E001",
-        'absolute': "001",
-        'combined': f"S{season:02d}E001"
-    }
+    # Use the passed episode_formats which are generated for the first episode of the season.
+    if not episode_formats:
+        logging.warning(f"No episode_formats provided for anime season search for '{title}' S{season}. Skipping.")
+        return []
     
     # Reuse the episode search logic but mark results as potential season packs
     all_results = []

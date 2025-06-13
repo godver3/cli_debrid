@@ -381,115 +381,117 @@ def mark_all_notifications_read():
 @base_bp.route('/api/task-stream')
 def task_stream():
     """Stream task updates. No caching for streaming endpoints."""
+    app = current_app._get_current_object()
     def generate():
         while True:
-            try:
-                program_runner = get_program_runner()
-                tz = program_runner.scheduler.timezone if program_runner and hasattr(program_runner, 'scheduler') else pytz.utc
-                current_time_dt = datetime.now(tz)
+            with app.app_context():
+                try:
+                    program_runner = get_program_runner()
+                    tz = program_runner.scheduler.timezone if program_runner and program_runner.scheduler else pytz.utc
+                    current_time_dt = datetime.now(tz)
 
-                # Renamed to reflect its purpose before filtering
-                potential_running_task_ids = []
-                ui_visible_running_tasks_list = [] # This will be sent to UI
+                    # Renamed to reflect its purpose before filtering
+                    potential_running_task_ids = []
+                    ui_visible_running_tasks_list = [] # This will be sent to UI
 
-                is_paused = False
-                pause_info_to_send = {
-                    "reason_string": None, "error_type": None, "service_name": None,
-                    "status_code": None, "retry_count": 0
-                }
-                tasks_info = []
-                program_running_state = False
-                
-                # Get current monotonic time ONCE for consistent check across tasks in this iteration
-                current_monotonic_now = time.monotonic()
+                    is_paused = False
+                    pause_info_to_send = {
+                        "reason_string": None, "error_type": None, "service_name": None,
+                        "status_code": None, "retry_count": 0
+                    }
+                    tasks_info = []
+                    program_running_state = False
+                    
+                    # Get current monotonic time ONCE for consistent check across tasks in this iteration
+                    current_monotonic_now = time.monotonic()
 
-                if program_runner is not None:
-                    program_running_state = program_runner.is_running()
+                    if program_runner is not None:
+                        program_running_state = program_runner.is_running()
 
-                    # Get all actually running task IDs and their start times
-                    potential_running_tasks_with_starts = {}
-                    try:
-                        # Atomically get the set of currently running task IDs
-                        with program_runner._running_task_lock:
-                            current_task_ids_snapshot = list(program_runner.currently_executing_tasks)
+                        # Get all actually running task IDs and their start times
+                        potential_running_tasks_with_starts = {}
+                        try:
+                            # Atomically get the set of currently running task IDs
+                            with program_runner._running_task_lock:
+                                current_task_ids_snapshot = list(program_runner.currently_executing_tasks)
+                            
+                            # Atomically get their start times
+                            with program_runner._executing_task_start_times_lock:
+                                for task_id in current_task_ids_snapshot:
+                                    if task_id in program_runner.executing_task_start_times:
+                                        potential_running_tasks_with_starts[task_id] = program_runner.executing_task_start_times[task_id]
+                                    else:
+                                        logging.warning(f"Task '{task_id}' in currently_executing_tasks but missing from executing_task_start_times. Won't be shown as running this cycle.")
                         
-                        # Atomically get their start times
-                        with program_runner._executing_task_start_times_lock:
-                            for task_id in current_task_ids_snapshot:
-                                if task_id in program_runner.executing_task_start_times:
-                                    potential_running_tasks_with_starts[task_id] = program_runner.executing_task_start_times[task_id]
-                                else:
-                                    logging.warning(f"Task '{task_id}' in currently_executing_tasks but missing from executing_task_start_times. Won't be shown as running this cycle.")
-                    
-                    except Exception as read_err:
-                         logging.error(f"Error reading running task data for UI stifling: {read_err}", exc_info=True)
-                         # potential_running_tasks_with_starts remains empty
+                        except Exception as read_err:
+                             logging.error(f"Error reading running task data for UI stifling: {read_err}", exc_info=True)
+                             # potential_running_tasks_with_starts remains empty
 
-                    # Filter tasks based on duration for UI display
-                    for task_id, start_time_monotonic in potential_running_tasks_with_starts.items():
-                        duration_monotonic = current_monotonic_now - start_time_monotonic
-                        if duration_monotonic >= 0.1:  # Stifle period of 1 second
-                            ui_visible_running_tasks_list.append(task_id)
-                        else:
-                            # This logging can be verbose if many short tasks run
-                            logging.debug(f"Task '{task_id}' running for {duration_monotonic:.3f}s, stifled from UI display.")
-                    
-                    # Get pause state
-                    is_paused = program_runner.queue_paused
-                    if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
-                        pause_info_to_send = program_runner.pause_info.copy()
+                        # Filter tasks based on duration for UI display
+                        for task_id, start_time_monotonic in potential_running_tasks_with_starts.items():
+                            duration_monotonic = current_monotonic_now - start_time_monotonic
+                            if duration_monotonic >= 0.1:  # Stifle period of 1 second
+                                ui_visible_running_tasks_list.append(task_id)
+                            else:
+                                # This logging can be verbose if many short tasks run
+                                logging.debug(f"Task '{task_id}' running for {duration_monotonic:.3f}s, stifled from UI display.")
+                        
+                        # Get pause state
+                        is_paused = program_runner.queue_paused
+                        if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
+                            pause_info_to_send = program_runner.pause_info.copy()
 
-                    # Get scheduled task list (this part remains the same)
-                    if program_running_state and hasattr(program_runner, 'scheduler'):
-                        with program_runner.scheduler_lock:
-                            jobs = program_runner.scheduler.get_jobs()
-                            for job in jobs:
-                                interval = None
-                                if isinstance(job.trigger, IntervalTrigger):
-                                    interval = job.trigger.interval.total_seconds()
+                        # Get scheduled task list (this part remains the same)
+                        if program_running_state and program_runner.scheduler:
+                            with program_runner.scheduler_lock:
+                                jobs = program_runner.scheduler.get_jobs()
+                                for job in jobs:
+                                    interval = None
+                                    if isinstance(job.trigger, IntervalTrigger):
+                                        interval = job.trigger.interval.total_seconds()
 
-                                if interval is not None and interval < 150: # Skip tasks with interval < 150 seconds
-                                    continue
+                                    if interval is not None and interval < 150: # Skip tasks with interval < 150 seconds
+                                        continue
 
-                                next_run_timestamp = None
-                                if job.next_run_time:
-                                    next_run_aware = job.next_run_time.astimezone(tz)
-                                    next_run_timestamp = next_run_aware.timestamp()
+                                    next_run_timestamp = None
+                                    if job.next_run_time:
+                                        next_run_aware = job.next_run_time.astimezone(tz)
+                                        next_run_timestamp = next_run_aware.timestamp()
 
-                                enabled = job.next_run_time is not None
+                                    enabled = job.next_run_time is not None
 
-                                time_until_next = None
-                                if enabled and next_run_timestamp:
-                                    time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
+                                    time_until_next = None
+                                    if enabled and next_run_timestamp:
+                                        time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
 
-                                tasks_info.append({
-                                    'name': job.id,
-                                    'next_run': time_until_next,
-                                    'next_run_timestamp': next_run_timestamp,
-                                    'interval': interval,
-                                    'enabled': enabled,
-                                })
-                        tasks_info.sort(key=lambda x: x['name'])
+                                    tasks_info.append({
+                                        'name': job.id,
+                                        'next_run': time_until_next,
+                                        'next_run_timestamp': next_run_timestamp,
+                                        'interval': interval,
+                                        'enabled': enabled,
+                                    })
+                            tasks_info.sort(key=lambda x: x['name'])
 
-                # Construct the data payload using the new filtered list for running tasks
-                data = {
-                    'success': True,
-                    'running': program_running_state,
-                    'tasks': tasks_info,
-                    'paused': is_paused,
-                    'pause_info': pause_info_to_send,
-                    'running_tasks_list': ui_visible_running_tasks_list # Use the filtered list
-                }
+                    # Construct the data payload using the new filtered list for running tasks
+                    data = {
+                        'success': True,
+                        'running': program_running_state,
+                        'tasks': tasks_info,
+                        'paused': is_paused,
+                        'pause_info': pause_info_to_send,
+                        'running_tasks_list': ui_visible_running_tasks_list # Use the filtered list
+                    }
 
-                yield f"data: {json.dumps(data, default=str)}\n\n"
+                    yield f"data: {json.dumps(data, default=str)}\n\n"
 
-            except Exception as e:
-                logging.error(f"Error in task stream generate loop: {str(e)}", exc_info=True)
-                default_error_pause_info = {
-                    "reason_string": "Error in task stream.", "error_type": "STREAM_ERROR", 
-                    "service_name": "System", "status_code": None, "retry_count": 0
-                }
-                yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_info': default_error_pause_info, 'running_tasks_list': [], 'error': str(e)})}\n\n" # Send empty list on error
+                except Exception as e:
+                    logging.error(f"Error in task stream generate loop: {str(e)}", exc_info=True)
+                    default_error_pause_info = {
+                        "reason_string": "Error in task stream.", "error_type": "STREAM_ERROR", 
+                        "service_name": "System", "status_code": None, "retry_count": 0
+                    }
+                    yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_info': default_error_pause_info, 'running_tasks_list': [], 'error': str(e)})}\n\n" # Send empty list on error
 
             time.sleep(1) # Stream updates every 1 second
 

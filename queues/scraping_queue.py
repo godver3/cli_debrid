@@ -231,6 +231,34 @@ class ScrapingQueue:
             if str(item_id_being_processed) == DEBUG_ITEM_ID:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Checking alternate scrape window. Item date: {item_to_process.get('release_date')}, Airtime: {item_to_process.get('airtime')}")
                 pass
+            
+            # NEW: Check physical release requirement before alternate scrape window logic
+            # This prevents items with future physical release dates from bouncing between queues
+            scraping_versions = get_setting('Scraping', 'versions', {})
+            version_settings = scraping_versions.get(item_to_process.get('version', ''), {})
+            require_physical = version_settings.get('require_physical_release', False)
+            is_magnet_assigned = item_to_process.get('content_source') == 'Magnet_Assigner'
+            
+            if not is_magnet_assigned and item_to_process.get('type') == 'movie' and require_physical:
+                physical_release_date = item_to_process.get('physical_release_date')
+                if physical_release_date:
+                    try:
+                        physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
+                        if physical_date > today:
+                            if str(item_id_being_processed) == DEBUG_ITEM_ID:
+                                # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Has future physical release date ({physical_date}). Moving to Wanted regardless of alternate scrape window.")
+                                pass
+                            logging.info(f"Movie {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
+                            queue_manager.move_to_wanted(item_to_process, "Scraping")
+                            self.remove_item(item_to_process)
+                            return True
+                    except ValueError:
+                        logging.warning(f"Invalid physical release date format for movie {item_identifier}: {physical_release_date}")
+                        # Continue with normal processing if date format is invalid
+                        pass
+                # If no physical date or physical date has passed, continue with alternate scrape window check
+            
+            # Now check alternate scrape window (only if physical release check passed)
             alt_scrape_check_result = self._is_within_alternate_scrape_window(item_to_process, datetime.now())
             if not alt_scrape_check_result:
                 if str(item_id_being_processed) == DEBUG_ITEM_ID:
@@ -309,23 +337,15 @@ class ScrapingQueue:
                 # Proceed only if the item wasn't immediately moved back to Wanted
                 if not processed_successfully_or_moved:
                     try:
-                        # --- Physical Release Check (always runs for movies that require it) ---
+                        # --- Physical Release Check is now handled earlier before alternate scrape window ---
+                        # Only need to handle missing physical release date case here
                         scraping_versions = get_setting('Scraping', 'versions', {})
                         version_settings = scraping_versions.get(item_to_process.get('version', ''), {})
                         require_physical = version_settings.get('require_physical_release', False)
 
                         if not is_magnet_assigned and item_to_process.get('type') == 'movie' and require_physical:
                             physical_release_date = item_to_process.get('physical_release_date')
-                            if physical_release_date:
-                                try:
-                                    physical_date = datetime.strptime(physical_release_date, '%Y-%m-%d').date()
-                                    if physical_date > today:
-                                        logging.info(f"Movie {item_identifier} has a future physical release date ({physical_date}). Moving back to Wanted queue.")
-                                        queue_manager.move_to_wanted(item_to_process, "Scraping")
-                                        processed_successfully_or_moved = True
-                                except ValueError:
-                                    logging.warning(f"Invalid physical release date format for movie {item_identifier}: {physical_release_date}")
-                            else: # No physical date available
+                            if not physical_release_date:  # Only check for missing physical date
                                 logging.info(f"Movie {item_identifier} requires physical release but no date available. Moving back to Wanted queue.")
                                 queue_manager.move_to_wanted(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
@@ -569,6 +589,12 @@ class ScrapingQueue:
                             else:
                                 airtime = datetime.strptime("00:00", '%H:%M').time()
                             release_datetime = datetime.combine(release_date, airtime)
+                            
+                            # If a movie has no specific airtime, shift the base release time to the start of the next day.
+                            # The user-defined offset will then be applied to this adjusted time.
+                            if item_to_process.get('type') == 'movie' and not airtime_str:
+                                release_datetime += timedelta(days=1)
+
                             # Apply offset based on type
                             offset_hours = 0.0
                             if item_to_process.get('type') == 'movie':

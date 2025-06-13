@@ -44,8 +44,8 @@ def get_wanted_from_collected() -> List[Tuple[List[Dict[str, Any]], Dict[str, bo
     for source in collected_sources:
         versions = source.get('versions', {})
 
-        wanted_items = get_all_media_items(state="Wanted", media_type="episode")
-        collected_items = get_all_media_items(state="Collected", media_type="episode")
+        wanted_items = list(get_all_media_items(state="Wanted", media_type="episode"))
+        collected_items = list(get_all_media_items(state="Collected", media_type="episode"))
         
         all_items = wanted_items + collected_items
         consolidated_items = {}

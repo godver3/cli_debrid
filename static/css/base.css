@@ -189,6 +189,15 @@ nav ul li a:hover::after {
 .version-info {
     font-size: 0.8em;
     color: #888;
+    text-decoration: none; /* Remove underline for link */
+}
+
+.version-info:hover {
+    text-decoration: none; /* Ensure no underline on hover */
+}
+
+.support-icon-link.discord:hover {
+    color: #5865F2; /* Discord brand color */
 }
 
 /* Hamburger menu styles */
@@ -248,13 +257,24 @@ nav ul li a:hover::after {
     background-color: #f44336;
 }
 
+#programControlButton.starting-program {
+    background-color: #007bff;
+    cursor: not-allowed;
+}
+
+#programControlButton.stopping-program {
+    background-color: #ffc107;
+    color: #212529;
+    cursor: not-allowed;
+}
+
 .action-controls .icon-button:hover, .start-program:hover {
     opacity: 0.9;
 }
 
 /* Database table styles */
 .table-container {
-    overflow-x: auto;
+     overflow-x: auto;
     margin-top: 20px;
 }
 
@@ -545,6 +565,16 @@ tr:hover {
         background-color: #bd2130;
     }
 
+    #programControlButton.starting-program {
+        background-color: #007bff;
+        border-color: #007bff;
+    }
+
+    #programControlButton.stopping-program {
+        background-color: #ffc107;
+        border-color: #ffc107;
+    }
+
     .action-controls .icon-button:active,
     .action-controls .start-program:active,
     .action-controls #programControlButton:active {
@@ -623,6 +653,20 @@ tr:hover {
         background-color: #bd2130;
     }
 
+    #programControlButton.starting-program {
+        background-color: #007bff;
+        border: 1px solid #007bff;
+    }
+
+    #programControlButton.stopping-program {
+        background-color: #ffc107;
+        border: 1px solid #ffc107;
+        color: #212529;
+    }
+    #programControlButton.stopping-program:hover {
+        background-color: #ffc107;
+    }
+
     .button-text {
         display: inline;
         margin-left: 8px;
@@ -641,6 +685,11 @@ tr:hover {
     .action-controls #programControlButton i {
         margin-right: 0;
         color: white;
+    }
+
+    #programControlButton.stopping-program i,
+    #programControlButton.stopping-program .button-text {
+        color: #212529;
     }
 
     .action-controls {
@@ -982,6 +1031,7 @@ h2 {
 /* Mobile-specific styles */
 @media (max-width: 1045px) {
     .task-monitor-container {
+        position: fixed; /* Explicitly set for mobile to ensure anchoring */
         /* Override desktop positioning */
         top: auto;
         bottom: 0;
@@ -1467,6 +1517,7 @@ h2 {
 
 @media (max-width: 1045px) {
     .task-monitor-container {
+        position: fixed; /* Explicitly set for mobile to ensure anchoring */
         /* Override desktop positioning */
         top: auto;
         bottom: 0;
@@ -2719,5 +2770,127 @@ body.modal-open {
 
     .task-monitor-container.visible + .task-monitor-toggle {
         bottom: 95px;
+    }
+}
+
+/* --- START EDIT: Provide additional bottom padding when task monitor is visible on mobile --- */
+@media (max-width: 1045px) and (display-mode: standalone) {
+    body.has-bottom-overlay {
+        padding-bottom: 70px; /* Prevent content from being covered by task monitor */
+    }
+}
+
+@media (max-width: 1045px) {
+    body.has-bottom-overlay {
+        padding-bottom: 60px; /* Prevent content from being covered by task monitor */
+    }
+}
+/* --- END EDIT --- */
+
+/* --- Version '666' Easter Egg --- */
+@keyframes redStrobe {
+    0%   { color: #aaa; text-shadow: 0 0 1px transparent; }
+    50%  { color: #ff0000; text-shadow: 0 0 8px #ff0000; }
+    100% { color: #aaa; text-shadow: 0 0 1px transparent; }
+}
+
+@keyframes bloodDripFall {
+    /* Idle period */
+    0%   { height: 0; opacity: 0; transform: translateY(0); }
+    70%  { height: 0; opacity: 0; transform: translateY(0); }
+    /* Drop starts */
+    75%  { height: 6px; opacity: 1; transform: translateY(0); }
+    95%  { height: 6px; opacity: 1; transform: translateY(14px); }
+    /* Fade & reset */
+    100% { height: 0; opacity: 0; transform: translateY(14px); }
+}
+
+.version-evil {
+    position: relative;
+    animation: redStrobe 3s ease-in-out infinite;
+}
+
+.version-evil::before,
+.version-evil::after {
+    content: '';
+    position: absolute;
+    top: 100%; /* Start exactly at the bottom of the text */
+    width: 3px;
+    height: 0;
+    background: #b30000;
+    border-radius: 50%;
+    animation: bloodDripFall var(--drip-duration, 1.5s) infinite ease-in-out;
+    transform-origin: top;
+}
+
+.version-evil::before { animation-delay: var(--drip-delay1, 0s); left: 30%; }
+.version-evil::after  { animation-delay: var(--drip-delay2, 3s); left: 60%; }
+
+/* Button to disable evil version */
+.disable-evil-btn {
+    margin-left: 6px;
+    background: #550000;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    font-size: 0.8em;
+    padding: 2px 6px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    pointer-events: auto;
+    position: relative;
+    z-index: 1050; /* sit above anchor */
+}
+.disable-evil-btn:hover {
+    background: #770000;
+}
+
+@media (max-width: 1045px) {
+    .disable-evil-btn {
+        padding: 6px 10px;
+        font-size: 1em;
+        border-radius: 5px;
+    }
+}
+
+/* -------------------------------------------------------------------
+   Mobile fix – make sure the task-monitor stays pinned to the bottom
+   of the visual viewport even when the browser chrome hides / shows
+   ------------------------------------------------------------------- */
+@media (max-width: 1045px) {
+    /* Always stick the whole container to the very bottom */
+    .task-monitor-container {
+        position: fixed !important;        /* override any earlier rule */
+        top: auto !important;              /* neutralise desktop value */
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 0px) !important;
+        left: 0;
+        right: 0;
+    }
+
+    /* Toggle button – keep its offsets in sync with the container */
+    .task-monitor-toggle {
+        bottom: calc(25px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+
+    .task-monitor-container.visible + .task-monitor-toggle {
+        bottom: calc(55px + env(safe-area-inset-bottom, 0px)) !important;
+    }
+}
+
+/* -------------------------------------------------------------------
+   Stand-alone (PWA) iOS fix – bump everything up so it clears the
+   home-indicator area and the rounded screen corners.
+   ------------------------------------------------------------------- */
+@media all and (display-mode: standalone) and (max-width: 1045px) {
+    .task-monitor-container {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 40px) !important; /* previous 40px gap retained */
+    }
+
+    .task-monitor-toggle {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 45px) !important;
+    }
+
+    .task-monitor-container.visible + .task-monitor-toggle {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 95px) !important;
     }
 }
