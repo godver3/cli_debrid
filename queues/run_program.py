@@ -254,7 +254,7 @@ class ProgramRunner:
             'task_update_statistics_summary': 300, # Run every 5 minutes
             'task_refresh_download_stats': 300,    # Run every 5 minutes
             'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
-            'task_verify_symlinked_files': 1800,    # Run every 30 minutes (if enabled)
+            'task_verify_symlinked_files': 7200,    # Run every 120 minutes (if enabled)
             'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled)
             'task_reconcile_queues': 3600,         # Run every 1 hour
             'task_check_database_health': 3600,    # Run every hour

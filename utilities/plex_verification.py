@@ -334,10 +334,19 @@ def run_plex_verification_scan(max_files: int = 500, recent_only: bool = False, 
                 # Log details before attempting update
                 file_type = file_data.get('type', 'unknown')
                 base_filename = os.path.basename(file_data['full_path'])
+
                 if file_type == 'movie':
-                    logger.info(f"Attempting Plex directory scan for failed movie verification: {file_data['title']} - {base_filename}")
+                    # Movie-specific logging
+                    logger.info(
+                        f"Attempting Plex directory scan for failed movie verification: {file_data['title']} - {base_filename}"
+                    )
                 else:  # TV show
-                    logger.info(f"Attempting Plex directory scan for failed episode verification: {file_data['title']} - S{season_num}E{episode_num} - {file_data.get('episode_title', 'unknown')} - {base_filename}")
+                    # Extract season/episode for detailed logging; default to 'unknown' if missing
+                    season_num = file_data.get('season_number', 'unknown')
+                    episode_num = file_data.get('episode_number', 'unknown')
+                    logger.info(
+                        f"Attempting Plex directory scan for failed episode verification: {file_data['title']} - S{season_num}E{episode_num} - {file_data.get('episode_title', 'unknown')} - {base_filename}"
+                    )
 
                 # Prepare item data for plex_update_item (needs 'full_path' or similar)
                 item_for_update = {'full_path': file_data['full_path'], 'title': file_data['title']}
