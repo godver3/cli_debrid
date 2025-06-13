@@ -99,6 +99,7 @@ from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
+from collections import defaultdict  # Added alongside deque above for runtime tracking
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -148,7 +149,8 @@ class ProgramRunner:
             }
             job_defaults = {
                 'coalesce': True, # If multiple runs are missed, only run once
-                'max_instances': 1 # Already part of individual job scheduling, but good to have as default
+                'max_instances': 1, # Already part of individual job scheduling, but good to have as default
+                'misfire_grace_time': None  # Allow jobs to run no matter how late
             }
             self.scheduler = BackgroundScheduler(executors=executors, job_defaults=job_defaults, timezone=tz)
             logging.info("APScheduler configured with a single worker thread for sequential job execution.")
@@ -161,7 +163,8 @@ class ProgramRunner:
             }
             job_defaults = {
                 'coalesce': True,
-                'max_instances': 1
+                'max_instances': 1,
+                'misfire_grace_time': None  # Allow jobs to run no matter how late
             }
             self.scheduler = BackgroundScheduler(executors=executors, job_defaults=job_defaults) # Fallback to default timezone
             logging.info("APScheduler configured with a single worker thread for sequential job execution (using system default timezone).")
@@ -749,6 +752,12 @@ class ProgramRunner:
         # In __init__, add:
         self.manual_tasks = set()  # Track manually triggered tasks
         self._initialized_runner_attributes = True # Mark as initialized at the end of actual init logic
+        # --- START EDIT: Runtime tracking attributes ---
+        self.task_runtime_totals = defaultdict(float)  # Accumulated runtime per task in current window
+        self.task_runtime_lock = threading.Lock()  # Protect access to task_runtime_totals
+        self._runtime_log_interval_sec = 300  # How often to emit runtime percentage report (seconds)
+        self._last_runtime_log_time = time.monotonic()
+        # --- END EDIT ---
 
     # *** START EDIT: New method to get task target ***
     def _get_task_target(self, task_name: str):
@@ -852,7 +861,7 @@ class ProgramRunner:
                             id=job_id,
                             name=job_id,
                             replace_existing=True,
-                            misfire_grace_time=max(60, interval_seconds // 4),
+                            misfire_grace_time=None,  # No grace limit – run even if very late
                             # *** START EDIT: Allow 1 concurrent instance ***
                             max_instances=1,
                             # *** END EDIT ***
@@ -4254,6 +4263,9 @@ class ProgramRunner:
             # Execute the original task function
             func(*args, **kwargs)
             duration = time.monotonic() - start_time # Measure duration regardless
+            # --- START EDIT: Record runtime on successful completion ---
+            self._record_task_runtime(task_name_for_logging, duration)
+            # --- END EDIT ---
 
             # Get memory usage after and log delta if sampling this execution
             # Check available again just before use
@@ -4297,6 +4309,9 @@ class ProgramRunner:
         except Exception as e:
             duration = time.monotonic() - start_time
             logging.error(f"Error during execution of job '{log_display_name}': {e}", exc_info=True)
+            # --- START EDIT: Record runtime even on error ---
+            self._record_task_runtime(task_name_for_logging, duration)
+            # --- END EDIT ---
 
             # Log memory even on error if sampling this execution
             # Check available again just before use
@@ -4557,6 +4572,29 @@ class ProgramRunner:
             logging.info("[Fail-safe] Queue forcibly resumed by watchdog. Services may still be unavailable.")
         except Exception as e:
             logging.error(f"Error in fail-safe resume logic: {e}", exc_info=True)
+
+    def _record_task_runtime(self, task_name: str, duration_seconds: float):
+        """Accumulate runtime and periodically log per-task percentage."""
+        now = time.monotonic()
+        with self.task_runtime_lock:
+            self.task_runtime_totals[task_name] += duration_seconds
+            if now - self._last_runtime_log_time >= self._runtime_log_interval_sec:
+                self._emit_task_runtime_report_locked(now)
+
+    def _emit_task_runtime_report_locked(self, now: float):
+        """Assumes task_runtime_lock held. Emits report and resets counters."""
+        if not self.task_runtime_totals:
+            self._last_runtime_log_time = now
+            return
+        total = sum(self.task_runtime_totals.values())
+        if total <= 0:
+            self.task_runtime_totals.clear()
+            self._last_runtime_log_time = now
+            return
+        parts = [f"{t}={v / total * 100:.1f} %" for t, v in sorted(self.task_runtime_totals.items(), key=lambda x: x[1], reverse=True)]
+        logging.info(f"[RUNTIME] Last {self._runtime_log_interval_sec} s: "+", ".join(parts)+f"  (total={total:.1f} s)")
+        self.task_runtime_totals.clear()
+        self._last_runtime_log_time = now
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

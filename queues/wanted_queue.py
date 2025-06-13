@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime, timedelta, date, time as dt_time
 from typing import Dict, Any, List
+import time
 
 from utilities.settings import get_setting
 from database.manual_blacklist import is_blacklisted
@@ -310,6 +311,8 @@ class WantedQueue:
         return new_idx
 
     def process(self, queue_manager):
+        # --- TIMING START ---
+        start_time = time.perf_counter()
         processed_candidates_count = 0
         moved_to_scraping_count = 0
         moved_to_unreleased_count = 0 
@@ -318,7 +321,10 @@ class WantedQueue:
         try:
             # 0. Move manually blacklisted items first
             try:
+                blacklist_start_time = time.perf_counter()
                 blacklisted_count = self.move_blacklisted_items()
+                blacklist_elapsed = time.perf_counter() - blacklist_start_time
+                logging.debug(f"[Timing] move_blacklisted_items() elapsed: {blacklist_elapsed:.3f}s, moved {blacklisted_count} items.")
                 # Optional: logging.info(f"Processed manual blacklist, {blacklisted_count} items moved.")
             except Exception as e_blacklist:
                 logging.error(f"Error moving manually blacklisted items: {e_blacklist}", exc_info=True)
@@ -400,7 +406,12 @@ class WantedQueue:
                 # If current scraping queue is already at or above the hard throttle limit for Wanted, stop.
                 # This check now correctly reflects any forced items that were just added.
                 if current_scraping_queue_size >= WANTED_THROTTLE_SCRAPING_SIZE:
-                    logging.info(f"Scraping queue size ({current_scraping_queue_size}) meets or exceeds WANTED_THROTTLE_SCRAPING_SIZE ({WANTED_THROTTLE_SCRAPING_SIZE}). Pausing Wanted processing.")
+                    elapsed = time.perf_counter() - start_time
+                    logging.info(
+                        f"Scraping queue size ({current_scraping_queue_size}) meets or exceeds "
+                        f"WANTED_THROTTLE_SCRAPING_SIZE ({WANTED_THROTTLE_SCRAPING_SIZE}). Pausing Wanted processing. "
+                        f"[Timing elapsed: {elapsed:.3f}s]"
+                    )
                     return True # Stop processing more items from Wanted
 
                 # Calculate how many more items we are allowed to add to scraping from the regular wanted pool
@@ -632,8 +643,14 @@ class WantedQueue:
             logging.error(f"Fatal error in wanted queue processing: {str(e)}", exc_info=True)
             return False
         finally:
-            # logging.info("WantedQueue process cycle ended.")
-            pass
+            total_elapsed = time.perf_counter() - start_time
+            logging.debug(
+                f"[Timing] WantedQueue.process total elapsed: {total_elapsed:.3f}s | "
+                f"Candidates evaluated: {processed_candidates_count}, "
+                f"Moved to Scraping: {moved_to_scraping_count}, "
+                f"Moved to Unreleased: {moved_to_unreleased_count}, "
+                f"Forced moved: {forced_items_moved_count}"
+            )
         return True
 
     def move_blacklisted_items(self):

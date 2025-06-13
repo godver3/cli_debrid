@@ -659,6 +659,9 @@
 
             // Update the notification indicator (red dot)
             function updateNotificationIndicator() {
+                // Safeguard: if the button isn't present (e.g., on the login page), skip any DOM manipulation
+                if (!notificationsBtn) return;
+
                 const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
                 // Indicator should only show if notifications are enabled AND there are unread ones
                 const hasUnread = !notificationsDisabled && notifications.some(n => !n.read);
@@ -699,12 +702,14 @@
                 }
             }
 
-            // Modal controls
-            notificationsBtn.addEventListener('click', function() {
-                notificationsModal.style.display = 'block';
-                document.body.classList.add('modal-open'); // Add class to body
-                fetchNotifications(); // Refresh notifications when opening modal
-            });
+            // Modal controls (only if the notifications button exists on this page)
+            if (notificationsBtn) {
+                notificationsBtn.addEventListener('click', function() {
+                    notificationsModal.style.display = 'block';
+                    document.body.classList.add('modal-open'); // Add class to body
+                    fetchNotifications(); // Refresh notifications when opening modal
+                });
+            }
 
             notificationsCloseBtn.addEventListener('click', function() {
                 notificationsModal.style.display = 'none';
