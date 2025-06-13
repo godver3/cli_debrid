@@ -164,11 +164,40 @@ def filter_results(
             if parsed_info.get('documentary', False):
                 normalized_result_title = f"{normalized_result_title} documentary"
             
-            # Calculate similarities using token_set_ratio for better matching of titles with extra info
-            main_title_sim = fuzz.token_set_ratio(normalized_result_title, normalized_query_title) / 100.0
-            alias_similarities = [fuzz.token_set_ratio(normalized_result_title, alias) / 100.0 for alias in normalized_aliases]
+            # Calculate similarities using a blended approach for better accuracy.
+            # We combine a lenient check on the full title with a stricter check on the parsed title.
+            parsed_title_str = parsed_info.get('title', '')
+            normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
+
+            # --- Main Title Similarity ---
+            main_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_query_title) / 100.0
+            if normalized_parsed_title:
+                main_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_query_title) / 100.0
+                main_title_sim = (main_sim_set + main_sim_sort) / 2.0
+            else:
+                main_title_sim = main_sim_set
+
+            # --- Alias Similarities ---
+            alias_similarities = []
+            if normalized_aliases:
+                for alias in normalized_aliases:
+                    alias_sim_set = fuzz.token_set_ratio(normalized_result_title, alias) / 100.0
+                    if normalized_parsed_title:
+                        alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, alias) / 100.0
+                        alias_similarities.append((alias_sim_set + alias_sim_sort) / 2.0)
+                    else:
+                        alias_similarities.append(alias_sim_set)
             best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
-            translated_title_sim = fuzz.token_set_ratio(normalized_result_title, normalized_translated_title) / 100.0 if normalized_translated_title else 0.0
+
+            # --- Translated Title Similarity ---
+            translated_title_sim = 0.0
+            if normalized_translated_title:
+                trans_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_translated_title) / 100.0
+                if normalized_parsed_title:
+                    trans_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_translated_title) / 100.0
+                    translated_title_sim = (trans_sim_set + trans_sim_sort) / 2.0
+                else:
+                    translated_title_sim = trans_sim_set
 
             # Determine the best similarity score achieved
             best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)

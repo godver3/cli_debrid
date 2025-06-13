@@ -12,6 +12,11 @@ import time
 
 # Pre-compile regex patterns
 _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
+# The site prefix patterns are used multiple times during normalization
+# Compile them once at module import time to avoid recompilation in tight loops
+_SITE_PREFIX_PATTERN = re.compile(r'^(www\s+\S+\s+\S+|www\.\S+\.\S+|[a-zA-Z0-9]+\s*\.\s*[a-zA-Z]+)\s*-\s*', re.IGNORECASE)
+# Re-use the same pattern for the second cleanup pass
+_LEFTOVER_SITE_PREFIX_PATTERN = _SITE_PREFIX_PATTERN
 
 @lru_cache(maxsize=1024)
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
@@ -99,103 +104,123 @@ def detect_resolution(parsed_info: Dict[str, Any]) -> str:
     resolution = parsed_info.get('resolution', 'Unknown')
     return resolution
 
+def _process_single_title(args):
+    """Helper for threaded execution inside batch_parse_torrent_info.
+
+    This function contains the per-item parsing logic that was previously
+    embedded in the for-loop of batch_parse_torrent_info. It is extracted so
+    that we can easily run it in a ThreadPoolExecutor while maintaining the
+    original behaviour.
+    """
+    title, size = args
+    try:
+        # Check for unreasonable season ranges early so we can skip expensive work
+        season_range_match = _SEASON_RANGE_PATTERN.search(title.lower())
+        if season_range_match:
+            start_season, end_season = map(int, season_range_match.groups())
+            if end_season - start_season > 50:
+                return {'title': title, 'original_title': title, 'invalid_season_range': True}
+
+        # Parse with PTT (cached)
+        parsed_info_from_ptt = _parse_with_ptt(title)
+
+        # Extract the clean title - if there's a site field, make sure it's not in the title
+        clean_title = parsed_info_from_ptt.get('title', title)
+        site = parsed_info_from_ptt.get('site')
+
+        # If PTT didn't detect a site but the title looks like it contains site info, try to extract it
+        if not site and isinstance(clean_title, str):
+            site_match = _SITE_PREFIX_PATTERN.search(clean_title)
+            if site_match:
+                site = site_match.group(1).strip()
+                clean_title = _SITE_PREFIX_PATTERN.sub('', clean_title)
+
+        # If site exists in PTT result but the title still starts with it, clean it
+        if site and isinstance(clean_title, str) and clean_title.lower().startswith(site.lower()):
+            clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
+
+        # Further cleaning pass in case site-like prefixes are still present
+        if isinstance(clean_title, str) and _LEFTOVER_SITE_PREFIX_PATTERN.search(clean_title):
+            clean_title = _LEFTOVER_SITE_PREFIX_PATTERN.sub('', clean_title)
+
+        # Convert PTT result to our standard format
+        processed_info = {
+            'title': clean_title,
+            'original_title': title,
+            'year': parsed_info_from_ptt.get('year'),
+            'resolution': parsed_info_from_ptt.get('resolution', 'Unknown'),
+            'source': parsed_info_from_ptt.get('source'),
+            'audio': parsed_info_from_ptt.get('audio'),
+            'codec': parsed_info_from_ptt.get('codec'),
+            'group': parsed_info_from_ptt.get('group'),
+            'season': parsed_info_from_ptt.get('season'),
+            'seasons': parsed_info_from_ptt.get('seasons', []),
+            'episode': parsed_info_from_ptt.get('episode'),
+            'episodes': parsed_info_from_ptt.get('episodes', []),
+            'type': parsed_info_from_ptt.get('type'),
+            'country': parsed_info_from_ptt.get('country'),
+            'date': parsed_info_from_ptt.get('date'),
+            'documentary': parsed_info_from_ptt.get('documentary', False),
+            'site': site,
+            'trash': parsed_info_from_ptt.get('trash', False)
+        }
+
+        # Handle size if provided
+        if size is not None:
+            processed_info['size'] = parse_size(size)
+
+        # Add additional information
+        processed_info['resolution_rank'] = get_resolution_rank(processed_info['resolution'])
+        processed_info['is_hdr'] = detect_hdr(parsed_info_from_ptt)
+
+        # Extract season/episode info
+        season_episode_info = detect_season_episode_info(processed_info.copy())
+        processed_info['season_episode_info'] = season_episode_info
+
+        return processed_info
+
+    except Exception as e:
+        logging.error(f"PTT parsing error for '{title}': {str(e)}", exc_info=True)
+        return {'title': title, 'original_title': title, 'parsing_error': True}
+
 def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, float]] = None) -> List[Dict[str, Any]]:
     """
-    Parse multiple torrent titles in batch for better performance using PTT.
+    Parse multiple torrent titles efficiently.
+
+    Optimisations:
+    1. Regex patterns are pre-compiled at module load time.
+    2. For large batches ( > 12 items ) the per-item work is executed in a
+       ThreadPoolExecutor which can significantly reduce wall-clock time on
+       multi-core systems without changing external behaviour.  A conservative
+       threshold is chosen to avoid the overhead of thread creation for small
+       inputs.
     """
     if sizes is None:
         sizes = [None] * len(titles)
-    
-    results = []
-    for title, size in zip(titles, sizes):
-        try:
-            # Check for unreasonable season ranges
-            season_range_match = _SEASON_RANGE_PATTERN.search(title.lower())
-            if season_range_match:
-                start_season, end_season = map(int, season_range_match.groups())
-                if end_season - start_season > 50:
-                    results.append({'title': title, 'original_title': title, 'invalid_season_range': True})
-                    continue
-            
-            # Parse with PTT (cached)
-            try:
-                # Get the parsed info from PTT
-                parsed_info_from_ptt = _parse_with_ptt(title)
 
-                # Extract the clean title - if there's a site field, make sure it's not in the title
-                clean_title = parsed_info_from_ptt.get('title', title)
-                site = parsed_info_from_ptt.get('site')
-                
-                # If PTT didn't detect a site but the title looks like it contains site info, try to extract it
-                if not site and isinstance(clean_title, str):
-                    # Look for common patterns like "www.site.com - " or "site.ms - " at the beginning of titles
-                    site_pattern = re.compile(r'^(www\s+\S+\s+\S+|www\.\S+\.\S+|[a-zA-Z0-9]+\s*\.\s*[a-zA-Z]+)\s*-\s*', re.IGNORECASE)
-                    site_match = site_pattern.search(clean_title)
-                    if site_match:
-                        site = site_match.group(1).strip()
-                        # Clean the title by removing the site prefix
-                        clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
-                
-                # If site exists in PTT result but the title still starts with it, clean it
-                if site and isinstance(clean_title, str) and clean_title.lower().startswith(site.lower()):
-                    # Strip the site and any trailing dash/space from the title
-                    clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
-                
-                # Further cleaning - if title still contains site-like patterns at the beginning
-                if isinstance(clean_title, str):
-                    # Look for common patterns that might indicate a site prefix wasn't properly removed
-                    leftover_pattern = re.compile(r'^(www\s+\S+\s+\S+|www\.\S+\.\S+|[a-zA-Z0-9]+\s*\.\s*[a-zA-Z]+)\s*-\s*', re.IGNORECASE)
-                    if leftover_pattern.search(clean_title):
-                        # Further clean the title
-                        cleaned_title = leftover_pattern.sub("", clean_title)
-                        clean_title = cleaned_title
-                
-                # Convert PTT result to our standard format
-                processed_info = {
-                    'title': clean_title,  # Use the clean title without site info
-                    'original_title': title,  # Store original title
-                    'year': parsed_info_from_ptt.get('year'),
-                    'resolution': parsed_info_from_ptt.get('resolution', 'Unknown'),
-                    'source': parsed_info_from_ptt.get('source'),
-                    'audio': parsed_info_from_ptt.get('audio'),
-                    'codec': parsed_info_from_ptt.get('codec'),
-                    'group': parsed_info_from_ptt.get('group'),
-                    'season': parsed_info_from_ptt.get('season'),
-                    'seasons': parsed_info_from_ptt.get('seasons', []),
-                    'episode': parsed_info_from_ptt.get('episode'),
-                    'episodes': parsed_info_from_ptt.get('episodes', []),
-                    'type': parsed_info_from_ptt.get('type'),
-                    'country': parsed_info_from_ptt.get('country'),
-                    'date': parsed_info_from_ptt.get('date'),
-                    'documentary': parsed_info_from_ptt.get('documentary', False),
-                    'site': site,
-                    'trash': parsed_info_from_ptt.get('trash', False)
-                }
-                
-                # Handle size if provided
-                if size is not None:
-                    processed_info['size'] = parse_size(size)
-                
-                # Add additional information
-                processed_info['resolution_rank'] = get_resolution_rank(processed_info['resolution'])
-                processed_info['is_hdr'] = detect_hdr(parsed_info_from_ptt)
-                
-                # Extract season/episode info
-                season_episode_info = detect_season_episode_info(processed_info.copy())
-                processed_info['season_episode_info'] = season_episode_info
-                
-                results.append(processed_info)
-                
-            except Exception as e:
-                logging.error(f"PTT parsing error for '{title}': {str(e)}")
-                results.append({'title': title, 'original_title': title, 'parsing_error': True})
-                continue
-            
+    # Quick sanity to keep lists aligned
+    if len(sizes) != len(titles):
+        # Fallback to original behaviour by aligning sizes length
+        sizes = list(sizes) + [None] * (len(titles) - len(sizes))
+
+    # Decide whether to process in parallel or sequentially based on workload
+    PARALLEL_THRESHOLD = 12  # Tunable – empirically the break-even point
+    if len(titles) >= PARALLEL_THRESHOLD:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            import multiprocessing
+
+            max_workers = min(32, (multiprocessing.cpu_count() or 1) * 2)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(_process_single_title, zip(titles, sizes)))
+            return results
         except Exception as e:
-            logging.error(f"Error in parse_torrent_info for '{title}': {str(e)}", exc_info=True)
-            results.append({'title': title, 'original_title': title, 'parsing_error': True})
-    
-    return results
+            # If anything goes wrong, fall back to sequential processing and log once
+            logging.error(f"Parallel batch_parse_torrent_info failed – falling back to sequential: {e}", exc_info=True)
+            # continue to sequential section
+
+    # Sequential fallback / small batch path
+    return [_process_single_title(args) for args in zip(titles, sizes)]
 
 def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[str, Any]:
     """

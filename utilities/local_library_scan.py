@@ -15,6 +15,7 @@ from database.symlink_verification import add_symlinked_file_for_verification, a
 from database.database_reading import get_all_media_items, get_media_item_by_id
 from scraper.functions.ptt_parser import parse_with_ptt
 import json # Ensure json is imported
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 
 def sanitize_filename(filename: str) -> str:
     """Sanitize filename to be safe for symlinks."""
@@ -202,30 +203,51 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 
                 if needs_genre_fetch:
                     logging.info(f"[SymlinkPath] Genres for item {item.get('imdb_id', 'N/A')} are missing or empty. Attempting to fetch from DirectAPI.")
-                    try:
-                        from cli_battery.app.direct_api import DirectAPI 
-                        api_instance = DirectAPI()
-                        
-                        fetched_metadata = None
-                        source = None
-                        item_imdb_id = item.get('imdb_id')
-                        if not item_imdb_id:
-                            logging.warning(f"[SymlinkPath] Cannot fetch genres: IMDb ID is missing for item.")
-                        elif item.get('type') == 'movie':
-                            fetched_metadata, source = api_instance.get_movie_metadata(item_imdb_id)
-                        else: # 'show' or 'episode'
-                            fetched_metadata, source = api_instance.get_show_metadata(item_imdb_id)
-                        
-                        if fetched_metadata and fetched_metadata.get('genres'):
-                            item_genres_value = fetched_metadata.get('genres') 
-                            logging.info(f"[SymlinkPath] Successfully fetched genres for {item_imdb_id} from {source}: {item_genres_value}")
-                        elif item_imdb_id: # Only log warning if we attempted a fetch
-                            logging.warning(f"[SymlinkPath] Failed to fetch genres or genres were empty from DirectAPI for {item_imdb_id}. Source: {source}")
-                    except ImportError:
-                        logging.error("[SymlinkPath] Could not import DirectAPI. Genre fetching skipped. Ensure cli_battery is in PYTHONPATH if this is unexpected.")
-                    except Exception as e_genre_fetch:
-                        logging.error(f"[SymlinkPath] Error fetching genres via DirectAPI for {item.get('imdb_id', 'N/A')}: {e_genre_fetch}")
-                
+                    
+                    # --- Start: Fetch with Timeout ---
+                    fetched_metadata = None
+                    source = None
+                    
+                    def fetch_genres_task():
+                        # This function will be executed in a separate thread
+                        try:
+                            from cli_battery.app.direct_api import DirectAPI
+                            api_instance = DirectAPI()
+                            item_imdb_id = item.get('imdb_id')
+                            
+                            if not item_imdb_id:
+                                logging.warning("[SymlinkPath] Cannot fetch genres: IMDb ID is missing for item.")
+                                return None, None
+                            
+                            if item.get('type') == 'movie':
+                                return api_instance.get_movie_metadata(item_imdb_id)
+                            else: # 'show' or 'episode'
+                                return api_instance.get_show_metadata(item_imdb_id)
+                        except ImportError:
+                            logging.error("[SymlinkPath] Could not import DirectAPI. Genre fetching skipped.")
+                            return None, None
+                        except Exception as e:
+                            logging.error(f"[SymlinkPath] Exception in genre fetch thread for {item.get('imdb_id', 'N/A')}: {e}")
+                            return None, None
+
+                    with ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(fetch_genres_task)
+                        try:
+                            # Get timeout value from settings, default to 15 seconds
+                            timeout_seconds = get_setting('Debug', 'direct_api_timeout', 15)
+                            fetched_metadata, source = future.result(timeout=timeout_seconds)
+                        except TimeoutError:
+                            logging.error(f"[SymlinkPath] Timed out after {timeout_seconds}s while fetching genres for {item.get('imdb_id', 'N/A')}.")
+                        except Exception as e_fetch:
+                             logging.error(f"[SymlinkPath] Error fetching genres via DirectAPI for {item.get('imdb_id', 'N/A')}: {e_fetch}")
+                    
+                    if fetched_metadata and fetched_metadata.get('genres'):
+                        item_genres_value = fetched_metadata.get('genres')
+                        logging.info(f"[SymlinkPath] Successfully fetched genres for {item.get('imdb_id')} from {source}: {item_genres_value}")
+                    elif item.get('imdb_id'): # Only log warning if we attempted a fetch
+                        logging.warning(f"[SymlinkPath] Failed to fetch genres or genres were empty from DirectAPI for {item.get('imdb_id')}. Source: {source}")
+                    # --- End: Fetch with Timeout ---
+
                 # Process item_genres_value (which might have been updated by the fetch)
                 parsed_genres_list = []
                 if isinstance(item_genres_value, list):

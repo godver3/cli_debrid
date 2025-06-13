@@ -790,4 +790,28 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log("DOMContentLoaded event fired."); // Log when event fires
     initializeTaskMonitor(); 
 }); 
-// --- END: Modify DOMContentLoaded Listener --- 
+// --- END: Modify DOMContentLoaded Listener ---
+
+// --- START EDIT: Reconnect Task Monitor when page becomes visible ---
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        try {
+            // If the task monitor was disabled due to a connectivity failure OR
+            // the SSE connection is closed, attempt to restore the UI and reconnect.
+            if (disabledDueToConnectivityFailure || !eventSource || eventSource.readyState === EventSource.CLOSED) {
+                console.log('[TaskMonitor LOG] Page became visible – attempting to re-enable task monitor and reconnect SSE');
+                // Reset the failure flag *before* calling enableTaskMonitor to ensure it is not ignored.
+                disabledDueToConnectivityFailure = false;
+
+                // Restore the UI so the user can interact with it immediately.
+                enableTaskMonitor();
+
+                // Establish a fresh SSE connection.
+                setupTaskStream();
+            }
+        } catch (err) {
+            console.error('[TaskMonitor LOG] Error during visibilitychange reconnection attempt:', err);
+        }
+    }
+});
+// --- END EDIT: Reconnect Task Monitor when page becomes visible --- 

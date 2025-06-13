@@ -666,23 +666,28 @@ class AddingQueue:
                     current_episode = item.get('episode') or item.get('episode_number')
                     version = item.get('version')
 
-                    if series_title and season is not None and current_episode is not None:
-                        from database import get_all_media_items # Local import
-                        all_items = [dict(row) for row in get_all_media_items(state=None)] # Fetch all items
-                        matching_items = [
-                            i for i in all_items
-                            if ((i.get('series_title', '') or i.get('title', '')) == series_title and
-                                (i.get('season') or i.get('season_number')) == season and
-                                (i.get('episode') or i.get('episode_number', -1)) > current_episode and
-                                i.get('version') == version and
-                                not i.get('fall_back_to_single_scraper')) # Only update those not already set
-                        ]
+                    # Stream items from DB to avoid loading entire table into memory
+                    from database import stream_all_media_items  # Local import
 
-                        for match in matching_items:
-                            match_id = match.get('id')
-                            if match_id: # Check if ID exists
+                    for candidate in stream_all_media_items(state=None, media_type='episode'):
+                        try:
+                            if ((candidate.get('series_title', '') or candidate.get('title', '')) != series_title):
+                                continue
+                            if (candidate.get('season') or candidate.get('season_number')) != season:
+                                continue
+                            if (candidate.get('episode') or candidate.get('episode_number', -1)) <= current_episode:
+                                continue
+                            if candidate.get('version') != version:
+                                continue
+                            if candidate.get('fall_back_to_single_scraper'):
+                                continue
+
+                            match_id = candidate.get('id')
+                            if match_id:
                                 update_media_item(match_id, fall_back_to_single_scraper=True)
-                                logging.debug(f"Enabled single scraper fallback for related item ID: {match_id} ({match.get('title')})")
+                                logging.debug(f"Enabled single scraper fallback for related item ID: {match_id} ({candidate.get('title')})")
+                        except Exception as iter_err:
+                            logging.error(f"Error while streaming candidate items for single scraper fallback: {iter_err}")
 
                 queue_manager.move_to_scraping(item, "Adding")
                 # move_to_scraping handles removal from self.items
@@ -703,23 +708,27 @@ class AddingQueue:
                             season = item.get('season') or item.get('season_number')
                             version = item.get('version')
 
-                            if series_title and season is not None:
-                                from database import get_all_media_items # Local import
-                                all_items_for_blacklist = [dict(row) for row in get_all_media_items(state=None)]
-                                if all_items_for_blacklist:
-                                    matching_items_for_blacklist = [
-                                        i for i in all_items_for_blacklist
-                                        if (i.get('id') != item_id and
-                                            (i.get('series_title', '') or i.get('title', '')) == series_title and
-                                            (i.get('season') or i.get('season_number')) == season and
-                                            i.get('version') == version and
-                                            i.get('state') not in ('Blacklisted', 'Collected') )
-                                    ]
+                            # Stream items from DB to avoid loading entire table into memory
+                            from database import stream_all_media_items  # Local import
 
-                                    for match in matching_items_for_blacklist:
-                                        related_item_state = match.get('state', 'Unknown')
-                                        logging.info(f"Blacklisting related episode ID: {match.get('id')} ({match.get('title')}) from state {related_item_state} due to primary item failure.")
-                                        queue_manager.move_to_blacklisted(match, related_item_state)
+                            for candidate in stream_all_media_items(state=None, media_type='episode'):
+                                try:
+                                    if candidate.get('id') == item_id:
+                                        continue
+                                    if ((candidate.get('series_title', '') or candidate.get('title', '')) != series_title):
+                                        continue
+                                    if (candidate.get('season') or candidate.get('season_number')) != season:
+                                        continue
+                                    if candidate.get('version') != version:
+                                        continue
+                                    if candidate.get('state') in ('Blacklisted', 'Collected'):
+                                        continue
+
+                                    related_item_state = candidate.get('state', 'Unknown')
+                                    logging.info(f"Blacklisting related episode ID: {candidate.get('id')} ({candidate.get('title')}) from state {related_item_state} due to primary item failure.")
+                                    queue_manager.move_to_blacklisted(candidate, related_item_state)
+                                except Exception as iter_err:
+                                    logging.error(f"Error while streaming candidate items for blacklist related: {iter_err}")
 
                         # move_to_blacklisted handles removal from self.items
                         return

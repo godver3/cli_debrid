@@ -194,7 +194,7 @@ def run_server():
     # Get port from environment variable or use default
     port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
     try:
-        app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port)
+        app.run(debug=True, use_reloader=False, host='0.0.0.0', port=port, threaded=True)
     except Exception as e:
         logging.error(f"Error running server: {str(e)}")
         cleanup_port(port)
