@@ -1047,6 +1047,51 @@ def get_media_item_presence_overall(imdb_id: str | None = None, tmdb_id: str | N
     finally:
         conn.close()
 
+@trace_memory_usage
+def get_distinct_imdb_ids(states: Optional[List[str]] = None, media_type: Optional[str] = None) -> List[str]:
+    """Return a list of distinct imdb_id values matching the supplied filters.
+
+    This is a lightweight alternative to ``get_all_media_items`` when you only
+    need the unique show/movie identifiers and not the full row payload.  It
+    dramatically reduces I/O and memory usage for large tables because it
+    leverages ``SELECT DISTINCT imdb_id`` directly in SQL and only transfers a
+    single column per row.
+
+    Args:
+        states: Optional list of states (e.g. ["Wanted", "Collected"]. If
+            ``None`` all states are considered.
+        media_type: Optional media type filter ("movie" or "episode"). If
+            ``None`` all types are considered.
+
+    Returns:
+        A list of imdb_id strings. Rows with NULL/empty imdb_id are ignored.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        query = "SELECT DISTINCT imdb_id FROM media_items WHERE imdb_id IS NOT NULL AND imdb_id != ''"
+        params: List[Any] = []
+
+        # State filtering
+        if states:
+            placeholders = ",".join(["?" for _ in states])
+            query += f" AND state IN ({placeholders})"
+            params.extend(states)
+
+        # Media type filtering
+        if media_type:
+            query += " AND type = ?"
+            params.append(media_type)
+
+        cursor = conn.execute(query, params)
+        return [row["imdb_id"] for row in cursor.fetchall()]
+    except Exception as e:
+        logging.error(f"Error retrieving distinct imdb_ids: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -1077,5 +1122,6 @@ __all__ = [
     'get_distinct_library_shows',
     'get_collected_episodes_count',
     'get_collected_episode_numbers',
-    'get_media_item_presence_overall'
+    'get_media_item_presence_overall',
+    'get_distinct_imdb_ids'
 ]
