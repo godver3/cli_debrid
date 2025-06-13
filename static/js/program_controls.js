@@ -13,7 +13,7 @@ export function initializeProgramControls() {
 
     // Use the initial state from the data attribute
     const initialStatus = document.body.dataset.programStatus;
-    updateButtonState(initialStatus === 'Running');
+    updateButtonState(initialStatus);
 
     programControlButton.addEventListener('click', toggleProgram);
     // Add touch event handling for mobile
@@ -25,6 +25,10 @@ export function initializeProgramControls() {
     function toggleProgram() {
         const currentStatus = programControlButton.dataset.status;
         const action = currentStatus === 'Running' ? 'stop' : 'start';
+
+        if (currentStatus === 'Starting' || currentStatus === 'Stopping') {
+            return;
+        }
 
         if (action === 'start') {
             const conditions = checkRequiredConditions();
@@ -49,44 +53,79 @@ export function initializeProgramControls() {
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
-                    updateButtonState(action === 'start');
+                    updateButtonState(action === 'start' ? 'Starting' : 'Stopping');
                 } else {
                     showErrorPopup(data.message);
+                    fetchProgramStatus();
                 }
             })
             .catch(error => {
                 console.error('Error controlling program:', error);
                 showErrorPopup('An error occurred while trying to control the program. Please check the console for more details.');
+                fetchProgramStatus();
             });
     }
 
-    function updateButtonState(isRunning) {
-        if (isRunning) {
-            programControlButton.innerHTML = '<i class="fas fa-stop"></i><span class="button-text">Stop Program</span>';
-            programControlButton.classList.remove('start-program');
-            programControlButton.classList.add('stop-program');
-            programControlButton.dataset.status = 'Running';
-        } else {
-            programControlButton.innerHTML = '<i class="fas fa-play"></i><span class="button-text">Start Program</span>';
-            programControlButton.classList.remove('stop-program');
-            programControlButton.classList.add('start-program');
-            programControlButton.dataset.status = 'Stopped';
+    function updateButtonState(status) {
+        programControlButton.disabled = false;
+        
+        let iconClass = '';
+        let buttonText = '';
+        let buttonClasses = ['icon-button']; // Base class
+
+        // Remove all state classes first to avoid conflicts
+        programControlButton.classList.remove('start-program', 'stop-program', 'starting-program', 'stopping-program');
+
+        switch(status) {
+            case 'Running':
+                iconClass = 'fa-stop';
+                buttonText = 'Stop Program';
+                buttonClasses.push('stop-program');
+                break;
+            case 'Starting':
+                iconClass = 'fa-spinner fa-spin';
+                buttonText = 'Starting...';
+                buttonClasses.push('starting-program');
+                programControlButton.disabled = true;
+                break;
+            case 'Stopping':
+                iconClass = 'fa-spinner fa-spin';
+                buttonText = 'Stopping...';
+                buttonClasses.push('stopping-program');
+                programControlButton.disabled = true;
+                break;
+            case 'Stopped':
+            default:
+                if (status !== 'Stopped' && status) { // Log if status is unknown but not empty
+                    console.warn(`Unknown program status: '${status}'. Defaulting to 'Stopped'.`);
+                }
+                iconClass = 'fa-play';
+                buttonText = 'Start Program';
+                buttonClasses.push('start-program');
+                status = 'Stopped'; // Normalize status for dataset
+                break;
         }
-        updateSettingsManagement(isRunning);
+
+        programControlButton.className = buttonClasses.join(' ');
+        programControlButton.innerHTML = `<i class="fas ${iconClass}"></i><span class="button-text">${buttonText}</span>`;
+        programControlButton.dataset.status = status;
+
+        const isBusy = (status === 'Running' || status === 'Starting' || status === 'Stopping');
+        updateSettingsManagement(isBusy);
     }
 
-    function updateSettingsManagement(isRunning) {
+    function updateSettingsManagement(isBusy) {
         const buttons = document.querySelectorAll('#saveSettingsButton, .add-scraper-link, .add-version-link, .add-source-link, .delete-scraper-btn, .delete-version-btn, .duplicate-version-btn, .delete-source-btn, .import-versions-link');
         buttons.forEach(button => {
-            button.disabled = isRunning;
-            button.style.opacity = isRunning ? '0.5' : '1';
-            button.style.cursor = isRunning ? 'not-allowed' : 'pointer';
+            button.disabled = isBusy;
+            button.style.opacity = isBusy ? '0.5' : '1';
+            button.style.cursor = isBusy ? 'not-allowed' : 'pointer';
         });
     
         const runningMessage = document.getElementById('programRunningMessage');
         const settingsContainer = document.querySelector('.settings-container');
     
-        if (isRunning) {
+        if (isBusy) {
             if (!runningMessage && settingsContainer) {
                 const message = document.createElement('div');
                 message.id = 'programRunningMessage';
@@ -153,38 +192,39 @@ export function initializeProgramControls() {
     function fetchSettings() {
         if (window.isRateLimited) {
             console.log("Rate limit exceeded. Skipping settings fetch.");
-            return Promise.resolve({}); // Return an empty object or default settings
+            return;
         }
 
         fetch('/settings/api/program_settings')
             .then(response => response.json())
             .then(data => {
                 currentSettings = data;
-                updateButtonState(programControlButton.dataset.status === 'Running');
             })
             .catch(error => {
                 console.error('Error fetching program settings:', error);
             });
     }
 
+    function fetchProgramStatus() {
+        fetch('/program_operation/api/program_status')
+            .then(response => response.json())
+            .then(data => {
+                updateButtonState(data.status);
+            })
+            .catch(error => console.error('Error fetching program status:', error));
+    }
+
     // Fetch settings initially and then every 30 seconds
     fetchSettings();
     setInterval(fetchSettings, 30000);
 
-    // Fetch program status every 30 seconds
-    setInterval(() => {
-        fetch('/program_operation/api/program_status')
-            .then(response => response.json())
-            .then(data => {
-                updateButtonState(data.running);
-            })
-            .catch(error => console.error('Error fetching program status:', error));
-    }, 30000);
+    // Fetch program status every 5 seconds for responsiveness
+    setInterval(fetchProgramStatus, 5000);
 
     // Add event listeners to update button state when settings change
     document.addEventListener('change', function(event) {
         if (event.target.matches('#scrapers input[type="checkbox"], #content-sources input[type="checkbox"], #required input')) {
-            updateButtonState(programControlButton.dataset.status === 'Running');
+            updateButtonState(programControlButton.dataset.status);
         }
     });
 }

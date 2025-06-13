@@ -70,8 +70,17 @@ def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, List[Dic
 
         # Check if it's a movie or TV show
         if file_data['type'] == 'movie':
-            # Log the number of movies in Plex library
-            logger.debug(f"Searching among {len(plex_library.get('movies', []))} movies in Plex")
+            # Try quick index lookup first
+            movies_index = plex_library.get('movies_index')
+            if movies_index:
+                indexed_matches = movies_index.get(db_filename_no_ext.lower()) or []
+                for plex_basename in indexed_matches:
+                    if plex_basename == db_filename:
+                        logger.info(f"Verified movie in Plex (indexed): {file_data['title']} - {db_filename}")
+                        return True
+
+            # Fall back to full scan (legacy path, still logs size)
+            logger.debug(f"Scanning {len(plex_library.get('movies', []))} movies in Plex (fallback)")
 
             # Search for the movie in Plex library
             for movie in plex_library.get('movies', []):
@@ -97,13 +106,22 @@ def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, List[Dic
             logger.warning(f"Movie not found in Plex after {file_data.get('verification_attempts', 0)} attempts: {file_data['title']} - {db_filename}")
 
         else:  # TV show
-            # Log the number of episodes in Plex library
-            logger.debug(f"Searching among {len(plex_library.get('episodes', []))} episodes in Plex")
-
-            # Format episode info for logging
+            # Determine episode identifiers early so they are available for logging
             season_num = file_data.get('season_number', 'unknown')
             episode_num = file_data.get('episode_number', 'unknown')
             episode_info = f"S{season_num}E{episode_num}"
+
+            # Quick index lookup for episodes
+            episodes_index = plex_library.get('episodes_index')
+            if episodes_index:
+                indexed_matches = episodes_index.get(db_filename_no_ext.lower()) or []
+                for plex_basename in indexed_matches:
+                    if plex_basename == db_filename:
+                        logger.info(f"Verified episode in Plex (indexed): {file_data['title']} {episode_info} - {file_data.get('episode_title', 'unknown')} - {db_filename}")
+                        return True
+
+            # Fallback to slow scan
+            logger.debug(f"Scanning {len(plex_library.get('episodes', []))} episodes in Plex (fallback)")
 
             # Search for the episode in Plex library
             for episode in plex_library.get('episodes', []):
@@ -145,7 +163,7 @@ def verify_plex_file(file_data: Dict[str, Any], plex_library: Dict[str, List[Dic
         logger.error(f"Error verifying file in Plex: {str(e)}", exc_info=True)
         return False
 
-def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, max_attempts: int = 10) -> Tuple[int, int]:
+def run_plex_verification_scan(max_files: int = 500, recent_only: bool = False, max_attempts: int = 10) -> Tuple[int, int]:
     """
     Run a verification scan to check if symlinked files are in Plex.
     This function ALWAYS scans all movie/show libraries for verification purposes.
@@ -185,7 +203,7 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
     logger.info(f"Processing {len(unverified_files)} unverified files in {scan_type} scan")
 
     # Get Plex library contents using the new functions, forcing scan_all_libraries=True
-    plex_library = None
+    plex_library: Optional[Dict[str, Any]] = None
     try:
         if recent_only:
             logger.info("Calling sync_run_get_recent_from_plex(scan_all_libraries=True)...")
@@ -204,6 +222,31 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
         elif not plex_library.get('movies') and not plex_library.get('episodes'):
              logger.warning(f"Plex scan ({scan_type}) returned no movies or episodes. Proceeding with verification check against empty library.")
              # Allow processing to continue, files will likely fail verification
+
+        # -----------------------------------------------------------------
+        # Build quick-lookup indexes so each verify call is O(1)
+        # -----------------------------------------------------------------
+        try:
+            movies_index = {}
+            for m in plex_library.get('movies', []):
+                loc = m.get('location')
+                if loc:
+                    key = os.path.splitext(os.path.basename(loc))[0].lower()
+                    movies_index.setdefault(key, []).append(os.path.basename(loc))
+
+            episodes_index = {}
+            for e in plex_library.get('episodes', []):
+                loc = e.get('location')
+                if loc:
+                    key = os.path.splitext(os.path.basename(loc))[0].lower()
+                    episodes_index.setdefault(key, []).append(os.path.basename(loc))
+
+            # Store in plex_library so verify_plex_file can reuse without changing its signature
+            plex_library['movies_index'] = movies_index
+            plex_library['episodes_index'] = episodes_index
+            logger.debug(f"Built Plex library quick lookup indexes: movies={len(movies_index)}, episodes={len(episodes_index)}")
+        except Exception as idx_err:
+            logger.error(f"Error building Plex library lookup indexes: {idx_err}")
 
     except Exception as e:
          logger.error(f"Unexpected error during Plex scan ({scan_type}): {e}", exc_info=True)
@@ -294,8 +337,6 @@ def run_plex_verification_scan(max_files: int = 50, recent_only: bool = False, m
                 if file_type == 'movie':
                     logger.info(f"Attempting Plex directory scan for failed movie verification: {file_data['title']} - {base_filename}")
                 else:  # TV show
-                    season_num = file_data.get('season_number', 'unknown')
-                    episode_num = file_data.get('episode_number', 'unknown')
                     logger.info(f"Attempting Plex directory scan for failed episode verification: {file_data['title']} - S{season_num}E{episode_num} - {file_data.get('episode_title', 'unknown')} - {base_filename}")
 
                 # Prepare item data for plex_update_item (needs 'full_path' or similar)

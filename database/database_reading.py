@@ -3,6 +3,7 @@ import logging
 import os
 import json
 from typing import List, Dict, Optional, Tuple, Set, Any
+import functools
 try:
     import tracemalloc
     tracemalloc_available = True
@@ -11,6 +12,54 @@ except ImportError:
     tracemalloc = None # Define tracemalloc as None if import failed
 import time
 from utilities.settings import get_setting
+
+def trace_memory_usage(func):
+    """
+    A decorator to trace and log memory usage of a function using tracemalloc.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        tracemalloc_enabled = get_setting('Debug', 'enable_tracemalloc', False)
+        mem_before, peak_before = 0, 0
+        start_time = time.time()
+
+        # Check if tracing is available, enabled, and active
+        if tracemalloc_available and tracemalloc_enabled:
+            if tracemalloc.is_tracing():
+                try:
+                    mem_before, peak_before = tracemalloc.get_traced_memory()
+                except Exception as e_mem:
+                    logging.error(f"[Tracemalloc DB] Error getting memory before {func.__name__}: {e_mem}")
+                    tracemalloc_enabled = False
+            else:
+                tracemalloc_enabled = False
+        
+        result = func(*args, **kwargs)
+        
+        duration = time.time() - start_time
+        
+        # Log memory usage if tracing was active for this call
+        if tracemalloc_available and tracemalloc_enabled and tracemalloc.is_tracing():
+            try:
+                mem_after, peak_after = tracemalloc.get_traced_memory()
+                mem_delta = mem_after - mem_before
+                peak_delta = peak_after - peak_before
+
+                items_count = 'N/A'
+                if isinstance(result, (list, dict)):
+                    items_count = len(result)
+
+                log_level = logging.INFO if abs(mem_delta / (1024*1024)) < 5 else logging.WARNING
+                logging.log(log_level,
+                            f"[Tracemalloc DB] {func.__name__} completed in {duration:.3f}s. "
+                            f"Returned Items: {items_count}. "
+                            f"Mem Delta: {mem_delta / (1024*1024):+.2f}MB ({mem_before / (1024*1024):.2f} -> {mem_after / (1024*1024):.2f}MB). "
+                            f"Peak Delta During Call: {peak_delta / (1024*1024):+.2f}MB.")
+            except Exception as e_mem:
+                logging.error(f"[Tracemalloc DB] Error getting memory after {func.__name__}: {e_mem}")
+        
+        return result
+    return wrapper
 
 def search_movies(search_term):
     conn = get_db_connection()
@@ -26,25 +75,21 @@ def search_tv_shows(search_term):
     conn.close()
     return items
 
+@trace_memory_usage
 def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
-    tracemalloc_enabled = get_setting('Debug', 'enable_tracemalloc', False)
-    mem_before, peak_before = 0, 0
-    start_time = time.time()
-    items = []
+    """
+    Retrieves all media items matching the criteria and returns them as a list.
+    This function is a wrapper around stream_all_media_items for backward compatibility.
+    It can be memory-intensive for large datasets.
+    """
+    return list(stream_all_media_items(state, media_type, imdb_id, tmdb_id, limit))
 
-    # Only attempt tracemalloc operations if it was imported and enabled
-    if tracemalloc_available and tracemalloc_enabled:
-        if tracemalloc.is_tracing():
-            try:
-                mem_before, peak_before = tracemalloc.get_traced_memory()
-            except Exception as e_mem:
-                logging.error(f"[Tracemalloc DB] Error getting memory before get_all_media_items: {e_mem}")
-                # Disable further tracemalloc attempts for this call if get_traced_memory fails
-                tracemalloc_enabled = False 
-        else:
-            # If tracing is not active, disable tracemalloc for this function call
-            tracemalloc_enabled = False
-
+@trace_memory_usage
+def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
+    """
+    A generator that streams media items from the database one by one.
+    This is memory-efficient and suitable for large datasets.
+    """
     conn = None
     try:
         conn = get_db_connection()
@@ -73,37 +118,22 @@ def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None,
             params.append(limit)
 
         cursor = conn.execute(query, params)
-        db_rows = cursor.fetchall()
-        items = [dict(item) for item in db_rows]
+        
+        # Yield rows one by one instead of fetching all at once
+        for row in cursor:
+            yield dict(row)
 
     except Exception as e:
-        logging.error(f"Error executing get_all_media_items query: {e}")
-        logging.debug(f"Query: {query}, Params: {params}")
-        items = []
+        logging.error(f"Error executing stream_all_media_items query: {e}")
+        # To aid debugging, it's good practice to log the query that failed
+        try:
+            logging.debug(f"Failed Query: {query}, Params: {params}")
+        except NameError:
+            logging.debug("Query and params were not available at the time of error.")
+        # An empty generator will be returned implicitly on error after this
     finally:
         if conn:
             conn.close()
-
-    duration = time.time() - start_time
-    # Check again if tracemalloc is available and was enabled for this call
-    if tracemalloc_available and tracemalloc_enabled and tracemalloc.is_tracing():
-        try:
-            mem_after, peak_after = tracemalloc.get_traced_memory()
-            mem_delta = mem_after - mem_before
-            peak_delta = peak_after - peak_before
-
-            log_level = logging.INFO if abs(mem_delta / (1024*1024)) < 5 else logging.WARNING
-            logging.log(log_level,
-                        f"[Tracemalloc DB] get_all_media_items completed in {duration:.3f}s. "
-                        f"Returned Items: {len(items)}. "
-                        f"Mem Delta: {mem_delta / (1024*1024):+.2f}MB ({mem_before / (1024*1024):.2f} -> {mem_after / (1024*1024):.2f}MB). "
-                        f"Peak Delta During Call: {peak_delta / (1024*1024):+.2f}MB.")
-
-        except Exception as e_mem:
-            logging.error(f"[Tracemalloc DB] Error getting memory after get_all_media_items: {e_mem}")
-    # else: Tracemalloc not available or not enabled, no memory logging needed
-
-    return items
 
 def get_media_item_presence(imdb_id=None, tmdb_id=None):
     conn = get_db_connection()
@@ -239,6 +269,7 @@ def get_all_season_episode_counts(tmdb_id):
 def row_to_dict(row):
     return dict(row)
 
+@trace_memory_usage
 def get_all_videos():
     """
     Retrieve all videos from the database with their essential information.
@@ -938,6 +969,84 @@ def get_collected_episodes_count(imdb_id: str, version_name: str) -> int:
         if conn:
             conn.close()
 
+def get_collected_episode_numbers(imdb_id: str, version_name: str) -> Set[Tuple[int, int]]:
+    """
+    Retrieves a set of (season_number, episode_number) tuples for a given IMDb ID and version name
+    from the media_items table.
+    """
+    conn = get_db_connection()
+    collected_episodes = set()
+    try:
+        # Select distinct season and episode numbers for a given imdb_id and version
+        # This logic mirrors get_collected_episodes_count
+        query = """
+            SELECT DISTINCT season_number, episode_number
+            FROM media_items
+            WHERE imdb_id = ?
+              AND LOWER(REPLACE(version, '*', '')) = LOWER(?)
+              AND type = 'episode'
+              AND state = 'Collected'
+              AND season_number IS NOT NULL
+              AND episode_number IS NOT NULL;
+        """
+        params = (imdb_id, version_name)
+        cursor = conn.execute(query, params)
+        for row in cursor.fetchall():
+            try:
+                # Ensure we are adding integers to the set
+                s_num = int(row['season_number'])
+                e_num = int(row['episode_number'])
+                collected_episodes.add((s_num, e_num))
+            except (ValueError, TypeError):
+                logging.warning(f"Skipping invalid non-integer season/episode number pair ({row['season_number']}, {row['episode_number']}) from DB for show {imdb_id}")
+
+        return collected_episodes
+    except Exception as e:
+        logging.error(f"Error getting collected episode numbers for {imdb_id} (version: {version_name}): {e}", exc_info=True)
+        return set()
+    finally:
+        if conn:
+            conn.close()
+
+def get_media_item_presence_overall(imdb_id: str | None = None, tmdb_id: str | None = None) -> str:
+    """Return an aggregated presence state for a title.
+
+    Logic priority:
+        1. Any row Blacklisted  -> "Blacklisted"
+        2. Mixture that contains Collected and something else -> "Partial"
+        3. All rows Collected -> "Collected"
+        4. Otherwise return the first state found (Wanted, Upgrading, etc.)
+        5. If no rows found -> "Missing"
+    """
+    conn = get_db_connection()
+    try:
+        if imdb_id is not None:
+            id_field, id_value = 'imdb_id', imdb_id
+        elif tmdb_id is not None:
+            id_field, id_value = 'tmdb_id', tmdb_id
+        else:
+            raise ValueError("Either imdb_id or tmdb_id must be provided.")
+
+        query = f'SELECT DISTINCT state FROM media_items WHERE {id_field} = ?'
+        cursor = conn.execute(query, (id_value,))
+        states = {row[0] for row in cursor.fetchall()}
+
+        if not states:
+            return "Missing"
+
+        if 'Blacklisted' in states:
+            return 'Blacklisted'
+
+        if 'Collected' in states:
+            return 'Collected' if len(states) == 1 else 'Partial'
+
+        return next(iter(states))
+    except Exception as e:
+        logging.error(f"Error retrieving aggregated media item status: {e}")
+        return 'Missing'
+    finally:
+        conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'search_movies', 
@@ -966,5 +1075,7 @@ __all__ = [
     'check_item_exists_by_symlink_path',
     'check_item_exists_with_symlink_path_containing',
     'get_distinct_library_shows',
-    'get_collected_episodes_count'
+    'get_collected_episodes_count',
+    'get_collected_episode_numbers',
+    'get_media_item_presence_overall'
 ]

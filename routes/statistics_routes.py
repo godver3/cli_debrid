@@ -11,7 +11,7 @@ from utilities.settings import get_setting, set_setting
 from .models import user_required, onboarding_required 
 from routes.extensions import app_start_time
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
-from .program_operation_routes import program_is_running, program_is_initializing
+from .program_operation_routes import get_program_status
 import json
 import math
 from functools import wraps
@@ -689,7 +689,7 @@ def set_time_preference():
             upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
             if upgrade_enabled:
                 from database import get_recently_upgraded_items
-                recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=5))
+                recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
                 for item in recently_upgraded:
                     # Format the upgrade date using collected_at for better differentiation
                     item['formatted_date'] = format_datetime_preference(
@@ -1010,10 +1010,7 @@ def index_api():
     stats['uptime'] = int(time.time() - app_start_time)
     
     # Get program status
-    stats['program_status'] = {
-        'running': program_is_running(),
-        'initializing': program_is_initializing()
-    }
+    stats['program_status'] = get_program_status()
     
     # Get collection counts
     from database.statistics import get_statistics_summary

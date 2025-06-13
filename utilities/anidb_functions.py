@@ -22,6 +22,16 @@ _episode_cache: Dict[int, List[Dict[str, Any]]] = {}
 _cache_expiry: Dict[int, datetime] = {}
 CACHE_DURATION = timedelta(hours=24)  # Cache episode data for 24 hours
 
+# Cache for anime search results
+_anime_search_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+_anime_search_cache_expiry: Dict[str, datetime] = {}
+ANIME_SEARCH_CACHE_DURATION = timedelta(hours=24)
+
+# Cache for anime relations
+_anime_relations_cache: Dict[int, List[Dict[str, Any]]] = {}
+_anime_relations_cache_expiry: Dict[int, datetime] = {}
+ANIME_RELATIONS_CACHE_DURATION = timedelta(hours=24)
+
 def _make_request(endpoint: str, params: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
     """Make a rate-limited request to Jikan API."""
     global last_request_time
@@ -68,6 +78,19 @@ def _make_request(endpoint: str, params: Dict[str, Any] = None) -> Optional[Dict
 def _search_anime(title: str) -> Optional[Dict[str, Any]]:
     """Search for an anime by title using Jikan API."""
     try:
+        now = datetime.now()
+        title_lower = title.lower()
+
+        # Check cache first
+        if title_lower in _anime_search_cache and title_lower in _anime_search_cache_expiry and now <= _anime_search_cache_expiry[title_lower]:
+            cached_result = _anime_search_cache.get(title_lower)
+            if cached_result:
+                logging.info(f"[AniDB] Using cached Jikan match for '{title}': '{cached_result.get('title')}' (MAL ID: {cached_result.get('mal_id')})")
+            else:
+                # Log as a warning to be consistent with the "No anime found" message below
+                logging.warning(f"[AniDB] Using cached 'Not Found' for Jikan title search: '{title}'")
+            return cached_result
+
         # Try searching with common season indicators removed first
         clean_title = re.sub(r'\b(season|s)\s*\d+\b', '', title, flags=re.IGNORECASE).strip()
         clean_title = re.sub(r'\b(part|pt)\s*\d+\b', '', clean_title, flags=re.IGNORECASE).strip()
@@ -110,9 +133,17 @@ def _search_anime(title: str) -> Optional[Dict[str, Any]]:
                  
         if not best_match:
             logging.warning(f"[AniDB] No anime found on Jikan for title variations: '{title}'")
+            # Cache the failure
+            _anime_search_cache[title_lower] = None
+            _anime_search_cache_expiry[title_lower] = now + ANIME_SEARCH_CACHE_DURATION
             return None
             
         logging.info(f"[AniDB] Final selected Jikan match for '{title}': '{best_match.get('title')}' (MAL ID: {best_match.get('mal_id')})")
+        
+        # Cache the success
+        _anime_search_cache[title_lower] = best_match
+        _anime_search_cache_expiry[title_lower] = now + ANIME_SEARCH_CACHE_DURATION
+        
         return best_match
         
     except Exception as e:
@@ -194,29 +225,43 @@ def _get_episode_details(mal_id: int, episode_number: int) -> Optional[Dict[str,
 def _get_related_anime(mal_id: int) -> List[Dict[str, Any]]:
     """Get related anime to check for split cours/seasons."""
     try:
+        now = datetime.now()
+        # Check cache first
+        if mal_id in _anime_relations_cache and mal_id in _anime_relations_cache_expiry and now <= _anime_relations_cache_expiry[mal_id]:
+            cached_relations = _anime_relations_cache.get(mal_id, [])
+            logging.debug(f"[AniDB:_get_related_anime] Using cached relations for MAL ID: {mal_id} ({len(cached_relations)} relations)")
+            return cached_relations
+
         logging.debug(f"[AniDB:_get_related_anime] Fetching relations for MAL ID: {mal_id}")
         result = _make_request(f'anime/{mal_id}/relations')
+        
+        related = [] # Default to empty list
+        
         if not result or not result.get('data'):
             logging.debug(f"[AniDB:_get_related_anime] No relations data found for MAL ID: {mal_id}")
-            return []
-            
-        # Look for sequels and related series
-        related = []
-        for relation in result['data']:
-            relation_type = relation.get('relation')
-            # Include more relation types that might indicate a sequence
-            if relation_type in ['Sequel', 'Prequel', 'Alternative version', 'Parent story', 'Other']: 
-                for entry in relation.get('entry', []):
-                    if entry.get('type') == 'anime':
-                        entry['relation_type'] = relation_type # Add relation type for context
-                        related.append(entry)
-                        logging.debug(f"[AniDB:_get_related_anime] Found related '{relation_type}' anime for MAL ID {mal_id}: '{entry.get('name')}' (MAL ID: {entry.get('mal_id')})")
-                        
-        logging.debug(f"[AniDB:_get_related_anime] Found {len(related)} potentially relevant relations for MAL ID: {mal_id}")
+            # Still cache the empty result to prevent re-fetching
+        else:
+            # Look for sequels and related series
+            for relation in result['data']:
+                relation_type = relation.get('relation')
+                # Include more relation types that might indicate a sequence
+                if relation_type in ['Sequel', 'Prequel', 'Alternative version', 'Parent story', 'Other']: 
+                    for entry in relation.get('entry', []):
+                        if entry.get('type') == 'anime':
+                            entry['relation_type'] = relation_type # Add relation type for context
+                            related.append(entry)
+                            logging.debug(f"[AniDB:_get_related_anime] Found related '{relation_type}' anime for MAL ID {mal_id}: '{entry.get('name')}' (MAL ID: {entry.get('mal_id')})")
+                            
+            logging.debug(f"[AniDB:_get_related_anime] Found {len(related)} potentially relevant relations for MAL ID: {mal_id}")
+        
+        # Cache the result (even if empty)
+        _anime_relations_cache[mal_id] = related
+        _anime_relations_cache_expiry[mal_id] = now + ANIME_RELATIONS_CACHE_DURATION
+        
         return related
         
     except Exception as e:
-        logging.error(f"Error getting related anime for MAL ID {mal_id}: {str(e)}")
+        logging.error(f"Error getting related anime for MAL ID {mal_id}: {str(e)}", exc_info=True)
         return []
 
 def _find_correct_season_mal_id(base_anime_data: Dict[str, Any], target_season: int) -> Optional[int]:

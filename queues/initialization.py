@@ -108,7 +108,7 @@ def reset_queued_item_status():
     
     from database import update_media_item_state, get_all_media_items
     for state in states_to_reset:
-        items = get_all_media_items(state=state)
+        items = list(get_all_media_items(state=state))
         if items:
             update_initialization_step("Reset Items", f"Processing {len(items)} items in {state} state", is_substep=True)
             for item in items:
@@ -158,7 +158,7 @@ def plex_collection_update(skip_initial_plex_update):
                 return True, True  # Plex responded and had content
             
         # If Plex returned no items, check if we have any existing collected items
-        existing_collected = get_all_media_items(state='Collected')
+        existing_collected = list(get_all_media_items(state='Collected'))
         if existing_collected:
             msg = "Plex scan returned no new content but found existing collected items - skipping content sources to prevent data loss"
             update_initialization_step("Plex Update", msg, error=msg, is_substep=True)
@@ -226,7 +226,7 @@ def initialize(skip_initial_plex_update=False):
 
     if plex_managed:
         from database import get_all_media_items # Import here for conditional check
-        existing_collected = get_all_media_items(state='Collected')
+        existing_collected = list(get_all_media_items(state='Collected'))
 
         if not existing_collected:
             # No collected items found, run full Plex scan

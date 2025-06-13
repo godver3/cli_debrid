@@ -1178,9 +1178,9 @@ def resync_symlinks_with_new_settings(
         return {"status": "skipped", "message": "Not using Symlinked/Local file management."}
 
     try:
-        collected_items = get_all_media_items(state='Collected')
+        collected_items = list(get_all_media_items(state='Collected'))
         # Also consider items in 'Upgrading' state if they have symlinks that need checking
-        upgrading_items = get_all_media_items(state='Upgrading')
+        upgrading_items = list(get_all_media_items(state='Upgrading'))
         collected_items.extend(upgrading_items) # Combine lists
         # Remove duplicates if any item somehow ended up in both lists (by ID)
         seen_ids = set()

@@ -153,28 +153,28 @@ def filter_results(
 
             
             # Title similarity check
-            normalized_result_title = normalize_title(parsed_info.get('title', original_title)).lower()
-            normalized_query = normalized_query_title
+            # Always use the original, full torrent title for comparison.
+            # This is the most reliable source of all possible names (e.g., EN, JP, etc.)
+            # especially when PTT parsing might be ambiguous.
+            # `fuzz.token_set_ratio` is designed to find matching subsets of words.
+            comparison_title = original_title
+            normalized_result_title = normalize_title(comparison_title).lower()
             
             # If this is a documentary, add it back to the result title for comparison
             if parsed_info.get('documentary', False):
                 normalized_result_title = f"{normalized_result_title} documentary"
             
-            # Calculate similarities
-            main_title_sim = fuzz.ratio(normalized_result_title, normalized_query) / 100.0
-            alias_similarities = [fuzz.ratio(normalized_result_title, alias) / 100.0 for alias in normalized_aliases]
+            # Calculate similarities using token_set_ratio for better matching of titles with extra info
+            main_title_sim = fuzz.token_set_ratio(normalized_result_title, normalized_query_title) / 100.0
+            alias_similarities = [fuzz.token_set_ratio(normalized_result_title, alias) / 100.0 for alias in normalized_aliases]
             best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
-            translated_title_sim = fuzz.ratio(normalized_result_title, normalized_translated_title) / 100.0 if normalized_translated_title else 0.0
+            translated_title_sim = fuzz.token_set_ratio(normalized_result_title, normalized_translated_title) / 100.0 if normalized_translated_title else 0.0
 
             # Determine the best similarity score achieved
             best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
 
             # Check if the best similarity meets the threshold
             if best_sim < similarity_threshold:
-                # Try matching against aliases if available
-                alias_similarities = [fuzz.ratio(normalized_result_title, alias) / 100.0 for alias in normalized_aliases]
-                best_alias_sim = max(alias_similarities) if alias_similarities else 0
-                
                 # Log the failure reason including all comparison scores
                 result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
                 logging.info(f"Rejected: Title similarity too low (best={best_sim:.2f} < {similarity_threshold}) for '{original_title}' (Size: {result['size']:.2f}GB)")
@@ -529,12 +529,43 @@ def filter_results(
                              #logging.debug(f"Date comparison result: {comparison_result} for '{original_title}'")
                              pass
 
-                    elif episode in result_episodes:
-                        # Case 2: PTT parsed episode numbers, check if target episode is present.
+                    elif episode in result_episodes and not (is_anime and result.get('target_abs_episode')):
+                        # Case-2: parsed episode matches the mapped episode.
+                        # BUT: if this is anime and we have an explicit absolute target from the
+                        # scrape pipeline, ignore this match – we only want the absolute number.
                         episode_match = True
-                    # Removed the complex anime absolute number fallback for now
-                    # elif is_anime and lenient_season_pass: 
-                    #     ...
+                    # --- Anime absolute-number fall-back -----------------------
+                    elif is_anime:
+                        try:
+                            # If the scrape pipeline provided the original absolute episode number
+                            # (before XEM season/episode remapping) use it directly.
+                            original_abs = result.get('target_abs_episode')
+                            if original_abs and (
+                                original_abs in result_episodes or
+                                re.search(rf'\b{original_abs}\b', original_title)):
+                                episode_match = True
+                                logging.info(
+                                    f"Anime absolute fallback (orig abs): matched absolute "
+                                    f"{original_abs} for '{original_title}'")
+                            else:
+                                # Convert mapped S/E back to the show's absolute number
+                                abs_target = 0
+                                if season_episode_counts:
+                                    for s_num in sorted(k for k in season_episode_counts
+                                                        if isinstance(k, int) and k < season):
+                                        abs_target += season_episode_counts.get(s_num, 0)
+                                abs_target += episode           # <- mapped episode (e.g. 4) gives 16
+                                # Accept if torrent explicitly carries that absolute number
+                                if (abs_target in result_episodes or
+                                    re.search(rf'\b{abs_target}\b', original_title)):
+                                    episode_match = True
+                                    logging.info(
+                                        f"Anime absolute fallback: matched absolute "
+                                        f"{abs_target} for '{original_title}'")
+                        except Exception as abs_err:
+                            logging.warning(f"Absolute-fallback error for "
+                                            f"'{original_title}': {abs_err}")
+                    # -----------------------------------------------------------------
 
                     if not episode_match:
                         # Before rejecting, check if it was identified as a potential single season pack earlier

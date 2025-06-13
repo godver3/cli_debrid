@@ -48,6 +48,8 @@
             </select>
             <button id="bulk-early-release" class="bulk-action-btn" disabled>Mark Selected as Early Release</button>
             <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
+            <!-- NEW: Manual resync for selected items -->
+            <button id="bulk-resync" class="bulk-action-btn" disabled>Resync Selected</button>
         </div>
     </div>
     <div id="column-selector-wrapper">
@@ -1738,6 +1740,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const bulkEarlyReleaseBtn = document.getElementById('bulk-early-release');
     const bulkRescrapeBtn = document.getElementById('bulk-rescrape');
     const bulkForcePriorityBtn = document.getElementById('bulk-force-priority');
+    // NEW constant for resync button
+    const bulkResyncBtn = document.getElementById('bulk-resync');
 
     // Fetch available versions and populate the version dropdown
     fetch('/settings/get_scraping_versions')
@@ -1863,6 +1867,8 @@ document.addEventListener('DOMContentLoaded', function() {
         bulkEarlyReleaseBtn.disabled = selectedCount === 0;
         bulkRescrapeBtn.disabled = selectedCount === 0;
         bulkForcePriorityBtn.disabled = selectedCount === 0;
+        // NEW: enable/disable resync button
+        bulkResyncBtn.disabled = selectedCount === 0;
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
@@ -2158,6 +2164,23 @@ document.addEventListener('DOMContentLoaded', function() {
             onConfirm: () => {
                 executeBulkAction(selectedItems, 'force_priority', null, 'Force Priority', 'marked for forced priority');
             },
+        });
+    });
+
+    // NEW: Bulk resync handler
+    bulkResyncBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(cb => cb.dataset.itemId);
+        if (selectedItems.length === 0) return;
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Resync',
+            message: `Resync symlinks and DB paths for ${selectedItems.length} item(s)?`,
+            confirmText: 'Resync',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'resync', null, 'Resync', 'resynchronized');
+            }
         });
     });
 

@@ -57,7 +57,8 @@ class ScraperManager:
         genres: List[str] = None,
         episode_formats: Optional[Dict[str, str]] = None,
         tmdb_id: Optional[str] = None,
-        is_translated_search: bool = False
+        is_translated_search: bool = False,
+        is_anime: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Scrape all configured sources for content, enrich with specific metadata, and log detailed results.
@@ -74,10 +75,10 @@ class ScraperManager:
             episode_formats: Dictionary of episode format patterns for anime
             tmdb_id: TMDB ID of the content
             is_translated_search: Flag indicating if the search title is a translation
+            is_anime: Flag to indicate if the content is anime
         """
         all_results = []
         instance_summary = {} # To store results count per instance
-        is_anime = genres and 'anime' in [genre.lower() for genre in genres]
         is_episode = content_type.lower() == 'episode'
 
         self.scraper_timeout = get_setting('Scraping', 'scraper_timeout', 5)
@@ -188,11 +189,14 @@ class ScraperManager:
             return all_results
         
         # For anime episodes, use ONLY Nyaa if enabled and it returns results
+        logging.info(f"[ScraperManager] Anime check: is_anime={is_anime}, is_episode={is_episode}.")
         if is_anime and is_episode:
             nyaa_settings = self.get_scraper_settings('Nyaa')
             old_nyaa_settings = self.get_scraper_settings('OldNyaa')
             nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
             old_nyaa_enabled = old_nyaa_settings.get('enabled', False) if old_nyaa_settings else False
+            
+            logging.info(f"[ScraperManager] Nyaa enabled: {nyaa_enabled}, OldNyaa enabled: {old_nyaa_enabled}.")
             
             if nyaa_enabled or old_nyaa_enabled:
                 logging.info(f"Trying Nyaa/OldNyaa first for anime episode: {title}")

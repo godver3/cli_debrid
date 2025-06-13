@@ -100,6 +100,39 @@
         background-color: #e7f3fe; /* Light blue background */
         border-color: #337ab7; /* Blue border */
     }
+
+    /* Using a more specific selector to override framework styles */
+    .library-show-item .btn-scrape-show {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 500;
+        text-align: center;
+        white-space: nowrap;
+        vertical-align: middle;
+        user-select: none;
+        border: 1px solid transparent;
+        text-decoration: none;
+        transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+        color: #1a1a1a;
+        background-color: #FFA500;
+        border-color: #FFA500;
+        padding: 0.25rem 0.6rem;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        border-radius: 0.2rem;
+    }
+
+    .library-show-item .btn-scrape-show:hover {
+        color: #1a1a1a;
+        background-color: #d98e00;
+        border-color: #cc8400;
+        text-decoration: none;
+    }
+
+    .library-show-item .btn-scrape-show i {
+        margin-right: 0.4rem;
+    }
 </style>
 {% endblock %}
 
@@ -329,6 +362,9 @@ function fetchShowDetails(showItem) {
                 }
                 if (data.versions_details && data.versions_details.length > 0) {
                     html += `<h6>Collection Status per Version:</h6><ul class="list-unstyled">`;
+                    
+                    let isMissingAnything = false;
+
                     data.versions_details.forEach(version_detail => {
                         html += `<li class="version-detail-item" 
                                      data-version-name="${version_detail.name}"
@@ -337,8 +373,53 @@ function fetchShowDetails(showItem) {
                             <strong>${version_detail.name}:</strong> 
                             ${version_detail.status_text} 
                         </li>`;
+
+                        // Check if anything is missing to decide whether to show the button
+                        if (version_detail.next_missing) {
+                            isMissingAnything = true;
+                        }
                     });
                     html += `</ul>`;
+
+                    if (isMissingAnything) {
+                        const scrapeUrl = new URL("{{ url_for('scraper.index') }}", window.location.origin);
+                        scrapeUrl.searchParams.set('search_term', imdbId);
+
+                        const buttonStyle = `
+                            display: inline-flex; 
+                            align-items: center; 
+                            justify-content: center; 
+                            font-weight: 500; 
+                            text-align: center; 
+                            white-space: nowrap; 
+                            vertical-align: middle; 
+                            user-select: none; 
+                            border: 1px solid #FFA500; 
+                            text-decoration: none; 
+                            transition: background-color 0.15s ease-in-out;
+                            color: #1a1a1a; 
+                            background-color: #FFA500; 
+                            padding: 0.25rem 0.6rem; 
+                            font-size: 0.875rem; 
+                            line-height: 1.5; 
+                            border-radius: 0.2rem;
+                            cursor: pointer;
+                        `;
+                        
+                        const iconStyle = `margin-right: 0.4rem;`;
+
+                        html += `<div class="mt-2">
+                                    <a href="${scrapeUrl.toString()}" 
+                                       target="_blank" 
+                                       style="${buttonStyle}" 
+                                       onmouseover="this.style.backgroundColor='#d98e00'" 
+                                       onmouseout="this.style.backgroundColor='#FFA500'"
+                                       title="Open scraper page and search for this show">
+                                        <i class="fas fa-search" style="${iconStyle}"></i> Search for Show
+                                    </a>
+                                 </div>`;
+                    }
+
                 } else if (!data.error) { 
                     html += `<p class="mb-1">No version-specific collection details available.</p>`;
                 }

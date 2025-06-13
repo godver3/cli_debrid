@@ -1,9 +1,9 @@
-from flask import Blueprint, render_template, jsonify, request, Response
+from flask import Blueprint, render_template, jsonify, request, Response, current_app
 from .models import user_required, onboarding_required
 from datetime import datetime, timedelta
 from queues.queue_manager import QueueManager
 import logging
-from .program_operation_routes import program_is_running, program_is_initializing
+from .program_operation_routes import get_program_status
 from queues.initialization import get_initialization_status
 from cli_battery.app.limiter import limiter
 from utilities.settings import get_setting
@@ -13,6 +13,18 @@ from database.database_reading import get_all_media_items, get_item_count_by_sta
 
 queues_bp = Blueprint('queues', __name__)
 queue_manager = QueueManager()
+
+# Cache settings to avoid repeated database/file reads
+_settings_cache = {}
+_cache_timestamp = 0
+CACHE_DURATION = 30  # Cache settings for 30 seconds
+
+# === Processing rate statistics cache ===
+_items_per_hour_cache = {
+    'value': None,
+    'timestamp': 0
+}
+ITEMS_PER_HOUR_CACHE_DURATION = 300  # 5 minutes
 
 def init_limiter(app):
     """Initialize the rate limiter with the Flask app"""
@@ -94,8 +106,7 @@ def consolidate_items(items, limit=None):
 @onboarding_required
 def index():
     queue_contents = queue_manager.get_queue_contents()
-    program_running = program_is_running()
-    program_initializing = program_is_initializing()
+    program_status = get_program_status()
     
     for queue_name, items in queue_contents.items():
         if queue_name == 'Upgrading':
@@ -142,7 +153,7 @@ def index():
 
 
     upgrading_queue = queue_contents.get('Upgrading', [])
-    return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_running=program_running, program_initializing=program_initializing)
+    return render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status)
 
 @queues_bp.route('/api/queue_contents')
 @user_required
@@ -150,12 +161,11 @@ def index():
 def api_queue_contents():
     queue_name = request.args.get('queue', None)
     queue_contents = queue_manager.get_queue_contents()
-    program_running = program_is_running()
-    program_initializing = program_is_initializing()
+    program_status = get_program_status()
     
     # Get initialization status
     initialization_status = None
-    if program_initializing:
+    if program_status == 'Starting':
         status = get_initialization_status()
         if status:
             initialization_status = {
@@ -179,8 +189,7 @@ def api_queue_contents():
                 "contents": {queue_name: items},
                 "total_items": total_count,
                 "original_count": total_count,  # Add original count
-                "program_running": program_running,
-                "program_initializing": program_initializing,
+                "program_status": program_status,
                 "initialization_status": initialization_status
             })
         elif queue_name == 'Unreleased':
@@ -189,8 +198,7 @@ def api_queue_contents():
                 "contents": {queue_name: items},
                 "total_items": total_count,
                 "original_count": total_count,  # Add original count
-                "program_running": program_running,
-                "program_initializing": program_initializing,
+                "program_status": program_status,
                 "initialization_status": initialization_status
             })
     
@@ -251,34 +259,47 @@ def api_queue_contents():
     return jsonify({
         "contents": queue_contents,
         "queue_counts": queue_counts,  # Add original counts
-        "program_running": program_running,
-        "program_initializing": program_initializing,
+        "program_status": program_status,
         "initialization_status": initialization_status
     })
 
-def process_item_for_response(item, queue_name, currently_processing_upgrade_id=None):
-    from utilities.settings import get_setting
-    try:
-        # Add scraping version settings to each item
-        scraping_versions = get_setting('Scraping', 'versions', {})
-        # Handle Infinity values in scraping_versions
-        for version_key, version_data in scraping_versions.items():
-            if isinstance(version_data, dict):
-                for key, value in version_data.items():
-                    if value == float('inf'):
-                        version_data[key] = "Infinity"
-                    elif value == float('-inf'):
-                        version_data[key] = "-Infinity"
+def get_cached_setting(category, key, default=None):
+    """Get settings with caching to reduce I/O operations"""
+    global _settings_cache, _cache_timestamp
+    import time
+    
+    current_time = time.time()
+    cache_key = f"{category}.{key}"
+    
+    # Check if cache is still valid (30 seconds)
+    if current_time - _cache_timestamp > CACHE_DURATION:
+        _settings_cache.clear()
+        _cache_timestamp = current_time
+    
+    if cache_key not in _settings_cache:
+        from utilities.settings import get_setting
+        _settings_cache[cache_key] = get_setting(category, key, default)
+    
+    return _settings_cache[cache_key]
 
-        item['scraping_versions'] = scraping_versions
+def process_item_for_response(item, queue_name, currently_processing_upgrade_id=None):
+    # Cache common settings that are accessed frequently
+    global _settings_cache
+    
+    try:
+        # Efficiently add only the necessary 'require_physical_release' flag.
+        if queue_name in ['Wanted', 'Scraping', 'Adding', 'Upgrading', 'Blacklisted', 'Unreleased']:
+            version = item.get('version')
+            if version:
+                scraping_versions = get_cached_setting('Scraping', 'versions', {})
+                version_settings = scraping_versions.get(version, {})
+                item['require_physical_release'] = version_settings.get('require_physical_release', False)
+            else:
+                item['require_physical_release'] = False
         
-        # --- START EDIT: Add processing flag ---
+        # Add processing and priority flags efficiently
         item['is_processing'] = (queue_name == 'Upgrading' and item['id'] == currently_processing_upgrade_id)
-        # --- END EDIT ---
-        
-        # --- START EDIT: Add force_priority flag ---
         item['is_force_priority'] = item.get('force_priority', False)
-        # --- END EDIT ---
         
         if queue_name == 'Upgrading':
             upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
@@ -294,75 +315,8 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
                 item['time_added'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_data.get(item['id'], {}).get('count', 0)
         elif queue_name == 'Wanted':
-            # --- START EDIT: Calculate and format scrape time ---
-            item['formatted_scrape_time'] = "Unknown" # Default value
-            try:
-                use_alt = get_setting('Debug', 'use_alternate_scrape_time_strategy', False)
-                anchor_str = get_setting('Debug', 'alternate_scrape_time_24h', '00:00')
-                now = datetime.now()
-                release_date_str = item.get('release_date')
-                airtime_str = item.get('airtime')
-                version = item.get('version')
-                item_type = item.get('type')
-
-                scraping_versions = get_setting('Scraping', 'versions', {})
-                version_settings = scraping_versions.get(version, {})
-                require_physical = version_settings.get('require_physical_release', False)
-                physical_release_date_str = item.get('physical_release_date')
-
-                effective_release_date_str = None
-                if require_physical and physical_release_date_str:
-                    effective_release_date_str = physical_release_date_str
-                elif not require_physical and release_date_str and str(release_date_str).lower() not in ['unknown', 'none', 'null', '']:
-                    effective_release_date_str = str(release_date_str)
-
-                if use_alt and effective_release_date_str:
-                    try:
-                        anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
-                    except Exception:
-                        anchor_time = datetime.strptime('00:00', '%H:%M').time()
-                    # Calculate the anchor datetime for today and tomorrow
-                    today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
-                    if now < today_anchor:
-                        prev_anchor = today_anchor - timedelta(days=1)
-                        next_anchor = today_anchor
-                    else:
-                        prev_anchor = today_anchor
-                        next_anchor = today_anchor + timedelta(days=1)
-                    # Item's anchor datetime
-                    item_release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
-                    item_anchor_dt = datetime.combine(item_release_date, anchor_time)
-                    # If item's anchor is in the future, show that
-                    if item_anchor_dt > now:
-                        item['formatted_scrape_time'] = item_anchor_dt.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
-                    else:
-                        # Show the next anchor after now
-                        item['formatted_scrape_time'] = next_anchor.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
-                elif effective_release_date_str:
-                    # Parse effective date
-                    release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
-                    if airtime_str:
-                        try: airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
-                        except ValueError:
-                            try: airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                            except ValueError: airtime = datetime.strptime("00:00", '%H:%M').time()
-                    else: airtime = datetime.strptime("00:00", '%H:%M').time()
-                    release_datetime = datetime.combine(release_date, airtime)
-                    offset_hours = 0.0
-                    if item_type == 'movie':
-                        movie_offset_setting = get_setting("Queue", "movie_airtime_offset", "0")
-                        try: offset_hours = float(movie_offset_setting)
-                        except (ValueError, TypeError): pass
-                    elif item_type == 'episode':
-                        episode_offset_setting = get_setting("Queue", "episode_airtime_offset", "0")
-                        try: offset_hours = float(episode_offset_setting)
-                        except (ValueError, TypeError): pass
-                    effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
-                    item['formatted_scrape_time'] = effective_scrape_time.strftime('%Y-%m-%d %I:%M %p')
-            except Exception as e:
-                 logging.warning(f"Could not calculate scrape time for Wanted item {item.get('id')}: {e}")
-                 item['formatted_scrape_time'] = "Error Calculating"
-            # --- END EDIT ---
+            # Optimize scrape time calculation - only compute when necessary
+            item['formatted_scrape_time'] = compute_scrape_time_cached(item)
         elif queue_name == 'Checking':
             # Convert datetime to string for time_added
             time_added = item.get('time_added', datetime.now())
@@ -383,163 +337,347 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             if 'wake_count' not in item or item['wake_count'] is None:
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])
         elif queue_name == 'Final_Check':
-            # --- START EDIT: Use final_check_add_timestamp or fallback ---
-            # Determine the timestamp to display
             display_timestamp = item.get('final_check_add_timestamp') or item.get('last_updated')
-            
-            # Add it to the item under a specific key for the frontend
             item['final_check_display_time'] = display_timestamp
-            # --- END EDIT ---
-            pass # No other specific action needed here other than ensuring it flows through
         
-        # Ensure all values are JSON serializable
+        # Optimize JSON serialization - only process problematic fields
+        datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']
         for key, value in item.items():
             if isinstance(value, datetime):
-                # Format the specific timestamp if it's a datetime object
                 if key == 'final_check_display_time':
                     item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
-                # Format other datetime objects as before
-                elif key not in ['scraping_versions']: # Avoid trying to format complex objects
+                elif key in datetime_fields:
                     item[key] = value.strftime('%Y-%m-%d %H:%M:%S')
             elif value == float('inf'):
                 item[key] = "Infinity"
             elif value == float('-inf'):
                 item[key] = "-Infinity"
+            elif isinstance(value, set):
+                item[key] = list(value)
             elif not isinstance(value, (str, int, float, bool, list, dict, type(None))):
-                # Convert sets to lists if necessary
-                if isinstance(value, set):
-                     item[key] = list(value)
-                else:
-                     item[key] = str(value) # Fallback to string conversion
+                item[key] = str(value)
                 
         return item
     except Exception as e:
-        logging.error(f"Error processing item in queue {queue_name}: {str(e)}", exc_info=True) # Added exc_info
-        # Return a safe version of the item
+        logging.error(f"Error processing item in queue {queue_name}: {str(e)}", exc_info=True)
         return {
             'id': item.get('id', 'unknown'),
             'title': item.get('title', 'Error processing item'),
             'error': str(e)
         }
 
+def compute_scrape_time_cached(item):
+    """Optimized scrape time calculation with caching"""
+    try:
+        # Use cached settings
+        use_alt = get_cached_setting('Debug', 'use_alternate_scrape_time_strategy', False)
+        anchor_str = get_cached_setting('Debug', 'alternate_scrape_time_24h', '00:00')
+        
+        now = datetime.now()
+        release_date_str = item.get('release_date')
+        airtime_str = item.get('airtime')
+        version = item.get('version')
+        item_type = item.get('type')
+
+        scraping_versions = get_cached_setting('Scraping', 'versions', {})
+        version_settings = scraping_versions.get(version, {})
+        require_physical = version_settings.get('require_physical_release', False)
+        physical_release_date_str = item.get('physical_release_date')
+
+        effective_release_date_str = None
+        if require_physical and physical_release_date_str:
+            effective_release_date_str = physical_release_date_str
+        elif not require_physical and release_date_str and str(release_date_str).lower() not in ['unknown', 'none', 'null', '']:
+            effective_release_date_str = str(release_date_str)
+
+        if use_alt and effective_release_date_str:
+            try:
+                anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
+            except Exception:
+                anchor_time = datetime.strptime('00:00', '%H:%M').time()
+            
+            # Calculate the anchor datetime for today and tomorrow
+            today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
+            if now < today_anchor:
+                next_anchor = today_anchor
+            else:
+                next_anchor = today_anchor + timedelta(days=1)
+            
+            # Item's anchor datetime
+            item_release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
+            item_anchor_dt = datetime.combine(item_release_date, anchor_time)
+            
+            # If item's anchor is in the future, show that
+            if item_anchor_dt > now:
+                return item_anchor_dt.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
+            else:
+                return next_anchor.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
+                
+        elif effective_release_date_str:
+            # Parse effective date
+            release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
+            if airtime_str:
+                try: 
+                    airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
+                except ValueError:
+                    try: 
+                        airtime = datetime.strptime(airtime_str, '%H:%M').time()
+                    except ValueError: 
+                        airtime = datetime.strptime("00:00", '%H:%M').time()
+            else: 
+                airtime = datetime.strptime("00:00", '%H:%M').time()
+            
+            release_datetime = datetime.combine(release_date, airtime)
+
+            # If a movie has no specific airtime, shift the base release time to the start of the next day.
+            if item_type == 'movie' and not airtime_str:
+                release_datetime += timedelta(days=1)
+
+            item['release_date'] = release_datetime.strftime('%Y-%m-%d')
+
+            offset_hours = 0.0
+            if item_type == 'movie':
+                movie_offset_setting = get_cached_setting("Queue", "movie_airtime_offset", "0")
+                try: 
+                    offset_hours = float(movie_offset_setting)
+                except (ValueError, TypeError): 
+                    pass
+            elif item_type == 'episode':
+                episode_offset_setting = get_cached_setting("Queue", "episode_airtime_offset", "0")
+                try: 
+                    offset_hours = float(episode_offset_setting)
+                except (ValueError, TypeError): 
+                    pass
+                    
+            effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
+            return effective_scrape_time.strftime('%Y-%m-%d %I:%M %p')
+            
+    except Exception as e:
+        logging.warning(f"Could not calculate scrape time for Wanted item {item.get('id')}: {e}")
+        return "Error Calculating"
+        
+    return "Unknown"
+
 @queues_bp.route('/api/queue-stream')
 @user_required
 def queue_stream():
-    """Stream queue updates, fetching limited DB data for large queues."""
-    ITEMS_LIMIT = 500  # Fixed limit of 500 items per queue
+    """Stream queue updates, optimized for high item counts."""
+    app = current_app._get_current_object()
+
+    # Determine client type from User-Agent first, as it's needed in the generator.
+    ua_string = request.headers.get('User-Agent', '')
+    mobile_indicators = ['Mobile', 'Android', 'iPhone', 'iPad', 'iPod', 'Opera Mini', 'IEMobile']
+    is_mobile_client = any(indicator in ua_string for indicator in mobile_indicators)
+
+    # Use the 'limit' from the request to control the number of items sent.
+    try:
+        limit = int(request.args.get('limit'))
+    except (TypeError, ValueError):
+        # Fallback to User-Agent detection if limit is not provided or invalid.
+        limit = 50 if is_mobile_client else 100
+
+    # Apply a hard maximum limit to prevent abuse.
+    ITEMS_LIMIT = min(limit, 500)
     DB_FETCH_QUEUES = {"Wanted", "Blacklisted", "Unreleased", "Final_Check"}
+    
+    # Performance optimization: Track last sent data to avoid redundant updates
+    last_sent_hash = None
+    consecutive_identical_sends = 0
+    MAX_IDENTICAL_SENDS = 3  # Stop sending if data unchanged for 3 cycles
 
     def generate():
+        nonlocal last_sent_hash, consecutive_identical_sends
+        last_heartbeat = time.time()
+        HEARTBEAT_INTERVAL = 30  # Send heartbeat every 30 seconds
+        
         while True:
-            try:
-                # Get queue contents (only fetches in-memory queues now)
-                in_memory_queue_contents = queue_manager.get_queue_contents()
-                program_running = program_is_running()
-                program_initializing = program_is_initializing()
-                
-                # --- START EDIT: Get currently processing upgrade ID ---
-                currently_processing_upgrade_id = None
-                if 'Upgrading' in queue_manager.queues:
-                    currently_processing_upgrade_id = queue_manager.queues['Upgrading'].get_currently_processing_item_id()
-                # --- END EDIT ---
-                
-                # Get initialization status
-                initialization_status = None
-                if program_initializing:
-                    status = get_initialization_status()
-                    if status:
-                        initialization_status = {
-                            'current_step': status.get('current_step', ''),
-                            'total_steps': status.get('total_steps', 4),
-                            'current_step_number': status.get('current_step_number', 0),
-                            'progress_value': status.get('progress_value', 0),
-                            'substep_details': status.get('substep_details', ''),
-                            'error_details': status.get('error_details', None),
-                            'is_substep': status.get('is_substep', False),
-                            'current_phase': status.get('current_phase', None)
-                        }
-                
-                # --- START EDIT: Fetch DB queues and counts ---
-                final_contents = {}
-                queue_counts = {}
-                hidden_counts = {}
-
-                # Process in-memory queues first
-                for queue_name, items in in_memory_queue_contents.items():
-                    if queue_name not in DB_FETCH_QUEUES:
-                        total_count = len(items)
-                        queue_counts[queue_name] = total_count
-                        hidden_count = max(0, total_count - ITEMS_LIMIT)
-                        if hidden_count > 0:
-                            hidden_counts[queue_name] = hidden_count
-
-                        limited_items = items[:ITEMS_LIMIT]
-                        # --- START EDIT: Pass ID to processing function ---
-                        processed_items = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in limited_items]
-                        # --- END EDIT ---
-                        final_contents[queue_name] = processed_items
-
-                # Process database-backed queues
-                for queue_name in DB_FETCH_QUEUES:
-                    try:
-                        # Get total count from DB
-                        total_count = get_item_count_by_state(queue_name)
-                        queue_counts[queue_name] = total_count
-                        hidden_count = max(0, total_count - ITEMS_LIMIT)
-                        if hidden_count > 0:
-                            hidden_counts[queue_name] = hidden_count
-
-                        # Fetch limited items from DB
-                        limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
-                        limited_items = [dict(item) for item in limited_items_raw] # Convert rows
-
-                        # --- START EDIT: Pass ID to processing function ---
-                        processed_items = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in limited_items]
-                        # --- END EDIT ---
-
-                        # Apply consolidation if needed
-                        if queue_name in ['Blacklisted', 'Unreleased']:
-                            processed_items, _ = consolidate_items(processed_items) # Use original consolidate function
-
-                        final_contents[queue_name] = processed_items
-
-                    except Exception as db_err:
-                         logging.error(f"Error fetching data for DB queue '{queue_name}': {db_err}")
-                         final_contents[queue_name] = [] # Provide empty list on error
-                         queue_counts[queue_name] = 0
-                         hidden_counts[queue_name] = 0
-                # --- END EDIT ---
-
-                data = {
-                    "contents": final_contents,
-                    "queue_counts": queue_counts,
-                    "hidden_counts": hidden_counts,
-                    "program_running": program_running,
-                    "program_initializing": program_initializing,
-                    "initialization_status": initialization_status,
-                    # --- START EDIT: Include the ID in the stream data (optional, but could be useful for global indicators) ---
-                    "currently_processing_upgrade_id": currently_processing_upgrade_id
-                    # --- END EDIT ---
-                }
-
-                yield f"data: {json.dumps(data, default=str)}\n\n"
-
-            except Exception as e:
-                logging.error(f"Error in queue stream: {str(e)}")
+            with app.app_context():
                 try:
-                    yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
-                except Exception as inner_e:
-                    # Failsafe: yield a hardcoded valid JSON string
-                    yield 'data: {"success": false, "error": "Unknown streaming error"}\n\n'
-            
-            time.sleep(2.5)  # Check for updates every 2.5 seconds
-    
-    response = Response(generate(), mimetype='text/event-stream')
-    response.headers.update({
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type',
-        'X-Accel-Buffering': 'no'  # Disable buffering in Nginx
-    })
-    return response
+                    current_time = time.time()
+                    
+                    # Send heartbeat to keep connection alive
+                    if current_time - last_heartbeat > HEARTBEAT_INTERVAL:
+                        yield f"data: {json.dumps({'heartbeat': True, 'timestamp': current_time})}\n\n"
+                        last_heartbeat = current_time
+                    program_status = get_program_status()
+
+                    if program_status in ["Stopped", "Stopping"]:
+                        yield f"data: {json.dumps({'program_status': program_status})}\n\n"
+                        time.sleep(2)
+                        continue
+
+                    initialization_status = None
+                    if program_status == "Starting":
+                        status = get_initialization_status()
+                        if status:
+                            initialization_status = {
+                                'current_step': status.get('current_step', ''),
+                                'total_steps': status.get('total_steps', 4),
+                                'current_step_number': status.get('current_step_number', 0),
+                                'progress_value': status.get('progress_value', 0),
+                                'substep_details': status.get('substep_details', ''),
+                                'error_details': status.get('error_details', None),
+                                'is_substep': status.get('is_substep', False),
+                                'current_phase': status.get('current_phase', None)
+                            }
+                        yield f"data: {json.dumps({'program_status': 'Starting', 'initialization_status': initialization_status})}\n\n"
+                        time.sleep(0.5)
+                        continue
+
+                    # If program is running, proceed to send queue data
+                    queue_manager = QueueManager()
+                    
+                    currently_processing_upgrade_id = None
+                    if 'Upgrading' in queue_manager.queues:
+                        currently_processing_upgrade_id = queue_manager.queues['Upgrading'].get_currently_processing_item_id()
+
+                    in_memory_queue_contents = queue_manager.get_queue_contents()
+
+                    final_contents = {}
+                    queue_counts = {}
+                    hidden_counts = {}
+
+                    # Process in-memory queues first
+                    for queue_name, items in in_memory_queue_contents.items():
+                        if queue_name not in DB_FETCH_QUEUES:
+                            total_count = len(items)
+                            queue_counts[queue_name] = total_count
+                            hidden_count = max(0, total_count - ITEMS_LIMIT)
+                            if hidden_count > 0:
+                                hidden_counts[queue_name] = hidden_count
+
+                            limited_items = items[:ITEMS_LIMIT]
+                            # Process items in batches for better performance
+                            processed_items = []
+                            for i in range(0, len(limited_items), 25):  # Process 25 items at a time
+                                batch = limited_items[i:i+25]
+                                batch_processed = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in batch]
+                                processed_items.extend(batch_processed)
+                            
+                            final_contents[queue_name] = processed_items
+
+                    # Process database-backed queues
+                    for queue_name in DB_FETCH_QUEUES:
+                        try:
+                            total_count = get_item_count_by_state(queue_name)
+                            queue_counts[queue_name] = total_count
+                            hidden_count = max(0, total_count - ITEMS_LIMIT)
+                            if hidden_count > 0:
+                                hidden_counts[queue_name] = hidden_count
+
+                            # We use page=1 because the stream always shows the top of the queue.
+                            limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
+                            limited_items = [dict(item) for item in limited_items_raw]
+
+                            # Process items in batches for better performance
+                            processed_items = []
+                            for i in range(0, len(limited_items), 25):  # Process 25 items at a time
+                                batch = limited_items[i:i+25]
+                                batch_processed = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in batch]
+                                processed_items.extend(batch_processed)
+
+                            if queue_name in ['Blacklisted', 'Unreleased']:
+                                processed_items, _ = consolidate_items(processed_items)
+
+                            final_contents[queue_name] = processed_items
+
+                        except Exception as db_err:
+                             logging.error(f"Error fetching data for DB queue '{queue_name}': {db_err}")
+                             final_contents[queue_name] = []
+                             queue_counts[queue_name] = 0
+                             hidden_counts[queue_name] = 0
+                    
+                    # Calculate processing rate statistics
+                    items_per_hour = get_items_processed_per_hour()
+                    items_remaining = queue_counts.get('Scraping', 0) + queue_counts.get('Wanted', 0)
+                    remaining_hours = (items_remaining / items_per_hour) if items_per_hour else None
+                    remaining_scrape_time = _format_remaining_time(remaining_hours) if remaining_hours is not None else "Unknown"
+
+                    data_to_send = {
+                        "program_status": "Running",
+                        "contents": final_contents,
+                        "queue_counts": queue_counts,
+                        "hidden_counts": hidden_counts,
+                        "currently_processing_upgrade_id": currently_processing_upgrade_id,
+                        "items_per_hour": items_per_hour,
+                        "remaining_scrape_time": remaining_scrape_time
+                    }
+
+                    # Performance optimization: Only send if data has changed
+                    current_hash = hash(json.dumps(data_to_send, sort_keys=True, default=str))
+                    if current_hash == last_sent_hash:
+                        consecutive_identical_sends += 1
+                        if consecutive_identical_sends >= MAX_IDENTICAL_SENDS:
+                            # Skip sending identical data, but send occasionally to keep connection alive
+                            time.sleep(5)  # Wait longer when no changes
+                            consecutive_identical_sends = 0  # Reset counter
+                            continue
+                    else:
+                        last_sent_hash = current_hash
+                        consecutive_identical_sends = 0
+
+                    yield f"data: {json.dumps(data_to_send, default=str)}\n\n"
+
+                except Exception as e:
+                    logging.error(f"Error in queue stream: {e}", exc_info=True)
+                    yield f"data: {json.dumps({'error': str(e), 'program_status': 'Error'})}\n\n"
+                
+                # Dynamic refresh interval based on queue sizes
+                total_items = sum(queue_counts.values()) if 'queue_counts' in locals() else 0
+                if total_items > 500:
+                    refresh_interval = 5.0  # Slower updates for very large queues
+                elif total_items > 200:
+                    refresh_interval = 3.5  # Moderate updates for large queues
+                else:
+                    refresh_interval = get_cached_setting('queue_refresh_interval', 2.5)
+
+                # Further slow down updates for mobile clients
+                if is_mobile_client:
+                    refresh_interval = max(refresh_interval * 1.5, 4.0)  # Ensure at least ~4s interval
+                
+                time.sleep(refresh_interval if refresh_interval is not None else 2.5)
+
+    return Response(generate(), mimetype='text/event-stream')
+
+def get_paginated_items(queue_name, page, per_page):
+    # Implementation of get_paginated_items function
+    pass
+
+def get_items_processed_per_hour():
+    """Return the number of items collected in the last hour. Cached for 5 minutes to reduce DB load."""
+    global _items_per_hour_cache
+    current_ts = time.time()
+    if (_items_per_hour_cache['value'] is not None and
+            current_ts - _items_per_hour_cache['timestamp'] < ITEMS_PER_HOUR_CACHE_DURATION):
+        return _items_per_hour_cache['value']
+
+    try:
+        from database.core import get_db_connection  # Local import to avoid circular imports
+        conn = get_db_connection()
+        query = (
+            "SELECT COUNT(*) AS items_collected_last_hour "
+            "FROM media_items "
+            "WHERE substr(collected_at, 1, 19) >= datetime('now', 'localtime', '-1 hour');"
+        )
+        cursor = conn.execute(query)
+        row = cursor.fetchone()
+        items_per_hour = row['items_collected_last_hour'] if row else 0
+    except Exception as e:
+        logging.error(f"Error calculating items processed per hour: {e}")
+        items_per_hour = 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    _items_per_hour_cache.update({'value': items_per_hour, 'timestamp': current_ts})
+    return items_per_hour
+
+def _format_remaining_time(hours_float: float) -> str:
+    """Convert fractional hours to H:MM string format."""
+    if hours_float is None or hours_float <= 0 or hours_float == float('inf'):
+        return "Unknown"
+    total_minutes = int(round(hours_float * 60))
+    hrs, mins = divmod(total_minutes, 60)
+    return f"{hrs}:{mins:02d}"

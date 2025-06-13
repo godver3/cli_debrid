@@ -447,17 +447,22 @@ class MediaMatcher:
 
         logging.debug(f"Checking {len(all_candidate_items)} candidate items against {len(parsed_torrent_files)} parsed files.")
 
+        # Allow multi-season matching if the user disables the restriction via settings.
+        from utilities.settings import get_setting
+        restrict_to_pack_season = get_setting('Matching', 'restrict_related_to_pack_season', False)
+
         # If the torrent was parsed as a specific season (pack), enforce matching only that season
         pack_season = xem_mapping.get('season') if xem_mapping else None
-        if pack_season is not None:
-            logging.info(f"Torrent pack identified as Season {pack_season}. Related item matching will be restricted to this season.")
+        if pack_season is not None and restrict_to_pack_season:
+            logging.info(
+                f"Torrent pack identified as Season {pack_season}. Related item matching will be restricted to this season (per setting)."
+            )
 
         # Determine relaxed matching based on original item (assuming related items follow same logic)
         genres = original_item.get('genres') or []
         if isinstance(genres, str):
             genres = [genres]
         is_anime = any('anime' in genre.lower() for genre in genres)
-        from utilities.settings import get_setting
         file_collection_management = get_setting('File Management', 'file_collection_management')
         using_plex = file_collection_management == 'Plex'
         # Apply relaxed matching globally based on the original item context
@@ -468,11 +473,33 @@ class MediaMatcher:
             if not item_id or item_id in processed_item_ids:
                 continue
 
-            # If a pack season is identified, skip items from other seasons
-            if pack_season is not None:
+            # Optionally skip items from other seasons for season packs
+            if pack_season is not None and restrict_to_pack_season:
                 item_season = item.get('season') or item.get('season_number')
                 if item_season != pack_season:
                     continue
+
+            # --- Build per-candidate XEM mapping (season-offset only) ---
+            candidate_xem_mapping = None
+            if xem_mapping is not None:
+                # Determine season delta based on original→scene mapping for the primary item
+                original_item_season = original_item.get('season') or original_item.get('season_number')
+                mapped_primary_season = xem_mapping.get('season')
+
+                try:
+                    if original_item_season is not None and mapped_primary_season is not None:
+                        season_delta = int(mapped_primary_season) - int(original_item_season)
+
+                        candidate_season = item.get('season') or item.get('season_number')
+                        candidate_episode = item.get('episode') or item.get('episode_number')
+
+                        if candidate_season is not None and candidate_episode is not None:
+                            candidate_xem_mapping = {
+                                'season': candidate_season + season_delta,
+                                'episode': candidate_episode,  # assume episode number itself is unchanged
+                            }
+                except Exception as map_err:
+                    logging.debug(f"Could not build candidate XEM mapping for item ID {item_id}: {map_err}")
 
             # Basic filtering for relevance
             item_title_to_check = item.get('series_title') or item.get('title')
@@ -491,7 +518,13 @@ class MediaMatcher:
             # --- Find Match in Parsed Files ---
             found_match_for_this_item = False
             for parsed_file_info in parsed_torrent_files:
-                if self._check_match(parsed_file_info, item_for_matching, use_relaxed_matching_for_all):
+                # Pass per-candidate mapping (if available) so scene numbering is considered correctly
+                if self._check_match(
+                    parsed_file_info,
+                    item_for_matching,
+                    use_relaxed_matching_for_all,
+                    xem_mapping=candidate_xem_mapping,
+                ):
                     logging.info(f"Found related item ID {item_id} (State: {item.get('state', 'Unknown')}) matching file '{parsed_file_info['path']}'")
                     # Store the item and the *basename* of the matched file path
                     related_matches.append((item, os.path.basename(parsed_file_info['path'])))

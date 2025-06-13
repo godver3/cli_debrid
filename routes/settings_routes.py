@@ -1441,6 +1441,23 @@ def delete_version():
                     versions[v_name]['fallback_version'] = 'None' # Set to None as requested
                     logging.info(f"Reset fallback_version for version '{v_name}' as '{version_id}' was deleted.")
             
+            # --- New Logic: Remove deleted version from Content Sources ---
+            content_sources = config.get('Content Sources', {})
+            updated_sources_count = 0
+            for source_id, source_config in content_sources.items():
+                if isinstance(source_config, dict) and 'versions' in source_config:
+                    source_versions = source_config['versions']
+                    if isinstance(source_versions, dict) and version_id in source_versions:
+                        del source_versions[version_id]
+                        updated_sources_count += 1
+                        logging.info(f"Removed deleted version '{version_id}' from Content Source '{source_id}' (dict format)")
+                    elif isinstance(source_versions, list) and version_id in source_versions:
+                        source_versions.remove(version_id)
+                        updated_sources_count += 1
+                        logging.info(f"Removed deleted version '{version_id}' from Content Source '{source_id}' (list format)")
+            if updated_sources_count > 0:
+                logging.info(f"Removed deleted version from {updated_sources_count} Content Source(s).")
+
             # Delete the actual version
             del versions[version_id]
             save_config(config) # Save config with updated fallbacks and deleted version

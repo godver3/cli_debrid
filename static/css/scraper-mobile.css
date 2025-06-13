@@ -646,7 +646,7 @@
         margin-bottom: 10px;
     }
 
-    input[name="versions"], input[name="selection-type"], input[name="seasons"] {
+    input[name="versions"], input[name="selection-type"], input[name="seasons"], input[name="scrape-versions"] {
         height: auto !important;
         appearance: auto !important;
     }

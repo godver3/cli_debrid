@@ -381,13 +381,12 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         SELECT * FROM (
             SELECT
                 title, year, 'episode' as type, collected_at, imdb_id, tmdb_id,
-                version, filled_by_title, filled_by_file, season_number, episode_number
+                version, filled_by_title, filled_by_file, season_number, episode_number,
+                ROW_NUMBER() OVER(PARTITION BY title ORDER BY collected_at DESC) as rn
             FROM media_items
             WHERE type = 'episode' AND upgraded = 0 AND state IN ('Collected', 'Upgrading')
-            ORDER BY collected_at DESC
-            LIMIT 50
         )
-        GROUP BY title, season_number
+        WHERE rn = 1
         ORDER BY collected_at DESC
         LIMIT ?
         """

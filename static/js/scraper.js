@@ -167,8 +167,10 @@ function showLoadingState() {
     // Disable all buttons
     const buttons = document.getElementsByTagName('button');
     for (let button of buttons) {
-        button.disabled = true;
-        button.style.opacity = '0.5';
+        if (!button.classList.contains('close-loading')) {
+            button.disabled = true;
+            button.style.opacity = '0.5';
+        }
     }
     
     const selecter = document.getElementsByTagName('select');
@@ -248,7 +250,17 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         // Only add click handler for non-requester users
         if (!isRequester) {
             episodeDiv.onclick = function() {
-                selectMedia(item.id, item.title, item.year, item.media_type, item.season_num, item.episode_num, item.multi, genre_ids);
+                const content = {
+                    mediaId: item.id,
+                    title: item.title,
+                    year: item.year,
+                    mediaType: item.media_type,
+                    season: item.season_num,
+                    episode: item.episode_num,
+                    multi: item.multi,
+                    genre_ids: genre_ids
+                };
+                showScrapeVersionModal(content);
             };
         } else {
             // Apply visual styling to show it's not clickable for requesters
@@ -531,10 +543,22 @@ document.addEventListener('DOMContentLoaded', async function() {
         cancelVersionsButton.addEventListener('click', closeVersionModal);
     }
     
+    // Set up scrape version modal buttons
+    const confirmScrapeButton = document.getElementById('confirmScrapeVersion');
+    if (confirmScrapeButton) {
+        confirmScrapeButton.addEventListener('click', handleScrapeVersionConfirm);
+    }
+    
+    const cancelScrapeButton = document.getElementById('cancelScrapeVersion');
+    if (cancelScrapeButton) {
+        cancelScrapeButton.addEventListener('click', closeScrapeVersionModal);
+    }
+    
     // Close modals when clicking outside
     window.addEventListener('click', function(event) {
         const versionModal = document.getElementById('versionModal');
         const mobileActionModal = document.getElementById('mobileActionModal');
+        const scrapeVersionModal = document.getElementById('scrapeVersionModal');
         
         // Close version modal if clicking outside modal content
         if (event.target === versionModal) {
@@ -545,6 +569,11 @@ document.addEventListener('DOMContentLoaded', async function() {
         if (event.target === mobileActionModal) {
             closeMobileActionModal();
         }
+
+        // Close scrape version modal if clicking outside modal content
+        if (event.target === scrapeVersionModal) {
+            closeScrapeVersionModal();
+        }
     });
     
     // Close modals when pressing Escape key
@@ -553,6 +582,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             const versionModal = document.getElementById('versionModal');
             const mobileActionModal = document.getElementById('mobileActionModal');
             const overlayElement = document.getElementById('overlay'); // Use a different name
+            const scrapeVersionModal = document.getElementById('scrapeVersionModal');
             
             if (versionModal && versionModal.style.display === 'flex') {
                 closeVersionModal();
@@ -565,11 +595,16 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (overlayElement && overlayElement.style.display === 'flex') { // Check for flex
                 closeOverlay();
             }
+
+            if (scrapeVersionModal && scrapeVersionModal.style.display === 'flex') {
+                closeScrapeVersionModal();
+            }
         }
     });
     
     // Initialize the Loading object
     Loading.init();
+    Loading.setOnClose(hideLoadingState);
 
     // Handle Allow Specials checkbox
     const allowSpecialsCheckbox = document.getElementById('allow-specials');
@@ -785,11 +820,25 @@ document.addEventListener('DOMContentLoaded', async function() {
             localStorage.setItem('selectedVersion', versionSelect.value);
         });
     }
+
+    // Auto-search if search_term is in URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const searchTermFromUrl = urlParams.get('search_term');
+    if (searchTermFromUrl) {
+        const searchInput = document.querySelector('#search-form input[name="search_term"]');
+        const searchButton = document.getElementById('searchformButton');
+        if (searchInput && searchButton) {
+            console.log(`Auto-searching for: ${searchTermFromUrl}`);
+            searchInput.value = searchTermFromUrl;
+            searchButton.click();
+        }
+    }
 }); // End of DOMContentLoaded
 
 // Available versions and selected content
 let availableVersions = [];
 let selectedContent = null;
+let scrapeContent = null;
 
 // Fetch available versions
 async function fetchVersions() {
@@ -902,6 +951,57 @@ function closeVersionModal() {
     document.getElementById('versionModal').style.display = 'none';
     // Remove modal-open class from body
     document.body.classList.remove('modal-open');
+}
+
+// Close scrape version selection modal
+function closeScrapeVersionModal() {
+    document.getElementById('scrapeVersionModal').style.display = 'none';
+    document.body.classList.remove('modal-open');
+}
+
+// New function to show scrape version modal
+function showScrapeVersionModal(content) {
+    scrapeContent = content;
+    const modal = document.getElementById('scrapeVersionModal');
+    const versionRadios = document.getElementById('scrapeVersionRadios');
+
+    versionRadios.innerHTML = '';
+
+    availableVersions.forEach((version, index) => {
+        const div = document.createElement('div');
+        div.className = 'version-checkbox'; // Reuse class for styling
+        div.innerHTML = `
+            <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
+            <label for="scrape-version-${version}">${version}</label>
+        `;
+        versionRadios.appendChild(div);
+    });
+
+    // Add a 'No Version' option
+    const noVersionDiv = document.createElement('div');
+    noVersionDiv.className = 'version-checkbox';
+    noVersionDiv.innerHTML = `
+        <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
+        <label for="scrape-version-No Version">No Version</label>
+    `;
+    versionRadios.appendChild(noVersionDiv);
+
+    document.body.classList.add('modal-open');
+    modal.style.display = 'flex';
+}
+
+// New handler for scrape version confirmation
+async function handleScrapeVersionConfirm() {
+    const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+    if (selectedVersion === undefined) {
+        displayError('Please select a version.');
+        return;
+    }
+
+    closeScrapeVersionModal();
+
+    const c = scrapeContent;
+    await selectMedia(c.mediaId, c.title, c.year, c.mediaType, c.season, c.episode, c.multi, c.genre_ids, selectedVersion);
 }
 
 // Show version selection modal for a specific season
@@ -1035,8 +1135,8 @@ async function handleVersionConfirm() {
         // from the showVersionModalForSeason function, so we don't need to do anything
     }
     
-    await requestContent(selectedContent, selectedVersions);
     closeVersionModal();
+    await requestContent(selectedContent, selectedVersions);
 }
 
 // Request content
@@ -1169,8 +1269,18 @@ function createMovieElement(data) {
                 // Show mobile action modal
                 showMobileActionModal(item);
             } else {
-                // Desktop behavior - direct scrape
-                selectMedia(data.tmdb_id, data.title, data.year, 'movie', null, null, false, data.genre_ids);
+                // Desktop behavior - open scrape version modal with properly structured content object
+                const content = {
+                    mediaId: data.tmdb_id,
+                    title: data.title,
+                    year: data.year,
+                    mediaType: 'movie',
+                    season: null,
+                    episode: null,
+                    multi: false,
+                    genre_ids: data.genre_ids
+                };
+                showScrapeVersionModal(content);
             }
         }
     };
@@ -1653,7 +1763,17 @@ function displaySearchResults(results, version) {
                     showMobileActionModal(item);
                 } else {
                     if (item.media_type === 'movie') {
-                        selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, version);
+                        const content = {
+                            mediaId: item.id,
+                            title: item.title,
+                            year: item.year,
+                            mediaType: 'movie',
+                            season: null,
+                            episode: null,
+                            multi: false,
+                            genre_ids: item.genre_ids
+                        };
+                        showScrapeVersionModal(content);
                     } else {
                          // Make sure to pass the correct poster path key if needed by selectSeason
                         selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set);
@@ -1743,7 +1863,7 @@ function displaySearchResults(results, version) {
     });
 }
 
-async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids) {
+async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, version) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
     if (isRequesterEl && isRequesterEl.value === 'True') {
@@ -1751,15 +1871,21 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
         return;
     }
 
+    if (!mediaId || mediaId === 'undefined') {
+        console.error("selectMedia called with invalid mediaId:", mediaId);
+        displayError("An internal error occurred: media ID is missing.");
+        hideLoadingState();
+        return;
+    }
+
     showLoadingState();
-    const version = document.getElementById('version-select').value;
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
     formData.append('year', year);
     formData.append('media_type', mediaType);
-    if (season !== null) formData.append('season', season);
-    if (episode !== null) formData.append('episode', episode);
+    if (season != null) formData.append('season', season);
+    if (episode != null) formData.append('episode', episode);
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('skip_cache_check', 'true'); // Always use background checking
@@ -2088,7 +2214,17 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                 }
                 
                 const selectedItem = JSON.parse(dropdown.value);
-                selectMedia(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
+                const content = {
+                    mediaId: selectedItem.id,
+                    title: selectedItem.title,
+                    year: selectedItem.year,
+                    mediaType: selectedItem.media_type,
+                    season: selectedItem.season_num,
+                    episode: null,
+                    multi: true, // Season packs are multi-file
+                    genre_ids: genre_ids
+                };
+                showScrapeVersionModal(content);
             };
             
             // Add event handler for the request season button
@@ -2357,7 +2493,17 @@ function showMobileActionModal(item) {
     scrapeButton.onclick = function() {
         closeMobileActionModal();
         if (item.media_type === 'movie') {
-            selectMedia(item.id, item.title, item.year, item.media_type, null, null, false, item.version);
+            const content = {
+                mediaId: item.id,
+                title: item.title,
+                year: item.year,
+                mediaType: item.media_type,
+                season: null,
+                episode: null,
+                multi: false,
+                genre_ids: item.genre_ids
+            };
+            showScrapeVersionModal(content);
         } else {
             selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.voteAverage, item.backdrop_path, item.show_overview, item.tmdb_api_key_set);
         }
@@ -2383,4 +2529,56 @@ function closeMobileActionModal() {
     modal.style.display = 'none';
     // Remove modal-open class from body
     document.body.classList.remove('modal-open');
+}
+
+async function handleAutoScrape(imdbId, season, episode, version) {
+    showLoadingState();
+    console.log(`Auto-scraping for IMDb ID: ${imdbId}, Season: ${season}, Episode: ${episode}, Version: ${version}`);
+
+    try {
+        if (version) {
+            const versionSelect = document.getElementById('version-select');
+            if (versionSelect) {
+                if (availableVersions.length === 0) {
+                    await fetchVersions();
+                }
+                if (Array.from(versionSelect.options).some(opt => opt.value === version)) {
+                    versionSelect.value = version;
+                } else {
+                    console.warn(`Version "${version}" not found in dropdown. Using default.`);
+                }
+            }
+        }
+
+        const lookupResponse = await fetch('/scraper/lookup_by_id', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `id_type=imdb&media_id=${encodeURIComponent(imdbId)}`
+        });
+
+        if (!lookupResponse.ok) {
+            const errorData = await lookupResponse.json().catch(() => ({}));
+            throw new Error(errorData.error || `Failed to look up IMDb ID: ${lookupResponse.statusText}`);
+        }
+
+        const lookupData = await lookupResponse.json();
+        if (!lookupData.results || lookupData.results.length === 0) {
+            throw new Error('No media found for the provided IMDb ID.');
+        }
+
+        const mediaInfo = lookupData.results[0];
+        if (mediaInfo.media_type !== 'show' && mediaInfo.media_type !== 'tv') {
+            throw new Error('Auto-scraping is only supported for TV shows.');
+        }
+        
+        const { id: mediaId, title, year, media_type: mediaType, genre_ids } = mediaInfo;
+        const isMulti = !!(season && !episode);
+
+        await selectMedia(mediaId, title, year, mediaType, season, episode, isMulti, genre_ids, version);
+
+    } catch (error) {
+        hideLoadingState();
+        console.error('Auto-scrape failed:', error);
+        displayError(`Auto-scrape failed: ${error.message}`);
+    }
 }

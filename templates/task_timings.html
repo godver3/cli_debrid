@@ -597,12 +597,12 @@ function saveIntervalStates() {
         const taskName = tile.dataset.taskName;
         const input = tile.querySelector('.interval-input');
         if (input) {
-            const defaultIntervalSeconds = parseInt(input.dataset.defaultIntervalSeconds, 1);
+            const defaultIntervalSeconds = parseInt(input.dataset.defaultIntervalSeconds, 10);
             const currentValueStr = input.value.trim();
             if (currentValueStr === '') {
                 taskIntervalsSeconds[taskName] = null;
             } else {
-                const currentValueInt = parseInt(currentValueStr, 1);
+                const currentValueInt = parseInt(currentValueStr, 10);
                 if (!isNaN(currentValueInt)) {
                     if (currentValueInt !== defaultIntervalSeconds) {
                         taskIntervalsSeconds[taskName] = currentValueStr;
@@ -751,7 +751,7 @@ function createTaskTile(taskName, taskData) {
             ${customIntervalSec !== null && customIntervalSec !== undefined ? `| Saved: ${customIntervalSec}s` : ''}
         </div>
         <div class="interval-input-container">
-            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="10" step="1" ${enabled ? '' : 'disabled'} data-default-interval-seconds="${defaultIntervalSec}">
+            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="1" step="1" ${enabled ? '' : 'disabled'} data-default-interval-seconds="${defaultIntervalSec}">
             <span class="interval-input-label">seconds</span>
         </div>
         <div class="countdown" data-task="${taskName}">
@@ -793,7 +793,7 @@ function createTaskTile(taskName, taskData) {
     if (intervalInput) {
         intervalInput.addEventListener('input', function() {
             const currentValue = this.value.trim();
-            const matchesDefault = (currentValue === '' || parseInt(currentValue) === defaultIntervalSec);
+            const matchesDefault = (currentValue === '' || parseInt(currentValue, 10) === defaultIntervalSec);
             if (matchesDefault) {
                 this.classList.remove('custom'); this.classList.add('default');
             } else {

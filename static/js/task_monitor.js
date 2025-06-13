@@ -27,6 +27,12 @@ let isTaskMonitorInitialized = false; // Add this flag
 let pauseBannerElement = null;
 let pauseReasonTextElement = null;
 
+// NEW: Track if we have auto-hidden the task monitor due to a pause state on mobile
+let autoHiddenDueToPause = false;
+
+// NEW: Track if task monitor is disabled due to connectivity failure
+let disabledDueToConnectivityFailure = false;
+
 // --- START EDIT: Define Task Priority ---
 const TASK_DISPLAY_PRIORITY = [
     'Checking',
@@ -272,17 +278,15 @@ function setupTaskStream() {
             } else {
                 console.error('Task stream reported an error:', data.error);
                 displayError('Error fetching task status.');
-                // --- START EDIT: Pass default pauseInfo on error ---
-                updateTaskDisplay([], false, { reason_string: null, error_type: null, status_code: null }, []);
-                // --- END EDIT ---
+                // NEW: Trigger connectivity failure for stream errors
+                updateTaskDisplay([], true, { reason_string: 'Failed to fetch task status from server', error_type: 'CONNECTION_ERROR', status_code: 500 }, []);
                 if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
             }
         } catch (error) {
             console.error('Error parsing task stream data:', error);
             displayError('Error parsing task data.');
-            // --- START EDIT: Pass default pauseInfo on error ---
-            updateTaskDisplay([], false, { reason_string: null, error_type: null, status_code: null }, []);
-            // --- END EDIT ---
+            // NEW: Trigger connectivity failure for parsing errors
+            updateTaskDisplay([], true, { reason_string: 'Failed to parse task data from server', error_type: 'CONNECTION_ERROR', status_code: 500 }, []);
              if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
         }
     };
@@ -290,9 +294,8 @@ function setupTaskStream() {
     eventSource.onerror = (error) => {
         console.error('Task stream connection error:', error);
         displayError('Connection error with task stream.');
-        // --- START EDIT: Pass default pauseInfo on stream error ---
-        updateTaskDisplay([], false, { reason_string: null, error_type: null, status_code: null }, []);
-        // --- END EDIT ---
+        // NEW: Trigger connectivity failure for SSE connection errors
+        updateTaskDisplay([], true, { reason_string: 'Lost connection to task stream server', error_type: 'CONNECTION_ERROR', status_code: 500 }, []);
         if (pauseBannerElement) pauseBannerElement.classList.add('hidden');
         // Optionally, you might want to attempt to re-establish the EventSource connection here
         // For simplicity, this example doesn't include reconnection logic.
@@ -306,6 +309,12 @@ function setupTaskStream() {
 
 // --- START: Move toggleTaskMonitor outside initializeTaskMonitor ---
 function toggleTaskMonitor() {
+    // NEW: Prevent toggling if disabled due to connectivity failure
+    if (disabledDueToConnectivityFailure) {
+        console.log('[TaskMonitor LOG] Toggle ignored: Task monitor disabled due to connectivity failure');
+        return;
+    }
+
     const container = document.getElementById('taskMonitorContainer');
     // Ensure container exists before proceeding
     if (!container) {
@@ -340,6 +349,16 @@ function toggleTaskMonitor() {
     } else {
         console.error('updateBodyPaddingForTopOverlays function not found.');
     }
+    
+    // --- START EDIT: Add bottom padding adjustment for mobile ---
+    if (window.innerWidth <= 1045) {
+        if (isTaskMonitorVisible) {
+            document.body.classList.add('has-bottom-overlay');
+        } else {
+            document.body.classList.remove('has-bottom-overlay');
+        }
+    }
+    // --- END EDIT ---
     
     // Optional: Persist visibility state if needed (handled by toggleTaskMonitorVisibility?)
     // localStorage.setItem('taskMonitorHidden', !isTaskMonitorVisible);
@@ -409,6 +428,15 @@ export function initializeTaskMonitor() {
     } else {
          taskMonitorContainer.classList.remove('visible');
     }
+    // --- START EDIT: Adjust body bottom padding for initial visibility on mobile ---
+    if (window.innerWidth <= 1045) {
+        if (startVisible) {
+            document.body.classList.add('has-bottom-overlay');
+        } else {
+            document.body.classList.remove('has-bottom-overlay');
+        }
+    }
+    // --- END EDIT ---
     // Update icon based on initial state
     const initialIcon = taskMonitorToggle.querySelector('i');
     if(initialIcon){
@@ -511,6 +539,32 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
 
     const effectivePauseInfo = pauseInfo || { reason_string: null, error_type: null, status_code: null };
 
+    // NEW: Check for severe connectivity failures that should disable the task monitor
+    const isConnectivityFailure = effectivePauseInfo.error_type === 'CONNECTION_ERROR' || 
+                                 effectivePauseInfo.error_type === 'UNAUTHORIZED' || 
+                                 effectivePauseInfo.error_type === 'FORBIDDEN' ||
+                                 (effectivePauseInfo.status_code && (effectivePauseInfo.status_code >= 500 || effectivePauseInfo.status_code === 401 || effectivePauseInfo.status_code === 403));
+
+    // NEW: Handle connectivity failure - disable task monitor
+    if (isPaused && isConnectivityFailure && !disabledDueToConnectivityFailure) {
+        console.log('[TaskMonitor LOG] Connectivity failure detected, disabling task monitor');
+        disableTaskMonitor();
+        disabledDueToConnectivityFailure = true;
+        return;
+    }
+
+    // NEW: Re-enable task monitor if it was disabled due to connectivity and connectivity is restored
+    if (disabledDueToConnectivityFailure && (!isPaused || !isConnectivityFailure)) {
+        console.log('[TaskMonitor LOG] Connectivity restored, re-enabling task monitor');
+        enableTaskMonitor();
+        disabledDueToConnectivityFailure = false;
+    }
+
+    // NEW: If task monitor is disabled due to connectivity, don't process further updates
+    if (disabledDueToConnectivityFailure) {
+        return;
+    }
+
     if (isPaused) {
         // --- START EDIT: Add logging ---
         console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying PAUSED state.');
@@ -527,9 +581,27 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
         currentTaskTimeElement.textContent = reasonForDisplay.substring(0, 50) + (reasonForDisplay.length > 50 ? '...' : '');
         currentTaskDisplay.classList.add('paused');
         currentTaskDisplay.classList.remove('running');
+
+        // NEW: On mobile, automatically hide the task monitor container so it does not overlap the paused banner
+        if (window.innerWidth <= 1045 && !autoHiddenDueToPause) {
+            const container = document.getElementById('taskMonitorContainer');
+            if (container && container.classList.contains('visible')) {
+                toggleTaskMonitor(); // reuse existing toggle logic
+                autoHiddenDueToPause = true;
+            }
+        }
         return;
     } else {
         currentTaskDisplay.classList.remove('paused');
+
+        // NEW: If the monitor was auto-hidden while paused, restore it when unpaused
+        if (autoHiddenDueToPause && window.innerWidth <= 1045) {
+            const container = document.getElementById('taskMonitorContainer');
+            if (container && !container.classList.contains('visible')) {
+                toggleTaskMonitor();
+            }
+            autoHiddenDueToPause = false;
+        }
     }
 
     if (runningTasksList && runningTasksList.length > 0) {
@@ -595,6 +667,12 @@ function displayError(message) {
 
 // Ensure toggleDropdownVisibility function is defined correctly:
 function toggleDropdownVisibility() {
+    // NEW: Prevent dropdown interaction if disabled due to connectivity failure
+    if (disabledDueToConnectivityFailure) {
+        console.log('[TaskMonitor LOG] Dropdown toggle ignored: Task monitor disabled due to connectivity failure');
+        return;
+    }
+
     if (!taskMonitorDropdownElement || !currentTaskDisplay) {
         console.error("Task monitor dropdown or display element not found in toggleDropdownVisibility.");
         return;
@@ -609,6 +687,102 @@ function toggleDropdownVisibility() {
     } else {
         console.log("Dropdown toggle ignored: Main container is hidden.");
     }
+}
+
+// NEW: Helper functions to disable/enable task monitor components
+function disableTaskMonitor() {
+    const container = document.getElementById('taskMonitorContainer');
+    const toggleButton = document.getElementById('taskMonitorToggle');
+    const rateLimitsToggle = document.getElementById('rateLimitsSectionToggle');
+    
+    if (container) {
+        container.style.display = 'none';
+        container.classList.remove('visible');
+        // Also remove any dropdown visibility
+        if (taskMonitorDropdownElement) {
+            taskMonitorDropdownElement.classList.remove('dropdown-visible');
+        }
+    }
+    
+    // NEW: Only hide toggle buttons on mobile with !important
+    const isMobile = window.innerWidth <= 1045;
+    
+    if (toggleButton && isMobile) {
+        toggleButton.style.setProperty('display', 'none', 'important');
+    }
+    
+    // NEW: Also hide the rate limits toggle button during connectivity failure (mobile only)
+    if (rateLimitsToggle && isMobile) {
+        rateLimitsToggle.style.setProperty('display', 'none', 'important');
+    }
+    
+    // Remove any bottom padding that might be applied
+    if (window.innerWidth <= 1045) {
+        document.body.classList.remove('has-bottom-overlay');
+    }
+    
+    // Reset auto-hide flag since we're force-disabling
+    autoHiddenDueToPause = false;
+    
+    console.log('[TaskMonitor LOG] Task monitor and toggle buttons disabled due to connectivity failure');
+}
+
+function enableTaskMonitor() {
+    const container = document.getElementById('taskMonitorContainer');
+    const toggleButton = document.getElementById('taskMonitorToggle');
+    const rateLimitsToggle = document.getElementById('rateLimitsSectionToggle');
+    
+    if (container) {
+        container.style.display = '';
+        // Restore previous visibility state from localStorage
+        const wasHidden = localStorage.getItem('taskMonitorHidden') === 'true';
+        if (!wasHidden) {
+            container.classList.add('visible');
+            isTaskMonitorVisible = true;
+            if (window.innerWidth <= 1045) {
+                document.body.classList.add('has-bottom-overlay');
+            }
+        } else {
+            isTaskMonitorVisible = false;
+        }
+    }
+    
+    // NEW: Only restore toggle buttons on mobile
+    const isMobile = window.innerWidth <= 1045;
+    
+    if (toggleButton && isMobile) {
+        toggleButton.style.removeProperty('display');
+        // Restore proper icon state
+        const icon = toggleButton.querySelector('i');
+        if (icon) {
+            // Clear existing classes first
+            icon.classList.remove('fa-chevron-up', 'fa-chevron-down');
+            
+            // For bottom bar: UP to show, DOWN to hide
+            icon.classList.add(isTaskMonitorVisible ? 'fa-chevron-down' : 'fa-chevron-up');
+        }
+    } else if (toggleButton && !isMobile) {
+        // Desktop: restore normally without mobile-specific logic
+        toggleButton.style.display = '';
+        const icon = toggleButton.querySelector('i');
+        if (icon) {
+            // Clear existing classes first
+            icon.classList.remove('fa-chevron-up', 'fa-chevron-down');
+            
+            // For top bar: DOWN to show, UP to hide
+            icon.classList.add(isTaskMonitorVisible ? 'fa-chevron-up' : 'fa-chevron-down');
+        }
+    }
+    
+    // NEW: Also restore the rate limits toggle button (mobile only)
+    if (rateLimitsToggle && isMobile) {
+        rateLimitsToggle.style.removeProperty('display');
+    } else if (rateLimitsToggle && !isMobile) {
+        // Desktop: restore normally
+        rateLimitsToggle.style.display = '';
+    }
+    
+    console.log('[TaskMonitor LOG] Task monitor and toggle buttons re-enabled after connectivity restored');
 }
 
 // --- START: Modify DOMContentLoaded Listener ---

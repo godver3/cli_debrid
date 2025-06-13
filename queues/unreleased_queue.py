@@ -103,12 +103,6 @@ class UnreleasedQueue:
                     items_to_move.append(item)
                     continue
 
-                # --- Alternate scrape time strategy ---
-                if self._is_within_alternate_scrape_window(item, current_datetime):
-                    logging.info(f"{item_identifier} eligible by alternate scrape time strategy. Moving to Wanted queue.")
-                    items_to_move.append(item)
-                    continue
-
                 try:
                     release_date_str = item.get('release_date')
                     version = item.get('version')
@@ -133,6 +127,34 @@ class UnreleasedQueue:
                             base_date_str = physical_release_date_str
                             is_physical = True
 
+                        # NEW: Additional check for movies requiring physical release
+                        # Ensure physical release date is not in the future before allowing alternate scrape time strategy
+                        if physical_release_date_str:
+                            try:
+                                physical_date = datetime.strptime(physical_release_date_str, '%Y-%m-%d').date()
+                                current_date = current_datetime.date()
+                                if physical_date > current_date:
+                                    logging.debug(f"Movie {item_identifier} has future physical release date ({physical_date}). Skipping alternate scrape time strategy check.")
+                                    # Skip the alternate scrape time strategy and continue with normal date logic
+                                    # This prevents items from being moved to Wanted when they should wait for physical release
+                                    pass  # Continue to normal date processing below
+                                else:
+                                    # Physical release date has passed, allow alternate scrape time strategy check
+                                    if self._is_within_alternate_scrape_window(item, current_datetime):
+                                        logging.info(f"{item_identifier} eligible by alternate scrape time strategy (physical release date passed). Moving to Wanted queue.")
+                                        items_to_move.append(item)
+                                        continue
+                            except ValueError:
+                                logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date_str}")
+                                # Continue with normal processing if date format is invalid
+                                pass
+                    else:
+                        # For non-physical releases or episodes, allow normal alternate scrape time strategy
+                        if self._is_within_alternate_scrape_window(item, current_datetime):
+                            logging.info(f"{item_identifier} eligible by alternate scrape time strategy. Moving to Wanted queue.")
+                            items_to_move.append(item)
+                            continue
+
                     if item.get('early_release', False):
                         # The physical check has already passed if we are here.
                         logging.info(f"Early release item {item_identifier}. Moving to Wanted queue immediately.")
@@ -156,6 +178,11 @@ class UnreleasedQueue:
                     else: airtime = datetime.strptime("00:00", '%H:%M').time()
 
                     target_datetime = datetime.combine(base_date, airtime)
+
+                    # If a movie has no specific airtime, shift the base release time to the start of the next day.
+                    # The user-defined offset will then be applied to this adjusted time.
+                    if item.get('type') == 'movie' and not airtime_str:
+                        target_datetime += timedelta(days=1)
 
                     # Apply the appropriate offset based on type
                     offset = 0.0

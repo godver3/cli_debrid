@@ -36,8 +36,8 @@ program_runner = None
 server_thread = None
 
 def get_program_runner():
-    global program_runner
-    return program_runner
+    # The canonical instance is stored in the app context.
+    return getattr(current_app, 'program_runner', None)
 
 def cleanup_port(port):
     """Cleanup any process using the specified port using multiple methods."""
@@ -504,7 +504,10 @@ def _execute_start_program():
                  logging.info(f"[_execute_start_program] Reason for listener setup: runner.scheduler exists but is not running for runner (ID: {id(runner_instance)}). Attempting to clear it.")
                  # Attempt to shut down and nullify this zombie scheduler
                  try:
-                     runner_instance.scheduler.shutdown(wait=False)
+                     # Only attempt shutdown if the scheduler somehow thinks it's running;
+                     # calling shutdown() on a never-started scheduler needlessly raises an exception.
+                     if runner_instance.scheduler.running:
+                         runner_instance.scheduler.shutdown(wait=False)
                  except Exception as e_shutdown_zombie:
                      logging.warning(f"Error shutting down existing non-running scheduler: {e_shutdown_zombie}")
                  runner_instance.scheduler = None
@@ -680,26 +683,32 @@ def update_program_state():
 
 @program_operation_bp.route('/api/program_status', methods=['GET'])
 def program_status():
-    global program_runner
-    is_running = False
-    is_initializing = False
-    is_stopping = False # Add new state
-
-    if program_runner:
-        is_running = program_runner.is_running()
-        is_initializing = program_runner.is_initializing()
-        if hasattr(program_runner, 'is_stopping'): # Check for safety
-            is_stopping = program_runner.is_stopping()
-            
-    return jsonify({"running": is_running, "initializing": is_initializing, "stopping": is_stopping})
+    """
+    Returns the current operational status of the program.
+    This provides a single string ('Stopped', 'Starting', 'Running', 'Stopping')
+    for streamlined frontend state management.
+    """
+    # get_program_status() is a new helper that uses the get_status() method on the runner
+    status = get_program_status() 
+    return jsonify({"status": status})
 
 def program_is_running():
-    global program_runner
-    return program_runner.is_running() if program_runner else False
+    runner = get_program_runner()
+    return runner.is_running() if runner else False
 
-def program_is_initializing():  
-    global program_runner
-    return program_runner.is_initializing() if program_runner else False
+def get_program_status():
+    """
+    Helper function to get the detailed program status.
+    This can be used by template context processors.
+    """
+    runner = get_program_runner()
+    if runner and hasattr(runner, 'get_status'):
+        return runner.get_status()
+    # Fallback for when runner is not yet available
+    from flask import current_app
+    if current_app.config.get('PROGRAM_RUNNING'):
+        return "Running"
+    return "Stopped"
 
 @program_operation_bp.route('/api/check_program_conditions')
 @admin_required
@@ -1050,7 +1059,7 @@ def save_task_intervals():
     custom_intervals_seconds_input = data['task_intervals']
     valid_intervals_seconds = {}
     errors = []
-    MIN_INTERVAL_SECONDS = 10
+    MIN_INTERVAL_SECONDS = 1
 
     for task_name, interval_seconds_str in custom_intervals_seconds_input.items():
         if interval_seconds_str is None or interval_seconds_str == '':

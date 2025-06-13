@@ -20,6 +20,8 @@ from database.torrent_tracking import get_torrent_history
 from utilities.web_scraper import get_media_meta
 from queues.config_manager import get_content_source_display_names, load_config
 from database import update_media_item_state
+from utilities.local_library_scan import convert_item_to_symlink
+from database.database_writing import update_media_item
 # import math # Removed unused import
 database_bp = Blueprint('database', __name__)
 
@@ -800,7 +802,6 @@ def bulk_queue_action():
 
                         sql_params_for_final_db_update = params_for_rescrape_title_case_values + params_for_version_case_values + [datetime.now()] + item_ids_for_update_clause
                         
-                        
                         cursor_rescape_batch.execute(final_db_update_query, sql_params_for_final_db_update)
                         rows_affected_by_update = cursor_rescape_batch.rowcount
 
@@ -879,6 +880,65 @@ def bulk_queue_action():
                     logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 finally:
                     conn.close()
+            elif action == 'resync':
+                logging.info("Entering 'resync' block.")
+                for item_id in batch:
+                    try:
+                        item = get_media_item_by_id(item_id)
+                        if not item:
+                            error_count += 1
+                            errors.append(f"Item {item_id} not found")
+                            continue
+
+                        old_symlink_path = item.get('location_on_disk')
+                        # Determine source file path
+                        source_file_path = None
+                        if item.get('original_path_for_symlink') and os.path.exists(item['original_path_for_symlink']):
+                            source_file_path = item['original_path_for_symlink']
+                        elif old_symlink_path and os.path.islink(old_symlink_path):
+                            source_file_path = os.path.realpath(old_symlink_path)
+                        else:
+                            # Fallback – use whatever is stored if it exists
+                            source_file_path = old_symlink_path if old_symlink_path and os.path.exists(old_symlink_path) else None
+
+                        if not source_file_path or not os.path.exists(source_file_path):
+                            error_count += 1
+                            errors.append(f"Item {item_id}: source file not found for resync")
+                            continue
+
+                        # Prepare a copy for convert_item_to_symlink with correct source
+                        item_copy = item.copy()
+                        item_copy['location_on_disk'] = source_file_path
+
+                        result = convert_item_to_symlink(item_copy, skip_verification=True)
+                        if result.get('success'):
+                            # Remove old symlink only if the path has changed
+                            if old_symlink_path and result['new_location'] and \
+                               os.path.normpath(old_symlink_path) != os.path.normpath(result['new_location']) and \
+                               os.path.islink(old_symlink_path):
+                                try:
+                                    os.unlink(old_symlink_path)
+                                except Exception as unlink_err:
+                                    logging.warning(f"Failed to remove old symlink for item {item_id}: {unlink_err}")
+                            # Update DB to new paths
+                            update_media_item(
+                                item_id,
+                                location_on_disk=result['new_location'],
+                                original_path_for_symlink=source_file_path
+                            )
+                            total_processed += 1
+                        else:
+                            error_count += 1
+                            errors.append(f"Item {item_id}: {result.get('error')}")
+                    except sqlite3.OperationalError as e:
+                        if "database is locked" in str(e):
+                            logging.error("Database is locked during bulk resync.")
+                            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                        error_count += 1
+                        errors.append(f"Item {item_id}: {str(e)}")
+                    except Exception as e:
+                        error_count += 1
+                        errors.append(f"Item {item_id}: {str(e)}")
             else:
                 logging.warning(f"Bulk action returning error: Invalid action '{action}'")
                 # No need to explicitly resume here, finally block will handle it.
@@ -896,7 +956,8 @@ def bulk_queue_action():
                 "change_version": f"changed to version {target_queue}",
                 "early_release": "marked as early release and moved to Wanted queue",
                 "rescrape": "deleted files/Plex entries for and moved to Wanted queue", # Added rescrape message
-                "force_priority": "marked for forced priority"
+                "force_priority": "marked for forced priority",
+                "resync": "resynchronized"
             }
             action_text = action_map.get(action, f"processed ({action})")
             message = f"Successfully {action_text} {total_processed} items"

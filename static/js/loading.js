@@ -66,6 +66,7 @@ document.head.appendChild(loadingStyles);
 const Loading = {
     element: null,
     messageElement: null,
+    onCloseCallback: null,
     
     init: function() {
         // Create loading element if it doesn't exist
@@ -91,9 +92,17 @@ const Loading = {
             
             // Add click handler for close button
             this.element.querySelector('.close-loading').addEventListener('click', () => {
-                this.hide();
+                if (this.onCloseCallback) {
+                    this.onCloseCallback();
+                } else {
+                    this.hide();
+                }
             });
         }
+    },
+
+    setOnClose: function(callback) {
+        this.onCloseCallback = callback;
     },
 
     show: function(message, details) {

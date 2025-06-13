@@ -151,6 +151,28 @@ class WantedQueue:
                 queue_manager.move_to_unreleased(item, "Wanted")
                 return {'status': 'unreleased', 'item_data': item, 'message': f"{item_identifier} moved to Unreleased (missing physical date)."}
 
+            # NEW: Check if movie requires physical release and has future physical release date
+            # This must happen before alternate scrape time strategy to prevent bouncing between queues
+            if not is_magnet_assigned and item.get('type') == 'movie' and require_physical and physical_release_date_str:
+                try:
+                    physical_date = datetime.strptime(physical_release_date_str, '%Y-%m-%d').date()
+                    current_date = current_datetime.date()
+                    if physical_date > current_date:
+                        logging.debug(f"Movie {item_identifier} has future physical release date ({physical_date}). Must wait regardless of alternate scrape window.")
+                        # Calculate time until physical release to determine if it should go to Unreleased or wait
+                        time_until_physical = physical_date - current_date
+                        if time_until_physical > timedelta(days=1):  # More than 24 hours away
+                            logging.info(f"Movie {item_identifier} physical release date >24h away. Moving to Unreleased.")
+                            queue_manager.move_to_unreleased(item, "Wanted")
+                            return {'status': 'unreleased', 'item_data': item, 'message': f"{item_identifier} moved to Unreleased (physical release >24h away)."}
+                        else:
+                            logging.info(f"Movie {item_identifier} physical release date <24h away. Waiting in Wanted.")
+                            return {'status': 'wait', 'item_data': item, 'message': f"{item_identifier} waiting for physical release date."}
+                except ValueError:
+                    logging.warning(f"Invalid physical release date format for item {item_identifier}: {physical_release_date_str}. Moving to Unreleased.")
+                    queue_manager.move_to_unreleased(item, "Wanted")
+                    return {'status': 'unreleased', 'item_data': item, 'message': f"{item_identifier} moved to Unreleased (invalid physical date)."}
+
             # Handle early release
             is_early_release = item.get('early_release', False)
             if is_early_release:
@@ -232,6 +254,12 @@ class WantedQueue:
                     airtime = datetime.strptime("00:00", '%H:%M').time()
                 
                 release_datetime = datetime.combine(release_date, airtime)
+
+                # If a movie has no specific airtime, shift the base release time to the start of the next day.
+                # The user-defined offset will then be applied to this adjusted time.
+                if item['type'] == 'movie' and not airtime_str:
+                    release_datetime += timedelta(days=1)
+                    # logging.debug(f"[{item_identifier}] Movie with no airtime. Base release shifted to next day before applying offset.")
 
                 offset_hours = 0.0
                 offset_setting_key = "movie_airtime_offset" if item['type'] == 'movie' else "episode_airtime_offset"
