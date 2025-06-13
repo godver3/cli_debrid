@@ -328,24 +328,43 @@ class WantedQueue:
             conn_force = None
             try:
                 conn_force = get_db_connection()
+
+                # --- Timing Start ---
+                fp_start_time = datetime.now()
+
                 # Assuming force_priority is an INTEGER field (1 for true, 0 or NULL for false)
-                # The specific column name and true value (e.g., `force_priority = TRUE`) might need adjustment
-                # based on your actual database schema.
-                cursor_force = conn_force.execute("SELECT * FROM media_items WHERE state = 'Wanted' AND force_priority = 1")
+                cursor_force = conn_force.execute(
+                    "SELECT * FROM media_items WHERE state = 'Wanted' AND force_priority = 1"
+                )
                 forced_items_raw = cursor_force.fetchall()
-                
+
+                fp_query_duration = (datetime.now() - fp_start_time).total_seconds()
+                logging.info(
+                    f"[ForcePriority] DB query completed in {fp_query_duration:.3f}s and returned "
+                    f"{len(forced_items_raw)} row(s)."
+                )
+
                 if forced_items_raw:
                     forced_items = [dict(row) for row in forced_items_raw]
-                    logging.info(f"Found {len(forced_items)} force-prioritized items in Wanted state.")
+                    logging.info(
+                        f"[ForcePriority] Processing {len(forced_items)} item(s) marked as force_priority."
+                    )
                     for item in forced_items:
                         item_identifier_log = queue_manager.generate_identifier(item)
                         try:
-                            logging.info(f"Force-prioritizing item {item_identifier_log} to Scraping queue.")
-                            queue_manager.move_to_scraping(item, "Wanted") # State changes here
+                            logging.info(
+                                f"[ForcePriority] Moving {item_identifier_log} to Scraping queue."
+                            )
+                            queue_manager.move_to_scraping(item, "Wanted")  # State changes here
                             forced_items_moved_count += 1
-                            moved_to_scraping_count += 1 # Increment general counter as well
+                            moved_to_scraping_count += 1  # Increment general counter as well
                         except Exception as e_move_forced:
-                            logging.error(f"Error moving force-prioritized item {item_identifier_log} to scraping: {e_move_forced}", exc_info=True)
+                            logging.error(
+                                f"[ForcePriority] Error moving {item_identifier_log} to Scraping: {e_move_forced}",
+                                exc_info=True,
+                            )
+                else:
+                    logging.debug("[ForcePriority] No force-priority items found in this cycle.")
 
             except Exception as e_force:
                 logging.error(f"Error fetching or processing force-prioritized items: {e_force}", exc_info=True)
@@ -366,6 +385,12 @@ class WantedQueue:
                 try:
                     scraping_queue = queue_manager.queues.get("Scraping") 
                     if scraping_queue:
+                        # Ensure the ScrapingQueue memory is synchronized with the DB before checking its size
+                        try:
+                            scraping_queue.update()
+                        except Exception as e_scrape_update:
+                            logging.error(f"Error updating ScrapingQueue before size check: {e_scrape_update}")
+                            # Even if update fails, continue with current in-memory size to avoid crash
                         current_scraping_queue_size = len(scraping_queue.get_contents())
                     else:
                         logging.error("ScrapingQueue not found in queue_manager. Cannot apply throttle.")
