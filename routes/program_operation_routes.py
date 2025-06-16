@@ -972,6 +972,15 @@ def save_task_toggles():
         else:
             return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
 
+        # --- START EDIT: Determine only the differences relative to initialization baseline ---
+        baseline_enabled_set = getattr(runner, 'initial_enabled_tasks_snapshot', set())
+        diff_task_states = {}
+        for task_name, is_enabled_live in live_task_states.items():
+            was_enabled_initially = task_name in baseline_enabled_set
+            if was_enabled_initially != is_enabled_live:
+                diff_task_states[task_name] = is_enabled_live
+        # --- END EDIT ---
+
         # Get the file path
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
@@ -990,10 +999,14 @@ def save_task_toggles():
                 logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
                 # Proceed with saving new state, potentially losing metadata if file was corrupt
 
-        # Prepare data to save: use live_task_states and add back any preserved metadata
-        data_to_save = live_task_states.copy() 
+        # --- START EDIT: Build new save payload based on diffs only ---
+        # We now persist ONLY the latest differences so that stale keys are removed.
+        data_to_save = diff_task_states.copy()
+
+        # Preserve the migration version marker
         if migration_version is not None:
-            data_to_save[MIGRATION_VERSION_KEY] = migration_version 
+            data_to_save[MIGRATION_VERSION_KEY] = migration_version
+        # --- END EDIT ---
 
         # Save the combined data to JSON file
         try:
@@ -1211,8 +1224,10 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
     
     # Check if it's a known queue task (using the map keys)
     if task_name in queue_map:
-        # For queues, the key itself is usually descriptive enough
-        # Maybe capitalize? e.g., "Wanted", "Scraping"
+        # Special-case display names for specific queue tasks
+        if task_name == 'final_check_queue':
+            return 'Final Scrape'
+        # For other queues, the key itself is usually descriptive enough
         return task_name.capitalize()
 
     # Check if it's a content source task

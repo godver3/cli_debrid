@@ -275,6 +275,15 @@
         margin-left: 0.5rem;
     }
 
+    /* Label shown next to task names to indicate library specificity */
+    .library-label {
+        font-size: 0.75em;
+        color: #ffc107; /* Gold/yellow to stand out */
+        margin-left: 0.5rem;
+        font-weight: 500;
+        white-space: nowrap;
+    }
+
     .reset-notification-banner {
         background-color: #ffc107; /* Warning yellow */
         color: #333; /* Dark text for contrast */
@@ -706,13 +715,30 @@ function createTaskTile(taskName, taskData) {
     if (taskData.display_name) {
         displayName = taskData.display_name;
     } else {
-        if (taskName.endsWith('_wanted')) {
-            displayName = taskName.replace('task_', '').replace('_wanted', '').replace(/_/g, ' ');
+        if (taskName === 'task_check_plex_files') {
+            displayName = 'Check Local Files for Plex Update';
+        } else if (taskName === 'task_refresh_library_size_cache') {
+            displayName = 'Refresh Debrid Library Size';
+        } else if (taskName === 'final_check_queue' || taskName === 'Final_check_queue') {
+            displayName = 'Final Scrape';
         } else {
-            displayName = taskName.replace('task_', '').replace(/_/g, ' ');
+            if (taskName.endsWith('_wanted')) {
+                displayName = taskName.replace('task_', '').replace('_wanted', '').replace(/_/g, ' ');
+            } else {
+                displayName = taskName.replace('task_', '').replace(/_/g, ' ');
+            }
+            displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
         }
-        displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
     }
+
+    // Determine library specificity label, if any
+    let libraryLabel = '';
+    if (['task_check_plex_files', 'task_plex_full_scan'].includes(taskName)) {
+        libraryLabel = 'Plex library only';
+    } else if (taskName === 'task_verify_symlinked_files') {
+        libraryLabel = 'Symlink library only';
+    }
+
     console.log(`[TaskTimings] Display name for ${taskName}: ${displayName}`);
 
     const tile = document.createElement('div');
@@ -741,6 +767,7 @@ function createTaskTile(taskName, taskData) {
             <div class="task-name">
                 <span class="status-indicator ${enabled ? 'enabled' : 'disabled'}"></span>
                 ${displayName}
+                ${libraryLabel ? `<span class="library-label">${libraryLabel}</span>` : ''}
             </div>
             <span class="interval-badge" title="Default: ${defaultIntervalFormatted}">
                 Current: ${currentIntervalFormatted}

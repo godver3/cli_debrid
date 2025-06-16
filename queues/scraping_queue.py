@@ -3,6 +3,8 @@ from typing import Dict, Any, List
 from datetime import datetime, date, timedelta, time as dt_time
 import json
 import time
+import os
+import re
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
@@ -612,6 +614,16 @@ class ScrapingQueue:
                             release_datetime += timedelta(hours=offset_hours)
                         except Exception:
                             release_datetime = None
+                    # --- NEW: Restrict delayed scrape to items released within the past 7 days ---
+                    if delayed_scrape_enabled and release_datetime:
+                        try:
+                            if (now - release_datetime).days > 7:
+                                logging.info(f"Delayed scrape disabled for {item_identifier}: release is older than 7 days.")
+                                delayed_scrape_enabled = False
+                        except Exception:
+                            # Fallback: if any error occurs, leave delayed_scrape_enabled unchanged
+                            pass
+                    # --- END NEW CODE ---
                     # If release_datetime is None, treat as if enough time has passed (allow all results)
                     if delayed_scrape_enabled and minimum_scrape_score > 0:
                         # Split results by score
@@ -781,13 +793,41 @@ class ScrapingQueue:
             
             # New filter: if stored_rescrape_title exists, filter out results matching it
             if stored_rescrape_title:
+                def _normalize_title(title_str: str) -> str:
+                    """Normalize a torrent title for loose comparison.
+
+                    - Lower-case
+                    - Strip file extension
+                    - Remove non-alphanumerics (keeps digits and letters)
+                    """
+                    if not title_str:
+                        return ""
+                    # Lower-case first
+                    normalized = title_str.lower()
+                    # Remove extension
+                    normalized = os.path.splitext(normalized)[0]
+                    # Collapse non-alphanumeric characters
+                    normalized = re.sub(r"[^a-z0-9]+", "", normalized)
+                    return normalized
+
+                bad_title_norm = _normalize_title(stored_rescrape_title)
+
                 original_results_count = len(results)
-                results = [
-                    r for r in results
-                    if not (r.get('original_title') and r.get('original_title') == stored_rescrape_title)
-                ]
+                filtered_list = []
+                for r in results:
+                    cand_title = r.get('original_title')
+                    if cand_title:
+                        if _normalize_title(cand_title) == bad_title_norm:
+                            # Exact or loose match – skip this result
+                            continue
+                    filtered_list.append(r)
+
+                results = filtered_list
+
                 if len(results) < original_results_count:
-                    logging.info(f"Filtered out {original_results_count - len(results)} results matching stored rescrape title: '{stored_rescrape_title}' for {item_identifier}")
+                    logging.info(
+                        f"Filtered out {original_results_count - len(results)} results matching stored rescrape title (loose comparison) for {item_identifier}. Bad title: '{stored_rescrape_title}'"
+                    )
 
 
         is_anime = True if item.get('genres') and 'anime' in item['genres'] else False

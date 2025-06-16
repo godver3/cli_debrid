@@ -58,6 +58,68 @@ def get_item_size_gb(location_on_disk, original_path_for_symlink):
             return 0.0
     return 0.0
 
+# ---------------------------------------------------------------------------
+# Lightweight statistics helper – counts collected movies / shows / episodes
+# ---------------------------------------------------------------------------
+
+def get_basic_collection_counts():
+    """Return basic collection statistics.
+
+    Mirrors the logic in `database.statistics.get_collected_counts` but stripped
+    down to the three numbers we need, avoiding the summary table checks and
+    extra overhead. This still honours the business rules of counting only
+    collected / upgrading items, deduplicating movies by `imdb_id`, shows by
+    episode `imdb_id`, and episodes by the (imdb_id, season, episode) tuple.
+    """
+
+    from database import get_db_connection
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Unique collected movies
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT imdb_id)
+            FROM media_items
+            WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
+            """
+        )
+        total_movies = cursor.fetchone()[0]
+
+        # Unique shows (distinct imdb_id among collected episodes)
+        cursor.execute(
+            """
+            SELECT COUNT(DISTINCT imdb_id)
+            FROM media_items
+            WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            """
+        )
+        total_shows = cursor.fetchone()[0]
+
+        # Unique episodes (distinct imdb_id + season + episode)
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT DISTINCT imdb_id, season_number, episode_number
+                FROM media_items
+                WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            )
+            """
+        )
+        total_episodes = cursor.fetchone()[0]
+
+        return {
+            'total_movies': total_movies,
+            'total_shows': total_shows,
+            'total_episodes': total_episodes,
+        }
+    finally:
+        if conn:
+            conn.close()
+
 @database_bp.route('/', methods=['GET', 'POST'])
 @admin_required
 def index():
@@ -95,15 +157,14 @@ def index():
     # Get collection counts (with caching)
     current_time = time.time()
     if cached_stats_data and (current_time - stats_cache_timestamp < STATS_CACHE_DURATION_SECONDS):
-        logging.info("Using cached statistics summary.")
+        logging.info("Using cached collection counts.")
         counts = cached_stats_data
     else:
-        logging.info("Fetching fresh statistics summary.")
-        from database.statistics import get_statistics_summary
-        counts = get_statistics_summary()
+        logging.info("Fetching fresh collection counts (quick query).")
+        counts = get_basic_collection_counts()
         cached_stats_data = counts
         stats_cache_timestamp = current_time
-        logging.info(f"Statistics summary cached for {STATS_CACHE_DURATION_SECONDS} seconds.")
+        logging.info(f"Collection counts cached for {STATS_CACHE_DURATION_SECONDS} seconds.")
     timings['stats_fetched'] = time.perf_counter()
 
     data['stats'] = {
@@ -242,6 +303,11 @@ def index():
                      logging.warning(f"Ignoring filter condition: Invalid operator '{operator}' for column '{column}'.")
                      continue
                 
+                # Optimize categorical filters: treat "contains" as "equals" for
+                # State / Type columns to leverage indexes and avoid full scans.
+                if column in ('state', 'type') and operator == 'contains':
+                    operator = 'equals'
+
                 clause_added_in_this_iteration = False
                 if column == 'content_source':
                     value = raw_value

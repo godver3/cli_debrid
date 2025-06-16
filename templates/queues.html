@@ -799,6 +799,7 @@
     }
     
     function updateQueueContentsImmediate(data) {
+        const perfStart = performance.now();
         const queueContents = document.getElementById('queue-contents');
         const initializationStatus = document.getElementById('initialization-status');
         
@@ -824,7 +825,27 @@
             const statsDiv = document.getElementById('processing-stats');
             if (data.items_per_hour !== undefined && data.remaining_scrape_time !== undefined) {
                 document.getElementById('stats-items-per-hour').textContent = data.items_per_hour;
-                document.getElementById('stats-remaining-time').textContent = data.remaining_scrape_time;
+
+                const remainingTimeEl = document.getElementById('stats-remaining-time');
+
+                // Backend provides items_remaining (Scraping + ready Wanted). If 0 => queues cleared
+                const allQueuesEmpty = (data.items_remaining !== undefined && data.items_remaining === 0);
+
+                if (allQueuesEmpty) {
+                    // Show a random celebratory message instead of remaining time
+                    const congratsMessages = [
+                        'All done - nothing left to scrape!'
+                    ];
+                    const randomMsg = congratsMessages[Math.floor(Math.random() * congratsMessages.length)];
+                    remainingTimeEl.textContent = randomMsg;
+                } else {
+                    remainingTimeEl.textContent = data.remaining_scrape_time;
+                }
+                // Debug logging
+                console.log('[DEBUG] items_per_hour:', data.items_per_hour,
+                            'remaining_scrape_time:', data.remaining_scrape_time,
+                            'items_remaining:', data.items_remaining,
+                            'allQueuesEmpty:', allQueuesEmpty);
                 statsDiv.style.display = 'block';
             } else if (statsDiv) {
                 statsDiv.style.display = 'none';
@@ -926,6 +947,8 @@
         } else {
             console.log("Received unhandled program status:", data.program_status);
         }
+        // --- Performance logging for render ---
+        console.log('[PERF] updateQueueContentsImmediate:', (performance.now() - perfStart).toFixed(2) + 'ms');
     }
     
     function setupQueueStream() {
@@ -937,6 +960,7 @@
         const loadingIndicator = document.getElementById('loading-indicator');
         
         eventSource.onmessage = function(event) {
+            const msgStart = performance.now();
             try {
                 // Defensive: Only parse if event.data looks like JSON
                 if (typeof event.data !== 'string' || !event.data.trim().startsWith('{')) {
@@ -965,6 +989,7 @@
 
                 // Use optimized update function
                 updateQueueContents(data);
+                console.log('[PERF] eventSource.onmessage processing:', (performance.now() - msgStart).toFixed(2) + 'ms');
                 
             } catch (e) {
                 console.error('Error parsing queue data:', e);
@@ -1180,16 +1205,34 @@
 
     // Handle page visibility changes (especially important for mobile)
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden) {
-            console.log('Page hidden - EventSource will be maintained but may disconnect');
-        } else {
-            console.log('Page visible - Checking connection status');
-            // If we've been hidden and come back, and we're not receiving data,
-            // we might need to reconnect
-            if (eventSource && eventSource.readyState === EventSource.CLOSED) {
-                console.log('EventSource was closed while page was hidden, reconnecting');
+        if (document.visibilityState === 'visible') {
+            console.log('Page visible – validating queue stream connection');
+
+            /*
+               Re-establish the SSE connection if any of the following are true:
+               1. We previously marked ourselves as reconnecting (isReconnecting flag).
+               2. The EventSource does not exist.
+               3. The EventSource is in a CLOSED state.
+            */
+            if (isReconnecting || !eventSource || eventSource.readyState === EventSource.CLOSED) {
+                console.log('[Queue] Re-connecting EventSource after visibility change');
+                // Reset reconnection tracking so normal logic resumes
+                isReconnecting = false;
+                reconnectAttempts = 0;
+                reconnectDelay = 1000;
                 setupQueueStream();
             }
+        }
+    });
+
+    // Immediately attempt to reconnect when the browser regains network connectivity (useful on mobile)
+    window.addEventListener('online', () => {
+        console.log('[Queue] Browser came online – attempting to re-establish queue stream');
+        if (isReconnecting || !eventSource || eventSource.readyState === EventSource.CLOSED) {
+            isReconnecting = false;
+            reconnectAttempts = 0;
+            reconnectDelay = 1000;
+            setupQueueStream();
         }
     });
 

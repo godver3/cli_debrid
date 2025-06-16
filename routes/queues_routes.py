@@ -105,7 +105,11 @@ def consolidate_items(items, limit=None):
 @user_required
 @onboarding_required
 def index():
+    # --- Performance logging ---
+    start_time = time.time()
+    
     queue_contents = queue_manager.get_queue_contents()
+    
     program_status = get_program_status()
     
     for queue_name, items in queue_contents.items():
@@ -159,8 +163,12 @@ def index():
 @user_required
 @limiter.limit("1 per 5 seconds")
 def api_queue_contents():
+    # --- Performance logging ---
+    start_time = time.time()
+    
     queue_name = request.args.get('queue', None)
     queue_contents = queue_manager.get_queue_contents()
+    
     program_status = get_program_status()
     
     # Get initialization status
@@ -256,12 +264,13 @@ def api_queue_contents():
             items, _ = consolidate_items(items)
             queue_contents[queue_name] = items
 
-    return jsonify({
+    response = jsonify({
         "contents": queue_contents,
         "queue_counts": queue_counts,  # Add original counts
         "program_status": program_status,
         "initialization_status": initialization_status
     })
+    return response
 
 def get_cached_setting(category, key, default=None):
     """Get settings with caching to reduce I/O operations"""
@@ -491,8 +500,10 @@ def queue_stream():
         HEARTBEAT_INTERVAL = 30  # Send heartbeat every 30 seconds
         
         while True:
+            cycle_start = time.time()
             with app.app_context():
                 try:
+                    section_start = time.time()
                     current_time = time.time()
                     
                     # Send heartbeat to keep connection alive
@@ -525,12 +536,14 @@ def queue_stream():
                         continue
 
                     # If program is running, proceed to send queue data
+                    fetch_start = time.time()
                     queue_manager = QueueManager()
                     
                     currently_processing_upgrade_id = None
                     if 'Upgrading' in queue_manager.queues:
                         currently_processing_upgrade_id = queue_manager.queues['Upgrading'].get_currently_processing_item_id()
 
+                    mem_start = time.time()
                     in_memory_queue_contents = queue_manager.get_queue_contents()
 
                     final_contents = {}
@@ -547,6 +560,10 @@ def queue_stream():
                                 hidden_counts[queue_name] = hidden_count
 
                             limited_items = items[:ITEMS_LIMIT]
+                            # For Blacklisted and Unreleased queues, consolidate FIRST to reduce item count
+                            if queue_name in ['Blacklisted', 'Unreleased']:
+                                limited_items, _ = consolidate_items(limited_items)
+
                             # Process items in batches for better performance
                             processed_items = []
                             for i in range(0, len(limited_items), 25):  # Process 25 items at a time
@@ -557,7 +574,9 @@ def queue_stream():
                             final_contents[queue_name] = processed_items
 
                     # Process database-backed queues
+                    db_start = time.time()
                     for queue_name in DB_FETCH_QUEUES:
+                        qp_start = time.time()
                         try:
                             total_count = get_item_count_by_state(queue_name)
                             queue_counts[queue_name] = total_count
@@ -566,8 +585,13 @@ def queue_stream():
                                 hidden_counts[queue_name] = hidden_count
 
                             # We use page=1 because the stream always shows the top of the queue.
+                            query_start = time.time()
                             limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
                             limited_items = [dict(item) for item in limited_items_raw]
+
+                            # For Blacklisted and Unreleased queues, consolidate FIRST to reduce item count
+                            if queue_name in ['Blacklisted', 'Unreleased']:
+                                limited_items, _ = consolidate_items(limited_items)
 
                             # Process items in batches for better performance
                             processed_items = []
@@ -576,10 +600,8 @@ def queue_stream():
                                 batch_processed = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in batch]
                                 processed_items.extend(batch_processed)
 
-                            if queue_name in ['Blacklisted', 'Unreleased']:
-                                processed_items, _ = consolidate_items(processed_items)
-
                             final_contents[queue_name] = processed_items
+
 
                         except Exception as db_err:
                              logging.error(f"Error fetching data for DB queue '{queue_name}': {db_err}")
@@ -588,8 +610,11 @@ def queue_stream():
                              hidden_counts[queue_name] = 0
                     
                     # Calculate processing rate statistics
+                    stats_start = time.time()
                     items_per_hour = get_items_processed_per_hour()
-                    items_remaining = queue_counts.get('Scraping', 0) + queue_counts.get('Wanted', 0)
+                    # Only include Wanted items that have reached their scheduled scrape_time.
+                    ready_wanted_count = get_ready_wanted_items_count()
+                    items_remaining = queue_counts.get('Scraping', 0) + ready_wanted_count
                     remaining_hours = (items_remaining / items_per_hour) if items_per_hour else None
                     remaining_scrape_time = _format_remaining_time(remaining_hours) if remaining_hours is not None else "Unknown"
 
@@ -600,10 +625,12 @@ def queue_stream():
                         "hidden_counts": hidden_counts,
                         "currently_processing_upgrade_id": currently_processing_upgrade_id,
                         "items_per_hour": items_per_hour,
-                        "remaining_scrape_time": remaining_scrape_time
+                        "remaining_scrape_time": remaining_scrape_time,
+                        "items_remaining": items_remaining
                     }
 
                     # Performance optimization: Only send if data has changed
+                    ser_start = time.time()
                     current_hash = hash(json.dumps(data_to_send, sort_keys=True, default=str))
                     if current_hash == last_sent_hash:
                         consecutive_identical_sends += 1
@@ -616,7 +643,8 @@ def queue_stream():
                         last_sent_hash = current_hash
                         consecutive_identical_sends = 0
 
-                    yield f"data: {json.dumps(data_to_send, default=str)}\n\n"
+                    payload_str = json.dumps(data_to_send, default=str)
+                    yield f"data: {payload_str}\n\n"
 
                 except Exception as e:
                     logging.error(f"Error in queue stream: {e}", exc_info=True)
@@ -681,3 +709,49 @@ def _format_remaining_time(hours_float: float) -> str:
     total_minutes = int(round(hours_float * 60))
     hrs, mins = divmod(total_minutes, 60)
     return f"{hrs}:{mins:02d}"
+
+# ---------------------------------------------------------------------------
+# Helper: count Wanted items whose *computed* scrape time has passed
+# ---------------------------------------------------------------------------
+def get_ready_wanted_items_count() -> int:
+    """Return number of Wanted-queue entries that are ready to be scraped.
+
+    The *media_items* schema does not store a literal ``scrape_time`` column; that
+    value is derived at runtime (see ``compute_scrape_time_cached``).  To avoid
+    relying on absent columns we fetch the Wanted items, compute their scrape time
+    with the existing helper, and compare to *now*.
+    """
+    try:
+        from database.database_reading import get_all_media_items  # Lazy import
+        now = datetime.now()
+        ready_count = 0
+
+        # Wanted queue tends to be small; fetching all rows is acceptable here.
+        for raw in get_all_media_items(state="Wanted", limit=None):
+            item = dict(raw)
+
+            scrape_str = compute_scrape_time_cached(item)
+
+            # Skip if scrape time is unknown or invalid
+            if not scrape_str or scrape_str.startswith(("Unknown", "Error")):
+                continue
+
+            # Remove optional annotation like " (Alt Scrape Time)"
+            cleaned = scrape_str.split(" (")[0]
+
+            # Try common datetime formats that the helper may return
+            parsed_dt = None
+            for fmt in ("%Y-%m-%d %I:%M %p", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                try:
+                    parsed_dt = datetime.strptime(cleaned, fmt)
+                    break
+                except ValueError:
+                    continue
+
+            if parsed_dt and parsed_dt <= now:
+                ready_count += 1
+
+        return ready_count
+    except Exception as e:
+        logging.error(f"Error counting ready Wanted items: {e}")
+        return 0

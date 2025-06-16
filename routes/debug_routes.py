@@ -1289,6 +1289,31 @@ def move_item_to_wanted(item_id, current_original_scraped_title=None):
     from database import get_db_connection
     conn = get_db_connection()
     try:
+        # If no current_original_scraped_title was supplied, fetch it from the database so that we
+        # can preserve it in the rescrape_original_torrent_title field. This helps later scraping
+        # logic to avoid re-adding the same bad release.
+        if current_original_scraped_title is None:
+            # Prefer the title of the release we actually collected (filled_by_title) and fall back
+            # to the stored original_scraped_torrent_title if that is not present. This gives the
+            # scraping queue the best chance of recognising and skipping the bad release next time.
+            try:
+                cur_lookup = conn.cursor()
+                cur_lookup.execute(
+                    "SELECT filled_by_title, original_scraped_torrent_title FROM media_items WHERE id = ?",
+                    (item_id,)
+                )
+                row = cur_lookup.fetchone()
+                if row:
+                    filled_title, scraped_title = row
+                    current_original_scraped_title = filled_title or scraped_title
+            except Exception as _fetch_err:
+                logging.warning(
+                    f"move_item_to_wanted: failed to fetch fallback titles for item {item_id}: {_fetch_err}"
+                )
+            finally:
+                if 'cur_lookup' in locals():
+                    cur_lookup.close()
+
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE media_items 

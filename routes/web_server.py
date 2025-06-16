@@ -60,7 +60,8 @@ def inject_logo_selection():
     # Define logo mappings based on selection
     logo_paths = {
         'Default': 'white-icon-32x32.png',  # Default is the white icon
-        'Plex-Inspired': 'plex-icon-32x32.png'
+        'Plex-Inspired': 'plex-icon-32x32.png',
+        'Color Icon': 'color-icon-32x32.png'  # Newly added color icon
     }
     
     # Get the appropriate logo path or default to white icon if selection not found
@@ -151,14 +152,18 @@ def favicon():
     # Define favicon mappings based on selection
     favicon_paths = {
         'Default': 'favicon.ico',  # Default favicon
-        'Plex-Inspired': 'plex-icon-32x32.ico'
+        'Plex-Inspired': 'plex-icon-32x32.ico',
+        'Color Icon': 'color-icon-32x32.ico'
     }
     
     # Get the appropriate favicon path or default to regular favicon if selection not found
     favicon_path = favicon_paths.get(logo_selection, 'favicon.ico')
     
-    return send_from_directory(os.path.join(app.root_path, 'static'),
-                               favicon_path, mimetype='image/vnd.microsoft.icon')
+    response = send_from_directory(os.path.join(app.root_path, 'static'),
+                                   favicon_path, mimetype='image/vnd.microsoft.icon')
+    # Instruct browsers not to cache the favicon so updates are picked up immediately
+    response.headers['Cache-Control'] = 'no-cache, max-age=0'
+    return response
 
 @app.route('/favicon-<size>.png')
 def dynamic_favicon(size):
@@ -180,14 +185,22 @@ def dynamic_favicon(size):
             '32x32': 'plex-icon-32x32.png',
             '192x192': 'plex-favicon-192x192.png',
             '512x512': 'plex-favicon-512x512.png'
+        },
+        'Color Icon': {
+            '16x16': 'color-icon-16x16.png',
+            '32x32': 'color-icon-32x32.png',
+            '192x192': 'color-favicon-192x192.png',
+            '512x512': 'color-favicon-512x512.png'
         }
     }
     
     # Get the appropriate icon path or default to regular icon if selection not found
     icon_path = icon_paths.get(logo_selection, icon_paths['Default']).get(size, f'favicon-{size}.png')
     
-    return send_from_directory(os.path.join(app.root_path, 'static'),
-                               icon_path, mimetype='image/png')
+    response = send_from_directory(os.path.join(app.root_path, 'static'),
+                                   icon_path, mimetype='image/png')
+    response.headers['Cache-Control'] = 'no-cache, max-age=0'
+    return response
 
 @app.route('/site.webmanifest')
 def manifest():
@@ -207,6 +220,19 @@ def manifest():
             },
             {
                 "src": "/static/plex-favicon-512x512.png",
+                "sizes": "512x512",
+                "type": "image/png"
+            }
+        ]
+    elif logo_selection == 'Color Icon':
+        icons = [
+            {
+                "src": "/static/color-favicon-192x192.png",
+                "sizes": "192x192",
+                "type": "image/png"
+            },
+            {
+                "src": "/static/color-favicon-512x512.png",
                 "sizes": "512x512",
                 "type": "image/png"
             }
