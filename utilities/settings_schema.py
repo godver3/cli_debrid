@@ -12,8 +12,8 @@ def get_available_logos():
     # Define the static directory path relative to this file
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
     
-    # Default logo options
-    logo_options = ["Default", "Plex-Inspired"]
+    # Default logo options (always include these if assets exist)
+    logo_options = ["Default", "Plex-Inspired", "Color Icon"]
     
     # Pattern matching for Plex-Inspired logo
     plex_pattern = re.compile(r"plex-icon-\d+x\d+\.(png|ico)$")

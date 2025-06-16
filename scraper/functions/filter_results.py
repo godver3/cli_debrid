@@ -199,10 +199,60 @@ def filter_results(
                 else:
                     translated_title_sim = trans_sim_set
 
-            # Determine the best similarity score achieved
+            # Compute initial best similarity score (without API aliases)
             best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
 
-            # Check if the best similarity meets the threshold
+            # --- Fetch additional aliases via DirectAPI ---
+            item_aliases = {}
+            try:
+                if direct_api:
+                    if content_type.lower() == 'movie':
+                        item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
+                    else:
+                        item_aliases, _ = direct_api.get_show_aliases(imdb_id)
+            except Exception as alias_err:
+                logging.warning(f"Failed to fetch aliases for {imdb_id}: {alias_err}")
+                item_aliases = {}
+
+            # Ensure item_aliases is a dictionary even if the API returned None or an unexpected value
+            if not isinstance(item_aliases, dict):
+                item_aliases = {}
+
+            # Deduplicate and log aliases
+            item_aliases = {k: list(set(v)) for k, v in item_aliases.items()}
+
+
+            # -------------------------------------------------------------
+            # Re-evaluate alias similarities with the newly fetched aliases
+            # -------------------------------------------------------------
+            # Build a combined list of aliases (those provided as function
+            # arguments plus those fetched from the API) so that every
+            # available synonym can help a release pass the similarity check.
+            # NOTE: we keep the original `alias_similarities` list because it
+            # already contains scores for `matching_aliases`. We now extend it
+            # with scores calculated for API aliases and then recompute
+            # best_alias_sim / best_sim prior to the threshold comparison.
+
+            item_alias_similarities: list = []
+            for alias_list in item_aliases.values():
+                for alias in alias_list:
+                    normalized_api_alias = normalize_title(alias).lower()
+                    alias_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_api_alias) / 100.0
+                    if normalized_parsed_title:
+                        alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
+                        item_alias_similarities.append((alias_sim_set + alias_sim_sort) / 2.0)
+                    else:
+                        item_alias_similarities.append(alias_sim_set)
+
+            # Combine and (re)compute best alias / best overall similarity
+            if item_alias_similarities:
+                alias_similarities.extend(item_alias_similarities)
+                best_alias_sim = max(alias_similarities)
+                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+
+            # -------------------------------------------------------------
+            # Check if the best similarity meets the threshold (now updated)
+            # -------------------------------------------------------------
             if best_sim < similarity_threshold:
                 # Log the failure reason including all comparison scores
                 result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
@@ -558,10 +608,12 @@ def filter_results(
                              #logging.debug(f"Date comparison result: {comparison_result} for '{original_title}'")
                              pass
 
-                    elif episode in result_episodes and not (is_anime and result.get('target_abs_episode')):
-                        # Case-2: parsed episode matches the mapped episode.
-                        # BUT: if this is anime and we have an explicit absolute target from the
-                        # scrape pipeline, ignore this match – we only want the absolute number.
+                    elif episode in result_episodes:
+                        # Case-2: parsed episode matches the mapped episode (S/E match).
+                        # For anime we previously required an absolute-number match, but this was
+                        # causing valid Season/Episode releases such as S03E11 to be rejected.
+                        # Accept the direct S/E match here; absolute-number logic below still
+                        # provides an additional matching path when torrents use absolute numbers.
                         episode_match = True
                     # --- Anime absolute-number fall-back -----------------------
                     elif is_anime:

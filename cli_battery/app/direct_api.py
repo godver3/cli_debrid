@@ -8,6 +8,12 @@ from sqlalchemy.orm import Session as SqlAlchemySession
 from .trakt_metadata import TraktMetadata
 from functools import lru_cache
 
+# Aliases & caching utilities
+from typing import Tuple as _Tup, Optional as _Opt, Dict as _Dict, Any as _Any
+
+_MOVIE_ALIAS_CACHE: _Dict[str, _Tup[_Opt[_Dict[str, _Any]], _Opt[str]]] = {}
+_SHOW_ALIAS_CACHE: _Dict[str, _Tup[_Opt[_Dict[str, _Any]], _Opt[str]]] = {}
+
 @contextmanager
 def managed_session():
     """Provide a transactional scope around a series of operations."""
@@ -93,24 +99,46 @@ class DirectAPI:
             logging.error(f"Error during DirectAPI.tmdb_to_imdb for {tmdb_id}: {e}", exc_info=True)
             return None, None
 
+    # ----------------------------------------------------------------------
+    # Alias fetching with caching
+    # ----------------------------------------------------------------------
+
     @staticmethod
     def get_show_aliases(imdb_id: str):
+        """Return aliases for a TV show, using an in-memory cache to avoid
+        repeated database hits in tight loops (e.g., filter_results)."""
+
+        if imdb_id in _SHOW_ALIAS_CACHE:
+            return _SHOW_ALIAS_CACHE[imdb_id]
+
         try:
             with managed_session() as session:
                 aliases, source = MetadataManager.get_show_aliases(imdb_id, session=session)
+                # Cache even if aliases is None so we don't hammer DB on bad IDs.
+                _SHOW_ALIAS_CACHE[imdb_id] = (aliases, source)
                 return aliases, source
         except Exception as e:
             logging.error(f"Error during DirectAPI.get_show_aliases for {imdb_id}: {e}", exc_info=True)
+            # Cache the failure to avoid repeated exceptions
+            _SHOW_ALIAS_CACHE[imdb_id] = (None, None)
             return None, None
 
     @staticmethod
     def get_movie_aliases(imdb_id: str):
+        """Return aliases for a movie, using an in-memory cache to avoid
+        repeated database hits."""
+
+        if imdb_id in _MOVIE_ALIAS_CACHE:
+            return _MOVIE_ALIAS_CACHE[imdb_id]
+
         try:
             with managed_session() as session:
                 aliases, source = MetadataManager.get_movie_aliases(imdb_id, session=session)
+                _MOVIE_ALIAS_CACHE[imdb_id] = (aliases, source)
                 return aliases, source
         except Exception as e:
             logging.error(f"Error during DirectAPI.get_movie_aliases for {imdb_id}: {e}", exc_info=True)
+            _MOVIE_ALIAS_CACHE[imdb_id] = (None, None)
             return None, None
 
     @staticmethod
@@ -217,8 +245,8 @@ class DirectAPI:
             logging.error(f"Error during DirectAPI.force_refresh_metadata for {imdb_id}: {e}", exc_info=True)
             return None, None
 
-    @staticmethod
     @lru_cache()
+    @staticmethod
     def search_media(query: str, year: Optional[int] = None, media_type: Optional[str] = None) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
         """
         Search for media using Trakt. Caches results in memory.

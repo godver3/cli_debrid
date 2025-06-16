@@ -254,7 +254,7 @@ class ProgramRunner:
             # Periodic Maintenance/Update Tasks
             'task_check_service_connectivity': 60, # Run every 60 seconds
             'task_heartbeat': 120,               # Run every 2 minutes
-            'task_update_statistics_summary': 300, # Run every 5 minutes
+            # 'task_update_statistics_summary': 300, # Run every 5 minutes
             'task_refresh_download_stats': 300,    # Run every 5 minutes
             'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
             'task_verify_symlinked_files': 7200,    # Run every 120 minutes (if enabled)
@@ -268,7 +268,7 @@ class ProgramRunner:
             'task_update_movie_ids': 50600,        # Run every ~14 hours
             'task_update_movie_titles': 55600,     # Run every ~15 hours
             'task_refresh_release_dates': 36000,   # Run every 10 hours
-            'task_generate_airtime_report': 3600,  # Run every hour
+            # 'task_generate_airtime_report': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
@@ -460,21 +460,21 @@ class ProgramRunner:
             # Essential Periodic Tasks
             'task_check_service_connectivity',
             'task_heartbeat',
-            'task_update_statistics_summary',
+            # 'task_update_statistics_summary',
             'task_refresh_download_stats',
             'task_precompute_airing_shows',
             'task_reconcile_queues',
             'task_check_database_health',
             'task_sync_time',
             'task_check_trakt_early_releases',
-            'task_update_show_ids',
-            'task_update_show_titles',
-            'task_update_movie_ids',
-            'task_update_movie_titles',
+            # 'task_update_show_ids',
+            # 'task_update_show_titles',
+            # 'task_update_movie_ids',
+            # 'task_update_movie_titles',
             'task_refresh_release_dates',
-            'task_generate_airtime_report',
+            # 'task_generate_airtime_report',
             'task_refresh_plex_tokens',
-            'task_update_tv_show_status',
+            # 'task_update_tv_show_status',
             # NEW Load Adjustment Task
             # 'task_adjust_intervals_for_load',
             # --- START EDIT: Add 'task_verify_plex_removals' back to default set ---
@@ -675,6 +675,14 @@ class ProgramRunner:
         # else:
             # self.HEAVY_DB_TASKS = set(self.task_intervals.keys()) # REVERTED: Scheduler now handles global sequential execution. HEAVY_DB_TASKS reverts to original intent.
             # logging.info(f"All {len(self.HEAVY_DB_TASKS)} tasks defined in task_intervals will now use the exclusive execution lock, effectively running sequentially.")
+        # --- END EDIT ---
+
+        # --- START EDIT: Capture baseline enabled tasks snapshot ---
+        # Store the set of tasks that were enabled immediately after initialization (including
+        # any changes applied from task_toggles.json, content-source processing, and settings).
+        # When the user later saves toggle states we can compare against this snapshot and only
+        # persist differences, keeping the JSON file minimal.
+        self.initial_enabled_tasks_snapshot = set(self.enabled_tasks)
         # --- END EDIT ---
 
         # Schedule initial tasks
@@ -1760,8 +1768,8 @@ class ProgramRunner:
     def task_purge_not_wanted_magnets_file(self):
         purge_not_wanted_magnets_file()
 
-    def task_generate_airtime_report(self):
-        generate_airtime_report()
+    # def task_generate_airtime_report(self):
+    #     generate_airtime_report()
 
     def task_debug_log(self):
         current_time = time.time()
@@ -3544,15 +3552,15 @@ class ProgramRunner:
             logging.error(f"Error during standalone Plex removal processing: {e}", exc_info=True)
 
 
-    def task_update_statistics_summary(self):
-        """Update the statistics summary table for faster statistics page loading"""
-        try:
-            # Use the directly imported function with force=True
-            from database.statistics import update_statistics_summary
-            update_statistics_summary(force=True)
-            logging.debug("Scheduled statistics summary update complete")
-        except Exception as e:
-            logging.error(f"Error updating statistics summary: {str(e)}")
+    # def task_update_statistics_summary(self):
+    #     """Update the statistics summary table for faster statistics page loading"""
+    #     try:
+    #         # Use the directly imported function with force=True
+    #         from database.statistics import update_statistics_summary
+    #         update_statistics_summary(force=True)
+    #         logging.debug("Scheduled statistics summary update complete")
+    #     except Exception as e:
+    #         logging.error(f"Error updating statistics summary: {str(e)}")
 
     def task_check_database_health(self):
         """Periodic task to verify database health and handle any corruption."""
