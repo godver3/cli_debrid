@@ -17,6 +17,8 @@ ANALYSIS_VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".w
 ANALYSIS_THREADS = 15  # Number of threads for file analysis
 MEDIA_ANALYSIS_PROGRESS_JSON = "media_file_analysis_progress.json" # Stored in USER_DB_CONTENT
 FILES_TO_ANALYZE_PER_RUN = 200
+# NEW: Maximum seconds to wait for a single file analysis before treating it as stalled
+ANALYSIS_SINGLE_FILE_TIMEOUT = 120  # 2 minutes per file – make configurable later if needed
 
 def is_ffprobe_available():
     """Checks if ffprobe is installed and accessible in the system's PATH."""
@@ -353,12 +355,15 @@ def analyze_and_repair_media_files(collection_type, max_files_to_check_this_run=
 
     files_submitted_for_analysis = 0
     futures = []
+    # Map each Future back to its absolute path for clearer timeout/error logging
+    future_to_path = {}
     
     with ThreadPoolExecutor(max_workers=max(1, ANALYSIS_THREADS)) as executor:
         for abs_file_path_to_analyze in files_to_process_this_run:
             relative_path = os.path.relpath(abs_file_path_to_analyze, base_path)
             future = executor.submit(task_analyze_single_file_and_take_action, db_path, abs_file_path_to_analyze, relative_path, collection_type, base_path)
             futures.append(future)
+            future_to_path[future] = abs_file_path_to_analyze
             files_submitted_for_analysis += 1
         
         logging.info(f"Submitted {files_submitted_for_analysis} files for analysis for {collection_type}.")
@@ -369,34 +374,46 @@ def analyze_and_repair_media_files(collection_type, max_files_to_check_this_run=
         if files_to_process_this_run: # If there are files, take the first as a baseline that will be updated
             last_successfully_processed_path_in_batch = files_to_process_this_run[0]
 
-
         temp_total_analyzed_this_session = 0
 
-        for future in as_completed(futures):
+        # Iterate over each future individually so we can apply a per-future timeout.
+        for future in futures:
+            abs_path_for_log = future_to_path.get(future, "<unknown>")
             try:
-                processed_abs_path, status = future.result()
+                processed_abs_path, status = future.result(timeout=ANALYSIS_SINGLE_FILE_TIMEOUT)
                 logging.info(f"Completed analysis for {processed_abs_path} ({collection_type}), status: {status}")
-                
-                if processed_abs_path > last_successfully_processed_path_in_batch:
-                    last_successfully_processed_path_in_batch = processed_abs_path
-                
-                temp_total_analyzed_this_session += 1
-                processed_count_this_session += 1
-
-                if processed_count_this_session % 20 == 0 and processed_count_this_session < files_submitted_for_analysis:
-                    intermediate_progress_to_save = {
-                        "last_processed_absolute_path": last_successfully_processed_path_in_batch,
-                        "total_files_analyzed_ever": total_analyzed_ever_start_of_run + temp_total_analyzed_this_session
-                    }
-                    try:
-                        with open(progress_file_full_path, 'w') as f:
-                            json.dump(intermediate_progress_to_save, f, indent=4)
-                        logging.debug(f"Saved intermediate progress for {collection_type}. Last path: {last_successfully_processed_path_in_batch}")
-                    except IOError as e:
-                        logging.error(f"Could not save intermediate progress for {collection_type} to {progress_file_full_path}: {e}")
+            except TimeoutError:
+                logging.error(
+                    f"Analysis timed out after {ANALYSIS_SINGLE_FILE_TIMEOUT}s for '{abs_path_for_log}'. Marking as 'timeout' and continuing.")
+                status = "timeout"
+                processed_abs_path = abs_path_for_log
+                # Attempt to cancel – wont stop if already running but avoids queueing follow-ups.
+                future.cancel()
             except Exception as exc:
-                logging.error(f'A file analysis task for {collection_type} generated an exception: {exc}', exc_info=True)
-        
+                logging.error(f"A file analysis task for {collection_type} generated an exception: {exc}", exc_info=True)
+                status = "error"
+                processed_abs_path = abs_path_for_log
+
+            # Common bookkeeping (runs for success, timeout or error)
+            if processed_abs_path and processed_abs_path > last_successfully_processed_path_in_batch:
+                last_successfully_processed_path_in_batch = processed_abs_path
+
+            temp_total_analyzed_this_session += 1
+            processed_count_this_session += 1
+
+            # Periodic progress save (every 20 processed items)
+            if processed_count_this_session % 20 == 0 and processed_count_this_session < files_submitted_for_analysis:
+                intermediate_progress_to_save = {
+                    "last_processed_absolute_path": last_successfully_processed_path_in_batch,
+                    "total_files_analyzed_ever": total_analyzed_ever_start_of_run + temp_total_analyzed_this_session
+                }
+                try:
+                    with open(progress_file_full_path, 'w') as f:
+                        json.dump(intermediate_progress_to_save, f, indent=4)
+                    logging.debug(f"Saved intermediate progress for {collection_type}. Last path: {last_successfully_processed_path_in_batch}")
+                except IOError as e:
+                    logging.error(f"Could not save intermediate progress for {collection_type} to {progress_file_full_path}: {e}")
+
     current_progress_data["total_files_analyzed_ever"] = total_analyzed_ever_start_of_run + temp_total_analyzed_this_session
 
     if files_submitted_for_analysis > 0: # Only update path if we actually processed something

@@ -218,9 +218,33 @@ def filter_results(
             if not isinstance(item_aliases, dict):
                 item_aliases = {}
 
+            # -------------------------------------------------------------
+            # Include original_title from metadata in alias pool
+            # -------------------------------------------------------------
+            try:
+                if imdb_id and direct_api:
+                    if content_type.lower() == 'movie':
+                        meta_data, _ = direct_api.get_movie_metadata(imdb_id)
+                    else:
+                        meta_data, _ = direct_api.get_show_metadata(imdb_id)
+
+                    if meta_data and isinstance(meta_data, dict):
+                        orig_title_val = meta_data.get('original_title') or meta_data.get('originalTitle')
+                        if orig_title_val:
+                            if isinstance(orig_title_val, list):
+                                orig_title_list = [str(t) for t in orig_title_val if t]
+                            else:
+                                orig_title_list = [str(orig_title_val)]
+
+                            existing_orig_list = item_aliases.get('original_title', [])
+                            # Merge and ensure uniqueness later in dedup step
+                            existing_orig_list.extend(orig_title_list)
+                            item_aliases['original_title'] = existing_orig_list
+            except Exception as meta_err:
+                logging.warning(f"Failed to fetch original_title for {imdb_id}: {meta_err}")
+
             # Deduplicate and log aliases
             item_aliases = {k: list(set(v)) for k, v in item_aliases.items()}
-
 
             # -------------------------------------------------------------
             # Re-evaluate alias similarities with the newly fetched aliases
@@ -330,9 +354,13 @@ def filter_results(
                 # --- End new check ---
 
             elif is_episode:
-                # Add year check for TV shows
-                # Check if the title is "Formula 1" (case-insensitive) to bypass year check
-                is_formula_1 = "formula 1" in title.lower()
+                # Only apply the special Formula 1 handling to real Formula 1 event releases.
+                # The Netflix series "Formula 1: Drive to Survive" should be treated as
+                # a regular TV show and go through the normal season-matching logic.
+                # Therefore, we enable the Formula 1 override only when the title contains
+                # "Formula 1" *and* does NOT contain "Drive to Survive" (case-insensitive).
+                title_lower_for_f1_check = title.lower()
+                is_formula_1 = ("formula 1" in title_lower_for_f1_check) and ("drive to survive" not in title_lower_for_f1_check)
 
                 if not is_formula_1: # Only perform year check if not Formula 1
                     parsed_year = parsed_info.get('year')

@@ -759,17 +759,63 @@ def run_main():
 
     # Set up process monitoring
     def monitor_processes():
+        """
+        Periodically log:
+        1. Memory/CPU for each cli-debrid child process
+        2. Top 10 system processes by RSS memory
+        3. Top 10 memory-consuming locations inside this wrapper (tracemalloc)
+        """
+        # Start tracemalloc once (safe to call repeatedly)
+        try:
+            import tracemalloc
+            if not tracemalloc.is_tracing():
+                tracemalloc.start()
+        except Exception as e:
+            tracemalloc = None
+            logging.warning(f"tracemalloc unavailable – location-level stats disabled: {e}")
+
         while any(p.is_alive() for p in processes):
-            for i, p in enumerate(processes):
+            # 1) Per-child process stats
+            for p in processes:
                 if p.is_alive():
                     try:
                         proc = psutil.Process(p.pid)
-                        mem_info = proc.memory_info()
-                        logging.info(f"Process {p.name} (PID {p.pid}) - Memory: {mem_info.rss / (1024 * 1024):.2f} MB, CPU: {proc.cpu_percent(interval=0.1)}%")
+                        mem = proc.memory_info().rss / (1024 * 1024)
+                        cpu = proc.cpu_percent(interval=0.1)
+                        logging.info(
+                            f"Process {p.name} (PID {p.pid}) – "
+                            f"Memory: {mem:.2f} MB, CPU: {cpu:.1f}%"
+                        )
                     except Exception as e:
-                        logging.error(f"Error monitoring process {p.name}: {str(e)}")
+                        logging.error(f"Error monitoring {p.name}: {e}")
+
+            # 2) Top 10 system processes by memory
+            try:
+                top_by_mem = sorted(
+                    psutil.process_iter(['pid', 'name', 'memory_info']),
+                    key=lambda pr: pr.info['memory_info'].rss if pr.info['memory_info'] else 0,
+                    reverse=True
+                )[:10]
+                logging.info("[System] Top 10 processes by RSS memory:")
+                for pr in top_by_mem:
+                    rss_mb = pr.info['memory_info'].rss / (1024 * 1024)
+                    logging.info(f"    PID {pr.info['pid']:>6} – {pr.info['name'][:25]:<25} : {rss_mb:>7.2f} MB")
+            except Exception as e:
+                logging.error(f"Error gathering system memory leaderboard: {e}")
+
+            # 3) Top 10 code locations inside this wrapper (if tracemalloc running)
+            if 'tracemalloc' in locals() and tracemalloc and tracemalloc.is_tracing():
+                try:
+                    snapshot = tracemalloc.take_snapshot()
+                    top_stats = snapshot.statistics('lineno')[:10]
+                    logging.info("[Wrapper] Top 10 memory-consuming locations:")
+                    for stat in top_stats:
+                        logging.info(f"    {stat}")
+                except Exception as e:
+                    logging.error(f"Error collecting tracemalloc stats: {e}")
+
             time.sleep(60)  # Check every minute
-    
+
     monitor_proc_thread = threading.Thread(target=monitor_processes, name="ProcessMonitor")
     monitor_proc_thread.daemon = True
     monitor_proc_thread.start()

@@ -392,16 +392,14 @@
         <p><i class="fas fa-info-circle"></i> Task timings and intervals are displayed based on the running program. Customize intervals using the input fields (in seconds) and save your preferences. Saved intervals apply on program restart unless live updates are successful.</p>
     </div>
 
-    <!-- Combined Save Buttons -->
+    <!-- ACTION BUTTONS CONTAINER -->
     <div class="action-buttons-container">
         <button id="resetAllSettingsBtn" class="save-toggles-btn" style="background-color: #dc3545;"> <!-- Red for reset -->
             <i class="fas fa-undo"></i> Reset All to Default
         </button>
-         <button id="saveIntervalsBtn" class="save-toggles-btn" style="background-color: #28a745;"> <!-- Green for intervals -->
-            <i class="fas fa-clock"></i> Save Intervals
-        </button>
-        <button id="saveTogglesBtn" class="save-toggles-btn"> <!-- Original blue for toggles -->
-            <i class="fas fa-save"></i> Save Toggles
+        <!-- Consolidated save button -->
+        <button id="saveSettingsBtn" class="save-toggles-btn" style="background-color: #28a745;"> <!-- Green for save -->
+            <i class="fas fa-save"></i> Save
         </button>
     </div>
     
@@ -450,6 +448,9 @@ let isProgramConsideredRunning = false; // Tracks the page's belief of the progr
 const FAST_POLL_INTERVAL = 5000; // 5 seconds for checking program status when believed to be down
 const REGULAR_UPDATE_INTERVAL = 60000; // 60 seconds for regular task updates
 // --- END NEW VARS ---
+
+// Track any in-flight toggle enable/disable requests so Save can wait for them.
+const pendingToggleRequests = [];
 
 // Function to dismiss the reset notification
 window.dismissResetNotification = function() {
@@ -504,12 +505,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     console.log('[TaskTimings] Tab switching logic initialized.');
 
-    // Add event listener for Save Toggles button
-    document.getElementById('saveTogglesBtn').addEventListener('click', saveToggleStates);
-    console.log('[TaskTimings] Event listener for Save Toggles button added.');
-    // Add event listener for Save Intervals button
-    document.getElementById('saveIntervalsBtn').addEventListener('click', saveIntervalStates);
-    console.log('[TaskTimings] Event listener for Save Intervals button added.');
+    // Add event listener for consolidated Save button
+    document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+    console.log('[TaskTimings] Event listener for consolidated Save button added.');
     // Add event listener for Reset All Settings button
     document.getElementById('resetAllSettingsBtn').addEventListener('click', handleResetAllSettings);
     console.log('[TaskTimings] Event listener for Reset All Settings button added.');
@@ -531,13 +529,21 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 1500); 
 });
 
-// Function to save toggle states
-function saveToggleStates() {
-    console.log('[TaskTimings] saveToggleStates called.');
+// Consolidated save function
+function saveSettings() {
+    console.log('[TaskTimings] saveSettings called.');
+    const saveBtn = document.getElementById('saveSettingsBtn');
+    const originalText = saveBtn.innerHTML;
+    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    saveBtn.disabled = true;
+
+    // Wait for any pending toggle enable/disable requests to finish first
+    Promise.all(pendingToggleRequests).then(() => {
+
+    /* Collect toggle states */
     const taskStates = {};
     let enabledCount = 0;
     let disabledCount = 0;
-    
     document.querySelectorAll('.task-tile').forEach(tile => {
         const taskName = tile.dataset.taskName;
         const isEnabled = tile.querySelector('input[type="checkbox"]').checked;
@@ -545,62 +551,8 @@ function saveToggleStates() {
         if (isEnabled) enabledCount++; else disabledCount++;
     });
     console.log('[TaskTimings] Task states collected for saving:', taskStates);
-    
-    const saveBtn = document.getElementById('saveTogglesBtn');
-    const originalText = saveBtn.innerHTML;
-    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-    saveBtn.disabled = true;
 
-    fetch('/program_operation/save_task_toggles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task_states: taskStates })
-    })
-    .then(response => response.json())
-    .then(data => {
-        saveBtn.innerHTML = originalText;
-        saveBtn.disabled = false;
-        console.log('[TaskTimings] Save toggles response:', data);
-        if (data.success) {
-            showPopup({
-                type: POPUP_TYPES.SUCCESS,
-                title: 'Success',
-                message: `Task toggle states saved successfully. ${enabledCount} tasks enabled, ${disabledCount} tasks disabled. These settings will be applied when the program starts.`
-            });
-        } else {
-            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'Failed to save task toggle states' });
-        }
-    })
-    .catch(error => {
-        saveBtn.innerHTML = originalText;
-        saveBtn.disabled = false;
-        console.error('[TaskTimings] Error saving toggle states:', error);
-        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to save task toggle states' });
-    });
-}
-
-// Function to load saved toggle states
-function loadSavedToggleStates() {
-    console.log('[TaskTimings] loadSavedToggleStates called.');
-    fetch('/program_operation/load_task_toggles')
-        .then(response => response.json())
-        .then(data => {
-            console.log('[TaskTimings] Load saved toggles response:', data);
-            if (data.success && data.task_states) {
-                // Note: This function currently doesn't apply the loaded states to the UI elements
-                // if the program isn't running and no tiles are present. It mostly logs.
-                // UI update would require creating dummy tiles or a different display strategy.
-                console.log('[TaskTimings] Saved toggle states loaded:', data.task_states);
-            }
-        })
-        .catch(error => {
-            console.error('[TaskTimings] Error loading saved toggle states:', error);
-        });
-}
-
-// Function to save interval states
-function saveIntervalStates() {
-    console.log('[TaskTimings] saveIntervalStates called.');
+    /* Collect interval states */
     const taskIntervalsSeconds = {};
     document.querySelectorAll('.task-tile').forEach(tile => {
         const taskName = tile.dataset.taskName;
@@ -624,35 +576,80 @@ function saveIntervalStates() {
     });
     console.log('[TaskTimings] Task intervals collected for saving (seconds):', taskIntervalsSeconds);
 
-    const saveBtn = document.getElementById('saveIntervalsBtn');
-    const originalText = saveBtn.innerHTML;
-    saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-    saveBtn.disabled = true;
+    /* Send both save requests */
+    const togglePromise = fetch('/program_operation/save_task_toggles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task_states: taskStates })
+    }).then(r => r.json());
 
-    fetch('/program_operation/save_task_intervals', {
+    const intervalPromise = fetch('/program_operation/save_task_intervals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ task_intervals: taskIntervalsSeconds })
-    })
-    .then(response => response.json())
-    .then(data => {
+    }).then(r => r.json());
+
+    Promise.all([togglePromise, intervalPromise])
+        .then(([toggleRes, intervalRes]) => {
+            saveBtn.innerHTML = originalText;
+            saveBtn.disabled = false;
+            console.log('[TaskTimings] Save toggle response:', toggleRes);
+            console.log('[TaskTimings] Save intervals response:', intervalRes);
+
+            const allSuccess = (toggleRes.success || toggleRes.status === 'success') &&
+                             (intervalRes.success || intervalRes.status === 'success');
+
+            if (allSuccess) {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: `Task settings saved successfully. ${enabledCount} tasks enabled, ${disabledCount} tasks disabled.`
+                });
+                console.log('[TaskTimings] Settings saved, refreshing tasks.');
+                setTimeout(fetchAndUpdateTasks, 500);
+            } else {
+                const errorMsg = (toggleRes.error || intervalRes.error) || 'Failed to save task settings';
+                showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: errorMsg });
+            }
+        })
+        .catch(error => {
+            // This catch is for waiting Promise.all
+            console.error('[TaskTimings] Error while waiting for pending toggle requests:', error);
+            // Proceed regardless
+            /* You might choose to call proceedSave(); but for simplicity we just release button */
+            saveBtn.innerHTML = originalText;
+            saveBtn.disabled = false;
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to save task settings due to pending toggle error.' });
+        });
+
+    }).catch(err => {
+        // This catch is for waiting Promise.all
+        console.error('[TaskTimings] Error while waiting for pending toggle requests:', err);
+        // Proceed regardless
+        /* You might choose to call proceedSave(); but for simplicity we just release button */
         saveBtn.innerHTML = originalText;
         saveBtn.disabled = false;
-        console.log('[TaskTimings] Save intervals response:', data);
-        if (data.success) {
-            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: data.message || 'Task intervals saved successfully.' });
-            console.log('[TaskTimings] Intervals saved, calling fetchAndUpdateTasks.');
-            setTimeout(fetchAndUpdateTasks, 500);
-        } else {
-            showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: data.error || 'Failed to save task intervals' });
-        }
-    })
-    .catch(error => {
-        saveBtn.innerHTML = originalText;
-        saveBtn.disabled = false;
-        console.error('[TaskTimings] Error saving intervals:', error);
-        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to save task intervals' });
+        showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Failed to save task settings due to pending toggle error.' });
     });
+}
+
+// Function to load saved toggle states
+function loadSavedToggleStates() {
+    console.log('[TaskTimings] loadSavedToggleStates called.');
+    fetch('/program_operation/load_task_toggles')
+        .then(response => response.json())
+        .then(data => {
+            console.log('[TaskTimings] Load saved toggles response:', data);
+            if (data.success && data.task_states) {
+                // Note: This function currently doesn't apply the loaded states to the UI elements
+                // if the program isn't running and no tiles are present. It mostly logs.
+                // UI update would require creating dummy tiles or a different display strategy.
+                console.log('[TaskTimings] Saved toggle states loaded:', data.task_states);
+            }
+        })
+        .catch(error => {
+            console.error('[TaskTimings] Error loading saved toggle states:', error);
+        });
 }
 
 // Function to load saved interval states
@@ -1031,13 +1028,18 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
     
     // --- START EDIT: Enhanced fetch logging ---
     console.log(`[TaskTimings] Initiating fetch to ${endpoint}...`);
-    fetch(endpoint, {
+    const toggleFetchPromise = fetch(endpoint, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: `task_name=${encodeURIComponent(taskName)}`
-    })
+    });
+
+    // Add to pending list so saveSettings can await completion
+    pendingToggleRequests.push(toggleFetchPromise);
+
+    toggleFetchPromise
     .then(response => {
         console.log(`[TaskTimings] Received response from ${endpoint}. Status: ${response.status}, StatusText: ${response.statusText}`);
         if (!response.ok) {
@@ -1100,6 +1102,11 @@ window.toggleTaskStatus = function toggleTaskStatus(taskName, enabled) {
             console.log(`[TaskTimings] Reverted checkbox for ${taskName} due to CATCH block error.`);
         }
         showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: `Failed to ${action} task: ${displayName}. Error: ${error.message}` });
+    })
+    .finally(() => {
+        // Remove this promise from tracking array once settled
+        const idx = pendingToggleRequests.indexOf(toggleFetchPromise);
+        if (idx > -1) pendingToggleRequests.splice(idx, 1);
     });
     // --- END EDIT ---
 }

@@ -490,6 +490,7 @@ class ProgramRunner:
             # 'task_artificial_long_run',
         }
         logging.info("Initialized base enabled tasks.")
+        # (The accurate default snapshot will be captured later, after content-source and conditional tasks.)
 
         # 2. Load task_toggles.json ONCE and update enabled_tasks
         # --- START EDIT: Initialize saved_states before try block ---
@@ -507,23 +508,8 @@ class ProgramRunner:
                 with open(toggles_file_path, 'r') as f:
                     saved_states = json.load(f)
 
-                for task_name, enabled in saved_states.items():
-                    normalized_name = self._normalize_task_name(task_name)
-                    # Check if the task from the JSON file actually exists in our defined intervals
-                    # --- START EDIT: Check against original_task_intervals which is more complete early on ---
-                    if normalized_name not in self.original_task_intervals and normalized_name not in self.task_intervals:
-                    # --- END EDIT ---
-                        logging.warning(f"Task '{normalized_name}' found in task_toggles.json but not defined in task_intervals/original_task_intervals. Skipping toggle.")
-                        continue
-
-                    if enabled:
-                        if normalized_name not in self.enabled_tasks:
-                            self.enabled_tasks.add(normalized_name)
-                            logging.info(f"Enabled task from saved settings: {normalized_name}")
-                    elif not enabled:
-                        if normalized_name in self.enabled_tasks:
-                            self.enabled_tasks.remove(normalized_name)
-                            logging.info(f"Disabled task from saved settings: {normalized_name}")
+                # Defer actual enabling/disabling based on toggles until after all default/conditional logic is done.
+                self._saved_toggle_states = saved_states
             else:
                 logging.info("No task_toggles.json found, using default enabled tasks.")
         except Exception as e:
@@ -640,6 +626,32 @@ class ProgramRunner:
         # 6. Finalize original task intervals *after* content sources potentially added intervals
         # self.original_task_intervals = self.task_intervals.copy() # REMOVE THIS LINE
         logging.info("Finalized original task intervals after all task definitions and settings.") # Comment becomes slightly less accurate but fine
+
+        # --- NEW STEP: Capture default-enabled snapshot AFTER content-source and conditional tasks,
+        # but BEFORE applying user toggle overrides. This snapshot now truly represents defaults.
+        if not hasattr(self, 'default_enabled_tasks_snapshot'):
+            self.default_enabled_tasks_snapshot = set(self.enabled_tasks)
+            logging.info(f"Captured default_enabled_tasks_snapshot with {len(self.default_enabled_tasks_snapshot)} tasks.")
+
+        # --- NOW apply saved toggle overrides (if any) ---
+        saved_states_to_apply = getattr(self, '_saved_toggle_states', {})
+        if saved_states_to_apply:
+            logging.info("Applying saved task toggles after default snapshot capture...")
+            for task_name, enabled in saved_states_to_apply.items():
+                normalized_name = self._normalize_task_name(task_name)
+                if normalized_name not in self.original_task_intervals and normalized_name not in self.task_intervals:
+                    logging.warning(f"Task '{normalized_name}' in task_toggles.json not defined in intervals. Skipping toggle application.")
+                    continue
+                if enabled:
+                    if normalized_name not in self.enabled_tasks:
+                        self.enabled_tasks.add(normalized_name)
+                        logging.info(f"Toggle applied: ENABLED '{normalized_name}' from saved settings.")
+                else:
+                    if normalized_name in self.enabled_tasks:
+                        self.enabled_tasks.remove(normalized_name)
+                        logging.info(f"Toggle applied: DISABLED '{normalized_name}' from saved settings.")
+        else:
+            logging.info("No saved toggle states to apply.")
 
         # --- END: Task Enabling Logic Reorder ---
 
@@ -2823,9 +2835,7 @@ class ProgramRunner:
         """Task to refresh the download stats cache"""
         from database.statistics import get_cached_download_stats
         try:
-            # *** START EDIT ***
-            get_cached_download_stats() # Removed unsupported force_refresh=True argument
-            # *** END EDIT ***
+            get_cached_download_stats()
             logging.debug("Download stats cache refreshed")
         except Exception as e:
             logging.error(f"Error refreshing download stats cache: {str(e)}")
@@ -4337,7 +4347,6 @@ class ProgramRunner:
             elif run_tracemalloc_sample:
                  # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of error memory check.")
-
             raise # Re-raise the exception
         finally:
             # --- START EDIT: Manage currently_executing_tasks ---
@@ -5080,3 +5089,4 @@ def run_program():
 
 if __name__ == "__main__":
     run_program()
+
