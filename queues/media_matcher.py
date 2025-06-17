@@ -159,7 +159,9 @@ class MediaMatcher:
             if not date_match: # Only check if date didn't match
                 # Determine item title for F1 check
                 item_title_for_f1_check = (item.get('series_title', '') or item.get('title', '')).lower()
-                is_formula_1_item = "formula 1" in item_title_for_f1_check
+                # Treat as Formula 1 motorsport event only if title includes "formula 1" **and** does NOT contain
+                # "drive to survive" (which refers to the Netflix documentary series).
+                is_formula_1_item = ("formula 1" in item_title_for_f1_check) and ("drive to survive" not in item_title_for_f1_check)
 
                 if is_formula_1_item and not using_xem: # Apply F1 logic if not overridden by XEM
                     # For F1, target_season IS the event year.
@@ -242,7 +244,8 @@ class MediaMatcher:
         elif item_type == 'episode':
             # Check for Formula 1
             item_title_for_f1_check = (item.get('series_title', '') or item.get('title', '')).lower()
-            is_formula_1_item = "formula 1" in item_title_for_f1_check
+            # Same refined detection as above to avoid mis-classifying "Formula 1: Drive to Survive".
+            is_formula_1_item = ("formula 1" in item_title_for_f1_check) and ("drive to survive" not in item_title_for_f1_check)
 
             if is_formula_1_item:
                 logging.debug(f"Formula 1 item detected: '{item_title_for_f1_check}'. Applying simplified 'session' file matching.")

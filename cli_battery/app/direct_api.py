@@ -43,6 +43,7 @@ class DirectAPI:
         logger.info("DirectAPI initialized, database engine ready.")
 
     @staticmethod
+    @lru_cache()
     def get_movie_metadata(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
         try:
             with managed_session() as session:
@@ -63,6 +64,7 @@ class DirectAPI:
             return None, None
 
     @staticmethod
+    @lru_cache()
     def get_show_metadata(imdb_id):
         logging.info(f"DirectAPI.get_show_metadata called for {imdb_id}")
         try:

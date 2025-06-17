@@ -972,8 +972,13 @@ def save_task_toggles():
         else:
             return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
 
-        # --- START EDIT: Determine only the differences relative to initialization baseline ---
-        baseline_enabled_set = getattr(runner, 'initial_enabled_tasks_snapshot', set())
+        # Prefer the default-enabled snapshot captured before user overrides were applied
+        baseline_enabled_set = set()
+        if hasattr(runner, 'default_enabled_tasks_snapshot'):
+            baseline_enabled_set = runner.default_enabled_tasks_snapshot
+        else:
+            baseline_enabled_set = getattr(runner, 'initial_enabled_tasks_snapshot', set())
+
         diff_task_states = {}
         for task_name, is_enabled_live in live_task_states.items():
             was_enabled_initially = task_name in baseline_enabled_set
@@ -1129,15 +1134,24 @@ def save_task_intervals():
             logging.info("Program running, attempting to apply interval changes (seconds) live...")
             # Iterate over valid_intervals_seconds because it reflects the user's latest batch of changes
             for task_name, interval_sec_or_none in valid_intervals_seconds.items():
-                 if hasattr(runner, 'update_task_interval'):
-                     try:
-                         if runner.update_task_interval(task_name, interval_sec_or_none): # Pass processed value (int or None)
-                              updated_live += 1
-                     except Exception as live_e:
-                         update_errors.append(f"Error applying live update for {task_name}: {live_e}")
-                 else:
-                      update_errors.append("ProgramRunner does not support live interval updates.")
-                      break # Stop trying if method not found
+                # Apply live interval change only if the task is currently enabled to avoid re-enabling paused tasks
+                normalized_name = runner._normalize_task_name(task_name) if hasattr(runner, '_normalize_task_name') else task_name
+                task_currently_enabled = hasattr(runner, 'enabled_tasks') and normalized_name in runner.enabled_tasks
+
+                if not task_currently_enabled:
+                    # Skip live update; interval will take effect next time the task is enabled or on program restart
+                    logging.info(f"Skipping live interval update for disabled task '{normalized_name}'. Interval preference stored only.")
+                    continue
+
+                if hasattr(runner, 'update_task_interval'):
+                    try:
+                        if runner.update_task_interval(task_name, interval_sec_or_none): # Pass processed value (int or None)
+                             updated_live += 1
+                    except Exception as live_e:
+                        update_errors.append(f"Error applying live update for {task_name}: {live_e}")
+                else:
+                     update_errors.append("ProgramRunner does not support live interval updates.")
+                     break # Stop trying if method not found
             if update_errors:
                  logging.warning("Some live interval updates failed: " + "; ".join(update_errors))
         
