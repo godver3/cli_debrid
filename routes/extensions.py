@@ -73,7 +73,29 @@ class InMemorySessionInterface(SessionInterface):
         
         # Save the session data in the in-memory store with creation time
         created = getattr(session, 'created', time.time())
+        prev_count = len(self.session_store)
         self.session_store[session.sid] = (pickle.dumps(dict(session)), created)
+
+        # --------------------------------------------------------------
+        #  DEBUG ‑ Memory-leak investigation (anonymous session growth)
+        # --------------------------------------------------------------
+        # When the user system is DISABLED we expect many short-lived
+        # anonymous requests.  Each request that fails to send back the
+        # session cookie will allocate a new entry in `session_store`.
+        # The following lightweight logging helps confirm that behaviour
+        # without flooding the logs.
+        try:
+            if not is_user_system_enabled():  # Only track when feature OFF
+                new_count = len(self.session_store)
+                if new_count != prev_count:
+                    # Log every 50th new session (first <50 always logged)
+                    if new_count < 50 or new_count % 50 == 0:
+                        self.logger.info(
+                            f"[MemLeakDebug] Anonymous session added (total: {new_count})")
+        except Exception:
+            # Never let debug instrumentation break normal flow
+            pass
+        # --------------------------------------------------------------
         
         # Set the cookie with the session ID
         httponly = self.get_cookie_httponly(app)
@@ -412,6 +434,23 @@ class SimpleTaskQueue:
     def __init__(self):
         self.tasks = {}
 
+    # Internal helper to prune completed tasks and keep memory bounded
+    def _cleanup_completed_tasks(self, max_tasks=100):
+        """Remove completed tasks beyond *max_tasks* to prevent unbounded RAM."""
+        try:
+            if len(self.tasks) <= max_tasks:
+                return
+
+            # Iterate in insertion order (dict preserves order in Py3.7+)
+            for tid in list(self.tasks.keys()):
+                if len(self.tasks) <= max_tasks:
+                    break
+                status = self.tasks[tid]['status']
+                if status in ("SUCCESS", "FAILURE"):
+                    self.tasks.pop(tid, None)
+        except Exception as e:
+            logging.error(f"[SimpleTaskQueue] Error during cleanup: {e}")
+
     def add_task(self, func, *args, **kwargs):
         task_id = str(uuid.uuid4())
         self.tasks[task_id] = {'status': 'PENDING', 'result': None}
@@ -421,13 +460,35 @@ class SimpleTaskQueue:
             try:
                 result = func(*args, **kwargs)
                 self.tasks[task_id]['status'] = 'SUCCESS'
-                self.tasks[task_id]['result'] = result
+                # Avoid storing multi-hundred-MB results in memory
+                try:
+                    import sys
+                    MAX_BYTES = 5 * 1024 * 1024  # 5 MB cap
+                    size_bytes = sys.getsizeof(result)
+                    if size_bytes > MAX_BYTES:
+                        self.tasks[task_id]['result'] = f"<omitted large result (~{size_bytes/1048576:.1f} MB)>"
+                    else:
+                        self.tasks[task_id]['result'] = result
+                except Exception:
+                    # Fallback if size check fails
+                    self.tasks[task_id]['result'] = "<result stored>"
             except Exception as e:
                 self.tasks[task_id]['status'] = 'FAILURE'
                 self.tasks[task_id]['result'] = str(e)
 
+            # After task finishes, prune old entries
+            self._cleanup_completed_tasks()
+
         thread = threading.Thread(target=run_task)
         thread.start()
+
+        # ─── MEM-PROBE #3: Monitor queue growth ─────────────
+        try:
+            if len(self.tasks) % 100 == 0:
+                logging.info(f"[MemProbe-Tasks] queue_length={len(self.tasks)}")
+        except Exception:
+            pass
+        # ─────────────────────────────────────────────────────
         return task_id
 
     def get_task_status(self, task_id):

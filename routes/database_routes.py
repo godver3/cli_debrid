@@ -196,7 +196,7 @@ def index():
             all_columns_for_ui.append('size')
         data['all_columns'] = all_columns_for_ui
 
-        default_display_columns = ['id', 'title', 'year', 'type', 'state', 'version', 'size']
+        default_display_columns = ['id', 'title', 'year', 'type', 'state', 'version']
 
         # 1. Get raw selected columns (from POST or session/GET)
         raw_selected_columns = []
@@ -397,7 +397,16 @@ def index():
         if sort_column_req != 'size' and sort_column_req in db_actual_columns:
             order_clause = f'ORDER BY "{sort_column_req}" {sort_order_req}'
         
-        query = f"{base_query} {final_where_clause} {order_clause}"
+        # Apply a row limit for the initial (non-AJAX) page load to keep
+        # the first HTML render snappy – the front-end will immediately
+        # re-request the full data set via AJAX once the page is ready.
+        INITIAL_LOAD_LIMIT = 250  # Hard cap for HTML render only
+        is_ajax_request = request.args.get('ajax') == '1'
+
+        if not is_ajax_request:
+            query = f"{base_query} {final_where_clause} {order_clause} LIMIT {INITIAL_LOAD_LIMIT}"
+        else:
+            query = f"{base_query} {final_where_clause} {order_clause}"
         logging.debug(f"Executing query: {query} with params: {final_params}")
         timings['filter_processing_done'] = time.perf_counter()
         cursor.execute(query, final_params)
