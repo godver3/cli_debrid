@@ -4894,10 +4894,27 @@ def get_and_add_all_collected_from_plex(bypass=False):
             from database import add_collected_items # Keep import local
             add_collected_items(movies + episodes)
             logging.info(f"Finished adding {len(movies) + len(episodes)} collected items to database.")
+
+            # -------- Memory cleanup to avoid JSON blob retention --------
+            try:
+                import gc
+                collected_content.clear()  # remove references to large lists
+                # Conditionally delete large local lists if they exist
+                for _var in ['movies', 'episodes', 'all_raw_movies', 'all_raw_episodes']:
+                    if _var in locals():
+                        locals()[_var].clear()
+                # Drop references so GC can reclaim
+                movies = episodes = None
+                if 'all_raw_movies' in locals():
+                    all_raw_movies = None  # type: ignore
+                if 'all_raw_episodes' in locals():
+                    all_raw_episodes = None  # type: ignore
+                gc.collect()
+                logging.info("[MemCleanup] Cleared collected content and forced GC after Plex full scan.")
+            except Exception as e_cleanup:
+                logging.debug(f"[MemCleanup] Exception during cleanup: {e_cleanup}")
+            # ----------------------------------------------------------------
             return collected_content  # Return the original content even if some items were skipped
-        else:
-            logging.info("No collected movies or episodes retrieved or processed.")
-            return collected_content # Return empty dict if nothing found
 
     logging.warning(f"Failed to retrieve or process collected content from {mode}.")
     return None

@@ -765,14 +765,18 @@ def run_main():
         2. Top 10 system processes by RSS memory
         3. Top 10 memory-consuming locations inside this wrapper (tracemalloc)
         """
-        # Start tracemalloc once (safe to call repeatedly)
+        # Start tracemalloc only if explicitly enabled in settings
+        tracemalloc = None  # Ensure defined for later checks
         try:
-            import tracemalloc
-            if not tracemalloc.is_tracing():
-                tracemalloc.start()
+            if get_setting('Debug', 'enable_tracemalloc', False):
+                import tracemalloc  # Local import to avoid overhead when disabled
+                if not tracemalloc.is_tracing():
+                    tracemalloc.start()
+                logging.info("tracemalloc memory tracking ENABLED inside windows_wrapper monitor (may add overhead).")
         except Exception as e:
+            # If settings module not available or tracemalloc fails, keep it disabled
             tracemalloc = None
-            logging.warning(f"tracemalloc unavailable – location-level stats disabled: {e}")
+            logging.warning(f"tracemalloc disabled/unavailable – location-level stats disabled: {e}")
 
         while any(p.is_alive() for p in processes):
             # 1) Per-child process stats
@@ -811,6 +815,20 @@ def run_main():
                     logging.info("[Wrapper] Top 10 memory-consuming locations:")
                     for stat in top_stats:
                         logging.info(f"    {stat}")
+
+                    # ─── MEM-PROBE #1: wrapper-level totals ─────────────
+                    try:
+                        import gc, os
+                        rss_bytes = psutil.Process(os.getpid()).memory_info().rss
+                        current, peak = tracemalloc.get_traced_memory()
+                        snapshot_objects = sum(1 for o in gc.get_objects() if o.__class__.__name__ == 'Snapshot')
+                        logging.info(
+                            f"[MemProbe-Wrapper] rss={rss_bytes/1048576:,.0f} MB "
+                            f"tracemalloc={current/1048576:,.0f}/{peak/1048576:,.0f} MB "
+                            f"snapshots={snapshot_objects}")
+                    except Exception:
+                        pass
+                    # ──────────────────────────────────────────────────
                 except Exception as e:
                     logging.error(f"Error collecting tracemalloc stats: {e}")
 

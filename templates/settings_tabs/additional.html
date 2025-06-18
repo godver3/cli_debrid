@@ -13,7 +13,7 @@
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
-                {% if key != 'tab' and not (section == "UI Settings" and key == "enable_phalanx_db") and key != 'blacklist_duration' %}
+                {% if key != 'tab' and not (section == "UI Settings" and key == "enable_phalanx_db") and key != 'blacklist_duration' and key != 'main_loop_sleep_seconds' and key != 'item_process_delay_seconds' %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}
@@ -271,7 +271,7 @@
         </div>
         <div class="settings-section-content">
             {% for key, value in section_data.items() %}
-                {% if key != 'tab' and key != 'blacklist_duration' %}
+                {% if key != 'tab' and key != 'blacklist_duration' and key != 'main_loop_sleep_seconds' and key != 'item_process_delay_seconds' %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                     {% if value.type == 'boolean' %}

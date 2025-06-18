@@ -115,50 +115,83 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
     Optionally filters by item type (e.g., 4 for episodes).
     Uses more robust pagination checks inspired by the test script.
     """
-    all_metadata = []
-    start_index = 0
+    # ------------------------------------------------------------
+    # 1. Get the first page (start=0) – this also gives us totalSize
+    # ------------------------------------------------------------
+    all_metadata: List[Dict[str, Any]] = []
     effective_page_size = max(1, page_size)
 
-    while True:
-        url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
-        if item_type is not None:
-            url += f"&type={item_type}"
+    base_url = f"{plex_url}/library/sections/{library_key}/all?includeGuids=1"
+    if item_type is not None:
+        base_url += f"&type={item_type}"
 
-        request_headers = headers.copy()
-        request_headers['X-Plex-Container-Start'] = str(start_index)
-        request_headers['X-Plex-Container-Size'] = str(effective_page_size)
+    type_str = f" (Type={item_type})" if item_type is not None else ""
 
-        type_str = f" (Type={item_type})" if item_type is not None else ""
-        logger.info(f"Fetching items from library {library_key}{type_str}, start: {start_index}, size: {effective_page_size}")
-        data = await fetch_data(session, url, request_headers, semaphore)
-        
-        if 'MediaContainer' in data and 'Metadata' in data['MediaContainer']:
-            metadata = data['MediaContainer']['Metadata']
-            if metadata:
+    first_headers = headers.copy()
+    first_headers['X-Plex-Container-Start'] = "0"
+    first_headers['X-Plex-Container-Size'] = str(effective_page_size)
+
+    logger.info(f"Fetching FIRST page from library {library_key}{type_str}, size: {effective_page_size}")
+    first_page = await fetch_data(session, base_url, first_headers, semaphore)
+
+    if 'MediaContainer' not in first_page or 'Metadata' not in first_page['MediaContainer']:
+        logger.error(f"Failed to retrieve valid MediaContainer for first page of library {library_key}{type_str}")
+        return []
+
+    all_metadata.extend(first_page['MediaContainer'].get('Metadata', []))
+
+    total_size = first_page['MediaContainer'].get('totalSize')
+
+    # If totalSize is missing, fall back to old serial pagination logic ----------------
+    if total_size is None:
+        logger.warning(f"totalSize missing in response; falling back to serial pagination for library {library_key}{type_str}")
+
+        start_index = len(all_metadata)
+        while True:
+            paged_headers = headers.copy()
+            paged_headers['X-Plex-Container-Start'] = str(start_index)
+            paged_headers['X-Plex-Container-Size'] = str(effective_page_size)
+
+            logger.info(f"(Fallback) Fetching items from library {library_key}{type_str}, start: {start_index}, size: {effective_page_size}")
+            page_data = await fetch_data(session, base_url, paged_headers, semaphore)
+
+            if 'MediaContainer' in page_data and 'Metadata' in page_data['MediaContainer']:
+                metadata = page_data['MediaContainer']['Metadata']
+                if not metadata:
+                    break
                 all_metadata.extend(metadata)
-                start_index += len(metadata)
-                
-                total_size = data['MediaContainer'].get('totalSize')
-                size_attr = data['MediaContainer'].get('size')
-
-                if total_size is not None and start_index >= int(total_size):
-                    logger.info(f"Reached totalSize {total_size} for library {library_key}{type_str}")
-                    break
                 if len(metadata) < effective_page_size:
-                    logger.info(f"Fetched last page (size {len(metadata)} < {effective_page_size}) for library {library_key}{type_str}")
                     break
-                if size_attr == 0 and start_index > 0:
-                     logger.info(f"Response size attribute is 0, assuming end of library {library_key}{type_str}")
-                     break
-
+                start_index += len(metadata)
             else:
-                logger.info(f"No more metadata found for library {library_key}{type_str} at start index {start_index}")
                 break
-        else:
-            logger.error(f"Failed to retrieve valid MediaContainer from library {library_key}{type_str} at start index {start_index}")
-            break
-            
-    logger.info(f"Retrieved {len(all_metadata)} items in total from library {library_key}{type_str} (PageSize={effective_page_size})")
+        logger.info(f"Retrieved {len(all_metadata)} items in total from library {library_key}{type_str} (serial fallback)")
+        return all_metadata
+
+    # ------------------------------------------------------------
+    # 2. Build list of remaining offsets and fetch them concurrently
+    # ------------------------------------------------------------
+    total_size = int(total_size)
+    remaining_offsets = list(range(effective_page_size, total_size, effective_page_size))
+
+    logger.info(f"Library {library_key}{type_str}: totalSize={total_size}, remaining pages={len(remaining_offsets)} (page_size={effective_page_size})")
+
+    tasks = []
+    for offset in remaining_offsets:
+        hdr = headers.copy()
+        hdr['X-Plex-Container-Start'] = str(offset)
+        hdr['X-Plex-Container-Size'] = str(effective_page_size)
+        tasks.append(fetch_data(session, base_url, hdr, semaphore))
+
+    if tasks:
+        logger.info(f"Fetching {len(tasks)} additional pages from library {library_key}{type_str} concurrently (<= {semaphore._value} at a time)")
+        results = await asyncio.gather(*tasks)
+        for page_idx, page in enumerate(results, start=1):
+            meta = page.get('MediaContainer', {}).get('Metadata') or []
+            all_metadata.extend(meta)
+            logger.debug(f"Concurrent page {page_idx}/{len(tasks)} for library {library_key}{type_str} returned {len(meta)} items")
+
+    logger.info(f"Retrieved {len(all_metadata)} items in total from library {library_key}{type_str} (Concurrent Pagination)")
     return all_metadata
 
 async def get_detailed_movie_metadata(session: aiohttp.ClientSession, plex_url: str, movie_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
@@ -476,19 +509,34 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
         logger.info(f"Identified {stats['movie_libs']} movie libraries to process: {movie_libraries}")
         logger.info(f"Identified {stats['show_libs']} show libraries to process: {show_libraries}")
 
-        if progress_callback: progress_callback('scanning', 'Retrieving show library contents...')
+        if progress_callback:
+            progress_callback('scanning', f'Pre-processing phase: fetched {len(movie_libraries)} movie libraries. Episode scan will follow.', {
+                'total_shows': 'unknown',
+                'total_movies': len(movie_libraries),
+                'shows_processed': 0,
+                'movies_processed': 0
+            })
 
-        all_shows = []
-        for library_key in show_libraries:
-            shows = await get_library_contents(session, plex_url, library_key, headers, semaphore, page_size=effective_page_size)
-            all_shows.extend(shows)
-        
+        # We skip an upfront fetch of show-level items (which was previously only used for a count)
+        # because we only require episode-level metadata later. This saves an extra pass through the
+        # library. We simply initialise the list so existing progress-reporting logic continues to work.
+        all_shows = []  # full show objects will be discovered implicitly during the episode fetch.
+
         if progress_callback: progress_callback('scanning', 'Retrieving movie library contents...')
 
+        # Initial one-time fetch of movie metadata (reuse later for processing)
         all_movies = []
         for library_key in movie_libraries:
             movies = await get_library_contents(session, plex_url, library_key, headers, semaphore, page_size=effective_page_size)
             all_movies.extend(movies)
+
+        if progress_callback:
+            progress_callback('scanning', f'Retrieved {len(all_movies)} movies; proceeding to episode libraries...', {
+                'total_shows': 'unknown',
+                'total_movies': len(all_movies),
+                'shows_processed': 0,
+                'movies_processed': 0
+            })
 
         logger.info(f"Total shows found: {len(all_shows)}")
         logger.info(f"Total movies found: {len(all_movies)}")
@@ -504,18 +552,15 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             })
 
         if movie_libraries:
-            if progress_callback: progress_callback('scanning', f'Retrieving content from {len(movie_libraries)} movie libraries...')
-            logger.info(f"Starting movie fetch from {len(movie_libraries)} libraries...")
-            t_fetch_mov_start = time.perf_counter()
-            all_raw_movies = []
-            fetch_movie_tasks = [get_library_contents(session, plex_url, key, headers, semaphore, page_size=effective_page_size) for key in movie_libraries]
-            library_movie_results = await asyncio.gather(*fetch_movie_tasks)
-            for result in library_movie_results:
-                all_raw_movies.extend(result)
-            t_fetch_mov_end = time.perf_counter()
-            stats["time_fetch_movies"] = t_fetch_mov_end - t_fetch_mov_start
+            # We already retrieved movie metadata earlier (all_movies). Re-use it instead of fetching again.
+            logger.info(f"Using previously gathered movie metadata from {len(movie_libraries)} movie libraries (items: {len(all_movies)}). Skipping redundant fetch.")
+
+            all_raw_movies = all_movies  # reuse earlier results
             stats["total_raw_movies_fetched"] = len(all_raw_movies)
-            logger.info(f"Fetched {stats['total_raw_movies_fetched']} raw movie metadata objects in {stats['time_fetch_movies']:.2f}s.")
+            # We did not measure time separately for this earlier serial fetch; set to 0 to avoid skewing summary.
+            stats.setdefault("time_fetch_movies", 0.0)
+            if progress_callback:
+                progress_callback('scanning', f'Processing {len(all_raw_movies)} movies...')
 
             if all_raw_movies:
                 if progress_callback: progress_callback('scanning', f'Processing {len(all_raw_movies)} movies...')

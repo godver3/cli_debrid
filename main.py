@@ -367,12 +367,20 @@ def setup_tray_icon():
     def on_exit(icon, item):
         print("Exit initiated. Generating memory usage report...")
         
-        snapshot = tracemalloc.take_snapshot()
-        top_stats = snapshot.statistics('lineno')
+        # Only collect a snapshot if tracemalloc is actively tracing
+        try:
+            import tracemalloc
+            if tracemalloc.is_tracing():
+                snapshot = tracemalloc.take_snapshot()
+                top_stats = snapshot.statistics('lineno')
 
-        print("\n[ Top 10 memory consuming locations ]")
-        for stat in top_stats[:10]:
-            print(stat)
+                print("\n[ Top 10 memory consuming locations ]")
+                for stat in top_stats[:10]:
+                    print(stat)
+            else:
+                print("tracemalloc is not tracing; skipping memory snapshot.")
+        except Exception as e:
+            print(f"Could not collect tracemalloc snapshot: {e}")
 
         logging.info("Exit option selected from system tray")
         icon.stop()
@@ -520,12 +528,20 @@ def check_localhost_binding(port=5000):
 def stop_program(from_signal=False):
     print("Exit initiated. Generating memory usage report...")
     
-    snapshot = tracemalloc.take_snapshot()
-    top_stats = snapshot.statistics('lineno')
+    # Only collect a snapshot if tracemalloc is actively tracing
+    try:
+        import tracemalloc
+        if tracemalloc.is_tracing():
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.statistics('lineno')
 
-    print("\n[ Top 10 memory consuming locations ]")
-    for stat in top_stats[:10]:
-        print(stat)
+            print("\n[ Top 10 memory consuming locations ]")
+            for stat in top_stats[:10]:
+                print(stat)
+        else:
+            print("tracemalloc is not tracing; skipping memory snapshot.")
+    except Exception as e:
+        print(f"Could not collect tracemalloc snapshot: {e}")
 
     # Access ProgramRunner singleton directly
     from queues.run_program import ProgramRunner
@@ -1001,6 +1017,7 @@ def main():
     # --- START EDIT: Import flask_app and _execute_start_program here ---
     from routes.extensions import app as flask_app 
     from routes.program_operation_routes import _execute_start_program
+    import os
     # --- END EDIT ---
 
     setup_directories()
@@ -1570,6 +1587,7 @@ def main():
         set_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
         logging.info("Set blank upgrading_percentage_threshold to default value of 0.1")
 
+    import os
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
     battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
@@ -1699,10 +1717,43 @@ def main():
     SUPERVISOR_MAX_RESUME_ATTEMPTS = 3 
     # --- END EDIT ---
 
+    # Prepare MemProbe timing
+    if not hasattr(main, 'last_memprobe_time'):
+        main.last_memprobe_time = 0.0
+
     # Main loop
     try:
         while True:
             time.sleep(5) # Main loop poll interval
+
+            # ─── MEM-PROBE #2: per-process allocations ─────────────
+            try:
+                now = time.time()
+                # Only run the periodic memory probe if tracemalloc tracking is enabled via settings
+                if now - main.last_memprobe_time > 60 and get_setting('Debug', 'enable_tracemalloc', False):
+                    main.last_memprobe_time = now
+                    import tracemalloc, psutil, os, gc
+                    if not tracemalloc.is_tracing():
+                        tracemalloc.start()
+                    current, peak = tracemalloc.get_traced_memory()
+                    rss_bytes = psutil.Process(os.getpid()).memory_info().rss
+                    obj_count = len(gc.get_objects())
+                    logging.info(
+                        f"[MemProbe-Main] rss={rss_bytes/1048576:,.0f} MB "
+                        f"tracemalloc={current/1048576:,.0f}/{peak/1048576:,.0f} MB "
+                        f"py_objects={obj_count}")
+
+                    # Log top 5 files by new allocations since start
+                    try:
+                        snapshot = tracemalloc.take_snapshot()
+                        top_stats = snapshot.statistics('filename')[:5]
+                        for stat in top_stats:
+                            logging.info(f"[MemProbe-Main]    {stat}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            # ────────────────────────────────────────────────────────
 
             # --- START EDIT: Supervisor Logic ---
             # No 'global' keyword needed here to access the module-level variable
@@ -1797,7 +1848,9 @@ def print_version():
         print("Version: Unknown\n")
 
 if __name__ == "__main__":
-    tracemalloc.start()
+    # Start tracemalloc only if explicitly enabled in settings to avoid the default overhead
+    if get_setting('Debug', 'enable_tracemalloc', False):
+        tracemalloc.start()
     try:
         if len(sys.argv) > 1 and sys.argv[1] == "--package":
             package_main()
@@ -1842,12 +1895,19 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("KeyboardInterrupt received. Generating memory usage report...")
         
-        snapshot = tracemalloc.take_snapshot()
-        top_stats = snapshot.statistics('lineno')
+        try:
+            import tracemalloc
+            if tracemalloc.is_tracing():
+                snapshot = tracemalloc.take_snapshot()
+                top_stats = snapshot.statistics('lineno')
 
-        print("\n[ Top 10 memory consuming locations ]")
-        for stat in top_stats[:10]:
-            print(stat)
+                print("\n[ Top 10 memory consuming locations ]")
+                for stat in top_stats[:10]:
+                    print(stat)
+            else:
+                print("tracemalloc is not tracing; skipping memory snapshot.")
+        except Exception as e:
+            print(f"Could not collect tracemalloc snapshot: {e}")
 
         stop_global_profiling()
         print("Program stopped by KeyboardInterrupt in __main__.")
