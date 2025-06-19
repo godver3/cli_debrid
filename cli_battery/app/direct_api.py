@@ -247,8 +247,8 @@ class DirectAPI:
             logging.error(f"Error during DirectAPI.force_refresh_metadata for {imdb_id}: {e}", exc_info=True)
             return None, None
 
-    @lru_cache()
     @staticmethod
+    @lru_cache()
     def search_media(query: str, year: Optional[int] = None, media_type: Optional[str] = None) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
         """
         Search for media using Trakt. Caches results in memory.
