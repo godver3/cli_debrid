@@ -1689,7 +1689,7 @@ def main():
                     logging.error("CRITICAL [main.py auto-start]: flask_app.program_runner listeners not confirmed setup. Aborting direct start.")
                     print("Failed to auto-start program: Internal setup error (runner listeners not ready).")
                 else:
-                    start_result = _execute_start_program() # Direct call
+                    start_result = _execute_start_program(skip_connectivity_check=True) # Direct call, skip initial connectivity check for auto-start
 
                     if start_result.get("status") == "success":
                         print("Program started successfully via auto-start (direct call).")

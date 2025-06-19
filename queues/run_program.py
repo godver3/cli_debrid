@@ -237,7 +237,7 @@ class ProgramRunner:
         # Base Task Intervals
         self.task_intervals = {
             # Queue Processing Tasks (intervals for individual queues are less critical now)
-            'Wanted': 1,             # Increased from 5
+            'Wanted': 60,             # Increased from 5
             'Scraping': 1,           # Increased from 5
             'Adding': 1,             # Increased from 5
             'Checking': 180,
