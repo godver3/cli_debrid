@@ -196,12 +196,30 @@ class TraktMetadata:
                 else:
                     logger.info(f"TraktMetadata._get_movie_data: No aliases found or error fetching aliases for {imdb_id}.")
 
-                # Fetch release dates using the slug
-                url_releases = f"{self.base_url}/movies/{slug}/releases"
-                logger.info(f"TraktMetadata._get_movie_data: Fetching release dates using slug {slug} (IMDb: {imdb_id}) with URL: {url_releases}")
-                response_releases = self._make_request(url_releases)
-                if response_releases and response_releases.status_code == 200:
-                    releases_raw = response_releases.json()
+                # Fetch release dates – prefer IMDb endpoint, fall back to slug if needed
+                release_endpoints = [f"{self.base_url}/movies/{imdb_id}/releases"]
+                if slug:
+                    release_endpoints.append(f"{self.base_url}/movies/{slug}/releases")
+
+                releases_raw = None
+                for rel_url in release_endpoints:
+                    logger.info(
+                        "TraktMetadata._get_movie_data: Attempting to fetch release dates from %s (IMDb: %s)",
+                        rel_url, imdb_id
+                    )
+                    resp_rel = self._make_request(rel_url)
+                    if resp_rel and resp_rel.status_code == 200:
+                        temp_json = resp_rel.json()
+                        if temp_json:  # Non-empty list
+                            releases_raw = temp_json
+                            logger.info("Successfully obtained %d release records from %s", len(releases_raw), rel_url)
+                            break
+                        else:
+                            logger.info("Received empty release list from %s", rel_url)
+                    else:
+                        logger.info("Failed to obtain releases from %s (status: %s)", rel_url, resp_rel.status_code if resp_rel else 'No response')
+
+                if releases_raw is not None:
                     formatted_releases = defaultdict(list)
                     for release_item in releases_raw:
                         country = release_item.get('country')
@@ -210,23 +228,25 @@ class TraktMetadata:
                         if country and release_date_str:
                             try:
                                 date_obj = iso8601.parse_date(release_date_str)
-                                # Ensure _get_local_timezone is accessible, e.g., imported at module level if needed
-                                # For now, assuming it's available as in the original get_release_dates method
                                 if date_obj.tzinfo is not None:
-                                    from metadata.metadata import _get_local_timezone 
+                                    from metadata.metadata import _get_local_timezone
                                     date_obj = date_obj.astimezone(_get_local_timezone())
                                 formatted_releases[country].append({
                                     'date': date_obj.date().isoformat(),
                                     'type': release_type
                                 })
                             except iso8601.ParseError:
-                                logger.warning(f"Could not parse release date: {release_date_str} for movie {imdb_id}, slug {slug}, country {country}")
+                                logger.warning(
+                                    "Could not parse release date: %s for movie %s (country=%s)",
+                                    release_date_str, imdb_id, country
+                                )
                             except Exception as e_date:
-                                logger.error(f"Error processing release date {release_date_str} for {imdb_id}: {e_date}")
+                                logger.error("Error processing release date %s for %s: %s", release_date_str, imdb_id, e_date)
+
                     movie_data_raw['release_dates'] = dict(formatted_releases)
-                    logger.info(f"TraktMetadata._get_movie_data: Successfully processed and added release dates for {imdb_id}.")
+                    logger.info("TraktMetadata._get_movie_data: Stored formatted release dates for %s (countries=%d)", imdb_id, len(formatted_releases))
                 else:
-                    logger.info(f"TraktMetadata._get_movie_data: No release dates found or error fetching release dates for {imdb_id} using slug {slug}.")
+                    logger.info("TraktMetadata._get_movie_data: No release dates found for %s via any endpoint", imdb_id)
             else:
                 logger.warning(f"TraktMetadata._get_movie_data: Slug not found for IMDb {imdb_id}. Cannot fetch aliases or release dates by slug. Data: {movie_data_raw}")
 

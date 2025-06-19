@@ -156,7 +156,8 @@ def login():
                             placed = True
                             break
                     if not placed:
-                        logging.debug(f"Could not place poster for URL: {url} after 100 attempts.")
+                        # logging.debug(f"Could not place poster for URL: {url} after 100 attempts.")
+                        pass
                 
                 posters_data = [{'url': p['url'], 'style': p['style']} for p in placed_posters]
     except Exception as e:

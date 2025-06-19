@@ -449,7 +449,7 @@ def check_service_connectivity():
     return services_reachable, failed_services_details
 
 # --- START EDIT: New internal function for program start logic ---
-def _execute_start_program():
+def _execute_start_program(skip_connectivity_check: bool = False):
     """
     Core logic to start the program.
     This is intended to be called internally by main.py or by the Flask route.
@@ -477,14 +477,17 @@ def _execute_start_program():
             logging.warning(f"[_execute_start_program] Attempt to start while program is stopping (runner ID: {id(runner_instance)}).")
             return {"status": "error", "message": "Program is currently stopping. Cannot start at this moment."}
 
-        # Service connectivity check
-        check_result, failed_services_info = check_service_connectivity()
-        if not check_result:
-            error_messages = [fs_info.get('message', fs_info.get('service', 'Unknown service error')) for fs_info in failed_services_info]
-            error_summary = "Cannot start program: Failed to connect to required services. Failures: " + "; ".join(error_messages)
-            logging.error(f"[_execute_start_program] Service connectivity check FAILED: {error_summary}")
-            return {"status": "error", "message": error_summary, "failed_services_details": failed_services_info}
-        logging.info("[_execute_start_program] Service connectivity check PASSED.")
+        # Service connectivity check (optional)
+        if not skip_connectivity_check:
+            check_result, failed_services_info = check_service_connectivity()
+            if not check_result:
+                error_messages = [fs_info.get('message', fs_info.get('service', 'Unknown service error')) for fs_info in failed_services_info]
+                error_summary = "Cannot start program: Failed to connect to required services. Failures: " + "; ".join(error_messages)
+                logging.error(f"[_execute_start_program] Service connectivity check FAILED: {error_summary}")
+                return {"status": "error", "message": error_summary, "failed_services_details": failed_services_info}
+            logging.info("[_execute_start_program] Service connectivity check PASSED.")
+        else:
+            logging.info("[_execute_start_program] Pre-start connectivity check skipped as requested.")
 
         if runner_instance.is_running():
             logging.info(f"[_execute_start_program] Program (runner_instance ID: {id(runner_instance)}) is already running.")
@@ -543,6 +546,17 @@ def _execute_start_program():
         logging.info(f"[_execute_start_program] runner_instance (ID: {id(runner_instance)}) start initiated. Set app.config['PROGRAM_RUNNING']=True.")
         send_queue_start_notification("Queue processing started") # Consider context: "via UI" or "automatically"
         logging.info("[_execute_start_program] Sent queue start notification.")
+
+        # If we skipped the connectivity check, trigger an immediate post-start check so
+        # that the ProgramRunner can pause itself if services are unavailable.
+        if skip_connectivity_check:
+            try:
+                logging.info("[_execute_start_program] Triggering post-start connectivity check via task_check_service_connectivity (skip_connectivity_check=True)")
+                # Direct call – this will invoke normal failure-handling logic.
+                runner_instance.task_check_service_connectivity()
+            except Exception as e_post_chk:
+                logging.error(f"[_execute_start_program] Post-start connectivity check failed: {e_post_chk}", exc_info=True)
+
         logging.info("--- _execute_start_program completing successfully ---")
         return {"status": "success", "message": "Program started successfully"}
     finally:
