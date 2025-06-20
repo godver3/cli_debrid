@@ -201,19 +201,20 @@ class ScraperManager:
             if nyaa_enabled or old_nyaa_enabled:
                 logging.info(f"Trying Nyaa/OldNyaa first for anime episode: {title}")
                 
-                # Use ThreadPoolExecutor to run anime scrapers in parallel
+                # Use ThreadPoolExecutor to run anime scrapers in parallel without blocking on shutdown
                 anime_scraper_tasks = []
-                with ThreadPoolExecutor() as executor:
+                executor = ThreadPoolExecutor()
+                future_instance_map = {}
+                try:
                     if old_nyaa_enabled:
-                        anime_scraper_tasks.append(
-                            executor.submit(run_scraper, 'OldNyaa', 'OldNyaa', old_nyaa_settings, is_translated_search)
-                        )
-                    
+                        fut = executor.submit(run_scraper, 'OldNyaa', 'OldNyaa', old_nyaa_settings, is_translated_search)
+                        anime_scraper_tasks.append(fut)
+                        future_instance_map[fut] = ('OldNyaa', 'OldNyaa')
                     if nyaa_enabled:
-                        anime_scraper_tasks.append(
-                            executor.submit(run_scraper, 'Nyaa', 'Nyaa', nyaa_settings, is_translated_search)
-                        )
-                    
+                        fut = executor.submit(run_scraper, 'Nyaa', 'Nyaa', nyaa_settings, is_translated_search)
+                        anime_scraper_tasks.append(fut)
+                        future_instance_map[fut] = ('Nyaa', 'Nyaa')
+
                     # Collect results as they complete with timeout
                     try:
                         done, not_done = concurrent.futures.wait(
@@ -221,11 +222,11 @@ class ScraperManager:
                             timeout=self.batch_timeout,
                             return_when=concurrent.futures.ALL_COMPLETED
                         )
-                        
+
                         # Cancel any futures that didn't complete in time
                         for future in not_done:
                             future.cancel()
-                        
+
                         # Process completed futures
                         for future in done:
                             try:
@@ -235,18 +236,23 @@ class ScraperManager:
                                     all_results.extend(results)
                                     instance_summary[instance] = {'type': scraper_type, 'count': len(results)}
                             except TimeoutError:
-                                logging.error(f"Individual anime scraper timed out after {self.scraper_timeout} seconds")
+                                inst, stype = future_instance_map.get(future, ('Unknown', 'Unknown'))
+                                logging.error(f"Individual anime scraper '{inst}' timed out after {self.scraper_timeout} seconds")
                             except Exception as e:
                                 logging.error(f"Error in anime scraper: {str(e)}")
-                        
+
                         if not_done:
-                            logging.error(f"Cancelled {len(not_done)} anime scrapers that exceeded the {self.batch_timeout} second timeout")
-                    
+                            logging.error(
+                                f"Cancelled {len(not_done)} anime scrapers that exceeded the {self.batch_timeout} second timeout")
+
                     except Exception as e:
                         logging.error(f"Error during anime batch scraping: {str(e)}")
                         # Cancel all remaining futures
                         for future in anime_scraper_tasks:
                             future.cancel()
+                finally:
+                    # Shutdown the executor without waiting for running threads to finish
+                    executor.shutdown(wait=False, cancel_futures=True)
                 
                 # Only return early if we found results from anime scrapers
                 if all_results:
@@ -279,13 +285,16 @@ class ScraperManager:
                 
             scraper_tasks.append((instance, scraper_type, current_settings))
         
-        # Run all scrapers in parallel using ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(run_scraper, instance, scraper_type, settings, is_translated_search)
-                for instance, scraper_type, settings in scraper_tasks
-            ]
-            
+        # Run all scrapers in parallel using ThreadPoolExecutor without blocking on shutdown
+        executor = ThreadPoolExecutor()
+        future_instance_map = {}
+        try:
+            futures = []
+            for instance, scraper_type, settings in scraper_tasks:
+                fut = executor.submit(run_scraper, instance, scraper_type, settings, is_translated_search)
+                futures.append(fut)
+                future_instance_map[fut] = (instance, scraper_type)
+
             # Collect results as they complete with timeout
             try:
                 done, not_done = concurrent.futures.wait(
@@ -293,11 +302,11 @@ class ScraperManager:
                     timeout=self.batch_timeout,
                     return_when=concurrent.futures.ALL_COMPLETED
                 )
-                
+
                 # Cancel any futures that didn't complete in time
                 for future in not_done:
                     future.cancel()
-                
+
                 # Process completed futures
                 for future in done:
                     try:
@@ -306,41 +315,33 @@ class ScraperManager:
                             all_results.extend(results)
                             instance_summary[instance] = {'type': scraper_type, 'count': len(results)}
                     except TimeoutError:
+                        inst, stype = future_instance_map.get(future, ('Unknown', 'Unknown'))
                         if self.use_timeout:
-                            logging.error(f"Individual scraper '{future._result_item[0]}' timed out after {self.scraper_timeout} seconds") # Try to get instance name
-                        # Ensure timed out scrapers are in summary with count 0 or 'Timed Out'
-                        try:
-                             timed_out_instance = future._result_item[0] # Access internal tuple (instance, scraper_type, settings)
-                             if timed_out_instance not in instance_summary:
-                                  instance_summary[timed_out_instance] = {'type': future._result_item[1], 'count': 'Timed Out'}
-                        except Exception:
-                            logging.warning("Could not identify timed out scraper instance for summary.")
-
+                            logging.error(
+                                f"Individual scraper '{inst}' timed out after {self.scraper_timeout} seconds")
+                        if inst not in instance_summary:
+                            instance_summary[inst] = {'type': stype, 'count': 'Timed Out'}
                     except Exception as e:
-                        try:
-                             failed_instance = future._result_item[0]
-                             logging.error(f"Error in '{failed_instance}' scraper future: {str(e)}")
-                             if failed_instance not in instance_summary:
-                                  instance_summary[failed_instance] = {'type': future._result_item[1], 'count': 'Error'}
-                        except Exception:
-                             logging.error(f"Error in unidentified scraper future: {str(e)}")
+                        inst, stype = future_instance_map.get(future, ('Unknown', 'Unknown'))
+                        logging.error(f"Error in '{inst}' scraper future: {str(e)}")
+                        if inst not in instance_summary:
+                            instance_summary[inst] = {'type': stype, 'count': 'Error'}
 
                 if not_done:
-                    logging.error(f"Cancelled {len(not_done)} scrapers that exceeded the {self.batch_timeout} second timeout")
-                    # Add cancelled scrapers to summary
+                    logging.error(
+                        f"Cancelled {len(not_done)} scrapers that exceeded the {self.batch_timeout} second timeout")
                     for future in not_done:
-                         try:
-                              cancelled_instance = future._result_item[0]
-                              if cancelled_instance not in instance_summary:
-                                   instance_summary[cancelled_instance] = {'type': future._result_item[1], 'count': 'Cancelled (Timeout)'}
-                         except Exception:
-                              logging.warning("Could not identify cancelled scraper instance for summary.")
+                        inst, stype = future_instance_map.get(future, ('Unknown', 'Unknown'))
+                        if inst not in instance_summary:
+                            instance_summary[inst] = {'type': stype, 'count': 'Cancelled (Timeout)'}
 
             except Exception as e:
                 logging.error(f"Error during batch scraping: {str(e)}")
-                # Cancel all remaining futures
                 for future in futures:
                     future.cancel()
+        finally:
+            # Shutdown the executor without waiting for running threads to finish
+            executor.shutdown(wait=False, cancel_futures=True)
 
         # Log the final report
         self._log_scraper_report(title, year, instance_summary)
