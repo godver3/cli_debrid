@@ -54,7 +54,7 @@ def reload_settings():
             "tvsubtitles"
         ])
         config['SUBLIMINAL_USER_AGENT'] = get_setting('Subtitle Settings', 'user_agent', 
-                                                   'SubDownloader/1.0 (your-email@example.com)'),
+                                                   'SubDownloader/1.0 (your-email@example.com)')
 
         # Fetch symlink_folder_order with default
         config['symlink_folder_order_str'] = get_setting('File Management', 'symlink_folder_order', 'type,version,resolution')
