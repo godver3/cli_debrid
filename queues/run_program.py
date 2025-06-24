@@ -285,6 +285,9 @@ class ProgramRunner:
             # --- START EDIT: Add media analysis task interval ---
             'task_analyze_media_files': 1 * 60 * 60, # Once an hour
             # --- END EDIT ---
+            # --- START EDIT: Add manual Plex full scan task ---
+            'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
+            # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
         }
         # Store original intervals for reference (will be updated after content sources)
@@ -423,6 +426,9 @@ class ProgramRunner:
             'task_process_standalone_plex_removals', # Add to dynamic intervals as well
             # --- START EDIT: Add media analysis task to dynamic intervals ---
             'task_analyze_media_files',
+            # --- END EDIT ---
+            # --- START EDIT: Add manual plex scan to dynamic intervals ---
+            'task_manual_plex_full_scan',
             # --- END EDIT ---
         }
         # Add content source tasks with interval > 900s (15 min) to dynamic set
@@ -1467,6 +1473,16 @@ class ProgramRunner:
         logging.info("Triggering queue reconciliation after full Plex scan.")
         self.task_reconcile_queues()
         
+    # --- START EDIT: Add manual Plex full scan task method ---
+    def task_manual_plex_full_scan(self):
+        """Manually trigger a full Plex scan, bypassing the mode check."""
+        logging.info("Executing manual Plex full scan task...")
+        get_and_add_all_collected_from_plex(bypass=True)
+        # Add reconciliation call after full scan processing
+        logging.info("Triggering queue reconciliation after manual Plex full scan.")
+        self.task_reconcile_queues()
+    # --- END EDIT ---
+    
     def process_content_source(self, source, data):
         from datetime import datetime, timedelta # Add this import
         source_type = source.split('_')[0]
@@ -2409,68 +2425,58 @@ class ProgramRunner:
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content/')
         notifications_file = Path(db_content_dir) / "collected_notifications.pkl"
         
-        if notifications_file.exists():
+        if not notifications_file.exists():
+            return
+
+        # Generate a unique temporary filename in the same directory
+        unique_suffix = f".{uuid.uuid4()}.tmp"
+        temp_notifications_file = notifications_file.with_suffix(unique_suffix)
+
+        try:
+            # Atomically move the file for processing
+            notifications_file.rename(temp_notifications_file)
+        except FileNotFoundError:
+            logging.debug("Notifications file disappeared before processing, another worker likely picked it up.")
+            return
+
+        notifications = []
+        try:
+            with open(temp_notifications_file, "rb") as f:
+                notifications = pickle.load(f)
+        except (pickle.UnpicklingError, EOFError, FileNotFoundError) as pe:
+            logging.error(f"Error reading notifications pickle file ({temp_notifications_file}): {pe}. Discarding file.")
+        except Exception as e_read:
+            logging.error(f"Error processing unique temp file read ({temp_notifications_file}): {e_read}", exc_info=True)
+        finally:
+            # Always attempt to clean up the temporary file
             try:
-                # Generate a unique temporary filename in the same directory
-                unique_suffix = f".{uuid.uuid4()}.tmp"
-                temp_notifications_file = notifications_file.with_suffix(unique_suffix)
+                temp_notifications_file.unlink()
+            except OSError as e_unlink:
+                logging.error(f"Failed to remove processed temp notification file {temp_notifications_file}: {e_unlink}")
 
-                notifications = []
-                try:
-                    # Move/rename the file first
-                    notifications_file.rename(temp_notifications_file)
-                    with open(temp_notifications_file, "rb") as f:
-                        notifications = pickle.load(f)
-                        # Temp file is now processed, unlink it
-                        try:
-                            temp_notifications_file.unlink()
-                        except OSError as e_unlink_final:
-                            logging.warning(f"Could not remove unique temp file {temp_notifications_file}: {e_unlink_final}")
+        if notifications:
+            # Fetch enabled notifications using CLI_DEBRID_PORT
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            try:
+                response = requests.get(f'http://localhost:{port}/settings/notifications/enabled', timeout=10) # Add timeout
+                response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
-                except FileNotFoundError:
-                    logging.debug("Notifications file disappeared before processing.")
-                    return # Original file gone
-                except (pickle.UnpicklingError, EOFError) as pe:
-                    logging.error(f"Error reading notifications pickle file ({temp_notifications_file}): {pe}. Discarding file.")
-                    try: temp_notifications_file.unlink() # Attempt removal of corrupt unique file
-                    except OSError: pass
-                    return
-                except Exception as e_read:
-                    logging.error(f"Error handling unique temp file read/rename ({temp_notifications_file}): {e_read}", exc_info=True)
-                    # Don't try to put it back, just log and return
-                    return
+                enabled_notifications = response.json().get('enabled_notifications', {})
+                
+                # Send notifications
+                send_notifications(notifications, enabled_notifications)
+                
+                logging.info(f"Sent {len(notifications)} notifications.")
 
-                if notifications:
-                    # Fetch enabled notifications using CLI_DEBRID_PORT
-                    port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-                    try:
-                        response = requests.get(f'http://localhost:{port}/settings/notifications/enabled', timeout=10) # Add timeout
-                        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-
-                        enabled_notifications = response.json().get('enabled_notifications', {})
-                        
-                        # Send notifications
-                        send_notifications(notifications, enabled_notifications)
-                        
-                        logging.info(f"Sent {len(notifications)} notifications.")
-
-                    except requests.exceptions.RequestException as req_err:
-                        logging.error(f"Failed to fetch enabled notifications: {req_err}")
-                        # Re-queue notifications if fetching config fails?
-                        # For simplicity now, we log error and notifications are lost for this cycle.
-                        # Could re-pickle 'notifications' back to the original file path.
-                    except json.JSONDecodeError as json_err:
-                         logging.error(f"Failed to parse enabled notifications response: {json_err}")
-                    except Exception as e_send:
-                        logging.error(f"Error sending notifications: {str(e_send)}", exc_info=True)
-
-                # else: # No notifications loaded, log removed for less noise
-                    # logging.debug("No notifications to send")
-
-            except Exception as e:
-                logging.error(f"Error processing notifications task: {str(e)}", exc_info=True)
-        # else: # File doesn't exist, log removed for less noise
-            # logging.debug("No notifications file found")
+            except requests.exceptions.RequestException as req_err:
+                logging.error(f"Failed to fetch enabled notifications: {req_err}")
+                # Re-queue notifications if fetching config fails?
+                # For simplicity now, we log error and notifications are lost for this cycle.
+                # Could re-pickle 'notifications' back to the original file path.
+            except json.JSONDecodeError as json_err:
+                 logging.error(f"Failed to parse enabled notifications response: {json_err}")
+            except Exception as e_send:
+                logging.error(f"Error sending notifications: {str(e_send)}", exc_info=True)
 
     def task_sync_time(self):
         # self.sync_time() # Call the original sync_time logic

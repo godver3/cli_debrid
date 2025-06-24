@@ -24,13 +24,139 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+
+      - name: Upgrade npm (brings in fixed node-gyp)
+        run: npm install -g npm@10.9.0
+        shell: bash
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+        
+      - name: Setup Visual Studio Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
           
-      - name: Install phalanx_db_hyperswarm dependencies
-        shell: cmd
+      - name: Set PYTHON environment variable for node-gyp
+        shell: powershell
+        run: |
+          $pythonPath = (Get-Command python).Source
+          echo "PYTHON=$pythonPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "Set PYTHON environment variable to $pythonPath"
+
+      - name: Verify build environment
+        shell: powershell
+        run: |
+          # Verify Python is available
+          $pythonPath = (Get-Command python).Source
+          Write-Host "Python available at: $pythonPath"
+          python --version
+          
+          # Verify Visual Studio environment
+          Write-Host "Visual Studio environment variables:"
+          Write-Host "VCINSTALLDIR: $env:VCINSTALLDIR"
+          Write-Host "VCToolsInstallDir: $env:VCToolsInstallDir"
+          Write-Host "INCLUDE: $env:INCLUDE"
+          Write-Host "LIB: $env:LIB"
+          
+      - name: Clean and install phalanx_db_hyperswarm dependencies
+        shell: powershell
         run: |
           cd phalanx_db_hyperswarm
-          npm install
+          
+          # Force kill any processes that might be holding file handles
+          Write-Host "Stopping any processes that might lock files..."
+          Get-Process -Name "msbuild" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "node" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "cl" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          
+          # Remove existing node_modules if it exists
+          if (Test-Path "node_modules") {
+            Write-Host "Removing existing node_modules directory..."
+            # Use robust removal with retry logic
+            $maxRetries = 3
+            $retryCount = 0
+            do {
+              try {
+                Remove-Item -Recurse -Force -Path "node_modules" -ErrorAction Stop
+                Write-Host "Successfully removed node_modules"
+                break
+              }
+              catch {
+                $retryCount++
+                Write-Host "Attempt $retryCount failed: $($_.Exception.Message)"
+                if ($retryCount -lt $maxRetries) {
+                  Write-Host "Waiting 5 seconds before retry..."
+                  Start-Sleep -Seconds 5
+                } else {
+                  Write-Host "Max retries reached, continuing anyway..."
+                }
+              }
+            } while ($retryCount -lt $maxRetries)
+          }
+          
+          # Clean npm cache
+          npm cache clean --force
+          
+          # Set environment variables for native compilation
+          $env:npm_config_cache = "$env:APPDATA\npm-cache"
+          $env:npm_config_progress = "false"
+          
+          # Try to install with prebuilt binaries first
+          Write-Host "Attempting to install with prebuilt binaries..."
+          npm install --prefer-offline --no-audit --no-fund --loglevel=info
+          
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "[SUCCESS] Successfully installed all dependencies with prebuilt binaries"
+          } else {
+            Write-Host "[ERROR] Prebuilt installation failed (exit code: $LASTEXITCODE)"
+            Write-Host "[INFO] Attempting to build native modules from source..."
+            
+            # Clear any partial installation
+            if (Test-Path "node_modules") {
+              Write-Host "Clearing partial installation..."
+              Remove-Item -Recurse -Force -Path "node_modules" -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+            }
+            
+            # Try full installation with build from source
+            Write-Host "Installing all dependencies with native compilation..."
+            npm install --msvs_version=2022 --loglevel=verbose
+            
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "[FATAL ERROR] Failed to install npm dependencies"
+              Write-Host "Build cannot continue without required Node.js dependencies"
+              Write-Host "Exit code: $LASTEXITCODE"
+              exit 1
+            } else {
+              Write-Host "[SUCCESS] Successfully built all dependencies from source"
+            }
+          }
+          
+          # Verify critical packages are installed
+          Write-Host "`n=== Verifying Installation ==="
+          $criticalPackages = @("hyperbee", "hyperswarm", "@hyperswarm/rpc", "autobase", "corestore")
+          $missingPackages = @()
+          
+          foreach ($package in $criticalPackages) {
+            $packagePath = "node_modules\$package"
+            if (Test-Path $packagePath) {
+              Write-Host "[OK] $package - installed"
+            } else {
+              Write-Host "[MISSING] $package - MISSING"
+              $missingPackages += $package
+            }
+          }
+          
+          if ($missingPackages.Count -gt 0) {
+            Write-Host "`n[FATAL ERROR] Missing critical packages: $($missingPackages -join ', ')"
+            Write-Host "Build cannot continue without these dependencies"
+            exit 1
+          }
+          
+          Write-Host "`n[SUCCESS] All critical Node.js dependencies successfully installed"
+          
           cd ..
           
       - name: Create and activate virtual environment

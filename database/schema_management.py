@@ -225,6 +225,9 @@ def migrate_schema():
         if 'force_priority' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN force_priority BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added force_priority column to media_items table.")
+        if 'location_basename' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN location_basename TEXT')
+            logging.info("Successfully added location_basename column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -239,6 +242,11 @@ def migrate_schema():
             logging.info("Attempting to create index idx_media_items_content_source...")
             conn.execute('CREATE INDEX idx_media_items_content_source ON media_items(content_source);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_content_source.")
+
+        if 'idx_media_items_location_basename' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_location_basename...")
+            conn.execute('CREATE INDEX idx_media_items_location_basename ON media_items(location_basename);')
+            logging.info("Successfully created CREATE INDEX for idx_media_items_location_basename.")
 
         # Add index for original_path_for_symlink if it doesn't exist
         if 'idx_media_items_original_path_for_symlink' not in existing_indexes:
@@ -279,6 +287,48 @@ def migrate_schema():
                 WHERE state = 'Wanted'
             ''')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_upcoming_releases.")
+
+        # Add triggers for location_basename
+        cursor.execute("DROP TRIGGER IF EXISTS trigger_media_items_insert_location_basename")
+        cursor.execute("DROP TRIGGER IF EXISTS trigger_media_items_update_location_basename")
+        
+        conn.execute('''
+            CREATE TRIGGER trigger_media_items_insert_location_basename
+            AFTER INSERT ON media_items
+            FOR EACH ROW
+            WHEN NEW.location_on_disk IS NOT NULL
+            BEGIN
+                UPDATE media_items
+                SET location_basename = REPLACE(NEW.location_on_disk, RTRIM(NEW.location_on_disk, REPLACE(NEW.location_on_disk, '/', '')), '')
+                WHERE id = NEW.id;
+            END;
+        ''')
+        logging.info("Successfully created insert trigger for location_basename.")
+        
+        conn.execute('''
+            CREATE TRIGGER trigger_media_items_update_location_basename
+            AFTER UPDATE OF location_on_disk ON media_items
+            FOR EACH ROW
+            WHEN NEW.location_on_disk IS NOT NULL AND (OLD.location_on_disk IS NULL OR NEW.location_on_disk != OLD.location_on_disk)
+            BEGIN
+                UPDATE media_items
+                SET location_basename = REPLACE(NEW.location_on_disk, RTRIM(NEW.location_on_disk, REPLACE(NEW.location_on_disk, '/', '')), '')
+                WHERE id = NEW.id;
+            END;
+        ''')
+        logging.info("Successfully created update trigger for location_basename.")
+
+        # Backfill location_basename for existing data
+        # Check if there are any rows that need backfilling
+        cursor.execute("SELECT 1 FROM media_items WHERE location_on_disk IS NOT NULL AND location_basename IS NULL LIMIT 1")
+        if cursor.fetchone():
+            logging.info("Backfilling location_basename for existing media items...")
+            conn.execute('''
+                UPDATE media_items
+                SET location_basename = REPLACE(location_on_disk, RTRIM(location_on_disk, REPLACE(location_on_disk, '/', '')), '')
+                WHERE location_on_disk IS NOT NULL AND location_basename IS NULL;
+            ''')
+            logging.info("Finished backfilling location_basename.")
 
         # Check if symlinked_files_verification table exists
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='symlinked_files_verification'")
@@ -476,7 +526,8 @@ def create_tables():
                 final_check_add_timestamp TIMESTAMP,
                 real_debrid_original_title TEXT,
                 rescrape_original_torrent_title TEXT,
-                force_priority BOOLEAN DEFAULT FALSE
+                force_priority BOOLEAN DEFAULT FALSE,
+                location_basename TEXT
             )
         ''')
 

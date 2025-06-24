@@ -11,7 +11,7 @@ import pickle
 import os
 from database.database_reading import get_all_media_items, get_media_item_presence
 from database.database_writing import update_media_item
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from utilities.settings import get_setting
 import random
 from time import sleep
@@ -76,10 +76,11 @@ def get_trakt_friend_headers(auth_id: str) -> Dict[str, str]:
         
         # Check if the token is expired
         if state.get('expires_at'):
-            # Convert from Unix timestamp to datetime
-            expires_at = datetime.fromtimestamp(state['expires_at'])
-            if datetime.now() > expires_at:
+            expires_at_ts = _to_timestamp(state.get('expires_at'))
+            # Token is expired if timestamp is in the past
+            if expires_at_ts and time.time() > expires_at_ts:
                 # Token is expired, try to refresh it
+                logging.info(f"Friend's Trakt token for {auth_id} appears expired. Attempting refresh.")
                 refresh_friend_token(auth_id)
                 # Reload the state
                 with open(state_file, 'r') as file:
@@ -146,10 +147,12 @@ def refresh_friend_token(auth_id: str) -> bool:
             token_data = response.json()
             
             # Update state with new token information
+            now = datetime.now(timezone.utc)
             state.update({
                 'access_token': token_data['access_token'],
                 'refresh_token': token_data['refresh_token'],
-                'expires_at': (datetime.now() + timedelta(seconds=token_data['expires_in'])).timestamp()
+                'expires_at': (now + timedelta(seconds=token_data['expires_in'])).isoformat(),
+                'last_refresh': now.isoformat()
             })
             
             # Save the updated state
@@ -458,6 +461,24 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         
     return processed_items
 
+def _to_timestamp(value: Any) -> float | None:
+    """Converts an ISO 8601 string or a Unix timestamp to a float timestamp."""
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            # Handle ISO format, replacing 'Z' with timezone info
+            return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        except (ValueError, TypeError):
+            # Handle stringified timestamp
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return None
+    return None
+
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
     
@@ -477,13 +498,19 @@ def ensure_trakt_auth():
         logging.error("Trakt authentication not properly configured")
         return None
     
+    expires_at_ts = _to_timestamp(trakt.core.OAUTH_EXPIRES_AT)
+    if not expires_at_ts:
+        logging.error("Trakt 'OAUTH_EXPIRES_AT' is missing or invalid.")
+        return None
+
     current_time = int(time.time())
     
-    if current_time > (trakt.core.OAUTH_EXPIRES_AT - 86400):
-        logging.info("Token expired, refreshing")
+    if current_time > (expires_at_ts - 86400):
+        logging.info("Token expired or nearing expiration, refreshing")
         try:
+            # The trakt library should handle the refresh automatically if needed
             trakt.core._validate_token(trakt.core.CORE)
-            logging.debug("Token refreshed successfully")
+            logging.debug("Token refreshed successfully (or was already valid)")
         except Exception as e:
             logging.error(f"Failed to refresh Trakt token: {e}", exc_info=True)
             return None

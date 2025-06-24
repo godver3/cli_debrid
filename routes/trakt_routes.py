@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 import re
 from .models import admin_required
+from datetime import datetime, timedelta, timezone
 
 trakt_bp = Blueprint('trakt', __name__)
 
@@ -67,7 +68,11 @@ def trakt_auth_status():
             update_trakt_config('CLIENT_SECRET', client_secret)
             update_trakt_config('OAUTH_TOKEN', token_data['access_token'])
             update_trakt_config('OAUTH_REFRESH', token_data['refresh_token'])
-            update_trakt_config('OAUTH_EXPIRES_AT', int(time.time()) + token_data['expires_in'])
+            
+            # Save expiration as ISO 8601 string
+            expires_at_dt = datetime.now(timezone.utc) + timedelta(seconds=token_data['expires_in'])
+            update_trakt_config('OAUTH_EXPIRES_AT', expires_at_dt.isoformat())
+            update_trakt_config('LAST_REFRESH', datetime.now(timezone.utc).isoformat())
             
             # Remove the device code response as it's no longer needed
             trakt_config = get_trakt_config()
@@ -97,14 +102,39 @@ def trakt_auth_status():
 def check_trakt_auth_status():
     trakt_config = get_trakt_config()
     if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
-        if trakt_config['OAUTH_EXPIRES_AT'] > time.time():
+        expires_at_raw = trakt_config['OAUTH_EXPIRES_AT']
+        expires_at_ts = _to_timestamp(expires_at_raw)
+
+        if expires_at_ts and expires_at_ts > time.time():
             return jsonify({'status': 'authorized'})
     return jsonify({'status': 'unauthorized'})
 
+def _to_timestamp(value):
+    """Converts an ISO 8601 string or a Unix timestamp to a float timestamp."""
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            # Handle ISO format, replacing 'Z' with timezone info
+            return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+        except ValueError:
+            # Handle stringified timestamp
+            try:
+                return float(value)
+            except ValueError:
+                return None
+    return None
+
 def get_trakt_config():
     if TRAKT_CONFIG_PATH.exists():
-        with TRAKT_CONFIG_PATH.open('r') as f:
-            return json.load(f)
+        try:
+            with TRAKT_CONFIG_PATH.open('r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logging.warning(f"Could not decode .pytrakt.json file at {TRAKT_CONFIG_PATH}. It might be empty or malformed.")
+            return {}
     return {}
 
 def save_trakt_config(config):

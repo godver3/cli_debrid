@@ -42,7 +42,12 @@ class TraktAuth:
     def load_from_pytrakt(self):
         if os.path.exists(self.pytrakt_file):
             with open(self.pytrakt_file, 'r') as f:
-                pytrakt_data = json.load(f)
+                try:
+                    pytrakt_data = json.load(f)
+                except json.JSONDecodeError:
+                    logger.warning(f"Could not decode .pytrakt.json file at {self.pytrakt_file}. It might be empty or malformed.")
+                    pytrakt_data = {}
+
             self.access_token = pytrakt_data.get('OAUTH_TOKEN')
             self.refresh_token = pytrakt_data.get('OAUTH_REFRESH')
             self.expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
