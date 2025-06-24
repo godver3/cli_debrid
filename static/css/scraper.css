@@ -970,21 +970,26 @@ h2.episode-title {
 .overlay-content td {
     padding: 12px;
     text-align: left;
-    overflow: hidden;
-    text-overflow: ellipsis;
     border-bottom: none;
     width: auto; /* Allow columns to size naturally */
+    vertical-align: middle; /* Explicitly align all cells vertically */
 }
 
 /* Title column - allow wrapping */
-.overlay-content td:first-child {
-    width: 90%; /* Give title column more space */
-    white-space: normal;
-    max-height: 4.5em;
+.overlay-content td .torrent-title-wrapper {
+    max-height: 4.5em; /* Match line-height * line-clamp */
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
+    line-height: 1.5em; /* Set a consistent line height */
+    word-wrap: break-word;
+    white-space: normal;
+}
+
+.overlay-content td:first-child {
+    width: 90%; /* Give title column more space */
+    white-space: normal;
 }
 
 /* Cache status column */

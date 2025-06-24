@@ -539,6 +539,13 @@ class ScrapingQueue:
                     except ValueError:
                         logging.warning(f"Could not parse release date '{release_date_str}' for {item_identifier} to check age for pack wantedness/multi-pack modification. Defaulting to check_pack_wantedness={check_pack_wantedness_for_initial_scrape}.")
 
+                    # Check if we should skip multi-scrape for new content
+                    skip_multi_for_new = get_setting("Debug", "skip_initial_multi_scrape_for_new_content", False)
+                    if skip_multi_for_new and not is_older_than_7_days:
+                        if is_multi_pack: # Only log if we are changing it
+                            logging.info(f"Item {item_identifier} is new and 'skip_initial_multi_scrape_for_new_content' is enabled. Forcing single episode scrape for initial attempt.")
+                        is_multi_pack = False
+                        
                     # If item is an episode and older than 7 days, force multi-pack for initial scrape
                     if item_to_process['type'] == 'episode' and is_older_than_7_days:
                         if not is_multi_pack: # Log only if we are changing it

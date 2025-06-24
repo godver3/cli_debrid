@@ -1488,7 +1488,7 @@ def phalanxdb_status():
             'phalanxdb_status.html',
             connection_status=connection_status,
             mesh_status=mesh_status,
-            enabled=True
+            enabled=True,
         )
         
     except Exception as e:

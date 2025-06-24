@@ -114,53 +114,29 @@ class Settings:
                 os.remove(temp_path)
 
     def load(self):
-        loaded_from_backup = False
+        config = {}  # Default to empty config
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r') as f:
-                    config = json.load(f)
-                logger.debug(f"Loaded settings from {self.config_file}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Error decoding JSON from {self.config_file}: {e}. Attempting to load backup.")
-                if os.path.exists(self.backup_file):
-                    try:
-                        with open(self.backup_file, 'r') as f:
-                            config = json.load(f)
-                        logger.warning(f"Successfully loaded settings from backup file: {self.backup_file}")
-                        loaded_from_backup = True
-                        # Attempt to restore the backup over the corrupted file
-                        try:
-                            shutil.copy2(self.backup_file, self.config_file)
-                            logger.info(f"Restored settings from backup to {self.config_file}")
-                        except Exception as restore_err:
-                             logger.error(f"Failed to restore backup to {self.config_file}: {restore_err}")
-                    except Exception as backup_load_err:
-                        logger.error(f"Error loading settings from backup file {self.backup_file}: {backup_load_err}. Using defaults.")
-                        config = {} # Use default values
-                else:
-                    logger.error("Backup file not found. Using default settings.")
-                    config = {} # Use default values
+                    # Check if file is not empty
+                    if os.fstat(f.fileno()).st_size > 0:
+                        f.seek(0)  # Rewind to start
+                        config = json.load(f)
+                    else:
+                        logger.warning(f"Config file is empty: {self.config_file}. Using default settings.")
+            except json.JSONDecodeError:
+                logger.error(f"Error decoding JSON from {self.config_file}. Using default settings.")
             except Exception as e:
-                 logger.error(f"Unexpected error loading settings from {self.config_file}: {e}. Using defaults.")
-                 config = {} # Use default values
+                logger.error(f"Unexpected error loading settings from {self.config_file}: {e}. Using defaults.")
         else:
             logger.warning(f"Config file not found: {self.config_file}. Using default settings.")
-            config = {} # Use default values
 
         # Apply loaded config or defaults
         self.active_provider = config.get('active_provider', 'none')
-        self.providers = config.get('providers', [ {'name': 'trakt', 'enabled': False} ]) # Ensure default is same structure
-        # Load staleness from the file if present, otherwise use the property (which reads from main config)
+        self.providers = config.get('providers', [ {'name': 'trakt', 'enabled': False} ])
         self._staleness_threshold = config.get('staleness_threshold', None)
         self.max_entries = config.get('max_entries', 1000)
         self.log_level = config.get('log_level', 'INFO')
-        # Don't load Trakt here, let the cached_property handle it using get_setting
-
-        # If we loaded from backup, immediately save to potentially fix formatting issues
-        # and ensure consistency with the current code structure.
-        if loaded_from_backup:
-            logger.info("Saving settings immediately after loading from backup to ensure consistency.")
-            self.save()
 
     def get_all(self):
         return {

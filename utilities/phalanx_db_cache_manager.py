@@ -381,7 +381,7 @@ class PhalanxDBClassManager:
             return {
                 'syncsSent': result.get('syncsSent', 0),
                 'syncsReceived': result.get('syncsReceived', 0),
-                'lastSyncAt': result.get('lastSyncAt', datetime.now().isoformat()),
+                'lastSyncAt': result.get('lastSync', datetime.now().isoformat()),
                 'connectionsActive': result.get('connectionsActive', 0),
                 'databaseEntries': result.get('databaseEntries', 0),
                 'nodeId': result.get('nodeId', 'unavailable'),

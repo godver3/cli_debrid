@@ -237,6 +237,16 @@
                        class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
                 <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
             </div>
+            
+            <!-- Skip Initial Multi Scrape for New Content -->
+            <div class="settings-form-group">
+                <label for="debug-skip_initial_multi_scrape_for_new_content" class="settings-title">Skip Initial Multi-Scrape for New Content:</label>
+                <input type="checkbox" id="debug-skip_initial_multi_scrape_for_new_content" name="Debug.skip_initial_multi_scrape_for_new_content"
+                       data-section="Debug" data-key="skip_initial_multi_scrape_for_new_content"
+                       {% if settings.get('Debug', {}).get('skip_initial_multi_scrape_for_new_content', False) %}checked{% endif %}>
+                <p class="settings-description">Skip the initial multi-provider scrape for new content (released within the past 7 days).</p>
+            </div>
+
             <script>
                 document.addEventListener('DOMContentLoaded', function() {
                     const sanitizerInput = document.getElementById('debug-sanitizer_replacement_character');
