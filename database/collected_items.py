@@ -44,21 +44,25 @@ def add_collected_items(media_items_batch, recent=False):
         
         if filenames_in_batch:
             # Process filenames in batches to avoid SQLite variable limit
-            batch_size = 450  # Will become 900 when doubled (under 999 limit)
+            batch_size = 450
             filenames_list = list(filenames_in_batch)
             existing_items = []
             
             for i in range(0, len(filenames_list), batch_size):
                 batch = filenames_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
+                
                 query = f'''
                     SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
-                           filled_by_file, collected_at, release_date, upgrading_from, content_source
+                           filled_by_file, collected_at, release_date, upgrading_from, content_source,
+                           location_on_disk, location_basename
                     FROM media_items
                     WHERE filled_by_file IN ({placeholders})
                        OR upgrading_from IN ({placeholders})
+                       OR location_basename IN ({placeholders})
                 '''
-                params = batch * 2  # Parameters for both placeholders
+                
+                params = batch * 3
                 cursor = conn.execute(query, params)
                 existing_items.extend(cursor.fetchall())
                 cursor.close()
@@ -67,20 +71,25 @@ def add_collected_items(media_items_batch, recent=False):
             for row in existing_items:
                 filled_by_file = row['filled_by_file']
                 upgrading_from = os.path.basename(row['upgrading_from'] or '')
+                location_basename = row['location_basename']
                 state = row['state']
 
                 if state == 'Collected':
-                    existing_collected_files.add(filled_by_file)
+                    if filled_by_file: existing_collected_files.add(filled_by_file)
+                    if location_basename: existing_collected_files.add(location_basename)
                 if state == 'Upgrading':
                     if filled_by_file:
                         existing_collected_files.add(filled_by_file)
                     if upgrading_from:
                         upgrading_from_files.add(upgrading_from)
 
+                dict_row = row_to_dict(row)
                 if filled_by_file:
-                    existing_file_map[filled_by_file] = row_to_dict(row)
+                    existing_file_map[filled_by_file] = dict_row
                 if upgrading_from:
-                    existing_file_map[upgrading_from] = row_to_dict(row)
+                    existing_file_map[upgrading_from] = dict_row
+                if location_basename:
+                    existing_file_map[location_basename] = dict_row
 
         filtered_out_files = set()
         filtered_media_items_batch = []
@@ -462,14 +471,27 @@ def add_collected_items(media_items_batch, recent=False):
             # logging.info("Starting post-loop cleanup for missing files.")
             # start_cleanup_time = time.time()
             cursor = conn.execute('''
-                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, filled_by_file, collected_at, release_date, upgrading_from
+                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, 
+                       filled_by_file, collected_at, release_date, upgrading_from, location_basename
                 FROM media_items
                 WHERE state = 'Collected'
             ''')
             for row in cursor:
                 item = row_to_dict(row)
                 item_identifier = generate_identifier(item)
-                if item['filled_by_file'] and item['filled_by_file'] not in all_valid_filenames:
+                
+                filled_by = item.get('filled_by_file')
+                location_base = item.get('location_basename')
+
+                # A file is considered present if either its 'filled_by_file' or 'location_basename' is in the scan results
+                is_present_on_disk = (filled_by and filled_by in all_valid_filenames) or \
+                                     (location_base and location_base in all_valid_filenames)
+
+                # A file is considered expected if it has at least one filename associated with it
+                is_expected_on_disk = filled_by or location_base
+
+                if is_expected_on_disk and not is_present_on_disk:
+                    file_to_log = location_base or filled_by
                     # This item's file is considered missing
                     if get_setting("Debug", "rescrape_missing_files", default=False):
                         try:
@@ -497,10 +519,10 @@ def add_collected_items(media_items_batch, recent=False):
                             )
                             
                             if matching_version_exists:
-                                logging.info(f"[Missing File Cleanup] Deleting item {item_identifier} (ID: {item['id']}, File: {item['filled_by_file']}) as another collected version ('{current_version}') exists.")
+                                logging.info(f"[Missing File Cleanup] Deleting item {item_identifier} (ID: {item['id']}, File: {file_to_log}) as another collected version ('{current_version}') exists.")
                                 conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
                             else:
-                                logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {item['filled_by_file']}). No other matching version found. Moving to 'Wanted'.")
+                                logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). No other matching version found. Moving to 'Wanted'.")
                                 conn.execute('''
                                     UPDATE media_items 
                                     SET state = 'Wanted', 
@@ -517,7 +539,7 @@ def add_collected_items(media_items_batch, recent=False):
                             # conn.rollback() # Rollback for THIS item was removed, transaction handles overall
                             logging.error(f"Error handling missing file for item {item_identifier} (ID: {item['id']}): {str(e)}", exc_info=True)
                     else: # rescrape_missing_files is False
-                        logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {item['filled_by_file']}). 'rescrape_missing_files' is False. Deleting item.")
+                        logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). 'rescrape_missing_files' is False. Deleting item.")
                         conn.execute('''
                             DELETE FROM media_items
                             WHERE id = ?

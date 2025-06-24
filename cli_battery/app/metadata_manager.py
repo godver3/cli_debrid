@@ -1149,16 +1149,50 @@ class MetadataManager:
     @staticmethod
     def refresh_release_dates(imdb_id, session: SqlAlchemySession): # Expects session
         trakt = TraktMetadata()
+        
+        item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+        if not item:
+            logger.info(f"Item {imdb_id} not found during release date refresh. Fetching all metadata to create it.")
+            # Fetch full metadata because we need title and year to create the item, and we should store it all.
+            movie_metadata = trakt.get_movie_metadata(imdb_id)
+            if not movie_metadata:
+                logger.warning(f"Could not fetch full metadata for {imdb_id} to create item. Aborting release date refresh.")
+                return None, None
+
+            # Create item within the provided session
+            item = Item(
+                imdb_id=imdb_id,
+                title=movie_metadata.get('title'),
+                year=movie_metadata.get('year'),
+                type='movie' # This function is for movies
+            )
+            session.add(item)
+            session.flush() # Flush to get item.id
+            logger.info(f"Created new movie item for {imdb_id} with title '{item.title}'")
+
+            # Now that the item is created, store ALL the fetched metadata
+            for key, value in movie_metadata.items():
+                if isinstance(value, (dict, list)):
+                    try:
+                        value = json.dumps(value)
+                    except TypeError:
+                        value = str(value)
+                else:
+                    value = str(value)
+                
+                metadata_entry = Metadata(item_id=item.id, key=key, value=value, provider='Trakt')
+                session.add(metadata_entry)
+
+            # Also update the item's general timestamp
+            from metadata.metadata import _get_local_timezone
+            item.updated_at = datetime.now(_get_local_timezone())
+            
+            # Since we've just stored everything, we can return the release dates from the fetched data
+            return movie_metadata.get('release_dates'), "trakt"
+
+        # If item already exists, proceed to check and update just the release dates if necessary
         trakt_release_dates = trakt.get_release_dates(imdb_id)
         if trakt_release_dates:
-            # Use the provided session
-            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-            if not item:
-                # Create item within the provided session
-                item = Item(imdb_id=imdb_id)
-                session.add(item)
-                session.flush() # Flush to get item.id if needed
-
             metadata = session.query(Metadata).filter_by(item_id=item.id, key='release_dates').first()
             if not metadata:
                 metadata = Metadata(item_id=item.id, key='release_dates')
@@ -1172,6 +1206,7 @@ class MetadataManager:
 
             # ** DO NOT COMMIT HERE - Handled by caller **
             return trakt_release_dates, "trakt"
+
         logger.warning(f"No release dates found for IMDB ID: {imdb_id}")
         return None, None
 

@@ -148,7 +148,7 @@ button.delete-scraper-btn:disabled,
 }
 
 /* Add specific styling for the Import Liked Lists button */
-.import-liked-to-source-btn {
+.import-liked-to-source-btn, .get-user-watchlist-btn {
     background-color: #2196F3; /* Blue background */
     color: white;
     border: none !important;
@@ -167,12 +167,12 @@ button.delete-scraper-btn:disabled,
     line-height: normal; /* Ensure text aligns well */
 }
 
-.import-liked-to-source-btn:hover:not(:disabled) {
+.import-liked-to-source-btn:hover:not(:disabled), .get-user-watchlist-btn:hover:not(:disabled) {
     background-color: #1976D2; /* Darker blue on hover */
 }
 
 /* Disabled state for the import button */
-.import-liked-to-source-btn:disabled {
+.import-liked-to-source-btn:disabled, .get-user-watchlist-btn:disabled {
     background-color: #6c757d !important; /* Grey background when disabled */
     color: #ccc !important;
     cursor: not-allowed !important;

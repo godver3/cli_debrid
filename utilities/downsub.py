@@ -99,6 +99,9 @@ def download_subtitles(files):
     for f in files:
         try:
             video = scan_video(f)
+            if isinstance(video.title, list):
+                logging.warning(f"Detected list title for {f}: {video.title}. Joining into a string.")
+                video.title = ' '.join(video.title)
             videos.append((video, f))  # Keep the original file path (symlink)
         except ValueError as e:
             logging.error(f"⚠️ Could not parse file: {f} - {e}")

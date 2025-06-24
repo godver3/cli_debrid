@@ -196,28 +196,23 @@ class TraktMetadata:
                 else:
                     logger.info(f"TraktMetadata._get_movie_data: No aliases found or error fetching aliases for {imdb_id}.")
 
-                # Fetch release dates – prefer IMDb endpoint, fall back to slug if needed
-                release_endpoints = [f"{self.base_url}/movies/{imdb_id}/releases"]
-                if slug:
-                    release_endpoints.append(f"{self.base_url}/movies/{slug}/releases")
-
+                # Fetch release dates - use the SLUG endpoint as it appears more accurate
                 releases_raw = None
-                for rel_url in release_endpoints:
-                    logger.info(
-                        "TraktMetadata._get_movie_data: Attempting to fetch release dates from %s (IMDb: %s)",
-                        rel_url, imdb_id
-                    )
-                    resp_rel = self._make_request(rel_url)
-                    if resp_rel and resp_rel.status_code == 200:
-                        temp_json = resp_rel.json()
-                        if temp_json:  # Non-empty list
-                            releases_raw = temp_json
-                            logger.info("Successfully obtained %d release records from %s", len(releases_raw), rel_url)
-                            break
-                        else:
-                            logger.info("Received empty release list from %s", rel_url)
+                release_url = f"{self.base_url}/movies/{slug}/releases"
+                logger.info(
+                    "TraktMetadata._get_movie_data: Attempting to fetch release dates from slug endpoint: %s (IMDb: %s)",
+                    release_url, imdb_id
+                )
+                resp_rel = self._make_request(release_url)
+                if resp_rel and resp_rel.status_code == 200:
+                    temp_json = resp_rel.json()
+                    if temp_json:  # Non-empty list
+                        releases_raw = temp_json
+                        logger.info("Successfully obtained %d release records from %s", len(releases_raw), release_url)
                     else:
-                        logger.info("Failed to obtain releases from %s (status: %s)", rel_url, resp_rel.status_code if resp_rel else 'No response')
+                        logger.info("Received empty release list from %s", release_url)
+                else:
+                    logger.info("Failed to obtain releases from %s (status: %s)", release_url, resp_rel.status_code if resp_rel else 'No response')
 
                 if releases_raw is not None:
                     formatted_releases = defaultdict(list)
@@ -451,18 +446,35 @@ class TraktMetadata:
         return "Posters not available through Trakt API"
 
     def get_release_dates(self, imdb_id):
+        """Get all release dates for a movie using its Trakt slug (more reliable)."""
+        logger.info(f"Fetching release dates for movie IMDb ID: {imdb_id} by finding its slug.")
+        
         # First search to get the movie's Trakt slug
         search_result = self._search_by_imdb(imdb_id)
-        if not search_result or search_result['type'] != 'movie':
+        if not search_result or search_result.get('type') != 'movie':
+            logger.warning(f"Could not find a movie with IMDb ID {imdb_id} via search.")
             return None
             
-        movie = search_result['movie']
-        slug = movie['ids']['slug']
+        movie = search_result.get('movie')
+        if not movie:
+            logger.warning(f"Search result for {imdb_id} did not contain a 'movie' object.")
+            return None
 
+        slug = movie.get('ids', {}).get('slug')
+        if not slug:
+            logger.warning(f"Could not find slug for {imdb_id} in search result.")
+            return None
+
+        logger.info(f"Found slug '{slug}' for IMDb ID {imdb_id}. Fetching releases.")
         url = f"{self.base_url}/movies/{slug}/releases"
         response = self._make_request(url)
+
         if response and response.status_code == 200:
             releases = response.json()
+            if not releases:
+                logger.warning(f"No release dates found for slug {slug} from {url} (empty list).")
+                return None
+
             formatted_releases = defaultdict(list)
             for release in releases:
                 country = release.get('country')
@@ -471,7 +483,6 @@ class TraktMetadata:
                 if country and release_date:
                     try:
                         date = iso8601.parse_date(release_date)
-                        # Convert to local timezone if necessary
                         if date.tzinfo is not None:
                             from metadata.metadata import _get_local_timezone
                             date = date.astimezone(_get_local_timezone())
@@ -482,7 +493,16 @@ class TraktMetadata:
                     except iso8601.ParseError:
                         logger.warning(f"Could not parse date: {release_date} for {imdb_id} in {country}")
             return dict(formatted_releases)
-        return None
+
+        elif response:
+            logger.warning(
+                f"Failed to fetch release dates for slug {slug} from {url}. "
+                f"Status: {response.status_code}, Response: {response.text}"
+            )
+            return None
+        else: # No response
+            logger.warning(f"No response from {url} when fetching release dates for slug {slug}.")
+            return None
 
     def convert_tmdb_to_imdb(self, tmdb_id, media_type=None):
         """

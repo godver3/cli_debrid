@@ -17,6 +17,7 @@ from utilities.settings import get_setting  # Import the proper get_setting func
 import platform
 import requests
 import tempfile
+import errno  # For socket error constants
 
 # Default ports configuration
 DEFAULT_PORTS = {
@@ -211,6 +212,7 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
             'last_activity': time.time()
         }
         
+        local_sock = None
         try:
             # Connect to local service with retry
             local_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -230,45 +232,65 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
             idle_timeout = 300  # 5 minutes
             last_activity = time.time()
             
+            # Set sockets to non-blocking mode for better control
+            client_sock.setblocking(False)
+            local_sock.setblocking(False)
+            
             while True:
                 # Check for idle timeout
                 if time.time() - last_activity > idle_timeout:
                     logging.warning(f"Connection {client_id} timed out after {idle_timeout} seconds of inactivity")
                     break
                 
-                # Wait for data from either socket with timeout
+                # Wait for data from either socket with shorter timeout for responsiveness
                 try:
-                    readable, _, exceptional = select.select([client_sock, local_sock], [], [client_sock, local_sock], 60)
+                    readable, _, exceptional = select.select([client_sock, local_sock], [], [client_sock, local_sock], 5)
                     
                     if exceptional:
                         logging.warning(f"Exceptional condition on sockets for client {client_id}")
                         break
                     
                     if not readable:  # Timeout occurred
+                        # Update active connection timestamp periodically
+                        if client_id in active_connections:
+                            active_connections[client_id]['last_activity'] = time.time()
                         continue
                     
                     for sock in readable:
                         other_sock = local_sock if sock is client_sock else client_sock
                         try:
+                            # Use MSG_DONTWAIT to prevent blocking
                             data = sock.recv(buffer_size)
                             if not data:
                                 logging.debug(f"No data received from {'client' if sock is client_sock else 'local'} socket for client {client_id}")
                                 return
                             
                             bytes_count = len(data)
-                            if sock is client_sock:
-                                active_connections[client_id]['bytes_received'] += bytes_count
-                            else:
-                                active_connections[client_id]['bytes_sent'] += bytes_count
+                            if client_id in active_connections:
+                                if sock is client_sock:
+                                    active_connections[client_id]['bytes_received'] += bytes_count
+                                else:
+                                    active_connections[client_id]['bytes_sent'] += bytes_count
                                 
                             other_sock.sendall(data)
                             last_activity = time.time()
-                            active_connections[client_id]['last_activity'] = last_activity
+                            if client_id in active_connections:
+                                active_connections[client_id]['last_activity'] = last_activity
+                        except socket.error as e:
+                            if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
+                                # Non-blocking socket, no data available
+                                continue
+                            else:
+                                logging.error(f"Socket error for client {client_id}: {str(e)}")
+                                return
                         except Exception as e:
-                            logging.error(f"Socket error for client {client_id}: {str(e)}")
+                            logging.error(f"Data handling error for client {client_id}: {str(e)}")
                             return
-                except Exception as e:
+                except select.error as e:
                     logging.error(f"Select error for client {client_id}: {str(e)}")
+                    break
+                except Exception as e:
+                    logging.error(f"Unexpected error in connection loop for client {client_id}: {str(e)}")
                     break
         except Exception as e:
             logging.error(f"Error in tunnel connection for client {client_id}: {str(e)}")
@@ -283,10 +305,21 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
                 if thread_name in active_threads:
                     del active_threads[thread_name]
                 
-                client_sock.close()
-                local_sock.close()
+                # Ensure both sockets are properly closed
+                if client_sock:
+                    try:
+                        client_sock.close()
+                    except:
+                        pass
+                
+                if local_sock:
+                    try:
+                        local_sock.close()
+                    except:
+                        pass
+                        
             except Exception as e:
-                logging.error(f"Error closing sockets for client {client_id}: {str(e)}")
+                logging.error(f"Error cleaning up connection {client_id}: {str(e)}")
 
     def tunnel_server():
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -320,6 +353,28 @@ def create_tunnel(remote_port, local_port, buffer_size=4096):
                 except socket.timeout:
                     # Just a timeout on accept, continue
                     logging.debug("Socket accept timeout, continuing...")
+                    
+                    # Clean up stale connections periodically
+                    current_time = time.time()
+                    stale_connections = []
+                    for conn_id, conn_info in active_connections.items():
+                        if current_time - conn_info['last_activity'] > 600:  # 10 minutes
+                            stale_connections.append(conn_id)
+                    
+                    for conn_id in stale_connections:
+                        logging.warning(f"Removing stale connection entry: {conn_id}")
+                        active_connections.pop(conn_id, None)
+                        
+                    # Clean up stale threads
+                    stale_threads = []
+                    for thread_name, last_seen in active_threads.items():
+                        if current_time - last_seen > 600:  # 10 minutes
+                            stale_threads.append(thread_name)
+                    
+                    for thread_name in stale_threads:
+                        logging.warning(f"Removing stale thread entry: {thread_name}")
+                        active_threads.pop(thread_name, None)
+                        
                     continue
                 except Exception as e:
                     logging.error(f"Error accepting connection: {str(e)}")
@@ -562,15 +617,37 @@ def run_phalanx_db():
             phalanx_env = dict(os.environ)
             # Set the PORT environment variable specifically for the node script
             phalanx_env['PORT'] = os.environ['CLI_DEBRID_PHALANX_PORT']
-            logging.info(f"Setting PORT={phalanx_env['PORT']} for phalanx_db_rest.js process")
+            logging.info(f"Setting PORT={phalanx_env['PORT']} for phalanx npm script process")
             
-            subprocess.run(['node', 'phalanx_db_rest.js'], 
-                         cwd=phalanx_dir, 
-                         shell=True,
-                         check=True,
-                         env=phalanx_env) # Pass environment
+            # Use 'npm run start:v4' as it's confirmed to work manually.
+            # This ensures any necessary flags from package.json are used.
+            # Use Popen to allow output redirection without holding output in memory,
+            # which is better for a long-running service.
+            process = subprocess.Popen(
+                ['npm', 'run', 'start:v4'],
+                cwd=phalanx_dir,
+                shell=True,
+                env=phalanx_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, # Redirect stderr to stdout
+                text=True,
+                bufsize=1 # Line-buffered
+            )
+
+            # Log the output from the service in real-time
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    logging.info(f"[phalanx_db] {line.strip()}")
+            
+            # Wait for the process to exit and check its return code
+            process.wait()
+            if process.returncode != 0:
+                # The loop above will have already logged the output.
+                # We just need to raise an error to be caught by the except block.
+                raise subprocess.CalledProcessError(process.returncode, process.args)
+
         except subprocess.CalledProcessError as e:
-            logging.error(f"phalanx_db_hyperswarm service failed to start: {e.stderr if hasattr(e, 'stderr') else str(e)}")
+            logging.error(f"phalanx_db_hyperswarm service failed with return code {e.returncode}. Check logs above for output.")
         except Exception as e:
             logging.error(f"Failed to start phalanx_db_hyperswarm service: {str(e)}")
             logging.debug(traceback.format_exc())
@@ -778,8 +855,13 @@ def run_main():
             tracemalloc = None
             logging.warning(f"tracemalloc disabled/unavailable – location-level stats disabled: {e}")
 
+        # Counter to reduce frequency of expensive operations
+        iteration_count = 0
+        
         while any(p.is_alive() for p in processes):
-            # 1) Per-child process stats
+            iteration_count += 1
+            
+            # 1) Per-child process stats (every iteration)
             for p in processes:
                 if p.is_alive():
                     try:
@@ -790,26 +872,53 @@ def run_main():
                             f"Process {p.name} (PID {p.pid}) – "
                             f"Memory: {mem:.2f} MB, CPU: {cpu:.1f}%"
                         )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        logging.debug(f"Process {p.name} no longer accessible")
                     except Exception as e:
                         logging.error(f"Error monitoring {p.name}: {e}")
 
-            # 2) Top 10 system processes by memory
-            try:
-                top_by_mem = sorted(
-                    psutil.process_iter(['pid', 'name', 'memory_info']),
-                    key=lambda pr: pr.info['memory_info'].rss if pr.info['memory_info'] else 0,
-                    reverse=True
-                )[:10]
-                logging.info("[System] Top 10 processes by RSS memory:")
-                for pr in top_by_mem:
-                    rss_mb = pr.info['memory_info'].rss / (1024 * 1024)
-                    logging.info(f"    PID {pr.info['pid']:>6} – {pr.info['name'][:25]:<25} : {rss_mb:>7.2f} MB")
-            except Exception as e:
-                logging.error(f"Error gathering system memory leaderboard: {e}")
-
-            # 3) Top 10 code locations inside this wrapper (if tracemalloc running)
-            if 'tracemalloc' in locals() and tracemalloc and tracemalloc.is_tracing():
+            # 2) Top 10 system processes by memory (every 5 iterations = 5 minutes)
+            if iteration_count % 5 == 0:
                 try:
+                    # Get process list once and reuse
+                    all_processes = []
+                    for proc in psutil.process_iter(['pid', 'name', 'memory_info']):
+                        try:
+                            if proc.info['memory_info']:
+                                all_processes.append(proc)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            continue
+                    
+                    # Sort and get top 10
+                    top_by_mem = sorted(
+                        all_processes,
+                        key=lambda pr: pr.info['memory_info'].rss,
+                        reverse=True
+                    )[:10]
+                    
+                    logging.info("[System] Top 10 processes by RSS memory:")
+                    for pr in top_by_mem:
+                        try:
+                            rss_mb = pr.info['memory_info'].rss / (1024 * 1024)
+                            logging.info(f"    PID {pr.info['pid']:>6} – {pr.info['name'][:25]:<25} : {rss_mb:>7.2f} MB")
+                        except:
+                            continue
+                            
+                    # Clear the process list to free memory
+                    all_processes = None
+                    top_by_mem = None
+                    
+                except Exception as e:
+                    logging.error(f"Error gathering system memory leaderboard: {e}")
+
+            # 3) Top 10 code locations inside this wrapper (every 10 iterations = 10 minutes)
+            if iteration_count % 10 == 0 and 'tracemalloc' in locals() and tracemalloc and tracemalloc.is_tracing():
+                snapshot = None
+                top_stats = None
+                try:
+                    # Clear any previous tracemalloc data
+                    tracemalloc.clear_traces()
+                    
                     snapshot = tracemalloc.take_snapshot()
                     top_stats = snapshot.statistics('lineno')[:10]
                     logging.info("[Wrapper] Top 10 memory-consuming locations:")
@@ -818,20 +927,35 @@ def run_main():
 
                     # ─── MEM-PROBE #1: wrapper-level totals ─────────────
                     try:
-                        import gc, os
+                        import gc
+                        # Force garbage collection before measuring
+                        gc.collect()
+                        
                         rss_bytes = psutil.Process(os.getpid()).memory_info().rss
                         current, peak = tracemalloc.get_traced_memory()
-                        snapshot_objects = sum(1 for o in gc.get_objects() if o.__class__.__name__ == 'Snapshot')
+                        # Don't count snapshot objects as they're transient
                         logging.info(
                             f"[MemProbe-Wrapper] rss={rss_bytes/1048576:,.0f} MB "
-                            f"tracemalloc={current/1048576:,.0f}/{peak/1048576:,.0f} MB "
-                            f"snapshots={snapshot_objects}")
+                            f"tracemalloc={current/1048576:,.0f}/{peak/1048576:,.0f} MB"
+                        )
                     except Exception:
                         pass
                     # ──────────────────────────────────────────────────
                 except Exception as e:
                     logging.error(f"Error collecting tracemalloc stats: {e}")
+                finally:
+                    # Explicitly clear snapshot and related objects to help GC
+                    if top_stats:
+                        del top_stats
+                    if snapshot:
+                        del snapshot
+                    # Force garbage collection after tracemalloc operations
+                    gc.collect()
 
+            # Reset counter to prevent overflow
+            if iteration_count >= 1000:
+                iteration_count = 0
+                
             time.sleep(60)  # Check every minute
 
     monitor_proc_thread = threading.Thread(target=monitor_processes, name="ProcessMonitor")

@@ -126,12 +126,12 @@ SETTINGS_SCHEMA = {
         },
         "original_files_path": {
             "type": "string",
-            "description": "Path to the original files (in Zurg use the /__all__ folder). On Windows, this must be on the same drive as the symlinked files path.",
+            "description": "Path to the original files (in Zurg use the /__all__ folder).",
             "default": "/mnt/zurg/__all__"
         },
         "symlinked_files_path": {
             "type": "string",
-            "description": "Path to the destination folder (where you want your files linked to). On Windows, this must be on the same drive as the original files path.",
+            "description": "Path to the destination folder (where you want your files linked to).",
             "default": "/mnt/symlinked"
         },
         "symlink_organize_by_type": {
@@ -836,6 +836,11 @@ SETTINGS_SCHEMA = {
             "description": "24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.",
             "default": "00:00",
             "validate": "time"
+        },
+        "skip_initial_multi_scrape_for_new_content": {
+            "type": "boolean",
+            "description": "Skip the initial multi-provider scrape for new content (released within the past 7 days).",
+            "default": False
         }
     },
     "Scrapers": {

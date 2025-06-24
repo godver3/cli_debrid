@@ -12,6 +12,7 @@ from .database import DatabaseManager, Item, init_db, Session as DbSession
 from .metadata_manager import MetadataManager
 from .settings import Settings
 from metadata.metadata import _get_local_timezone
+from .trakt_auth import TraktAuth
 
 class BackgroundJobManager:
     def __init__(self):
@@ -28,6 +29,16 @@ class BackgroundJobManager:
 
     def start(self):
         """Start all background jobs"""
+        try:
+            trakt_auth = TraktAuth()
+            if not trakt_auth.is_authenticated():
+                logger.warning("Trakt is not authenticated. Background jobs will not be started.")
+                return
+        except Exception as e:
+            logger.error(f"Failed to check Trakt authentication: {e}")
+            logger.warning("Background jobs will not be started due to Trakt auth check failure.")
+            return
+
         if not self.app:
             logger.error("Cannot start background jobs: Flask app not initialized")
             return

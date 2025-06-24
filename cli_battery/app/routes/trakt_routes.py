@@ -11,6 +11,8 @@ from app.trakt_metadata import TraktMetadata  # Add this import at the top of th
 import json
 import time
 import os
+import iso8601
+from datetime import datetime, timezone
 
 settings = Settings()
 
@@ -80,10 +82,32 @@ def trakt_auth_status():
 
 @trakt_bp.route('/check_trakt_auth', methods=['GET'])
 def check_trakt_auth():
-    trakt_config = get_trakt_config()
-    if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
-        if trakt_config['OAUTH_EXPIRES_AT'] > time.time():
-            return jsonify({'status': 'authorized'})
+    try:
+        trakt_config = get_trakt_config()
+        if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
+            expires_at_raw = trakt_config['OAUTH_EXPIRES_AT']
+            
+            expires_at = None
+            if isinstance(expires_at_raw, str):
+                try:
+                    # Use the robust iso8601 parser, which handles timezone offsets correctly
+                    expires_at = iso8601.parse_date(expires_at_raw)
+                except iso8601.ParseError:
+                    try:
+                        # Fallback for stringified Unix timestamp
+                        expires_at = datetime.fromtimestamp(float(expires_at_raw), tz=timezone.utc)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Could not parse expires_at string: {expires_at_raw}")
+            elif isinstance(expires_at_raw, (int, float)):
+                # Handle numeric Unix timestamp
+                expires_at = datetime.fromtimestamp(float(expires_at_raw), tz=timezone.utc)
+            
+            # Compare timezone-aware datetime objects
+            if expires_at and datetime.now(timezone.utc) < expires_at:
+                return jsonify({'status': 'authorized'})
+                
+    except Exception as e:
+        logger.error(f"Error checking Trakt auth status: {e}")
     return jsonify({'status': 'unauthorized'})
 
 # Add these helper functions
