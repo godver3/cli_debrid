@@ -685,8 +685,39 @@ class ScrapingQueue:
                                         continue
                                 current_filtered_fallback_results.append(result)
                             
+                            # Apply delayed scrape filter to fallback results
                             if current_filtered_fallback_results:
-                                logging.info(f"Found {len(current_filtered_fallback_results)} results in final multi-pack fallback for {item_identifier}.")
+                                logging.info(f"Applying delayed scrape filter to {len(current_filtered_fallback_results)} fallback results.")
+                                # Apply the same delayed scrape logic to fallback results
+                                if delayed_scrape_enabled and minimum_scrape_score > 0:
+                                    # Split fallback results by score
+                                    high_score_fallback = [r for r in current_filtered_fallback_results if r.get('score_breakdown', {}).get('total_score', 0) >= minimum_scrape_score]
+                                    low_score_fallback = [r for r in current_filtered_fallback_results if r not in high_score_fallback]
+                                    
+                                    logging.info(f"[{item_identifier}] Fallback Delayed Scrape Filter: Found {len(high_score_fallback)} high-score results and {len(low_score_fallback)} low-score results.")
+                                    
+                                    if high_score_fallback:
+                                        current_filtered_fallback_results = high_score_fallback
+                                    elif low_score_fallback:
+                                        # Check if enough time has passed for low score results
+                                        if release_datetime:
+                                            hours_since_release = (now - release_datetime).total_seconds() / 3600.0
+                                            if hours_since_release >= delayed_scrape_time_limit:
+                                                logging.info(f"Delayed scrape (fallback): {hours_since_release:.2f}h since release+airtime, allowing lower scored fallback results for {item_identifier}.")
+                                                current_filtered_fallback_results = low_score_fallback
+                                            else:
+                                                logging.info(f"Delayed scrape (fallback): Only {hours_since_release:.2f}h since release+airtime, not enough to allow lower scored fallback results for {item_identifier}. Discarding {len(low_score_fallback)} results.")
+                                                current_filtered_fallback_results = []
+                                        else:
+                                            # No valid release date, allow all fallback results
+                                            logging.info(f"Delayed scrape (fallback): No valid release date/airtime, allowing lower scored fallback results for {item_identifier}.")
+                                            current_filtered_fallback_results = low_score_fallback
+                                    else:
+                                        # No results at all after score filtering
+                                        current_filtered_fallback_results = []
+                            
+                            if current_filtered_fallback_results:
+                                logging.info(f"Found {len(current_filtered_fallback_results)} results in final multi-pack fallback for {item_identifier} after score filtering.")
                                 filtered_results = current_filtered_fallback_results # Use these results
                             else:
                                 logging.info(f"No valid (post-filter) results from final multi-pack fallback for {item_identifier}.")
