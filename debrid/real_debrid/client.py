@@ -89,7 +89,7 @@ class RealDebridProvider(DebridProvider):
             raise ProviderUnavailableError("API key is not available.")
         return self._internal_api_key
 
-    async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
+    async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
         """
         Check if one or more magnet links or torrent files are cached on Real-Debrid.
         First checks PhalanxDB for cached results, falls back to Real-Debrid API if needed.
@@ -102,6 +102,7 @@ class RealDebridProvider(DebridProvider):
             remove_uncached: Whether to remove uncached torrents after checking (default: True)
             remove_cached: Whether to remove cached torrents after checking (default: False)
             skip_phalanx_db: Whether to skip checking PhalanxDB (default: False)
+            imdb_id: Optional IMDb ID to check against the database to prevent removal.
             
         Returns:
             - True: Torrent is cached
@@ -280,6 +281,24 @@ class RealDebridProvider(DebridProvider):
                 
                 is_cached = status == 'downloaded'
                 
+                # --- START EDIT: Check against DB using filenames before deciding on removal ---
+                is_in_db = False
+                if imdb_id:
+                    from database.database_reading import is_any_file_in_db_for_item
+                    torrent_filenames = [f.get('path', '') for f in info.get('files', [])]
+                    logging.info(f"Comparing {torrent_filenames} to DB for IMDb ID {imdb_id}")
+                    if is_any_file_in_db_for_item(imdb_id, torrent_filenames):
+                        is_in_db = True
+                        logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id}. Disabling removal.")
+
+                # Override removal flags if item is in DB
+                local_remove_uncached = remove_uncached
+                local_remove_cached = remove_cached
+                if is_in_db:
+                    local_remove_uncached = False
+                    local_remove_cached = False
+                # --- END EDIT ---
+
                 # Update PhalanxDB with new cache status if enabled
                 if self.phalanx_enabled and self.phalanx_cache:
                     try:
@@ -302,14 +321,14 @@ class RealDebridProvider(DebridProvider):
                     self._cached_torrent_titles[hash_value] = info.get('filename', '')
                     
                     # Remove cached torrents if requested
-                    if remove_cached:
+                    if local_remove_cached:
                         try:
                             self.remove_torrent(torrent_id, "Torrent is cached - removed after cache check due to remove_cached=True")
                         except Exception as e:
                             logging.error(f"{log_prefix} Error removing cached torrent: {str(e)}")
                             self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                 else:
-                    if remove_uncached:
+                    if local_remove_uncached:
                         try:
                             self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
                             from database.torrent_tracking import update_cache_check_removal
@@ -872,7 +891,7 @@ class RealDebridProvider(DebridProvider):
             # Always clean up status tracking
             super().cleanup()
 
-    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
+    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
         """Synchronous version of is_cached"""
         try:
             # Create a new event loop for this thread if one doesn't exist
@@ -884,7 +903,7 @@ class RealDebridProvider(DebridProvider):
             
             # Run the async method in the event loop
             return loop.run_until_complete(
-                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, remove_cached, skip_phalanx_db)
+                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, remove_cached, skip_phalanx_db, imdb_id)
             )
         except Exception as e:
             logging.error(f"Error in is_cached_sync: {str(e)}")

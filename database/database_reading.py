@@ -1047,6 +1047,51 @@ def get_media_item_presence_overall(imdb_id: str | None = None, tmdb_id: str | N
     finally:
         conn.close()
 
+def is_any_file_in_db_for_item(imdb_id: str, filenames: List[str]) -> bool:
+    """
+    Check if any of the provided filenames match a 'filled_by_file' entry
+    for a specific IMDb ID in the database. Comparison is done on base filenames.
+
+    Args:
+        imdb_id: The IMDb ID of the media item.
+        filenames: A list of filenames from the torrent to check.
+
+    Returns:
+        True if a matching file is found, False otherwise.
+    """
+    if not imdb_id or not filenames:
+        return False
+
+    conn = get_db_connection()
+    try:
+        # Get all 'filled_by_file' for the given imdb_id
+        cursor = conn.execute(
+            "SELECT filled_by_file FROM media_items WHERE imdb_id = ? AND filled_by_file IS NOT NULL",
+            (imdb_id,)
+        )
+        db_files = cursor.fetchall()
+
+        if not db_files:
+            return False
+
+        # Create a set of base filenames from the database for efficient lookup
+        db_basenames = {os.path.basename(row['filled_by_file']) for row in db_files}
+
+        # Check if any of the torrent's filenames match
+        for f in filenames:
+            basename = os.path.basename(f)
+            if basename in db_basenames:
+                logging.info(f"Found matching file in DB for IMDb ID {imdb_id}: {basename}")
+                return True
+
+        return False
+    except Exception as e:
+        logging.error(f"Error checking if file is in DB for IMDb ID {imdb_id}: {e}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
 @trace_memory_usage
 def get_distinct_imdb_ids(states: Optional[List[str]] = None, media_type: Optional[str] = None) -> List[str]:
     """Return a list of distinct imdb_id values matching the supplied filters.
@@ -1123,5 +1168,6 @@ __all__ = [
     'get_collected_episodes_count',
     'get_collected_episode_numbers',
     'get_media_item_presence_overall',
-    'get_distinct_imdb_ids'
+    'get_distinct_imdb_ids',
+    'is_any_file_in_db_for_item'
 ]
