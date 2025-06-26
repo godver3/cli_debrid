@@ -289,9 +289,9 @@ SETTINGS_SCHEMA = {
         },
         "main_loop_sleep_seconds": {
             "type": "float",
-            "description": "Minimum sleep time (in seconds) for the main program loop. Higher values reduce CPU usage but might slightly delay task checks. Default: 5.0.",
-            "default": 5.0,
-            "min": 0.1
+            "description": "Amount of time (in seconds) to sleep after each task execution to reduce system load. This enforces a minimum delay between tasks. Default: 0.0 (no delay).",
+            "default": 0.0,
+            "min": 0.0
         },
         "item_process_delay_seconds": {
             "type": "float",
@@ -1412,6 +1412,44 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Arguments template for the script. Available variables: {title}, {year}, {type}, {imdb_id}, {location_on_disk}, {original_path_for_symlink}, {state}, {version}",
             "default": "{title} {imdb_id}"
+        }
+    },
+    "System Load Regulation": {
+        "tab": "Additional Settings",
+        "cpu_threshold_percent": {
+            "type": "integer",
+            "description": "CPU usage percentage threshold to trigger an increase in sleep time.",
+            "default": 75,
+            "min": 1,
+            "max": 100
+        },
+        "ram_threshold_percent": {
+            "type": "integer",
+            "description": "RAM usage percentage threshold to trigger an increase in sleep time.",
+            "default": 75,
+            "min": 1,
+            "max": 100
+        },
+        "regulation_increase_step_seconds": {
+            "type": "float",
+            "description": "Amount of time (in seconds) to increase the sleep duration by when load is high.",
+            "default": 1.0,
+            "min": 0.0,
+            "step": 0.1
+        },
+        "regulation_decrease_step_seconds": {
+            "type": "float",
+            "description": "Amount of time (in seconds) to decrease the sleep duration by when load is normal.",
+            "default": 1.0,
+            "min": 0.0,
+            "step": 0.1
+        },
+        "regulation_max_sleep_seconds": {
+            "type": "float",
+            "description": "The maximum sleep time (in seconds) that auto-regulation can set.",
+            "default": 60.0,
+            "min": 0.0,
+            "step": 0.1
         }
     }
 }

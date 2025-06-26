@@ -70,7 +70,7 @@ class TorrentProcessor:
         self._last_direct_checks[hash_value] = now
         return True
         
-    def check_cache_status(self, magnet_or_url: str, temp_file: Optional[str] = None, remove_cached: bool = False) -> Tuple[bool, str]:
+    def check_cache_status(self, magnet_or_url: str, temp_file: Optional[str] = None, remove_cached: bool = False, item: Optional[Dict] = None) -> Tuple[bool, str]:
         """
         Enhanced cache status checking with forced verification for uncached items
         
@@ -78,6 +78,7 @@ class TorrentProcessor:
             magnet_or_url: Magnet link or URL to check
             temp_file: Optional path to temporary torrent file
             remove_cached: Whether to remove cached torrents (default: False)
+            item: Optional media item dictionary for context.
             
         Returns:
             Tuple[bool, str]: (is_cached, cache_source)
@@ -89,6 +90,11 @@ class TorrentProcessor:
         """
         try:
             logging.debug(f"Starting enhanced cache_status check with remove_uncached=True and remove_cached={remove_cached}")
+            
+            # Extract imdb_id and title from item
+            imdb_id = item.get('imdb_id') if item else None
+            result_title = item.get('title') if item else None
+
             # Extract hash for cache lookup
             hash_value = None
             if magnet_or_url and magnet_or_url.startswith('magnet:'):
@@ -102,7 +108,9 @@ class TorrentProcessor:
                     magnet_or_url if not temp_file else "",
                     temp_file,
                     remove_uncached=True,
-                    remove_cached=remove_cached
+                    remove_cached=remove_cached,
+                    result_title=result_title,
+                    imdb_id=imdb_id
                 )
                 return direct_check, 'direct_check'
             
@@ -124,7 +132,9 @@ class TorrentProcessor:
                                 magnet_or_url if not temp_file else "",
                                 temp_file,
                                 remove_uncached=True,
-                                remove_cached=remove_cached
+                                remove_cached=remove_cached,
+                                result_title=result_title,
+                                imdb_id=imdb_id
                             )
                             
                             if direct_check != db_cache_status.get('is_cached', False):
@@ -140,7 +150,9 @@ class TorrentProcessor:
                 magnet_or_url if not temp_file else "",
                 temp_file,
                 remove_uncached=True,
-                remove_cached=remove_cached
+                remove_cached=remove_cached,
+                result_title=result_title,
+                imdb_id=imdb_id
             )
             
             # Store the result if provider supports it and phalanx is enabled
@@ -253,13 +265,14 @@ class TorrentProcessor:
                      pass
             return None, None
             
-    def check_cache_for_url(self, url: str, remove_cached: bool = False) -> Optional[bool]:
+    def check_cache_for_url(self, url: str, remove_cached: bool = False, item: Optional[Dict] = None) -> Optional[bool]:
         """
         Download a torrent file from URL and check if it's cached
         
         Args:
             url: URL to the torrent file
             remove_cached: Whether to remove cached torrents (default: False)
+            item: Optional media item dictionary for context.
             
         Returns:
             - True: Torrent is cached
@@ -301,7 +314,7 @@ class TorrentProcessor:
                         # and check_cache using check_cache_status suggests we should leverage check_cache_status.
                         # However, check_cache_status expects a magnet or a temp_file.
                         # We have temp_file_path here.
-                        is_cached_bool, _ = self.check_cache_status(magnet_or_url=None, temp_file=temp_file_path, remove_cached=remove_cached)
+                        is_cached_bool, _ = self.check_cache_status(magnet_or_url=None, temp_file=temp_file_path, remove_cached=remove_cached, item=item)
                         return is_cached_bool
 
                     elif response.status_code >= 300 and response.status_code < 400 and 'Location' in response.headers:
@@ -312,7 +325,7 @@ class TorrentProcessor:
                             # temp_file should be None as we are now dealing with a magnet link.
                             # The original temp_file_path (for the downloaded .torrent from the initial URL)
                             # will be cleaned up by the `finally` block.
-                            is_cached_status, _ = self.check_cache_status(redirect_url, temp_file=None, remove_cached=remove_cached)
+                            is_cached_status, _ = self.check_cache_status(redirect_url, temp_file=None, remove_cached=remove_cached, item=item)
                             return is_cached_status
                             
                         elif redirect_url.startswith('http://') or redirect_url.startswith('https://'):
@@ -340,7 +353,7 @@ class TorrentProcessor:
             logging.error(f"Error checking cache for URL: {str(e)}", exc_info=True)
             return None
             
-    def check_cache(self, magnet_or_url: str, temp_file: Optional[str] = None, remove_cached: bool = False) -> Optional[bool]:
+    def check_cache(self, magnet_or_url: str, temp_file: Optional[str] = None, remove_cached: bool = False, item: Optional[Dict] = None) -> Optional[bool]:
         """
         Check if a magnet link or torrent file is cached
         
@@ -348,6 +361,7 @@ class TorrentProcessor:
             magnet_or_url: Magnet link or URL
             temp_file: Optional path to torrent file
             remove_cached: Whether to remove cached torrents (default: False)
+            item: Optional media item dictionary for context.
             
         Returns:
             - True: Torrent is cached
@@ -362,10 +376,10 @@ class TorrentProcessor:
                 'jackett' in magnet_or_url.lower() or 
                 'prowlarr' in magnet_or_url.lower()):
                 logging.debug("Processing URL as a potential torrent file")
-                return self.check_cache_for_url(magnet_or_url, remove_cached=remove_cached)
+                return self.check_cache_for_url(magnet_or_url, remove_cached=remove_cached, item=item)
             
             # Use enhanced cache checking
-            is_cached, cache_source = self.check_cache_status(magnet_or_url, temp_file, remove_cached=remove_cached)
+            is_cached, cache_source = self.check_cache_status(magnet_or_url, temp_file, remove_cached=remove_cached, item=item)
             logging.debug(f"Cache check result: {is_cached} (source: {cache_source})")
             
             # Check if this is a RealDebridProvider and explicitly verify removal
@@ -545,9 +559,17 @@ class TorrentProcessor:
                     continue
                     
                 logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Cache Check - Starting cache status check")
+                
+                # Create a temporary item dict for passing to check_cache_status
+                temp_item_for_check = item.copy() if item else {}
+                temp_item_for_check['title'] = result_title # Use the title from the current scrape result
+                if 'imdb_id' not in temp_item_for_check and item and item.get('imdb_id'):
+                    temp_item_for_check['imdb_id'] = item.get('imdb_id')
+
                 is_cached, cache_source = self.check_cache_status(
                     magnet if not temp_file else "",
-                    temp_file
+                    temp_file,
+                    item=temp_item_for_check
                 )
                     
                 if is_cached is None:

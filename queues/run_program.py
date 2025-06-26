@@ -289,6 +289,7 @@ class ProgramRunner:
             'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
             # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
+            'task_regulate_system_load': 30 # Check system load every 30 seconds
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -749,6 +750,12 @@ class ProgramRunner:
 
         self.current_running_task = None
         self._running_task_lock = threading.Lock() # Lock for thread-safe access
+
+        # --- START EDIT: Add inter-task sleep variables ---
+        self.base_inter_task_sleep = float(get_setting('Queue', 'main_loop_sleep_seconds', 0.0))
+        self.current_inter_task_sleep = self.base_inter_task_sleep
+        logging.info(f"Initialized inter-task sleep to {self.current_inter_task_sleep}s based on settings.")
+        # --- END EDIT ---
 
         # --- START EDIT: Add long-running content source tasks to DYNAMIC_INTERVAL_TASKS ---
         # This should run *after* self.content_sources is populated and intervals set
@@ -1834,6 +1841,12 @@ class ProgramRunner:
         if self._stopping: 
             logging.warning("ProgramRunner.start called, but program is currently stopping.")
             return
+
+        # On each start, reset the inter-task sleep to the configured default
+        # to override any changes made by the dynamic load regulator in a previous run.
+        self.base_inter_task_sleep = float(get_setting('Queue', 'main_loop_sleep_seconds', 0.0))
+        self.current_inter_task_sleep = self.base_inter_task_sleep
+        logging.info(f"Inter-task sleep reset to {self.current_inter_task_sleep}s on program start.")
 
         self._initializing = True
         self._stopping = False 
@@ -4361,7 +4374,18 @@ class ProgramRunner:
                 if log_display_name != 'Wanted' and log_display_name != 'Scraping' and log_display_name != 'Adding':
                     logging.info(f"Task '{log_display_name}' finished execution, removed from currently_executing_tasks.")
             # --- END EDIT ---
-            
+                    
+            # --- START EDIT: Add inter-task sleep for low power mode ---
+            try:
+                inter_task_sleep_seconds = self.current_inter_task_sleep
+                if inter_task_sleep_seconds > 0:
+                    logging.debug(f"Sleeping for {inter_task_sleep_seconds:.2f}s after task '{log_display_name}' due to current inter-task sleep setting.")
+                    time.sleep(inter_task_sleep_seconds)
+            except (ValueError, TypeError):
+                # If setting is invalid, don't sleep
+                pass
+            # --- END EDIT ---
+
             # Clear start time for UI stifling
             with self._executing_task_start_times_lock:
                 removed_start_time = self.executing_task_start_times.pop(actual_job_id_from_scheduler, None)
@@ -4379,6 +4403,49 @@ class ProgramRunner:
                     # logging.error(f"Error releasing heavy task lock for '{task_name_for_logging}': {e_release}") # REVERTED
             # --- End Release heavy task lock --- # REVERTED
     # *** END EDIT ***
+
+    def task_regulate_system_load(self):
+        """Monitors CPU and RAM usage and dynamically adjusts inter-task sleep time to regulate system load."""
+        if not psutil:
+            logging.warning("Cannot regulate system load: psutil library is not installed.")
+            self.disable_task('task_regulate_system_load')
+            return
+
+        base_sleep = float(get_setting('Queue', 'main_loop_sleep_seconds', 0.0))
+
+        # Get regulation parameters
+        cpu_threshold = int(get_setting('System Load Regulation', 'cpu_threshold_percent', 75))
+        ram_threshold = int(get_setting('System Load Regulation', 'ram_threshold_percent', 75))
+        increase_step = float(get_setting('System Load Regulation', 'regulation_increase_step_seconds', 1.0))
+        decrease_step = float(get_setting('System Load Regulation', 'regulation_decrease_step_seconds', 1.0))
+        max_sleep = float(get_setting('System Load Regulation', 'regulation_max_sleep_seconds', 60.0))
+
+        # Get system usage
+        try:
+            cpu_usage = psutil.cpu_percent(interval=1)
+            ram_usage = psutil.virtual_memory().percent
+        except Exception as e:
+            logging.error(f"Error getting system usage: {e}")
+            return
+
+        high_load = False
+        if cpu_usage > cpu_threshold:
+            logging.warning(f"CPU usage ({cpu_usage:.1f}%) exceeds threshold ({cpu_threshold}%). Increasing inter-task sleep.")
+            high_load = True
+        
+        if ram_usage > ram_threshold:
+            logging.warning(f"RAM usage ({ram_usage:.1f}%) exceeds threshold ({ram_threshold}%). Increasing inter-task sleep.")
+            high_load = True
+
+        if high_load:
+            new_sleep = self.current_inter_task_sleep + increase_step
+            self.current_inter_task_sleep = min(new_sleep, max_sleep)
+            logging.info(f"System load high. Inter-task sleep increased to {self.current_inter_task_sleep:.2f}s")
+        else:
+            if self.current_inter_task_sleep > base_sleep:
+                new_sleep = self.current_inter_task_sleep - decrease_step
+                self.current_inter_task_sleep = max(new_sleep, base_sleep)
+                logging.debug(f"System load normal. Inter-task sleep adjusted to {self.current_inter_task_sleep:.2f}s")
 
     # --- START EDIT: Add method for live interval updates ---
     def update_task_interval(self, task_name: str, interval_seconds: int | None):

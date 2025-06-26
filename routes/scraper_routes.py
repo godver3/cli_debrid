@@ -911,6 +911,24 @@ def select_media():
         background_check = request.form.get('background_check', 'true').lower() == 'true'
         
         logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
+        
+        # --- START EDIT: Store imdb_id in session ---
+        if media_id:
+            try:
+                from metadata.metadata import get_imdb_id_if_missing
+                imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
+                if imdb_id:
+                    session['last_selected_imdb_id'] = imdb_id
+                    logging.info(f"Stored imdb_id {imdb_id} in session for tmdb_id {media_id}.")
+                else:
+                    # Clear session key if lookup fails to prevent using a stale ID
+                    if 'last_selected_imdb_id' in session:
+                        del session['last_selected_imdb_id']
+                    logging.warning(f"Could not resolve imdb_id for tmdb_id {media_id}. Cache check might be affected.")
+            except (ValueError, TypeError) as e:
+                logging.error(f"Error resolving imdb_id from tmdb_id '{media_id}': {e}")
+        # --- END EDIT ---
+
         logging.info(f"Cache check settings: skip_cache_check={skip_cache_check}, background_check={background_check}")
         logging.debug(f"[select_media_route] Calling process_media_selection for '{title}'.")
         
@@ -1407,6 +1425,16 @@ def check_cache_status():
             magnet_link = data.get('magnet_link')
             torrent_url = data.get('torrent_url')
             
+            # --- START EDIT: Get imdb_id from request and extract title ---
+            imdb_id = data.get('imdb_id')
+            if not imdb_id:
+                imdb_id = session.get('last_selected_imdb_id')
+                if imdb_id:
+                    logging.debug(f"Retrieved imdb_id {imdb_id} from session for cache check.")
+            
+            # Create the item dict for context if imdb_id is available
+            item_for_check = {'imdb_id': imdb_id} if imdb_id else None
+
             logging.debug(f"Processing cache check for item at index {index}")
             
             if not magnet_link and not torrent_url:
@@ -1478,7 +1506,7 @@ def check_cache_status():
             is_cached = None
             if magnet_link:
                 logging.info(f"Checking cache status for magnet link at index {index}")
-                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True)
+                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=item_for_check)
                 
                 # Update PhalanxDB with new cache status if enabled
                 if cache_manager and torrent_hash: # Check cache_manager is not None
@@ -1495,7 +1523,7 @@ def check_cache_status():
                     
             elif torrent_url:
                 logging.info(f"Checking cache status for torrent URL at index {index}")
-                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True)
+                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True, item=item_for_check)
                 
                 # Update PhalanxDB with new cache status if enabled
                 if cache_manager and torrent_hash: # Check cache_manager is not None
