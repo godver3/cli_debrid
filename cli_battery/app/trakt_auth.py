@@ -67,7 +67,7 @@ class TraktAuth:
         now = datetime.now(timezone.utc)
         self.settings.Trakt['access_token'] = token_data['access_token']
         self.settings.Trakt['refresh_token'] = token_data['refresh_token']
-        self.settings.Trakt['expires_at'] = (now + timedelta(seconds=token_data['expires_in'])).isoformat()
+        self.settings.Trakt['expires_at'] = int((now + timedelta(seconds=token_data['expires_in'])).timestamp())
         self.settings.Trakt['last_refresh'] = now.isoformat()
         logger.debug(f"Saving token data - Last Refresh: {now.isoformat()}")
         self.settings.save_settings()
@@ -90,6 +90,24 @@ class TraktAuth:
         
         now = datetime.now(timezone.utc)
         is_valid = now < expires_at
+        
+        # Check if token is expired or nearing expiration (within 1 hour)
+        refresh_threshold = expires_at - timedelta(hours=1)
+        needs_refresh = now >= refresh_threshold
+        
+        if needs_refresh:
+            if now >= expires_at:
+                logger.info("Token expired, attempting automatic refresh")
+            else:
+                logger.info("Token nearing expiration (within 1 hour), attempting automatic refresh")
+            
+            if self.refresh_access_token():
+                logger.info("Token refreshed successfully")
+                return True
+            else:
+                logger.error("Failed to refresh token")
+                return False
+        
         return is_valid
 
     def refresh_access_token(self):

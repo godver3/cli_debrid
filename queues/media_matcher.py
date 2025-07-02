@@ -103,6 +103,12 @@ class MediaMatcher:
             logging.debug(f"Match failed: Strict matching requires season, but item season is None and not using XEM.")
             return False
 
+        # --- Check if this is anime content ---
+        genres = item.get('genres') or []
+        if isinstance(genres, str):
+            genres = [genres]
+        is_anime = any('anime' in genre.lower() for genre in genres)
+
         # --- Relaxed Matching Logic ---
         if use_relaxed_matching:
             episode_match = False
@@ -120,6 +126,65 @@ class MediaMatcher:
                           not ptt_result.get('seasons') or # Filename has no season
                           target_season in ptt_result.get('seasons', []) or # Target season is in filename seasons
                           (0 in ptt_result.get('seasons', []))) # Filename has season 0
+
+            # --- ANIME ABSOLUTE EPISODE MATCHING ---
+            # Special handling for anime where season numbering might differ due to absolute episode formats
+            if is_anime and not season_match and target_season is not None and target_episode is not None:
+                try:
+                    # Get season episode counts for absolute episode calculation
+                    from database.database_reading import get_all_season_episode_counts
+                    tmdb_id = item.get('tmdb_id')
+                    if tmdb_id:
+                        season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                        
+                        # Calculate target absolute episode number
+                        target_absolute_episode = 0
+                        sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
+                        for s_num in sorted_seasons:
+                            target_absolute_episode += season_episode_counts.get(s_num, 0)
+                        target_absolute_episode += target_episode
+                        
+                        # Check if torrent uses absolute episode numbering (common patterns: S01E1134, E1134, 1134)
+                        torrent_seasons = ptt_result.get('seasons', [])
+                        torrent_episodes = ptt_result.get('episodes', [])
+                        
+                        # For anime, many releases use S01E{episode} where episode is actually the absolute episode number
+                        # Pattern 1: S01E{episode} format where episode matches our target episode directly
+                        if torrent_seasons == [1] and target_episode in torrent_episodes:
+                            season_match = True
+                            episode_match = True
+                            logging.debug(f"Anime absolute match: S01E{target_episode} format matched (target S{target_season}E{target_episode}, treating as absolute numbering)")
+                        
+                        # Pattern 2: Check if calculated absolute episode number matches torrent episode
+                        elif torrent_seasons == [1] and target_absolute_episode in torrent_episodes:
+                            season_match = True
+                            episode_match = True
+                            logging.debug(f"Anime absolute match: S01E{target_absolute_episode} format matched (target S{target_season}E{target_episode} = abs {target_absolute_episode})")
+                        
+                        # Pattern 3: E{absolute} or {absolute} format (season might be empty)
+                        elif not torrent_seasons and (target_episode in torrent_episodes or target_absolute_episode in torrent_episodes):
+                            season_match = True  # Allow missing season for absolute format
+                            episode_match = True
+                            episode_used = target_episode if target_episode in torrent_episodes else target_absolute_episode
+                            logging.debug(f"Anime absolute match: E{episode_used} or {episode_used} format matched (target S{target_season}E{target_episode})")
+                        
+                        # Pattern 4: Check if target episode or absolute episode appears in the original filename
+                        original_filename = ptt_result.get('original_filename', '')
+                        if original_filename:
+                            import re
+                            # Look for either the target episode or absolute episode as standalone numbers
+                            target_patterns = [str(target_episode), str(target_absolute_episode)]
+                            for pattern_num in target_patterns:
+                                if re.search(rf'\b{pattern_num}\b', original_filename):
+                                    season_match = True
+                                    episode_match = True
+                                    logging.debug(f"Anime absolute match: Found episode {pattern_num} in filename '{original_filename}' (target S{target_season}E{target_episode})")
+                                    break
+                                
+                except Exception as e:
+                    logging.warning(f"Error during anime absolute episode matching: {e}")
+                    # Continue with original season_match value
+                    pass
 
             if season_match and episode_match:
                  logging.debug(f"Relaxed match successful: S:{season_match} E:{episode_match}")
@@ -182,6 +247,65 @@ class MediaMatcher:
                     if not ptt_result.get('episodes') and ptt_result.get('fallback_episode') == target_episode:
                         episode_match = True
                     logging.debug(f"Strict non-F1/XEM match: S/E check -> S:{season_match} E:{episode_match} (Target S{target_season}E{target_episode})")
+
+                    # --- ANIME ABSOLUTE EPISODE MATCHING FOR STRICT MODE ---
+                    # Apply same logic as relaxed mode for anime content
+                    if is_anime and not season_match and not episode_match and target_season is not None and target_episode is not None:
+                        try:
+                            # Get season episode counts for absolute episode calculation
+                            from database.database_reading import get_all_season_episode_counts
+                            tmdb_id = item.get('tmdb_id')
+                            if tmdb_id:
+                                season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                                
+                                # Calculate target absolute episode number
+                                target_absolute_episode = 0
+                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
+                                for s_num in sorted_seasons:
+                                    target_absolute_episode += season_episode_counts.get(s_num, 0)
+                                target_absolute_episode += target_episode
+                                
+                                # Check if torrent uses absolute episode numbering
+                                torrent_seasons = ptt_result.get('seasons', [])
+                                torrent_episodes = ptt_result.get('episodes', [])
+                                
+                                # For anime, many releases use S01E{episode} where episode is actually the absolute episode number
+                                # Pattern 1: S01E{episode} format where episode matches our target episode directly
+                                if torrent_seasons == [1] and target_episode in torrent_episodes:
+                                    season_match = True
+                                    episode_match = True
+                                    logging.debug(f"Strict anime absolute match: S01E{target_episode} format matched (target S{target_season}E{target_episode}, treating as absolute numbering)")
+                                
+                                # Pattern 2: Check if calculated absolute episode number matches torrent episode
+                                elif torrent_seasons == [1] and target_absolute_episode in torrent_episodes:
+                                    season_match = True
+                                    episode_match = True
+                                    logging.debug(f"Strict anime absolute match: S01E{target_absolute_episode} format matched (target S{target_season}E{target_episode} = abs {target_absolute_episode})")
+                                
+                                # Pattern 3: E{absolute} or {absolute} format (season might be empty)
+                                elif not torrent_seasons and (target_episode in torrent_episodes or target_absolute_episode in torrent_episodes):
+                                    season_match = True  # Allow missing season for absolute format
+                                    episode_match = True
+                                    episode_used = target_episode if target_episode in torrent_episodes else target_absolute_episode
+                                    logging.debug(f"Strict anime absolute match: E{episode_used} or {episode_used} format matched (target S{target_season}E{target_episode})")
+                                
+                                # Pattern 4: Check if target episode or absolute episode appears in the original filename
+                                original_filename = ptt_result.get('original_filename', '')
+                                if original_filename:
+                                    import re
+                                    # Look for either the target episode or absolute episode as standalone numbers
+                                    target_patterns = [str(target_episode), str(target_absolute_episode)]
+                                    for pattern_num in target_patterns:
+                                        if re.search(rf'\b{pattern_num}\b', original_filename):
+                                            season_match = True
+                                            episode_match = True
+                                            logging.debug(f"Strict anime absolute match: Found episode {pattern_num} in filename '{original_filename}' (target S{target_season}E{target_episode})")
+                                            break
+                                        
+                        except Exception as e:
+                            logging.warning(f"Error during strict anime absolute episode matching: {e}")
+                            # Continue with original season_match/episode_match values
+                            pass
 
                 season_episode_match = season_match and episode_match
                 logging.debug(f"Strict match S/E component result: {season_episode_match}")

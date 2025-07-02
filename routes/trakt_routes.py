@@ -69,9 +69,9 @@ def trakt_auth_status():
             update_trakt_config('OAUTH_TOKEN', token_data['access_token'])
             update_trakt_config('OAUTH_REFRESH', token_data['refresh_token'])
             
-            # Save expiration as ISO 8601 string
+            # Save expiration as Unix timestamp for consistency
             expires_at_dt = datetime.now(timezone.utc) + timedelta(seconds=token_data['expires_in'])
-            update_trakt_config('OAUTH_EXPIRES_AT', expires_at_dt.isoformat())
+            update_trakt_config('OAUTH_EXPIRES_AT', int(expires_at_dt.timestamp()))
             update_trakt_config('LAST_REFRESH', datetime.now(timezone.utc).isoformat())
             
             # Remove the device code response as it's no longer needed

@@ -4,6 +4,7 @@ import os
 import json
 from typing import List, Dict, Optional, Tuple, Set, Any
 import functools
+import unicodedata
 try:
     import tracemalloc
     tracemalloc_available = True
@@ -12,6 +13,27 @@ except ImportError:
     tracemalloc = None # Define tracemalloc as None if import failed
 import time
 from utilities.settings import get_setting
+
+def normalize_string_for_comparison(text: str) -> str:
+    """
+    Normalize a string for reliable comparison, especially with Unicode characters.
+    Handles Cyrillic and other non-ASCII characters properly.
+    
+    Args:
+        text: The string to normalize
+        
+    Returns:
+        Normalized string suitable for database comparison
+    """
+    if not text:
+        return text
+    
+    # Normalize Unicode to NFC form (canonical composition)
+    # This ensures consistent representation of characters with diacritics/accents
+    normalized = unicodedata.normalize('NFC', text)
+    
+    # Convert to lowercase for case-insensitive comparison
+    return normalized.lower()
 
 def trace_memory_usage(func):
     """
@@ -722,6 +744,7 @@ def check_item_exists_by_directory_name(item_directory_name: str) -> bool:
     """
     Check if any media item exists in the database where the item_directory_name
     matches either the 'filled_by_title' or 'real_debrid_original_title' fields.
+    Uses Unicode normalization for proper handling of Cyrillic and other non-ASCII characters.
 
     Args:
         item_directory_name: The directory name component to check against specific title fields.
@@ -734,25 +757,35 @@ def check_item_exists_by_directory_name(item_directory_name: str) -> bool:
     try:
         conn = get_db_connection()
         
-        query = f'''
-            SELECT 1 
+        # Normalize the search term for Unicode comparison
+        normalized_search = normalize_string_for_comparison(item_directory_name)
+        
+        # Fetch potential matches - cast fields to avoid None comparisons
+        query = '''
+            SELECT filled_by_title, real_debrid_original_title
             FROM media_items 
-            WHERE filled_by_title = ? OR real_debrid_original_title = ?
-            LIMIT 1
+            WHERE filled_by_title IS NOT NULL OR real_debrid_original_title IS NOT NULL
         '''
-        # Check against both fields using the same name
-        params = [item_directory_name, item_directory_name] 
         
-        cursor = conn.execute(query, params)
-        result = cursor.fetchone()
+        cursor = conn.execute(query)
+        rows = cursor.fetchall()
         
-        # Log if an item is found for debugging purposes
-        if result is not None:
-            logging.debug(f"Found existing item(s) in DB with matching directory/title name: {item_directory_name}")
-        else:
-            logging.debug(f"No existing items found in DB with matching directory/title name: {item_directory_name}")
+        # Check each row with proper Unicode normalization
+        for row in rows:
+            filled_by_title = row['filled_by_title']
+            real_debrid_title = row['real_debrid_original_title']
             
-        return result is not None
+            if filled_by_title and normalize_string_for_comparison(filled_by_title) == normalized_search:
+                logging.debug(f"Found existing item in DB with matching filled_by_title: {item_directory_name}")
+                return True
+                
+            if real_debrid_title and normalize_string_for_comparison(real_debrid_title) == normalized_search:
+                logging.debug(f"Found existing item in DB with matching real_debrid_original_title: {item_directory_name}")
+                return True
+        
+        logging.debug(f"No existing items found in DB with matching directory/title name: {item_directory_name}")
+        return False
+        
     except Exception as e:
         logging.error(f"Error checking items by directory/title name ('{item_directory_name}'): {str(e)}")
         return False # Assume not found on error to avoid blocking unnecessarily
@@ -765,6 +798,7 @@ def check_item_exists_by_symlink_path(original_dir_path: str) -> bool:
     Check if any media item exists in the database where the 'original_path_for_symlink' 
     starts with the provided directory path. This is used to check if any file *within* 
     the specified directory is already tracked.
+    Uses Unicode normalization for proper handling of Cyrillic and other non-ASCII characters.
 
     Args:
         original_dir_path: The full directory path to check against the beginning of 
@@ -779,29 +813,32 @@ def check_item_exists_by_symlink_path(original_dir_path: str) -> bool:
         conn = get_db_connection()
         
         # We need to check if original_path_for_symlink starts with the directory path + separator
-        # Ensure the directory path ends with a separator for the LIKE query
+        # Ensure the directory path ends with a separator for the query
         path_prefix = original_dir_path.rstrip(os.path.sep) + os.path.sep
+        normalized_prefix = normalize_string_for_comparison(path_prefix)
         
-        # Use LIKE with a wildcard to match any file within the directory
+        # Fetch all non-null original_path_for_symlink values
         query = '''
-            SELECT 1 
+            SELECT original_path_for_symlink
             FROM media_items 
-            WHERE original_path_for_symlink LIKE ? 
-            LIMIT 1
+            WHERE original_path_for_symlink IS NOT NULL
         '''
-        # The pattern should be 'path_prefix%'
-        params = [path_prefix + '%'] 
         
-        cursor = conn.execute(query, params)
-        result = cursor.fetchone()
+        cursor = conn.execute(query)
+        rows = cursor.fetchall()
         
-        if result is not None:
-            logging.debug(f"Found existing item(s) in DB whose original_path_for_symlink starts with: {path_prefix}")
-        else:
-            # Keep log level debug to avoid spamming logs for non-matches
-            logging.debug(f"No existing item found in DB whose original_path_for_symlink starts with: {path_prefix}")
-            
-        return result is not None
+        # Check each path with proper Unicode normalization
+        for row in rows:
+            original_path = row['original_path_for_symlink']
+            if original_path:
+                normalized_path = normalize_string_for_comparison(original_path)
+                if normalized_path.startswith(normalized_prefix):
+                    logging.debug(f"Found existing item in DB whose original_path_for_symlink starts with: {path_prefix}")
+                    return True
+        
+        logging.debug(f"No existing item found in DB whose original_path_for_symlink starts with: {path_prefix}")
+        return False
+        
     except Exception as e:
         logging.error(f"Error checking items by original_path_for_symlink prefix ('{original_dir_path}'): {str(e)}")
         return False # Assume not found on error to avoid blocking unnecessarily
@@ -813,6 +850,7 @@ def check_item_exists_with_symlink_path_containing(path_segment: str) -> bool:
     """
     Check if any media item exists in the database where the 'original_path_for_symlink'
     contains the provided path_segment.
+    Uses Unicode normalization for proper handling of Cyrillic and other non-ASCII characters.
 
     Args:
         path_segment: The string segment to search for within the 'original_path_for_symlink' field.
@@ -825,24 +863,31 @@ def check_item_exists_with_symlink_path_containing(path_segment: str) -> bool:
     try:
         conn = get_db_connection()
         
+        # Normalize the search segment for Unicode comparison
+        normalized_segment = normalize_string_for_comparison(path_segment)
+        
+        # Fetch all non-null original_path_for_symlink values
         query = '''
-            SELECT 1 
+            SELECT original_path_for_symlink
             FROM media_items 
-            WHERE original_path_for_symlink LIKE ? 
-            LIMIT 1
+            WHERE original_path_for_symlink IS NOT NULL
         '''
-        # The pattern is '%path_segment%'
-        params = ['%' + path_segment + '%'] 
         
-        cursor = conn.execute(query, params)
-        result = cursor.fetchone()
+        cursor = conn.execute(query)
+        rows = cursor.fetchall()
         
-        if result is not None:
-            logging.debug(f"Found existing item(s) in DB where original_path_for_symlink CONTAINS segment: {path_segment}")
-        else:
-            logging.debug(f"No existing items found in DB where original_path_for_symlink CONTAINS segment: {path_segment}")
-            
-        return result is not None
+        # Check each path with proper Unicode normalization
+        for row in rows:
+            original_path = row['original_path_for_symlink']
+            if original_path:
+                normalized_path = normalize_string_for_comparison(original_path)
+                if normalized_segment in normalized_path:
+                    logging.debug(f"Found existing item in DB where original_path_for_symlink CONTAINS segment: {path_segment}")
+                    return True
+        
+        logging.debug(f"No existing items found in DB where original_path_for_symlink CONTAINS segment: {path_segment}")
+        return False
+        
     except Exception as e:
         logging.error(f"Error checking items by original_path_for_symlink containing segment ('{path_segment}'): {str(e)}")
         return False # Assume not found on error
@@ -1139,6 +1184,7 @@ def get_distinct_imdb_ids(states: Optional[List[str]] = None, media_type: Option
 
 # Define __all__ for explicit exports
 __all__ = [
+    'normalize_string_for_comparison',
     'search_movies', 
     'search_tv_shows', 
     'get_all_media_items', 

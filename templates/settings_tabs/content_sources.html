@@ -48,6 +48,9 @@
                 updateSymlinkSubfolderVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
             }
         });
+
+        // Initialize version checkbox monitoring for warning indicators
+        initializeVersionWarningUpdates();
     }
 
     function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
@@ -558,6 +561,69 @@
              }
         });
     }
+
+    function initializeVersionWarningUpdates() {
+        // Listen for changes to version checkboxes and enabled checkboxes
+        document.addEventListener('change', function(event) {
+            if (event.target.type === 'checkbox' && 
+                event.target.name && 
+                event.target.name.includes('Content Sources')) {
+                
+                // Extract source ID from the checkbox name
+                // Format: "Content Sources.SourceID.versions" or "Content Sources.SourceID.enabled"
+                const nameparts = event.target.name.split('.');
+                if (nameparts.length >= 2) {
+                    const sourceId = nameparts[1];
+                    updateVersionWarning(sourceId);
+                }
+            }
+        });
+    }
+
+    function updateVersionWarning(sourceId) {
+        // Find the enabled checkbox for this source
+        const enabledCheckbox = document.querySelector(`input[type="checkbox"][name="Content Sources.${sourceId}.enabled"]`);
+        const sourceIsEnabled = enabledCheckbox ? enabledCheckbox.checked : false;
+        
+        // Find all version checkboxes for this source
+        const versionCheckboxes = document.querySelectorAll(`input[type="checkbox"][name*="Content Sources.${sourceId}.versions"]`);
+        
+        // Check if any version is enabled
+        let hasEnabledVersions = false;
+        versionCheckboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                hasEnabledVersions = true;
+            }
+        });
+
+        // Find the warning indicator for this source
+        const sourceSection = document.querySelector(`.settings-section[data-source-id="${sourceId}"]`);
+        if (sourceSection) {
+            const warningElement = sourceSection.querySelector('.no-versions-warning');
+            
+            // Only show warning if source is enabled BUT no versions are enabled
+            if (sourceIsEnabled && !hasEnabledVersions) {
+                // Show warning
+                if (warningElement) {
+                    warningElement.style.display = 'inline-flex';
+                } else {
+                    // Create warning element if it doesn't exist
+                    const headerH4 = sourceSection.querySelector('.settings-section-header h4');
+                    if (headerH4) {
+                        const warningSpan = document.createElement('span');
+                        warningSpan.className = 'no-versions-warning';
+                        warningSpan.innerHTML = '<span class="no-versions-warning-icon">⚠️</span>No versions enabled';
+                        headerH4.appendChild(warningSpan);
+                    }
+                }
+            } else {
+                // Hide warning if source is disabled OR versions are enabled
+                if (warningElement) {
+                    warningElement.style.display = 'none';
+                }
+            }
+        }
+    }
 </script>
 
 <style>
@@ -583,6 +649,25 @@
     .checkbox-item input[type="checkbox"] {
         margin-right: 5px;
     }
+    
+    /* Warning indicator for sources with no versions enabled */
+    .no-versions-warning {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 8px;
+        color: #ff6b6b;
+        font-size: 12px;
+        font-weight: normal;
+    }
+    
+    .no-versions-warning-icon {
+        margin-right: 4px;
+        font-size: 14px;
+    }
+    
+    .no-versions-warning:hover {
+        color: #ff5252;
+    }
 </style>
 
 {% if settings['Content Sources'] is defined and settings['Content Sources'] is mapping %}
@@ -592,6 +677,26 @@
         {# ----------------------------- #}
         
         {% if config is mapping and 'type' in config and config.type %}
+            {# Check if this source has any versions enabled #}
+            {% set source_versions = config.get('versions', {}) %}
+            {% set has_enabled_versions = false %}
+            {% set source_is_enabled = config.get('enabled', false) %}
+            {% if source_versions %}
+                {% if source_versions is mapping %}
+                    {# Dictionary format: check for any true values #}
+                    {% for version_name, is_enabled in source_versions.items() %}
+                        {% if is_enabled %}
+                            {% set has_enabled_versions = true %}
+                        {% endif %}
+                    {% endfor %}
+                {% elif source_versions is iterable and not source_versions is string %}
+                    {# List format: check if list has any items #}
+                    {% if source_versions|length > 0 %}
+                        {% set has_enabled_versions = true %}
+                    {% endif %}
+                {% endif %}
+            {% endif %}
+            
             <div class="settings-section" data-source-id="{{ source_id }}">
                 <div class="settings-section-header">
                     <span class="settings-toggle-icon">+</span>
@@ -600,6 +705,12 @@
                             {{ config.display_name }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
                         {% else %}
                             {{ source_id }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
+                        {% endif %}
+                        {% if source_is_enabled and not has_enabled_versions %}
+                            <span class="no-versions-warning">
+                                <span class="no-versions-warning-icon">⚠️</span>
+                                No versions enabled
+                            </span>
                         {% endif %}
                     </h4>
                     <div class="source-buttons">
@@ -974,7 +1085,7 @@
                                     {% endif %}
                                 </div> {# End .settings-form-group for general fields #}
                             {% endif %} {# End if key != 'type' #}
-                        {% endfor %} {# End general loop for other types #}
+                        {% endfor %}
 
                         {# Render 'allow_specials' generally if applicable (might be redundant if handled above, but safe) #}
                          {% set source_type = config.type %}

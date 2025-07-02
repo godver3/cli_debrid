@@ -122,7 +122,7 @@ form#search-form input:-ms-input-placeholder {
     color: var(--text-primary) !important;
 }
 
-.movie-list, .show-list {
+.movie-list, .show-list, .anime-list {
     position: relative;
     padding: var(--spacing-md) 0;
     margin: 0 calc(-1 * var(--spacing-md));
@@ -361,6 +361,21 @@ form#search-form input:-ms-input-placeholder {
     box-shadow: 
         0 4px 6px rgba(0, 0, 0, 0.2),
         0 0 25px rgba(255, 255, 255, 0.15);
+}
+
+.mediatype-tv, .mediatype-mv {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 2;
+    backdrop-filter: blur(4px);
+    pointer-events: none;  /* Ensure hover works through the badge */
 }
 
 .mediatype-tv, .mediatype-mv {
@@ -1460,4 +1475,10 @@ tr.filtered-out-item:hover {
 .db-status-partial {
     background-color: #2196F3;
     color: white;
+}
+
+/* Apply same hover animations for search results */
+.sresult:hover .mediatype-tv,
+.sresult:hover .mediatype-mv {
+    transform: none !important;
 }

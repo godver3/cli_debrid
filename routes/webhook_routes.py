@@ -8,6 +8,7 @@ from utilities.plex_functions import plex_update_item
 from utilities.emby_functions import emby_update_item
 from utilities.settings import get_setting
 from urllib.parse import unquote
+import unicodedata
 import os.path
 from content_checkers.overseerr import get_overseerr_details, get_overseerr_headers
 from routes.api_tracker import api
@@ -31,6 +32,38 @@ from routes.debug_routes import _run_rclone_to_symlink_task # Added for the rclo
 import os # Added for os.path.basename and os.path.join
 
 webhook_bp = Blueprint('webhook', __name__)
+
+def robust_url_decode(encoded_string: str) -> str:
+    """
+    Robustly decode a URL-encoded string with proper Unicode handling.
+    
+    Args:
+        encoded_string: The URL-encoded string to decode
+        
+    Returns:
+        Properly decoded Unicode string
+    """
+    if not encoded_string:
+        return encoded_string
+    
+    try:
+        # First attempt standard UTF-8 decoding
+        decoded = unquote(encoded_string, encoding='utf-8')
+        
+        # Normalize Unicode to NFC form for consistent character representation
+        normalized = unicodedata.normalize('NFC', decoded)
+        
+        return normalized
+    except (UnicodeDecodeError, UnicodeError) as e:
+        logging.warning(f"Unicode decode error for '{encoded_string}': {e}. Trying with error handling.")
+        try:
+            # Try with error handling - replace invalid characters
+            decoded = unquote(encoded_string, encoding='utf-8', errors='replace')
+            normalized = unicodedata.normalize('NFC', decoded)
+            return normalized
+        except Exception as fallback_error:
+            logging.error(f"Complete failure to decode '{encoded_string}': {fallback_error}. Using original.")
+            return encoded_string
 
 @webhook_bp.route('/', methods=['POST'])
 def webhook():
@@ -104,8 +137,8 @@ def rclone_webhook():
         
         logging.info(f"Received rclone webhook with raw 'file' argument: '{full_relative_path_str_raw}'")
 
-        full_relative_path_str = unquote(full_relative_path_str_raw)
-        logging.info(f"Unquoted relative path from rclone: {full_relative_path_str}")
+        full_relative_path_str = robust_url_decode(full_relative_path_str_raw)
+        logging.info(f"Decoded relative path from rclone: {full_relative_path_str}")
 
         # This component is assumed to be the item's directory name (e.g., "Movie Title (Year)")
         # or filename, relative to the original_files_base_path categories.

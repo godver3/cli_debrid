@@ -814,6 +814,125 @@ def trending_shows():
         logging.error(f"Error retrieving Trakt Trending Shows: {e}")
         return []
 
+def trending_anime():
+    trakt_client_id = get_setting('Trakt', 'client_id')
+    
+    if not trakt_client_id:
+        logging.error("Trakt Client ID key not set. Please configure in settings.")
+        return []
+
+    headers = {
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': trakt_client_id
+    }
+    
+    # Use Trakt's anime genre filter directly - much more efficient!
+    trending_anime = []
+    target_anime_count = 20
+    
+    # Try multiple pages if needed to get enough anime
+    for page in range(1, 4):  # Pages 1, 2, 3
+        if len(trending_anime) >= target_anime_count:
+            break
+            
+        # Use Trakt's genre filter for anime
+        api_url = f"https://api.trakt.tv/shows/trending?genres=anime&extended=full&page={page}&limit=50"
+        logging.info(f"Fetching anime trending page {page} using Trakt genre filter...")
+
+        try:
+            response = api.get(api_url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            
+            if not data:  # No more data
+                logging.info(f"No more anime data on page {page}")
+                break
+                
+            anime_found_this_page = 0
+            
+            for result in data:
+                if len(trending_anime) >= target_anime_count:
+                    break
+                    
+                show_data = result.get('show', {})
+                tmdb_id = show_data.get('ids', {}).get('tmdb')
+                show_title = show_data.get('title', 'Unknown')
+                
+                if not tmdb_id:
+                    logging.debug(f"No TMDB ID for anime: {show_title}")
+                    continue
+                
+                logging.info(f"Processing anime from Trakt filter: {show_title} (TMDB: {tmdb_id})")
+                anime_found_this_page += 1
+                
+                # Process poster and metadata
+                try:
+                    cached_poster_url = get_cached_poster_url(tmdb_id, 'tv')
+                    cached_media_meta = get_cached_media_meta(tmdb_id, 'tv')
+
+                    if cached_poster_url and cached_media_meta:
+                        poster_path = cached_poster_url
+                        media_meta = cached_media_meta
+                        logging.debug(f"Using cached data for anime: {show_title}")
+                    else:
+                        logging.info(f"Fetching poster/meta for anime {show_title} (TMDB ID: {tmdb_id})")
+                        media_meta = get_media_meta(tmdb_id, 'tv')
+                        if media_meta:
+                            poster_path = media_meta[0]
+                            try:
+                                cache_poster_url(tmdb_id, 'tv', poster_path)
+                                cache_media_meta(tmdb_id, 'tv', media_meta)
+                                logging.debug(f"Cached data for anime: {show_title}")
+                            except Exception as cache_e:
+                                logging.warning(f"Error caching data for {show_title}: {cache_e}")
+                        else:
+                            # Fallback to placeholder
+                            logging.debug(f"Using placeholder for anime: {show_title}")
+                            placeholder_url = url_for('static', filename='images/placeholder.png', _external=True)
+                            
+                            # Handle HTTPS/HTTP
+                            if request.is_secure:
+                                parsed_url = urlparse(placeholder_url)
+                                placeholder_url = parsed_url._replace(scheme='https').geturl()
+                            else:
+                                parsed_url = urlparse(placeholder_url)
+                                placeholder_url = parsed_url._replace(scheme='http').geturl()
+                            
+                            poster_path = placeholder_url
+                        
+                    # Check if TMDB API key is set
+                    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+                    tmdb_api_key_set = bool(tmdb_api_key)
+
+                    trending_anime.append({
+                        "title": show_title,
+                        "year": show_data.get('year'),
+                        "imdb_id": show_data.get('ids', {}).get('imdb'),
+                        "tmdb_id": tmdb_id,
+                        "rating": show_data.get('rating', 0),
+                        "watcher_count": result.get('watchers', 0),
+                        "poster_path": poster_path,
+                        "show_overview": media_meta[1] if media_meta else '',
+                        "genre_ids": media_meta[2] if media_meta else [],
+                        "vote_average": media_meta[3] if media_meta else 0,
+                        "backdrop_path": media_meta[4] if media_meta else '',
+                        "tmdb_api_key_set": tmdb_api_key_set
+                    })
+                    
+                except Exception as process_e:
+                    logging.error(f"Error processing anime {show_title}: {process_e}")
+                    continue
+            
+            logging.info(f"Page {page}: Found {anime_found_this_page} anime using Trakt genre filter")
+            
+        except api.exceptions.RequestException as e:
+            logging.error(f"Error retrieving Trakt anime trending page {page}: {e}")
+            break  # Stop trying more pages on API error
+
+    logging.info(f"Total anime found using Trakt genre filter: {len(trending_anime)}")
+    return {"trendingAnime": trending_anime}
+
 def process_media_selection(media_id: str, title: str, year: str, media_type: str, season: Optional[int], episode: Optional[int], multi: bool, version: str, genres: List[str], skip_cache_check: bool = True, background_cache_check: bool = False) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     from metadata.metadata import get_metadata
     logging.info(f"Processing media selection with skip_cache_check={skip_cache_check}, background_cache_check={background_cache_check}")
