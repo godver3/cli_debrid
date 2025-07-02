@@ -1053,6 +1053,20 @@ def sync_run_get_recent_from_plex(scan_all_libraries: bool = False):
 
 def remove_file_from_plex(item_title, item_path, episode_title=None):
     try:
+        # Check for Jellyfin configuration first - if available, use Jellyfin instead
+        jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
+        jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()
+        
+        if jellyfin_url and jellyfin_token:
+            logger.info(f"Jellyfin configured, using Jellyfin for removal: {item_title} ({item_path})")
+            try:
+                from utilities.emby_functions import remove_file_from_emby
+                return remove_file_from_emby(item_title, item_path, episode_title)
+            except Exception as e:
+                logger.error(f"Error removing file from Jellyfin: {str(e)}. Falling back to Plex.")
+                # Continue to Plex removal below
+        
+        # Proceed with Plex removal (original logic)
         if get_setting('File Management', 'file_collection_management') == 'Plex':
             plex_url = get_setting('Plex', 'url').rstrip('/')
             plex_token = get_setting('Plex', 'token')
@@ -1195,8 +1209,22 @@ def find_plex_library_and_section(plex: PlexServer, item_path: str) -> Tuple[Opt
         return None, None
 
 def plex_update_item(item: Dict[str, Any]) -> bool:
-    logger.info(f"Attempting to trigger Plex scan for item: {item.get('title', 'Unknown')}")
+    logger.info(f"Attempting to trigger media server scan for item: {item.get('title', 'Unknown')}")
     try:
+        # Check for Jellyfin configuration first - if available, use Jellyfin instead
+        jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
+        jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()
+        
+        if jellyfin_url and jellyfin_token:
+            logger.info(f"Jellyfin configured, using Jellyfin for update: {item.get('title', 'Unknown')}")
+            try:
+                from utilities.emby_functions import emby_update_item
+                return emby_update_item(item)
+            except Exception as e:
+                logger.error(f"Error updating item in Jellyfin: {str(e)}. Falling back to Plex.")
+                # Continue to Plex update below
+        
+        # Proceed with Plex update (original logic)
         plex_url = get_setting('File Management', 'plex_url_for_symlink', '').rstrip('/')
         plex_token = get_setting('File Management', 'plex_token_for_symlink', '')
         

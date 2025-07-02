@@ -795,8 +795,9 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     'smtp_username': notification_config.get('smtp_username'),
                     'smtp_password': notification_config.get('smtp_password')
                 }
-                # Basic validation
-                if not all(smtp_config.values()):
+                # Basic validation - only check required fields
+                required_fields = ['from_address', 'to_address', 'smtp_server', 'smtp_port']
+                if not all(smtp_config.get(field) for field in required_fields):
                      logging.warning(f"Skipping Email notification ({notification_id}): Missing required SMTP configuration fields.")
                      continue
 
@@ -1144,8 +1145,6 @@ def get_enabled_notifications():
                 if all([
                     notification_config.get('smtp_server'),
                     notification_config.get('smtp_port'),
-                    notification_config.get('smtp_username'),
-                    notification_config.get('smtp_password'),
                     notification_config.get('from_address'),
                     notification_config.get('to_address')
                 ]):

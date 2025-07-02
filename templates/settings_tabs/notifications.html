@@ -57,7 +57,9 @@
                                         {{ key|replace('_', ' ')|title }}
                                     </label>
                                 {% else %}
-                                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">
+                                        {{ key|replace('_', ' ')|title }}{% if key in ['smtp_username', 'smtp_password'] %} (Optional){% endif %}:
+                                    </label>
                                     <input type="{% if 'password' in key %}password{% else %}text{% endif %}" 
                                            id="notifications-{{ notification_id }}-{{ key }}" 
                                            name="Notifications.{{ notification_id }}.{{ key }}" 

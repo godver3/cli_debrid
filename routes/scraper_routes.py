@@ -5,7 +5,7 @@ from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from utilities.settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall
-from utilities.web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
+from utilities.web_scraper import trending_movies, trending_shows, trending_anime, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
 from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
@@ -729,6 +729,51 @@ def shows_trending():
         else:
             # Return original error structure or a default one
             return jsonify(trendingShowsData if trendingShowsData else {'error': 'Error retrieving trending shows'})
+            
+    return render_template('scraper.html', versions=versions, is_requester=is_requester)
+
+@scraper_bp.route('/anime_trending', methods=['GET', 'POST'])
+@user_required
+@scraper_view_access_required
+def anime_trending():
+    from utilities.web_scraper import get_available_versions
+
+    versions = get_available_versions()
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
+    if request.method == 'GET':
+        trendingAnimeData = trending_anime() # Get trending anime data
+        if trendingAnimeData and 'trendingAnime' in trendingAnimeData:
+            processed_anime = []
+            for item in trendingAnimeData['trendingAnime']:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
+                    except (ValueError, TypeError):
+                         db_state = 'Missing'
+                         
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]: 
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing' # Default if no ID
+                processed_anime.append(item)
+                
+            # Return processed data under the original key
+            return jsonify({'trendingAnime': processed_anime})
+        else:
+            # Return original error structure or a default one
+            return jsonify(trendingAnimeData if trendingAnimeData else {'error': 'Error retrieving trending anime'})
             
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
@@ -1703,29 +1748,151 @@ async def _fetch_details_for_id_lookup(id_type: str, media_id: str) -> List[Dict
     metadata_result = None
     media_type = None
 
+    def is_better_tv_candidate(metadata):
+        """
+        Determine if metadata suggests this is better classified as a TV show.
+        Returns True if TV indicators are strong, False otherwise.
+        """
+        if not metadata:
+            return False
+            
+        # Strong TV indicators
+        airs_data = metadata.get('airs', {})
+        if airs_data and isinstance(airs_data, dict):
+            # Has day/time/timezone = TV show
+            if airs_data.get('day') or airs_data.get('time') or airs_data.get('timezone'):
+                logging.info(f"Strong TV indicator found: airs data = {airs_data}")
+                return True
+        
+        # Runtime analysis (episodes typically 20-70 mins, movies typically 80+ mins)
+        runtime = metadata.get('runtime')
+        if runtime and isinstance(runtime, int):
+            if runtime <= 70:  # Likely episode runtime
+                logging.info(f"TV runtime indicator: {runtime} minutes (typical episode length)")
+                return True
+            elif runtime >= 120:  # Likely movie runtime  
+                logging.info(f"Movie runtime indicator: {runtime} minutes (typical movie length)")
+                return False
+        
+        # Check for seasons data
+        seasons = metadata.get('seasons', {})
+        if seasons and isinstance(seasons, dict) and len(seasons) > 0:
+            logging.info(f"Strong TV indicator: seasons data found with {len(seasons)} seasons")
+            return True
+            
+        return False
+
+    def calculate_metadata_quality_score(metadata):
+        """Calculate a quality score for metadata completeness."""
+        if not metadata:
+            return 0
+            
+        score = 0
+        # Basic fields
+        if metadata.get('title'): score += 10
+        if metadata.get('year'): score += 10
+        if metadata.get('genres'): score += 5
+        if metadata.get('tmdb_id'): score += 15
+        
+        # Rich data indicators
+        if metadata.get('overview'): score += 5
+        if metadata.get('runtime'): score += 5
+        if metadata.get('airs'): score += 20  # TV shows have this
+        if metadata.get('seasons'): score += 25  # TV shows have this
+        if metadata.get('release_date') or metadata.get('first_aired'): score += 10
+        
+        return score
+
     try:
-        # This part uses synchronous get_metadata, which is fine before heavy I/O
+        movie_metadata = None
+        tv_metadata = None
+        
+        # Try both movie and TV lookups for IMDb IDs
         if id_type == 'imdb':
-            metadata_result = get_metadata(imdb_id=media_id, item_media_type='movie')
-            if metadata_result:
-                 media_type = 'movie'
-            else:
-                metadata_result = get_metadata(imdb_id=media_id, item_media_type='tv')
-                if metadata_result:
-                    media_type = 'tv'
+            logging.info(f"Trying both movie and TV lookups for IMDb ID: {media_id}")
+            
+            # Try movie lookup
+            try:
+                movie_metadata = get_metadata(imdb_id=media_id, item_media_type='movie')
+                if movie_metadata:
+                    logging.debug(f"Movie metadata found for {media_id}")
+            except Exception as e:
+                logging.debug(f"Movie lookup failed for {media_id}: {e}")
+            
+            # Try TV lookup  
+            try:
+                tv_metadata = get_metadata(imdb_id=media_id, item_media_type='tv')
+                if tv_metadata:
+                    logging.debug(f"TV metadata found for {media_id}")
+            except Exception as e:
+                logging.debug(f"TV lookup failed for {media_id}: {e}")
+                
         elif id_type == 'tmdb':
             try:
                 media_id_int = int(media_id)
-                metadata_result = get_metadata(tmdb_id=media_id_int, item_media_type='movie')
-                if metadata_result:
-                    media_type = 'movie'
-                else:
-                    metadata_result = get_metadata(tmdb_id=media_id_int, item_media_type='tv')
-                    if metadata_result:
-                        media_type = 'tv'
+                logging.info(f"Trying both movie and TV lookups for TMDB ID: {media_id_int}")
+                
+                # Try movie lookup
+                try:
+                    movie_metadata = get_metadata(tmdb_id=media_id_int, item_media_type='movie')
+                    if movie_metadata:
+                        logging.debug(f"Movie metadata found for TMDB {media_id_int}")
+                except Exception as e:
+                    logging.debug(f"Movie lookup failed for TMDB {media_id_int}: {e}")
+                
+                # Try TV lookup
+                try:
+                    tv_metadata = get_metadata(tmdb_id=media_id_int, item_media_type='tv')
+                    if tv_metadata:
+                        logging.debug(f"TV metadata found for TMDB {media_id_int}")
+                except Exception as e:
+                    logging.debug(f"TV lookup failed for TMDB {media_id_int}: {e}")
+                    
             except ValueError:
                 logging.error(f"Invalid TMDb ID format (after stripping prefix): {media_id}")
                 return []
+
+        # Now decide which result to use based on analysis
+        if movie_metadata and tv_metadata:
+            logging.info(f"Both movie and TV metadata found for {id_type}={media_id}, analyzing to determine best match...")
+            
+            # Check if TV metadata has strong TV indicators
+            if is_better_tv_candidate(tv_metadata):
+                logging.info(f"TV metadata has strong indicators, using TV result for {media_id}")
+                metadata_result = tv_metadata
+                media_type = 'tv'
+            elif is_better_tv_candidate(movie_metadata):
+                # This shouldn't happen often, but handle edge case
+                logging.warning(f"Movie metadata has TV indicators, switching to TV result for {media_id}")
+                metadata_result = tv_metadata if tv_metadata else movie_metadata
+                media_type = 'tv'
+            else:
+                # Compare quality scores
+                movie_score = calculate_metadata_quality_score(movie_metadata)
+                tv_score = calculate_metadata_quality_score(tv_metadata) 
+                
+                logging.info(f"Quality scores for {media_id}: movie={movie_score}, tv={tv_score}")
+                
+                if tv_score > movie_score:
+                    logging.info(f"TV metadata has higher quality score, using TV result for {media_id}")
+                    metadata_result = tv_metadata
+                    media_type = 'tv'
+                else:
+                    logging.info(f"Movie metadata has higher/equal quality score, using movie result for {media_id}")
+                    metadata_result = movie_metadata
+                    media_type = 'movie'
+                    
+        elif tv_metadata:
+            logging.info(f"Only TV metadata found for {media_id}")
+            metadata_result = tv_metadata
+            media_type = 'tv'
+        elif movie_metadata:
+            logging.info(f"Only movie metadata found for {media_id}")
+            metadata_result = movie_metadata
+            media_type = 'movie'
+        else:
+            logging.warning(f"No metadata found for {id_type} ID: {media_id}")
+            return []
 
         if metadata_result and media_type:
             tmdb_id = metadata_result.get('tmdb_id')
@@ -1779,6 +1946,9 @@ async def _fetch_details_for_id_lookup(id_type: str, media_id: str) -> List[Dict
                 'imdb_id': metadata_result.get('imdb_id')
             }
             results.append(formatted_result)
+            
+            # Log the final decision for debugging
+            logging.info(f"Final classification for {id_type}={media_id}: {media_type} - '{title}' ({year})")
         else:
             logging.warning(f"Could not find metadata for {id_type} ID: {media_id}")
 

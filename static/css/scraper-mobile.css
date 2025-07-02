@@ -295,14 +295,16 @@
     /* Trending Section Styles */
     .trending-container {
         padding-top: 10px;
-        overscroll-behavior: none;
-        -webkit-overflow-scrolling: none;
+        overscroll-behavior-x: none;
+        -webkit-overflow-scrolling: touch;
     }
 
     .trending-movies,
-    .trending-shows {
+    .trending-shows,
+    .trending-anime {
         padding: 10px;
         overscroll-behavior: none;
+        margin-bottom: 15px;
     }
 
     .media-card {
@@ -322,7 +324,7 @@
     }
 
     /* Lock scrolling in containers */
-    .movie-list, .show-list {
+    .movie-list, .show-list, .anime-list {
         display: flex;
         overflow-x: auto;  /* Restore horizontal scroll */
         scroll-behavior: smooth;
@@ -333,7 +335,7 @@
         margin: 0;
         width: 100%;
         flex-wrap: nowrap;
-        touch-action: pan-x;  /* Allow horizontal touch scrolling only */
+        touch-action: manipulation;  /* Allow both horizontal and vertical scrolling */
         cursor: grab;
         will-change: transform;
         overscroll-behavior-x: none;  /* Prevent bounce */
@@ -343,12 +345,13 @@
     .scroll-container {
         overflow-x: auto;
         overscroll-behavior-x: none;
-        touch-action: pan-x;
+        touch-action: manipulation;
         -webkit-overflow-scrolling: touch;
     }
 
     .movie-list::-webkit-scrollbar, 
     .show-list::-webkit-scrollbar,
+    .anime-list::-webkit-scrollbar,
     .scroll-container::-webkit-scrollbar {
         display: none;
     }
@@ -360,6 +363,7 @@
         user-select: none;
         -webkit-user-select: none;
         -webkit-touch-callout: none;
+        touch-action: manipulation;
     }
 
     .media-poster-img {
@@ -508,6 +512,7 @@
         padding: 0 !important;
         margin: 0 !important;
         transform: none !important;
+        touch-action: manipulation !important;
     }
 
     /* Hide request-icon and tester-icon on mobile devices */
@@ -534,7 +539,7 @@
         width: 140px !important;
         height: 210px !important;
         transform: none !important;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        box-shadow: none !important;
         border-radius: var(--border-radius-lg);
         margin: 0 !important;
         padding: 0 !important;
@@ -547,6 +552,7 @@
         transform: none !important;
         margin: 0 !important;
         padding: 0 !important;
+        touch-action: manipulation !important;
     }
 
     .poster-overlay {
@@ -634,15 +640,17 @@
         text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     }
 
-    /* Movie and Show List Container Adjustments */
+    /* Movie, Show, and Anime List Container Adjustments */
     .movie-list,
-    .show-list {
+    .show-list,
+    .anime-list {
         padding: 10px 0;
         margin: 0;
         gap: 10px;
     }
 
-    .movie-list {
+    .movie-list,
+    .show-list {
         margin-bottom: 10px;
     }
 
@@ -657,13 +665,34 @@
         gap: 10px;
     }
 
-    /* Disable hover effects */
+    /* Disable hover effects and glow */
     .media-poster:hover .media-poster-img,
     .media-poster:hover .media-title,
     .sresult:hover img,
-    .sresult:hover .searchresult-info {
+    .sresult:hover .searchresult-info,
+    .media-poster:hover .poster-container,
+    .sresult:hover .poster-container,
+    .media-card:hover,
+    .sresult:hover {
         transform: none !important;
-        opacity: 1;
+        opacity: 1 !important;
+        box-shadow: none !important;
+    }
+
+    /* Remove all glow and enhanced shadows on mobile */
+    .poster-container,
+    .media-poster-img,
+    .sresult img,
+    .media-card,
+    .sresult {
+        box-shadow: none !important;
+    }
+
+    /* Disable hover pseudo-effects */
+    .media-poster:hover::after,
+    .sresult:hover::after {
+        content: none !important;
+        display: none !important;
     }
 
     .media-title {
@@ -672,9 +701,16 @@
 
     /* Trending sections adjustments */
     .trending-movies,
-    .trending-shows {
+    .trending-shows,
+    .trending-anime {
         padding: 0;
         margin: 0;
+        margin-bottom: 20px;
+    }
+
+    /* Remove bottom margin from last trending section */
+    .trending-anime {
+        margin-bottom: 10px;
     }
 
     .trending-header {

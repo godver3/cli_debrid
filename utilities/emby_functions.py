@@ -1,3 +1,17 @@
+"""
+Emby/Jellyfin integration functions for media library management.
+
+Key improvements for partial library scans:
+- Uses UpdateType: "scan" instead of "Created"/"Deleted" for better reliability
+- Implements fallback from path-based scan to library-wide refresh
+- Scans the directory containing the file rather than the file itself
+- Uses proper Jellyfin API endpoints for reliable media discovery
+
+The emby_update_item function now uses a dual approach:
+1. Path-based scan using /Library/Media/Updated with UpdateType: "scan"
+2. Fallback to library refresh using /Items/{libraryId}/Refresh if path scan fails
+"""
+
 import logging
 import os
 import requests
@@ -86,6 +100,9 @@ def get_emby_library_info(emby_url: str, headers: dict, file_path: str) -> Optio
 def emby_update_item(item: Dict[str, Any]) -> bool:
     """
     Update Emby/Jellyfin library for a specific item by scanning its directory.
+    Uses multiple approaches to ensure reliable scanning:
+    1. Path-based scan using /Library/Media/Updated with UpdateType: "scan"
+    2. Fallback to library-wide refresh if path-based scan fails
     
     Args:
         item: Dictionary containing item details including location_on_disk
@@ -124,23 +141,24 @@ def emby_update_item(item: Dict[str, Any]) -> bool:
         # Normalize path for Emby/Jellyfin API
         file_location = normalize_path_for_emby(file_location)
         
-        # Make the API request
-        refresh_url = f"{emby_url}/Library/Media/Updated"
-        data = {
-            'Updates': [{
-                'Path': file_location,
-                'UpdateType': 'Created'
-            }]
-        }
+        # Approach 1: Path-based scan using /Library/Media/Updated with UpdateType: "scan"
+        logging.info(f"Attempting path-based scan for: {file_location}")
+        scan_success = _scan_path_in_jellyfin(emby_url, headers, file_location)
         
-        response = requests.post(refresh_url, headers=headers, json=data, timeout=30)
-        
-        if response.status_code == 204:  # Emby/Jellyfin returns 204 No Content on success
-            logging.info(f"Successfully triggered Emby/Jellyfin refresh for: {file_location}")
+        if scan_success:
+            logging.info(f"Successfully triggered path-based scan for: {file_location}")
             return True
-        else:
-            logging.error(f"Failed to trigger Emby/Jellyfin refresh. Status code: {response.status_code}")
-            return False
+            
+        # Approach 2: Fallback to library-wide refresh
+        logging.info(f"Path-based scan failed, attempting library refresh for: {file_location}")
+        library_success = _refresh_library_containing_path(emby_url, headers, file_location)
+        
+        if library_success:
+            logging.info(f"Successfully triggered library refresh for: {file_location}")
+            return True
+            
+        logging.error(f"All scan methods failed for: {file_location}")
+        return False
             
     except requests.exceptions.Timeout:
         logging.error("Timeout while trying to update Emby/Jellyfin")
@@ -150,6 +168,89 @@ def emby_update_item(item: Dict[str, Any]) -> bool:
         return False
     except Exception as e:
         logging.error(f"Error updating item in Emby/Jellyfin: {str(e)}")
+        return False
+
+def _scan_path_in_jellyfin(emby_url: str, headers: dict, file_path: str) -> bool:
+    """
+    Scan a specific path in Jellyfin using the Media/Updated endpoint.
+    
+    Args:
+        emby_url: Base URL for Emby/Jellyfin server
+        headers: Headers containing authentication
+        file_path: Path to scan
+        
+    Returns:
+        bool: True if scan was successful, False otherwise
+    """
+    try:
+        # Use the directory containing the file for scanning
+        scan_path = os.path.dirname(file_path)
+        
+        refresh_url = f"{emby_url}/Library/Media/Updated"
+        data = {
+            'Updates': [{
+                'Path': scan_path,
+                'UpdateType': 'scan'  # Use 'scan' instead of 'Created'
+            }]
+        }
+        
+        response = requests.post(refresh_url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code == 204:  # Jellyfin returns 204 No Content on success
+            return True
+        else:
+            logging.warning(f"Path-based scan returned status code: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in path-based scan: {str(e)}")
+        return False
+
+def _refresh_library_containing_path(emby_url: str, headers: dict, file_path: str) -> bool:
+    """
+    Refresh the entire library that contains the given path.
+    
+    Args:
+        emby_url: Base URL for Emby/Jellyfin server
+        headers: Headers containing authentication
+        file_path: Path to find library for
+        
+    Returns:
+        bool: True if library refresh was successful, False otherwise
+    """
+    try:
+        # Get library info for the path
+        library_info = get_emby_library_info(emby_url, headers, file_path)
+        
+        if not library_info:
+            logging.warning(f"Could not find library for path: {file_path}")
+            return False
+            
+        library_id = library_info['Id']
+        library_name = library_info['Name']
+        
+        logging.info(f"Refreshing library '{library_name}' ({library_id}) for path: {file_path}")
+        
+        # Refresh the entire library
+        refresh_url = f"{emby_url}/Items/{library_id}/Refresh"
+        params = {
+            'Recursive': 'true',
+            'ImageRefreshMode': 'Default',
+            'MetadataRefreshMode': 'Default',
+            'ReplaceAllImages': 'false',
+            'ReplaceAllMetadata': 'false'
+        }
+        
+        response = requests.post(refresh_url, headers=headers, params=params, timeout=30)
+        
+        if response.status_code == 204:  # Jellyfin returns 204 No Content on success
+            return True
+        else:
+            logging.warning(f"Library refresh returned status code: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in library refresh: {str(e)}")
         return False
 
 def remove_file_from_emby(item_title: str, item_path: str, episode_title: str = None) -> bool:
@@ -182,11 +283,13 @@ def remove_file_from_emby(item_title: str, item_path: str, episode_title: str = 
         item_path = normalize_path_for_emby(item_path)
         
         # Make the API request
+        # Use the directory containing the file for scanning after removal
+        scan_path = os.path.dirname(item_path)
         refresh_url = f"{emby_url}/Library/Media/Updated"
         data = {
             'Updates': [{
-                'Path': item_path,
-                'UpdateType': 'Deleted'
+                'Path': scan_path,
+                'UpdateType': 'scan'  # Use 'scan' to refresh the directory after file removal
             }]
         }
         

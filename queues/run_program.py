@@ -3381,9 +3381,27 @@ class ProgramRunner:
                 # and job_id_base as the second arg (task_name_for_logging) to _run_and_measure_task
                 wrapped_func = functools.partial(self._run_and_measure_task, manual_job_instance_id, job_id_base, target_func, args, kwargs)
                 
-                run_now_date = datetime.now(self.scheduler.timezone)
+                # Get timezone safely, with fallback if scheduler is None
+                if self.scheduler and hasattr(self.scheduler, 'timezone'):
+                    scheduler_timezone = self.scheduler.timezone
+                else:
+                    # Fallback timezone detection
+                    try:
+                        from metadata.metadata import _get_local_timezone
+                        scheduler_timezone = _get_local_timezone()
+                        logging.warning(f"Scheduler timezone not available, using fallback: {scheduler_timezone}")
+                    except Exception as e:
+                        logging.error(f"Failed to get fallback timezone: {e}, using UTC")
+                        scheduler_timezone = timezone.utc
+                
+                run_now_date = datetime.now(scheduler_timezone)
 
                 with self.scheduler_lock:
+                    # Ensure scheduler exists before adding job
+                    if not self.scheduler:
+                        logging.error(f"Cannot trigger task '{job_id_base}': Scheduler is not initialized")
+                        raise RuntimeError(f"Scheduler not initialized for manual task '{job_id_base}'")
+                    
                     self.scheduler.add_job(
                         func=wrapped_func,
                         trigger='date',  # Use DateTrigger for true run-once
@@ -3394,19 +3412,19 @@ class ProgramRunner:
                         max_instances=1, # Max instances for this specific job ID
                         misfire_grace_time=60 # Allow 1 minute grace time for manual tasks
                     )
-                    
-                logging.info(f"Task '{job_id_base}' (Manual Job ID: {manual_job_instance_id}) successfully queued for immediate execution via APScheduler.")
-                return {"success": True, "message": f"Task '{job_id_base}' queued for execution.", "job_id": manual_job_instance_id}
+                        
+                    logging.info(f"Task '{job_id_base}' (Manual Job ID: {manual_job_instance_id}) successfully queued for immediate execution via APScheduler.")
+                    return {"success": True, "message": f"Task '{job_id_base}' queued for execution.", "job_id": manual_job_instance_id}
 
             except Exception as e:
-                 logging.error(f"Error submitting manual task '{job_id_base}' to APScheduler: {e}", exc_info=True)
-                 raise RuntimeError(f"Failed to queue manual task '{job_id_base}': {e}")
+                logging.error(f"Error submitting manual task '{job_id_base}' to APScheduler: {e}", exc_info=True)
+                raise RuntimeError(f"Failed to queue manual task '{job_id_base}': {e}")
         else:
             logging.error(f"Could not determine target function for manual trigger of '{job_id_base}'")
             if job_id_base not in self.task_intervals:
-                  raise ValueError(f"Task '{job_id_base}' is not defined. Cannot queue.")
+                raise ValueError(f"Task '{job_id_base}' is not defined. Cannot queue.")
             else:
-                  raise ValueError(f"Task function for '{job_id_base}' not found despite task being defined.")
+                raise ValueError(f"Task function for '{job_id_base}' not found despite task being defined.")
 
     def enable_task(self, task_name):
         """Enable a task by adding/resuming its job in the scheduler."""

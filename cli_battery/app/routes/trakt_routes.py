@@ -128,6 +128,19 @@ def update_trakt_config(key, value):
     save_trakt_config(config)
 
 
+@trakt_bp.route('/refresh_trakt_auth', methods=['POST'])
+def refresh_trakt_auth():
+    """Manually refresh Trakt authentication token"""
+    try:
+        trakt_auth = TraktAuth()
+        
+        if trakt_auth.refresh_access_token():
+            return jsonify({'status': 'success', 'message': 'Trakt auth refreshed successfully'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to refresh Trakt auth'}), 500
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @trakt_bp.route('/receive_trakt_auth', methods=['POST'])
 def receive_trakt_auth():
     try:

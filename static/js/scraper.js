@@ -698,6 +698,45 @@ document.addEventListener('DOMContentLoaded', async function() {
         container_tv.addEventListener('scroll', updateButtonStates_tv);
     }
     
+    // Setup scroll functionality for anime container
+    const container_anime = document.getElementById('animeContainer');
+    const scrollLeftBtn_anime = document.getElementById('scrollLeft_anime');
+    const scrollRightBtn_anime = document.getElementById('scrollRight_anime');
+    
+    // Initialize button states for anime
+    if (scrollLeftBtn_anime) {
+        scrollLeftBtn_anime.disabled = false;
+    }
+    
+    function updateButtonStates_anime() {
+        if (!container_anime) return;
+        
+        if (scrollLeftBtn_anime) {
+            const isAtStart = container_anime.scrollLeft <= 0;
+            scrollLeftBtn_anime.disabled = isAtStart;
+        }
+        
+        if (scrollRightBtn_anime) {
+            const maxScroll = container_anime.scrollWidth - container_anime.clientWidth - 50;
+            const isAtEnd = container_anime.scrollLeft >= maxScroll - 5;
+            scrollRightBtn_anime.disabled = isAtEnd;
+        }
+    }
+    
+    function scroll_anime(direction) {
+        if (!container_anime) return;
+        const scrollAmount = container_anime.clientWidth * 0.8;
+        const targetScroll = direction === 'left' 
+            ? Math.max(container_anime.scrollLeft - scrollAmount, 0)
+            : Math.min(container_anime.scrollLeft + scrollAmount, container_anime.scrollWidth - container_anime.clientWidth);
+        container_anime.scrollTo({ left: targetScroll, behavior: 'smooth' });
+        setTimeout(updateButtonStates_anime, 500);
+    }
+    
+    if (container_anime) {
+        container_anime.addEventListener('scroll', updateButtonStates_anime);
+    }
+    
     // Check Trakt Auth and Load Trending Content
     fetch('/trakt/trakt_auth_status', { method: 'GET' })
         .then(response => {
@@ -708,6 +747,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             if (status.status == 'authorized') {
                 get_trendingMovies(); // Call overridden function
                 get_trendingShows();  // Call overridden function
+                get_trendingAnime();  // Call anime function
             } else {
                 displayTraktAuthMessage();
             }
@@ -716,6 +756,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             console.error('Trakt Auth Check Error:', error);
             get_trendingMovies(); // Fallback
             get_trendingShows();  // Fallback
+            get_trendingAnime();  // Fallback
         });
     
     // Setup scroll buttons using already declared variables
@@ -723,15 +764,19 @@ document.addEventListener('DOMContentLoaded', async function() {
     if (scrollRightBtn_mv) scrollRightBtn_mv.addEventListener('click', () => scroll_mv('right'));
     if (scrollLeftBtn_tv) scrollLeftBtn_tv.addEventListener('click', () => scroll_tv('left'));
     if (scrollRightBtn_tv) scrollRightBtn_tv.addEventListener('click', () => scroll_tv('right'));
+    if (scrollLeftBtn_anime) scrollLeftBtn_anime.addEventListener('click', () => scroll_anime('left'));
+    if (scrollRightBtn_anime) scrollRightBtn_anime.addEventListener('click', () => scroll_anime('right'));
     
     // Initialize button states
     updateButtonStates_mv();
     updateButtonStates_tv();
+    updateButtonStates_anime();
     
     // Add window resize listener
     window.addEventListener('resize', () => {
         updateButtonStates_mv();
         updateButtonStates_tv();
+        updateButtonStates_anime();
     });
     
     // Fetch available versions
@@ -739,14 +784,16 @@ document.addEventListener('DOMContentLoaded', async function() {
 
     // Update button states after images load
     function setupImageLoadHandlers() {
-        document.querySelectorAll('#movieContainer img, #showContainer img').forEach(img => {
+        document.querySelectorAll('#movieContainer img, #showContainer img, #animeContainer img').forEach(img => {
             if (img.complete) {
                 updateButtonStates_mv();
                 updateButtonStates_tv();
+                updateButtonStates_anime();
             } else {
                 img.addEventListener('load', () => {
                     updateButtonStates_mv();
                     updateButtonStates_tv();
+                    updateButtonStates_anime();
                 });
             }
         });
@@ -757,6 +804,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         setTimeout(() => {
             updateButtonStates_mv();
             updateButtonStates_tv();
+            updateButtonStates_anime();
             setupImageLoadHandlers();
         }, 500);
     }
@@ -775,15 +823,18 @@ document.addEventListener('DOMContentLoaded', async function() {
         setTimeout(initializeTrendingScrolling, 1000); // Initialize scrolling after content loads
     };
     
-    // No need to reassign to global scope if already modifying window object
-    // get_trendingMovies = window.get_trendingMovies;
-    // get_trendingShows = window.get_trendingShows;
+    const originalGetTrendingAnime = window.get_trendingAnime; // Assuming get_trendingAnime is global
+    window.get_trendingAnime = function() {
+        if (originalGetTrendingAnime) originalGetTrendingAnime();
+        setTimeout(initializeTrendingScrolling, 1000); // Initialize scrolling after content loads
+    };
 
     // Final initialization when everything is loaded
     window.addEventListener('load', () => {
         setTimeout(() => {
             updateButtonStates_mv();
             updateButtonStates_tv();
+            updateButtonStates_anime();
             setupImageLoadHandlers();
         }, 1000);
     });
@@ -1495,6 +1546,158 @@ function get_trendingShows() {
             trendingShows.forEach(item => {
                 const showElement = createShowElement(item);
                 container_tv.appendChild(showElement);
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        displayError('An error occurred.');
+    });
+}
+
+function createAnimeElement(data) {
+    const animeElement = document.createElement('div');
+    animeElement.className = 'media-card';
+    
+    // Get the isRequester value from the DOM
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    
+    // --- Create DB Status Pip HTML ---
+    let dbStatusPipHTML = '';
+    if (data.db_status && data.db_status !== 'missing') {
+        dbStatusPipHTML = `<div class="db-status-pip db-status-${data.db_status}" title="Status: ${data.db_status.charAt(0).toUpperCase() + data.db_status.slice(1)}"></div>`;
+    }
+    // --- End DB Status Pip HTML ---
+    
+    // Always include the request icon HTML regardless of user type
+    const requestIconHTML = `
+        <div class="request-icon" title="Request this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+        </div>
+    `;
+    
+    // Create tester icon HTML - mirrored on the left side
+    const testerIconHTML = `
+        <div class="tester-icon" title="Test this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6v4H9zM6 7h12l-3 10H9z"></path>
+                <path d="M10 17h4v4h-4z"></path>
+            </svg>
+        </div>
+    `;
+    
+    animeElement.innerHTML = `
+        <div class="media-poster">
+            <span id="trending-rating">${(data.rating).toFixed(1)}</span>
+            <span id="trending-watchers">👁 ${data.watcher_count}</span>
+            <div class="poster-container">
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
+                    alt="${data.title}" 
+                    class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
+                <div class="poster-overlay">
+                    <h3>${data.title}</h3>
+                    <p>${data.year}</p>
+                </div>
+                ${requestIconHTML}
+                ${testerIconHTML}
+                ${dbStatusPipHTML}
+            </div>
+            <div class="media-title" style="display: ${document.getElementById('tmdb_api_key_set').value === 'True' ? 'none' : 'block'}">
+                <h2>${data.title}</h2>
+                <p>${data.year}</p>
+            </div>
+        </div>
+    `;
+    
+    // Add click handlers for the poster
+    animeElement.onclick = function() {
+        // Check if we're on mobile (screen width <= 768px)
+        if (window.innerWidth <= 768) {
+            // Prepare data for mobile modal
+            const item = {
+                id: data.tmdb_id,
+                title: data.title,
+                year: data.year,
+                media_type: 'tv', // Anime is treated as TV show
+                genre_ids: data.genre_ids,
+                vote_average: data.rating, // Use data.rating from trending anime
+                backdrop_path: data.backdrop_path,
+                show_overview: data.show_overview,
+                poster_path: data.poster_path,
+                tmdb_api_key_set: document.getElementById('tmdb_api_key_set').value === 'True'
+            };
+            
+            // Show mobile action modal
+            showMobileActionModal(item);
+        } else {
+            // Desktop behavior - direct scrape
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.rating, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+        }
+    };
+    
+    // Add click handler for the request icon for all users
+    const requestIcon = animeElement.querySelector('.request-icon');
+    if (requestIcon) {
+        requestIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Show version modal with content info
+            showVersionModal({
+                id: data.tmdb_id,
+                title: data.title,
+                mediaType: 'tv', // Anime is treated as TV show
+                year: data.year
+            });
+            
+            return false;
+        };
+    }
+    
+    // Add click handler for the tester icon
+    const testerIcon = animeElement.querySelector('.tester-icon');
+    if (testerIcon) {
+        testerIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Redirect to the scraper_tester.html page with the content data as URL parameters
+            const params = new URLSearchParams({
+                title: data.title,
+                id: data.tmdb_id,
+                year: data.year,
+                media_type: 'tv' // Anime is treated as TV show
+            });
+            window.location.href = `/scraper/scraper_tester?${params.toString()}`;
+            
+            return false;
+        };
+    }
+    
+    return animeElement;
+}
+
+function get_trendingAnime() {
+    toggleResultsVisibility('get_trendingMovies');
+    const container_anime = document.getElementById('animeContainer');
+    
+    fetch('/scraper/anime_trending', {
+        method: 'GET'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.error) {
+            displayError(data.error);
+        } else {
+            const trendingAnime = data.trendingAnime;
+            trendingAnime.forEach(item => {
+                const animeElement = createAnimeElement(item);
+                container_anime.appendChild(animeElement);
             });
         }
     })

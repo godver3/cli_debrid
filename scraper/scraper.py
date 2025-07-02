@@ -672,13 +672,95 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             titles_to_try.append(('translated_title', translated_title))
             tried_titles_lower.add(translated_title.lower())
 
-        # 3. Add preferred alias
+        # 3. Add original language title from metadata (especially important for anime)
+        if is_anime:
+            try:
+                metadata, _ = direct_api.get_show_metadata(imdb_id) if content_type.lower() != 'movie' else direct_api.get_movie_metadata(imdb_id)
+                if metadata:
+                    # First, check aliases for a properly formatted romanized title
+                    aliases = metadata.get('aliases', {})
+                    romanized_found = False
+                    
+                    # Look for romanized titles in aliases (prioritize Japanese romanization patterns)
+                    for country_code, alias_list in aliases.items():
+                        if isinstance(alias_list, list):
+                            for alias in alias_list:
+                                # Check if this alias looks like a romanized Japanese title
+                                import re
+                                if alias and re.match(r'^[a-zA-Z\s\-]+$', alias) and alias.lower() not in tried_titles_lower:
+                                    # Skip if it's just the English title again
+                                    if alias.lower() != title.lower():
+                                        # Check for Japanese romanization patterns (common Japanese words/patterns)
+                                        japanese_patterns = [
+                                            r'\bno\b',  # "no" particle is very common in Japanese titles
+                                            r'(yama|kawa|saki|mura|hara|da|ta|ka|na|ma|sa|ra|wa|ga|zu|ji|chi|shi|ki|mi|ni|hi|ri|ai|ei|ou|uu)',  # Common Japanese syllable patterns
+                                            r'\w+(?:gami|kami|sama|chan|kun|san)\b',  # Japanese honorifics
+                                            r'\w+(?:ya|ko|ro|to|go|bo|po|zo|do|ba|pa)\b'  # Common Japanese ending patterns
+                                        ]
+                                        
+                                        # Check if it matches Japanese romanization patterns
+                                        is_likely_japanese = any(re.search(pattern, alias.lower()) for pattern in japanese_patterns)
+                                        
+                                        # Also check if it's NOT common English words
+                                        common_english_words = ['drugstore', 'soliloquy', 'pharmacy', 'apothecary', 'diary', 'diaries', 'story', 'tale', 'chronicles']
+                                        has_english_words = any(word in alias.lower() for word in common_english_words)
+                                        
+                                        if is_likely_japanese and not has_english_words:
+                                            logging.info(f"Adding Japanese romanized alias for anime: {alias}")
+                                            titles_to_try.append(('romanized_alias', alias))
+                                            tried_titles_lower.add(alias.lower())
+                                            romanized_found = True
+                                            break
+                        if romanized_found:
+                            break
+                    
+                    # Fallback: use original_title from metadata
+                    if not romanized_found:
+                        original_title_from_metadata = metadata.get('original_title') or metadata.get('originalTitle')
+                        if original_title_from_metadata:
+                            if isinstance(original_title_from_metadata, list):
+                                original_title_from_metadata = original_title_from_metadata[0]
+                            
+                            # Check if title contains Japanese characters and attempt romanization
+                            has_japanese = bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]', original_title_from_metadata))
+                            
+                            if has_japanese:
+                                try:
+                                    from scraper.functions.other_functions import romanize_japanese
+                                    romanized_title = romanize_japanese(original_title_from_metadata)
+                                    
+                                    # Try to fix spacing and capitalization
+                                    words = romanized_title.split()
+                                    if len(words) > 1:
+                                        # Capitalize first letter of each word and ensure proper spacing
+                                        romanized_title = ' '.join(word.capitalize() for word in words)
+                                    else:
+                                        # If no spaces, try to split on common patterns and capitalize
+                                        romanized_title = romanized_title.title()
+                                    
+                                    logging.info(f"Romanized Japanese title '{original_title_from_metadata}' to '{romanized_title}'")
+                                    if romanized_title.lower() not in tried_titles_lower:
+                                        logging.info(f"Adding romanized title for anime: {romanized_title}")
+                                        titles_to_try.append(('original_language_romanized', romanized_title))
+                                        tried_titles_lower.add(romanized_title.lower())
+                                except Exception as romanize_err:
+                                    logging.warning(f"Failed to romanize Japanese title '{original_title_from_metadata}': {romanize_err}")
+                            else:
+                                # Not Japanese, use as-is
+                                if original_title_from_metadata.lower() not in tried_titles_lower:
+                                    logging.info(f"Adding original language title from metadata for anime: {original_title_from_metadata}")
+                                    titles_to_try.append(('original_language', original_title_from_metadata))
+                                    tried_titles_lower.add(original_title_from_metadata.lower())
+            except Exception as e:
+                logging.warning(f"Failed to get original title from metadata for {imdb_id}: {e}")
+
+        # 4. Add preferred alias
         if not aliases_disabled and preferred_alias and preferred_alias.lower() not in tried_titles_lower:
             logging.info(f"Adding preferred alias: {preferred_alias}")
             titles_to_try.append(('preferred_alias', preferred_alias))
             tried_titles_lower.add(preferred_alias.lower())
 
-        # 4. Add all other matching country aliases
+        # 5. Add all other matching country aliases
         if not aliases_disabled and matching_aliases:
             for alias in matching_aliases:
                 if alias.lower() not in tried_titles_lower:
@@ -709,8 +791,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 is_anime=is_anime,
                 imdb_id_for_fallback=imdb_id,
                 direct_api_instance=direct_api,
-                is_alias=(source != 'original'),
-                alias_country=media_country_code if source != 'original' else None,
+                is_alias=(source not in ['original', 'original_language', 'original_language_romanized', 'romanized_alias']),
+                alias_country=media_country_code if source not in ['original', 'original_language', 'original_language_romanized', 'romanized_alias'] else None,
                 preferred_language=preferred_language,
                 translated_title=translated_title, # Always pass the actual translation
                 target_air_date=target_air_date, # Pass target_air_date here

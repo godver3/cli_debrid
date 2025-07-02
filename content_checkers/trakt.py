@@ -151,7 +151,7 @@ def refresh_friend_token(auth_id: str) -> bool:
             state.update({
                 'access_token': token_data['access_token'],
                 'refresh_token': token_data['refresh_token'],
-                'expires_at': (now + timedelta(seconds=token_data['expires_in'])).isoformat(),
+                'expires_at': int((now + timedelta(seconds=token_data['expires_in'])).timestamp()),
                 'last_refresh': now.isoformat()
             })
             
