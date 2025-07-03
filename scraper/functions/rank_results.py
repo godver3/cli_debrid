@@ -173,21 +173,29 @@ def rank_result_key(
         parsed_seasons_list = parsed_sei.get('seasons', [])
         season_pack_type = parsed_sei.get('season_pack', 'Unknown') # This will be 'Complete'
 
-        # Priority 1: Explicit single episode identified by parser (e.g., S01E01 via episodes list)
-        if parsed_episodes_list and len(parsed_episodes_list) == 1:
+        # Priority 1: Check for a "Complete Series" pack.
+        # This is a "Complete Series" pack if `season_pack_type` is 'Complete' and it's not a single season pack
+        # (i.e., parsed_seasons_list doesn't contain just one season).
+        is_single_season_pack = len(parsed_seasons_list) == 1 and all(str(s).isdigit() for s in parsed_seasons_list)
+        if season_pack_type == 'Complete' and not is_single_season_pack and show_season_episode_counts:
+            # This logic is for a "Complete Series" pack.
+            num_items = sum(count for s_num, count in show_season_episode_counts.items() if isinstance(s_num, int) and s_num > 0)
+            is_multi_pack = num_items > 1
+            logging.debug(f"[RRK] P1 (New): 'Complete Series' logic triggered. Num items: {num_items} for '{torrent_title}'")
+
+        # Priority 2: Explicit single episode identified by parser (e.g., S01E01 via episodes list)
+        elif parsed_episodes_list and len(parsed_episodes_list) == 1:
             num_items = 1
             is_multi_pack = False
-            # logging.debug(f"[RRK] P1: Single episode (parsed_episodes_list len 1): {torrent_title}")
+            # logging.debug(f"[RRK] P2: Single episode (parsed_episodes_list len 1): {torrent_title}")
 
-        # Priority 2: Multi-episode range (e.g., S01E01-E10 via episodes list)
+        # Priority 3: Multi-episode range (e.g., S01E01-E10 via episodes list)
         elif parsed_episodes_list and len(parsed_episodes_list) > 1:
             num_items = len(parsed_episodes_list)
             is_multi_pack = True
-            # logging.debug(f"[RRK] P2: Multi-episode range ({num_items} items): {torrent_title}")
+            # logging.debug(f"[RRK] P3: Multi-episode range ({num_items} items): {torrent_title}")
 
-        # Priority 3: Specific season(s) pack (e.g., S01, S01-S03, or S03 COMPLETE if '03' is in parsed_seasons_list)
-        # This handles "S01", "S01-S03", and also "S03 COMPLETE" if '03' is in parsed_seasons_list
-        # irrespective of season_pack_type for this specific logic.
+        # Priority 4: Specific season(s) pack (e.g., S01, S01-S03, or S03 COMPLETE if '03' is in parsed_seasons_list)
         elif parsed_seasons_list and show_season_episode_counts:
             current_total_episodes = 0
             for s_num_str in parsed_seasons_list: # parsed_seasons_list contains season numbers as strings
@@ -196,31 +204,22 @@ def rank_result_key(
                     if s_num_int > 0: # Ensure season number is valid positive integer
                         current_total_episodes += show_season_episode_counts.get(s_num_int, 0)
                 except ValueError:
-                    logging.warning(f"[RRK] P3: Could not convert season '{s_num_str}' to int for '{torrent_title}'")
+                    logging.warning(f"[RRK] P4: Could not convert season '{s_num_str}' to int for '{torrent_title}'")
             
             if current_total_episodes > 0:
                 num_items = current_total_episodes
                 is_multi_pack = True # A season pack is a multi-pack
-                # logging.debug(f"[RRK] P3: Specific season(s) pack ({num_items} items from {parsed_seasons_list}): {torrent_title}")
-            # else: num_items remains 1. If season_pack_type also indicates a pack, fallback later might make is_multi_pack=True.
+                # logging.debug(f"[RRK] P4: Specific season(s) pack ({num_items} items from {parsed_seasons_list}): {torrent_title}")
 
-        # Priority 4: 'Complete' pack (interpreted as whole show if NO specific seasons were identified by parsed_seasons_list)
+        # Priority 5: Fallback 'Complete' pack (interpreted as whole show if NO specific seasons were identified)
         elif season_pack_type == 'Complete' and not parsed_seasons_list and show_season_episode_counts:
-            # This means season_pack_type is 'Complete' but parsed_seasons_list was empty.
-            # This is likely a "Complete Series" pack.
             num_items = sum(count for s_num, count in show_season_episode_counts.items() if isinstance(s_num, int) and s_num > 0)
             is_multi_pack = num_items > 1
-            # if is_multi_pack:
-                # logging.debug(f"[RRK] P4: 'Complete' (whole show - no specific seasons parsed) pack ({num_items} items): {torrent_title}")
-            # else:
-                # logging.debug(f"[RRK] P4: 'Complete' pack (whole show - no specific seasons parsed), but num_items is {num_items}, treated as single/error: {torrent_title}")
+            # logging.debug(f"[RRK] P5: 'Complete' (whole show - no specific seasons parsed) pack ({num_items} items): {torrent_title}")
         
-        # Priority 5: Basic torrent_season and torrent_episode fields (if not already identified as multi-episode or specific pack)
-        # This implies it's a single episode if P1-P4 didn't apply or didn't set is_multi_pack.
+        # Priority 6: Basic torrent_season and torrent_episode fields (if not already identified as multi-episode or specific pack)
         elif isinstance(torrent_season, int) and isinstance(torrent_episode, int) and not is_multi_pack:
-            # It's a single episode if we haven't found it to be a multi-pack through other means.
-            # num_items is likely still 1 (default or from P1). is_multi_pack is False.
-            # logging.debug(f"[RRK] P5: Single episode (torrent_season/episode present, not a pack): {torrent_title}")
+            # logging.debug(f"[RRK] P6: Single episode (torrent_season/episode present, not a pack): {torrent_title}")
             pass # num_items = 1, is_multi_pack = False confirmed.
 
         # Fallback: If season_pack_type indicates a pack (e.g. "S01", "S01,S02", or even "Complete")
