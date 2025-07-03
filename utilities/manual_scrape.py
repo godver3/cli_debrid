@@ -1,15 +1,14 @@
 import logging
-from api_tracker import api
+from routes.api_tracker import api
 import re
 from typing import Tuple
 from typing import Dict, Any, Optional, Tuple, List
 from scraper.scraper import scrape
 #from utilities.result_viewer import display_results
 from debrid import get_debrid_provider, extract_hash_from_magnet
-from settings import get_setting
+from utilities.settings import get_setting
 import os
 from collections import Counter
-from metadata.metadata import get_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +130,7 @@ def run_manual_scrape(search_term=None, return_details=False):
     return None
 
 def get_details(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    from metadata.metadata import get_metadata
     trakt_client_id = get_setting('Trakt', 'client_id')
     
     if not trakt_client_id:
@@ -261,6 +261,7 @@ def scrape_sync(imdb_id, tmdb_id, title, year, movie_or_episode, season, episode
         #logger.debug(f"  Result {index}: title='{result.get('title')}', "
                      #f"size='{result.get('size')}', magnet='{result.get('magnet')[:50]}...'")
 
+    from utilities.result_viewer import display_results
     selected_item = display_results(processed_results, filtered_out_results)
     if selected_item:
         #logger.debug(f"Selected item: title='{selected_item.get('title')}', "

@@ -1,12 +1,12 @@
 from flask import Blueprint, jsonify, request, render_template
 from .models import user_required, onboarding_required
-from web_scraper import search_trakt, parse_search_term, get_available_versions
+from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
-from config_manager import load_config
-from metadata.metadata import process_metadata
+from queues.config_manager import load_config
 from database.wanted_items import add_wanted_items
 import logging
 import re
+from utilities.settings import load_config
 
 content_requestor_bp = Blueprint('content', __name__)
 
@@ -52,6 +52,7 @@ def search():
 @user_required
 def request_content():
     """Handle content request."""
+    from metadata.metadata import process_metadata
     try:
         data = request.json
         if not data:
@@ -80,28 +81,87 @@ def request_content():
             media_type = 'tv'
 
         if not imdb_id:
-            return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}'}), 400
+            # Check if any Jackett scrapers are enabled
+            config = load_config()
+            has_enabled_jackett = False
             
+            for instance, settings in config.get('Scrapers', {}).items():
+                if isinstance(settings, dict):
+                    if settings.get('type') == 'Jackett' and settings.get('enabled', False):
+                        has_enabled_jackett = True
+                        break
+            
+            # Get the title directly from the request data
+            title = data.get('title', '')
+            
+            # Only proceed if Jackett is enabled AND title contains UFC
+            if not has_enabled_jackett or 'UFC' not in title.upper():
+                return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}. This is only supported for UFC content with Jackett enabled.'}), 400
+            else:
+                logging.info(f"No IMDB ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
+            
+        # If media_type is 'tv' and no specific seasons are selected (i.e., "whole show"),
+        # fetch all available seasons.
+        if media_type == 'tv' and not selected_seasons and imdb_id:
+            logging.info(f"No specific seasons selected for TMDB ID {tmdb_id} (IMDB ID: {imdb_id}). Fetching all available seasons.")
+            try:
+                seasons_data, _ = DirectAPI.get_show_seasons(imdb_id)
+                if seasons_data:
+                    # Extract season numbers, filtering out season 0 (specials)
+                    all_season_numbers = [int(season_num) for season_num in seasons_data.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                    if all_season_numbers:
+                        selected_seasons = all_season_numbers
+                        logging.info(f"Fetched all available seasons for IMDB ID {imdb_id}: {selected_seasons}")
+                    else:
+                        logging.warning(f"No valid seasons found for IMDB ID {imdb_id} after fetching all seasons.")
+                else:
+                    logging.warning(f"Could not retrieve seasons data for IMDB ID {imdb_id} when fetching all seasons.")
+            except Exception as e:
+                logging.error(f"Error fetching all seasons for IMDB ID {imdb_id}: {str(e)}")
+                # Proceed without pre-populating seasons, behavior will be as before for this case.
+
         # Create wanted item in the format expected by process_metadata
         wanted_item = {
             'imdb_id': imdb_id,
             'tmdb_id': tmdb_id,
-            'media_type': media_type
+            'media_type': media_type,
+            'title': data.get('title'),  # Title from frontend
+            'year': data.get('year'),  # Year from frontend
+            'release_date': data.get('releaseDate'),  # Release date from frontend
+            'overview': data.get('overview'),  # Overview/description if available
+            'vote_average': data.get('voteAverage'),  # Rating if available
+            'backdrop_path': data.get('backdropPath')  # Backdrop image path if available
         }
+        
+        # Handle genres formatting
+        genres = data.get('genres', [])
+        if isinstance(genres, str):
+            # If genres come as comma-separated string, convert to list
+            genres = [g.strip() for g in genres.split(',')]
+        elif not isinstance(genres, list):
+            genres = []
+        wanted_item['genres'] = genres
         
         # If specific seasons were selected for a TV show, add them to the wanted item
         if media_type == 'tv' and selected_seasons:
             wanted_item['requested_seasons'] = selected_seasons
             
+        # Add the versions to the wanted_item
+        wanted_item['versions'] = versions
+            
         # Process metadata
         processed_items = process_metadata([wanted_item])
         if not processed_items:
-            return jsonify({'error': 'Failed to process metadata'}), 400
+            # Handle cases where process_metadata returns None or an empty dict
+            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Content might already exist or is invalid.")
+            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
         # Combine movies and episodes from processed items
         all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
         if not all_items:
-            return jsonify({'error': 'No valid items after processing'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Content might already exist.")
+            # Return a more specific message indicating the item might already exist or was filtered
+            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
         # Add content source to all items
         for item in all_items:

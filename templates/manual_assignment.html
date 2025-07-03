@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+
+{% block title %}Manual Magnet Assignment{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/manual_assignment.css') }}">
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script type="module">
+const notificationsUrl = "{{ url_for('static', filename='js/notifications.js') }}";
+let showPopup, POPUP_TYPES;
+
+// Dynamic import of notifications module
+import(notificationsUrl).then(module => {
+    showPopup = module.showPopup;
+    POPUP_TYPES = module.POPUP_TYPES;
+}).catch(error => console.error('Error loading notifications module:', error));
+
+document.addEventListener('DOMContentLoaded', function() {
+    const assignmentForm = document.getElementById('manual-assignment-form');
+    const submitButton = document.getElementById('confirm-assignment-btn');
+
+    assignmentForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        submitButton.disabled = true;
+        Loading.show();
+
+        try {
+            const formData = new FormData(assignmentForm);
+            const response = await fetch(assignmentForm.action, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'Accept': 'application/json'
+                }
+            });
+
+            const data = await response.json();
+            Loading.hide();
+
+            if (response.ok && data.success) {
+                if (showPopup) {
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Assignment Successful',
+                        message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
+                        autoClose: 4000,
+                        onConfirm: () => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }
+                    });
+                    setTimeout(() => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }, 4000);
+                } else {
+                    alert(data.message || 'Assignment Successful!');
+                    window.location.href = "{{ url_for('magnet.assign_magnet') }}";
+                }
+            } else {
+                if (showPopup) {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Assignment Failed',
+                        message: data.error || 'An error occurred during assignment.',
+                        autoClose: 5000
+                    });
+                } else {
+                    alert("Error: " + (data.error || 'Assignment failed.'));
+                }
+                submitButton.disabled = false; // Re-enable button on failure
+            }
+        } catch (error) {
+            Loading.hide();
+            console.error('Error submitting assignment:', error);
+            if (showPopup) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Submission Error',
+                    message: 'A network or unexpected error occurred.',
+                    autoClose: 5000
+                });
+            } else {
+                alert('An unexpected network error occurred.');
+            }
+            submitButton.disabled = false; // Re-enable button on error
+        }
+    });
+});
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="manual-assignment-container">
+    <h3>Manual File Assignment</h3>
+    <p>Torrent: <strong>{{ torrent_filename }}</strong> (Version: {{ version }})</p>
+    <p>Please map the video files from the torrent to the corresponding media items below.</p>
+
+    <form id="manual-assignment-form" method="POST" action="{{ url_for('magnet.confirm_manual_assignment') }}">
+        <input type="hidden" name="magnet_link" value="{{ magnet_link }}">
+        <input type="hidden" name="torrent_filename" value="{{ torrent_filename }}">
+        <input type="hidden" name="torrent_id" value="{{ torrent_id }}">
+        <input type="hidden" name="version" value="{{ version }}">
+
+        <div class="assignment-grid">
+            <div class="assignment-header">Media Item</div>
+            <div class="assignment-header">Torrent File</div>
+            
+            {% for item in target_items %}
+            <div class="media-item-info">
+                <strong>{{ item.title }}</strong> ({{ item.year }})
+                {% if item.type == 'episode' %}
+                    <br><em>S{{ "%02d"|format(item.season_number) }}E{{ "%02d"|format(item.episode_number) }} - {{ item.episode_title }}</em>
+                {% endif %}
+            </div>
+            <div class="file-selector">
+                <select name="{{ item.item_key }}" class="form-control">
+                    <option value="">-- Select a file --</option>
+                    <option value="--ignore--">-- Ignore this item --</option>
+                    {% for file in video_files %}
+                        {# Use filename (basename) for the option value, display full path for context #}
+                        {# Pre-select based on suggested_file_path (which is now also a basename) matching file.filename #}
+                        <option value="{{ file.filename }}" {% if item.suggested_file_path == file.filename %}selected{% endif %}>
+                            {{ file.filename }} ({{ (file.bytes / (1024*1024*1024))|round(2) }} GB)
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% else %}
+            <div class="no-items" colspan="2">
+                <p>No target media items were generated. Please go back and check your selection.</p>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="form-actions">
+            <a href="{{ url_for('magnet.assign_magnet') }}" class="btn btn-secondary">Cancel</a>
+            <button type="submit" id="confirm-assignment-btn" class="btn btn-primary">Confirm Assignment</button>
+        </div>
+    </form>
+</div>
+{% endblock %} 

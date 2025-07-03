@@ -1,0 +1,657 @@
+{% extends "base.html" %}
+
+{% block title %}Library Shows Overview {% if current_letter %} - {{ current_letter }}{% endif %}{% endblock %}
+
+{% block styles %}
+{{ super() }}
+{# Ensure library_management.css is linked, typically in base.html or here if not already there #}
+
+{# Inline styles for spinner - these could also be moved to library_management.css #}
+<style>
+    .show-details-placeholder {
+        min-height: 50px; 
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+    }
+    .loading-spinner {
+        border: 4px solid #444; 
+        border-top: 4px solid #FFA500; 
+        border-radius: 50%;
+        width: 24px;
+        height: 24px;
+        animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    .pagination {
+        margin-bottom: 20px;
+    }
+    .pagination a {
+        margin: 0 5px;
+        padding: 5px 10px;
+        border: 1px solid #ccc;
+        text-decoration: none;
+        color: #333;
+    }
+    .pagination a.active {
+        background-color: #007bff;
+        color: white;
+        border-color: #007bff;
+    }
+    /* .show-item-container is now .library-show-item in the new structure */
+    .library-show-item {
+        border: 1px solid #eee;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        background-color: #f9f9f9;
+        transition: background-color 0.3s ease, border-color 0.3s ease; /* For smooth transitions */
+    }
+    .show-title { /* This class is used inside .show-header */
+        font-size: 1.2em;
+        font-weight: bold;
+        /* cursor: pointer; /* Click is on show-header now */
+    }
+    
+    /* Styles for the new details content area */
+    .show-details-content {
+        margin-top: 5px;
+        padding-left: 15px;
+        display: none; /* Initially hidden, toggled by JS */
+        border-left: 2px solid #ddd;
+    }
+    .show-details-content.visible {
+        display: block;
+    }
+
+    .version-detail-item { /* This class will be applied by new JS rendering */
+        padding: 3px 0;
+    }
+    .loading-details { /* Used by old fetch, can be removed if that function is removed */
+        color: #777;
+        font-style: italic;
+    }
+    .error-details { /* Used by old fetch, can be removed if that function is removed */
+        color: red;
+        font-style: italic;
+    }
+    .version-selectors {
+        margin-bottom: 20px;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 5px;
+    }
+    .version-selectors label {
+        margin-right: 15px;
+        cursor: pointer;
+    }
+    /* Styling for fully collected in all selected versions */
+    .library-show-item.fully-collected-all-selected { /* Target .library-show-item */
+        background-color: #e6ffed; /* Light green background */
+        border-color: #5cb85c; /* Green border */
+    }
+    /* Styling for targeted collection complete (alternative styling if not fully green) */
+    .library-show-item.targeted-collection-complete { /* Target .library-show-item */
+        background-color: #e7f3fe; /* Light blue background */
+        border-color: #337ab7; /* Blue border */
+    }
+
+    /* Using a more specific selector to override framework styles */
+    .library-show-item .btn-scrape-show {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 500;
+        text-align: center;
+        white-space: nowrap;
+        vertical-align: middle;
+        user-select: none;
+        border: 1px solid transparent;
+        text-decoration: none;
+        transition: color 0.15s ease-in-out, background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+        color: #1a1a1a;
+        background-color: #FFA500;
+        border-color: #FFA500;
+        padding: 0.25rem 0.6rem;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        border-radius: 0.2rem;
+    }
+
+    .library-show-item .btn-scrape-show:hover {
+        color: #1a1a1a;
+        background-color: #d98e00;
+        border-color: #cc8400;
+        text-decoration: none;
+    }
+
+    .library-show-item .btn-scrape-show i {
+        margin-right: 0.4rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="row mb-3">
+        <div class="col">
+            <h2>Library Shows Overview {% if current_letter %}<span class="badge badge-secondary" style="background-color: #FFA500; color: #1a1a1a; padding: .4em .6em; font-size: 0.9em; border-radius: 10px; margin-left: 10px;">{{ current_letter }}</span>{% endif %}</h2>
+            <p style="font-style: italic; color: #808080; margin-bottom: 5px;">This page lists distinct shows found in your library. Click on a show to view collection details.</p>
+        </div>
+    </div>
+
+    <div class="alphabet-pagination">
+        {# "All" link #}
+        {% if current_letter %}
+            <a href="{{ url_for('library_management.library_shows_overview_page') }}">All</a>
+        {% else %}
+            <span class="active-letter">All</span>
+        {% endif %}
+
+        {# Alphabet links #}
+        {% for letter_item in alphabet %}
+            {% if current_letter == letter_item %}
+                <span class="active-letter">{{ letter_item }}</span>
+            {% else %}
+                <a href="{{ url_for('library_management.library_shows_overview_page', letter=letter_item) }}">{{ letter_item }}</a>
+            {% endif %}
+        {% endfor %}
+    </div>
+
+    {% if error_message %}
+        <div class="alert alert-danger" role="alert">
+            {{ error_message }}
+        </div>
+    {% endif %}
+
+    <div class="version-selectors">
+        <strong>Filter by Version:</strong>
+        {% for version_name in version_names %}
+            <label>
+                <input type="checkbox" class="version-checkbox" value="{{ version_name }}" checked> {{ version_name }}
+            </label>
+        {% endfor %}
+    </div>
+
+    <div class="collection-status-selectors">
+        <strong>Filter by Collection Status:</strong>
+        <label>
+            <input type="radio" name="collectionStatus" class="collection-status-radio" value="all" checked> All
+        </label>
+        <label>
+            <input type="radio" name="collectionStatus" class="collection-status-radio" value="collected"> Collected
+        </label>
+        <label>
+            <input type="radio" name="collectionStatus" class="collection-status-radio" value="uncollected"> Uncollected
+        </label>
+    </div>
+
+    {% if initial_shows_data %}
+        <div class="list-group" id="shows-list-container">
+            {% for show in initial_shows_data %}
+            <div class="list-group-item library-show-item" data-imdb-id="{{ show.imdb_id }}" id="show-{{ show.imdb_id }}"> {# Added id here for filterAndStyleShow to target parent #}
+                <div class="show-header">
+                    <h5 class="mb-1 show-title">{{ show.title }}</h5>
+                    <div style="display: flex; align-items: center;">
+                        <small class="imdb-link mr-2">IMDb: <a href="https://www.imdb.com/title/{{ show.imdb_id }}" target="_blank" onclick="event.stopPropagation()">{{ show.imdb_id }}</a></small>
+                        <span class="toggle-icon fas fa-chevron-right"></span>
+                    </div>
+                </div>
+                <div class="show-details-placeholder" id="placeholder-{{ show.imdb_id }}"> {# Changed ID to avoid conflict #}
+                    <div class="loading-spinner"></div>
+                </div>
+                <div class="show-details-content" id="content-{{show.imdb_id}}">
+                    <!-- Actual content will be moved here by JS -->
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% elif not error_message %}
+        <div class="alert alert-info" role="alert">
+            {% if current_letter %}
+                No shows found starting with{% if current_letter == '#' %} a symbol or number{% else %} '{{ current_letter }}'{% endif %}.
+            {% else %}
+                No shows found in the library database.
+            {% endif %}
+        </div>
+    {% endif %}
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+let selectedVersions = []; // Keep this global
+let selectedCollectionStatus = 'all'; // Keep this global, default to 'all'
+let observer; 
+
+document.addEventListener('DOMContentLoaded', function () {
+    console.log('DOM fully loaded and parsed');
+    const showsListContainer = document.getElementById('shows-list-container');
+    if (!showsListContainer) {
+        console.error('showsListContainer not found!');
+        return;
+    }
+
+    loadVersionSelection(); 
+    loadCollectionStatusSelection(); 
+
+    const showItems = showsListContainer.querySelectorAll('.library-show-item');
+    console.log(`Found ${showItems.length} show items.`);
+
+    if (showItems.length > 0) {
+        const observerOptions = {
+            root: null,
+            rootMargin: '300px 0px 300px 0px',
+            threshold: 0.01 
+        };
+
+        observer = new IntersectionObserver((entries, obs) => {
+            // console.log('IntersectionObserver callback triggered. Entries:', entries.length);
+            entries.forEach(entry => {
+                const imdbId = entry.target.dataset.imdbId || 'UNKNOWN_IMDB_ID';
+                // console.log(`Observer entry for ${imdbId}: isIntersecting=${entry.isIntersecting}, intersectionRatio=${entry.intersectionRatio.toFixed(2)}`);
+                if (entry.isIntersecting) {
+                    // console.log(`Observer: ${imdbId} is intersecting. Attempting fetchShowDetails.`);
+                    fetchShowDetails(entry.target); 
+                }
+            });
+        }, observerOptions);
+
+        showItems.forEach(item => {
+            observer.observe(item);
+            // Add a class to indicate it's pending its first filter check if details are not pre-loaded
+            const placeholder = item.querySelector('.show-details-placeholder');
+            if (!placeholder || !placeholder.dataset.loaded) {
+                // item.classList.add('pending-initial-filter'); // Optional: for styling
+            }
+
+            const header = item.querySelector('.show-header');
+            const detailsContentDiv = item.querySelector('.show-details-content'); 
+
+            if (header && detailsContentDiv) {
+                header.addEventListener('click', () => {
+                    const imdbId = item.dataset.imdbId;
+                    // console.log(`Header clicked for ${imdbId}`);
+                    const placeholder = item.querySelector('.show-details-placeholder');
+                    const detailsLoaded = placeholder && placeholder.dataset.loaded === 'true';
+
+                    if (detailsLoaded) { 
+                        const isVisible = detailsContentDiv.classList.toggle('visible');
+                        header.classList.toggle('expanded', isVisible);
+                        filterAndStyleShow(imdbId); 
+                    } else if (!placeholder.dataset.loading) {
+                        // console.log(`Header click: ${imdbId} not loaded, attempting fetchShowDetails.`);
+                        fetchShowDetails(item); 
+                        header.classList.toggle('expanded', true); 
+                    }
+                });
+            }
+        });
+        console.log('IntersectionObserver initialized and all items observed.');
+    }
+
+    const checkboxes = document.querySelectorAll('.version-checkbox');
+    checkboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', handleVersionSelectionChange);
+    });
+
+    const radioButtons = document.querySelectorAll('.collection-status-radio');
+    radioButtons.forEach(radio => {
+        radio.addEventListener('change', handleCollectionStatusChange);
+    });
+    
+    console.log('Applying initial filterAndStyleShow to all items...');
+    showItems.forEach(item => {
+        filterAndStyleShow(item.dataset.imdbId);
+    });
+    console.log('Calling initial triggerLoadForVisibleUnloadedItems...');
+    triggerLoadForVisibleUnloadedItems();
+    console.log('Initial setup complete.');
+});
+
+function fetchShowDetails(showItem) {
+    const imdbId = showItem.dataset.imdbId;
+    // REMOVED: if (window.getComputedStyle(showItem).display === 'none') return; 
+    // We fetch regardless of current display set by a PREVIOUS filterAndStyleShow run.
+    // The filterAndStyleShow AFTER fetch will determine final visibility.
+
+    const detailsPlaceholder = showItem.querySelector('.show-details-placeholder');
+    const detailsContentDiv = showItem.querySelector('.show-details-content');
+
+    if (!detailsPlaceholder || !detailsContentDiv) {
+        // console.error(`[fetchShowDetails for ${imdbId}] Placeholder or content div not found.`);
+        return;
+    }
+    if (detailsPlaceholder.dataset.loaded === 'true') {
+        // console.log(`[fetchShowDetails for ${imdbId}] Details already loaded.`);
+        return;
+    }
+    if (detailsPlaceholder.dataset.loading === 'true') {
+        // console.log(`[fetchShowDetails for ${imdbId}] Details already loading.`);
+        return;
+    }
+    
+    detailsPlaceholder.dataset.loading = 'true';
+    console.log(`[fetchShowDetails for ${imdbId}] Fetching...`);
+    // showItem.classList.remove('pending-initial-filter'); // Optional: remove pending class
+    const apiUrl = `{{ url_for('library_management.get_library_show_details', imdb_id='TEMP_IMDB_ID') }}`.replace('TEMP_IMDB_ID', imdbId);
+
+    fetch(apiUrl)
+        .then(response => {
+            // console.log(`[fetchShowDetails for ${imdbId}] Response received. OK=${response.ok}`);
+            return response.ok ? response.json() : Promise.reject(new Error(`HTTP error! status: ${response.status} for ${imdbId}`));
+        })
+        .then(data => {
+            // console.log(`[fetchShowDetails for ${imdbId}] Data processed. Error: ${data.error ? data.error : 'No'}`);
+            detailsPlaceholder.style.display = 'none'; 
+            let html = '';
+            if (data.error) {
+                html = `<p class="text-danger">Error loading details: ${data.details || data.error}</p>`;
+            } else {
+                if (data.total_show_episodes > 0) {
+                    html += `<p class="mb-1">Total Episodes (Overall): ${data.total_show_episodes}</p>`;
+                } else if (!data.error) { 
+                    html += `<p class="mb-1">Total Episodes (Overall): N/A</p>`;
+                }
+                if (data.versions_details && data.versions_details.length > 0) {
+                    html += `<h6>Collection Status per Version:</h6><ul class="list-unstyled">`;
+                    
+                    let isMissingAnything = false;
+
+                    data.versions_details.forEach(version_detail => {
+                        html += `<li class="version-detail-item" 
+                                     data-version-name="${version_detail.name}"
+                                     data-collected="${version_detail.collected_episodes}"
+                                     data-total="${version_detail.total_episodes_for_version}">
+                            <strong>${version_detail.name}:</strong> 
+                            ${version_detail.status_text} 
+                        </li>`;
+
+                        // Check if anything is missing to decide whether to show the button
+                        if (version_detail.next_missing) {
+                            isMissingAnything = true;
+                        }
+                    });
+                    html += `</ul>`;
+
+                    if (isMissingAnything) {
+                        const scrapeUrl = new URL("{{ url_for('scraper.index') }}", window.location.origin);
+                        scrapeUrl.searchParams.set('search_term', imdbId);
+
+                        const buttonStyle = `
+                            display: inline-flex; 
+                            align-items: center; 
+                            justify-content: center; 
+                            font-weight: 500; 
+                            text-align: center; 
+                            white-space: nowrap; 
+                            vertical-align: middle; 
+                            user-select: none; 
+                            border: 1px solid #FFA500; 
+                            text-decoration: none; 
+                            transition: background-color 0.15s ease-in-out;
+                            color: #1a1a1a; 
+                            background-color: #FFA500; 
+                            padding: 0.25rem 0.6rem; 
+                            font-size: 0.875rem; 
+                            line-height: 1.5; 
+                            border-radius: 0.2rem;
+                            cursor: pointer;
+                        `;
+                        
+                        const iconStyle = `margin-right: 0.4rem;`;
+
+                        html += `<div class="mt-2">
+                                    <a href="${scrapeUrl.toString()}" 
+                                       target="_blank" 
+                                       style="${buttonStyle}" 
+                                       onmouseover="this.style.backgroundColor='#d98e00'" 
+                                       onmouseout="this.style.backgroundColor='#FFA500'"
+                                       title="Open scraper page and search for this show">
+                                        <i class="fas fa-search" style="${iconStyle}"></i> Search for Show
+                                    </a>
+                                 </div>`;
+                    }
+
+                } else if (!data.error) { 
+                    html += `<p class="mb-1">No version-specific collection details available.</p>`;
+                }
+            }
+            detailsContentDiv.innerHTML = html;
+            detailsPlaceholder.dataset.loaded = 'true';
+            delete detailsPlaceholder.dataset.loading;
+            
+            // CRITICAL: Now filter and style based on the new data.
+            filterAndStyleShow(imdbId); 
+            
+            const header = showItem.querySelector('.show-header');
+            if (header.classList.contains('expanded')) {
+                detailsContentDiv.classList.add('visible');
+                filterAndStyleShow(imdbId); // Re-apply for version items if expanded
+            }
+        })
+        .catch(error => {
+            console.error(`[fetchShowDetails for ${imdbId}] Fetch error:`, error);
+            detailsPlaceholder.style.display = 'none';
+            detailsContentDiv.innerHTML = `<p class="text-danger">Failed to load details. ${error.message}</p>`;
+            detailsPlaceholder.dataset.loaded = 'true'; 
+            delete detailsPlaceholder.dataset.loading;
+            // Still call filterAndStyleShow to ensure it's correctly hidden or styled if it was pending
+            filterAndStyleShow(imdbId); 
+        });
+}
+
+// --- Version Selection Logic ---
+function loadVersionSelection() {
+    // console.log('Loading version selection from localStorage.');
+    const storedSelection = localStorage.getItem('libraryShowSelectedVersions');
+    const checkboxes = document.querySelectorAll('.version-checkbox');
+    let defaultSelection = [];
+    checkboxes.forEach(cb => defaultSelection.push(cb.value)); 
+
+    if (storedSelection) {
+        try {
+            const parsedSelection = JSON.parse(storedSelection);
+            if (Array.isArray(parsedSelection)) { 
+                selectedVersions = parsedSelection;
+            } else {
+                selectedVersions = defaultSelection; 
+            }
+        } catch (e) {
+            console.error("Error parsing stored version selection:", e);
+            selectedVersions = defaultSelection; 
+        }
+    } else {
+        selectedVersions = defaultSelection; 
+    }
+    // console.log('Selected versions:', selectedVersions);
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = selectedVersions.includes(checkbox.value);
+    });
+}
+
+function saveVersionSelection() {
+    // console.log('Saving version selection to localStorage:', selectedVersions);
+    localStorage.setItem('libraryShowSelectedVersions', JSON.stringify(selectedVersions));
+}
+
+function handleVersionSelectionChange() {
+    console.log('Version selection changed.');
+    selectedVersions = [];
+    document.querySelectorAll('.version-checkbox:checked').forEach(checkbox => {
+        selectedVersions.push(checkbox.value);
+    });
+    saveVersionSelection();
+
+    document.querySelectorAll('.library-show-item').forEach(showItem => {
+        filterAndStyleShow(showItem.dataset.imdbId); // Re-evaluate display based on new filters
+    });
+    triggerLoadForVisibleUnloadedItems(); // Check if any newly styled items need loading
+}
+
+// --- Collection Status Selection Logic ---
+function loadCollectionStatusSelection() {
+    // console.log('Loading collection status from localStorage.');
+    const storedStatus = localStorage.getItem('libraryShowCollectionStatus');
+    selectedCollectionStatus = storedStatus || 'all'; 
+    // console.log('Selected collection status:', selectedCollectionStatus);
+    document.querySelectorAll('.collection-status-radio').forEach(radio => {
+        if (radio.value === selectedCollectionStatus) {
+            radio.checked = true;
+        }
+    });
+}
+
+function saveCollectionStatusSelection() {
+    // console.log('Saving collection status to localStorage:', selectedCollectionStatus);
+    localStorage.setItem('libraryShowCollectionStatus', selectedCollectionStatus);
+}
+
+function handleCollectionStatusChange(event) {
+    console.log('Collection status changed to:', event.target.value);
+    selectedCollectionStatus = event.target.value;
+    saveCollectionStatusSelection();
+
+    document.querySelectorAll('.library-show-item').forEach(showItem => {
+        filterAndStyleShow(showItem.dataset.imdbId); // Re-evaluate display based on new filters
+    });
+    triggerLoadForVisibleUnloadedItems(); // Check if any newly styled items need loading
+}
+
+function triggerLoadForVisibleUnloadedItems() {
+    console.log('[triggerLoadForVisibleUnloadedItems] Checking for items to load proactively...');
+    let itemsToLoadCount = 0;
+    document.querySelectorAll('.library-show-item').forEach(item => {
+        const imdbId = item.dataset.imdbId;
+        // Check if the item is styled to be visible (this is after filterAndStyleShow has run)
+        if (window.getComputedStyle(item).display !== 'none') {
+            const placeholder = item.querySelector('.show-details-placeholder');
+            const detailsLoaded = placeholder && placeholder.dataset.loaded === 'true';
+            if (!detailsLoaded && !(placeholder && placeholder.dataset.loading)) {
+                const rect = item.getBoundingClientRect();
+                // Check if any part of the item is within the viewport (more generous)
+                const isInViewport = rect.top < window.innerHeight && rect.bottom > 0; 
+                if (isInViewport) { 
+                     console.log(`[triggerLoadForVisibleUnloadedItems] Proactively fetching for ${imdbId} as it's visible and in viewport.`);
+                     fetchShowDetails(item);
+                     itemsToLoadCount++;
+                } else {
+                    // console.log(`[triggerLoadForVisibleUnloadedItems] ${imdbId} is visible and unloaded but not currently in viewport.`);
+                }
+            }
+        } else {
+            // console.log(`[triggerLoadForVisibleUnloadedItems] Item ${imdbId} is display:none.`);
+        }
+    });
+    console.log(`[triggerLoadForVisibleUnloadedItems] Proactively attempted to load ${itemsToLoadCount} items.`);
+}
+
+function filterAndStyleShow(imdbId) {
+    const showContainer = document.getElementById(`show-${imdbId}`); 
+    if (!showContainer) {
+        // console.warn(`[filterAndStyleShow] Show container for ${imdbId} not found.`);
+        return;
+    }
+
+    const detailsContentDiv = document.getElementById(`content-${imdbId}`);
+    const placeholder = showContainer.querySelector('.show-details-placeholder');
+    const detailsLoaded = placeholder && placeholder.dataset.loaded === 'true';
+
+    // console.log(`[filterAndStyleShow for ${imdbId}] Details loaded: ${detailsLoaded}, Collection filter: ${selectedCollectionStatus}`);
+
+    let showItemBasedOnCollectionFilter = false;
+    let isConsideredFullyCollectedForStyling = false;
+    let hasAnySelectedVersionsWithDetails = false;
+
+    if (detailsLoaded) {
+        // Logic for when details ARE loaded (same as before)
+        if (detailsContentDiv) {
+            let selectedVersionItemsDisplayed = [];
+            detailsContentDiv.querySelectorAll('.version-detail-item').forEach(item => {
+                const versionName = item.dataset.versionName;
+                if (selectedVersions.includes(versionName)) {
+                    item.style.display = 'list-item'; 
+                    hasAnySelectedVersionsWithDetails = true;
+                    selectedVersionItemsDisplayed.push(item);
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        
+            if (hasAnySelectedVersionsWithDetails) {
+                let fullyCollectedRelevantCount = 0;
+                let zeroCollectedRelevantCount = 0;
+                let partiallyCollectedRelevantCount = 0;
+                let relevantDisplayedCount = 0;
+
+                selectedVersionItemsDisplayed.forEach(item => {
+                    const collected = parseInt(item.dataset.collected);
+                    const total = parseInt(item.dataset.total);
+                    if (!isNaN(collected) && !isNaN(total) && total > 0) { 
+                        relevantDisplayedCount++;
+                        if (collected >= total) {
+                            fullyCollectedRelevantCount++;
+                        } else if (collected === 0) {
+                            zeroCollectedRelevantCount++;
+                        } else {
+                            partiallyCollectedRelevantCount++;
+                        }
+                    }
+                });
+                
+                if (relevantDisplayedCount > 0 && 
+                    fullyCollectedRelevantCount > 0 && 
+                    partiallyCollectedRelevantCount === 0 &&
+                    (fullyCollectedRelevantCount + zeroCollectedRelevantCount === relevantDisplayedCount)) {
+                    isConsideredFullyCollectedForStyling = true;
+                }
+            }
+        }
+
+        if (selectedCollectionStatus === 'all') {
+            showItemBasedOnCollectionFilter = true;
+        } else if (selectedCollectionStatus === 'collected') {
+            showItemBasedOnCollectionFilter = isConsideredFullyCollectedForStyling && hasAnySelectedVersionsWithDetails;
+        } else if (selectedCollectionStatus === 'uncollected') {
+            showItemBasedOnCollectionFilter = !isConsideredFullyCollectedForStyling || !hasAnySelectedVersionsWithDetails;
+             if (!hasAnySelectedVersionsWithDetails && detailsLoaded) { 
+                showItemBasedOnCollectionFilter = true; // It's "uncollected" if no relevant version data to prove otherwise
+            }
+        }
+    } else {
+        // **NEW LOGIC for when details are NOT loaded**
+        // If filter is 'all', always show.
+        // If filter is 'collected' or 'uncollected', initially show it to allow observer to trigger fetch.
+        // The actual filtering (hiding) will happen *after* details are fetched and this function runs again.
+        showItemBasedOnCollectionFilter = true; 
+        // console.log(`[filterAndStyleShow for ${imdbId}] Details NOT loaded. Defaulting to showItemBasedOnCollectionFilter = true to allow observer.`);
+    }
+
+    const currentDisplay = window.getComputedStyle(showContainer).display;
+    const newDisplay = showItemBasedOnCollectionFilter ? '' : 'none';
+
+    // console.log(`[filterAndStyleShow for ${imdbId}] Filter: ${selectedCollectionStatus}. DetailsLoaded: ${detailsLoaded}. isCollectedForStyling: ${isConsideredFullyCollectedForStyling}. HasSelectedDetails: ${hasAnySelectedVersionsWithDetails}. ShowItemBasedOnFilter: ${showItemBasedOnCollectionFilter}. NewDisplay: ${newDisplay}`);
+
+    if (currentDisplay !== newDisplay) {
+        showContainer.style.display = newDisplay;
+        // console.log(`[filterAndStyleShow for ${imdbId}] Display style changed to: ${newDisplay}`);
+    }
+    
+    showContainer.classList.remove('fully-collected-all-selected', 'targeted-collection-complete', 'pending-initial-filter');
+    if (showItemBasedOnCollectionFilter && detailsLoaded) { 
+        if (isConsideredFullyCollectedForStyling) { 
+            showContainer.classList.add('fully-collected-all-selected');
+        }
+    }
+}
+
+</script>
+{% endblock %}
+

@@ -2,9 +2,25 @@ from flask import Flask
 from .database import init_db
 import os
 from .limiter import init_limiter
+import json
+
+def json_pretty_filter(value):
+    """Filter to pretty print JSON strings"""
+    try:
+        # If the value is already a string, try to parse it
+        if isinstance(value, str):
+            obj = json.loads(value)
+        else:
+            obj = value
+        return json.dumps(obj, indent=2, ensure_ascii=False)
+    except:
+        return value
 
 def create_app():
     app = Flask(__name__)
+    
+    # Add custom filters
+    app.jinja_env.filters['json_pretty'] = json_pretty_filter
     
     # Get db_content directory from environment variable with fallback
     db_directory = os.environ.get('USER_DB_CONTENT', '/user/db_content')

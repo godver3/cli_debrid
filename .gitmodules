@@ -1,0 +1,3 @@
+[submodule "phalanx_db_hyperswarm"]
+	path = phalanx_db_hyperswarm
+	url = https://github.com/godver3/phalanx_db_hyperswarm.git

@@ -100,7 +100,7 @@ def update_show_ids():
                                         if tmdb_id:
                                             logging.info(f"Attempting to get IMDb ID from TMDB (ID: {tmdb_id})")
                                             # TMDB API requires an API key - we should get this from config
-                                            from settings import get_setting
+                                            from utilities.settings import get_setting
                                             tmdb_api_key = get_setting('TMDB','api_key')
                                             if tmdb_api_key:
                                                 import requests
@@ -382,7 +382,7 @@ def update_movie_ids():
                                         if tmdb_id:
                                             logging.info(f"Attempting to get IMDb ID from TMDB (ID: {tmdb_id})")
                                             # TMDB API requires an API key - we should get this from config
-                                            from settings import get_setting
+                                            from utilities.settings import get_setting
                                             tmdb_api_key = get_setting('TMDB','api_key')
                                             if tmdb_api_key:
                                                 import requests
@@ -460,7 +460,8 @@ def update_movie_ids():
                 conn.commit()
                 logging.info(f"Updated movie '{movie_title}' with new IMDb ID: {api_imdb_id} (old ID {movie_imdb_id} added to aliases)")
             else:
-                logging.info(f"Movie comparison: {movie_title} - Database IMDB ID: {movie_imdb_id}, API IMDB ID: {api_imdb_id} - MATCH")
+                # logging.info(f"Movie comparison: {movie_title} - Database IMDB ID: {movie_imdb_id}, API IMDB ID: {api_imdb_id} - MATCH")
+                pass
 
     except Exception as e:
         logging.error(f"Error in update_movie_ids: {str(e)}")
@@ -548,7 +549,8 @@ def update_movie_titles():
                         conn.commit()
                         logging.info(f"Updated movie title from '{movie_title}' to '{new_title}' (old title added to aliases)")
                     else:
-                        logging.info(f"Movie title match - '{movie_title}'")
+                        # logging.info(f"Movie title match - '{movie_title}'")
+                        pass
                 else:
                     logging.warning(f"No metadata found in API for movie {movie_title} (imdb_id: {movie_imdb_id})")
 
@@ -572,7 +574,7 @@ def run_plex_library_maintenance():
     """
     logging.info("Starting Plex library maintenance tasks")
     try:
-        from settings import get_setting
+        from utilities.settings import get_setting
         from utilities.plex_removal_cache import cache_plex_removal
         from routes.debug_routes import move_item_to_wanted
         import os
@@ -760,7 +762,7 @@ def run_plex_library_maintenance():
                             # No other items with this version, move to rescrape
                             logging.info(f"  No other items with version {clean_version}, moving to rescrape")
                             try:
-                                move_item_to_wanted(missing['id'])
+                                move_item_to_wanted(missing['id'], None)
                                 logging.info(f"  Successfully moved item to Wanted state for rescraping")
                             except Exception as e:
                                 logging.error(f"  Error moving item to Wanted state: {str(e)}")
@@ -1073,7 +1075,7 @@ def handle_maintenance_actions(cursor, broken_links, orphaned_links):
                     logging.info(f"  No other items with version {clean_version}, moving to rescrape")
                     try:
                         from routes.debug_routes import move_item_to_wanted
-                        move_item_to_wanted(item_id)
+                        move_item_to_wanted(item_id, None)
                         logging.info(f"  Successfully moved item to Wanted state for rescraping")
                     except Exception as e:
                         logging.error(f"  Error moving item to Wanted state: {str(e)}")
@@ -1099,7 +1101,7 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
     """
     logging.info("Starting Symlinked/Local library maintenance tasks")
     try:
-        from settings import get_setting
+        from utilities.settings import get_setting
         import os
         import sqlite3
         
@@ -1107,12 +1109,37 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
         symlink_base_path = get_setting('File Management', 'symlinked_files_path')
         
         if not symlink_base_path:
-            logging.error("Symlink path not configured")
+            logging.error("Symlink path ('File Management.symlinked_files_path') not configured. Maintenance cannot proceed.")
             return
             
         if not os.path.exists(symlink_base_path):
-            logging.error(f"Symlink location does not exist: {symlink_base_path}")
+            logging.error(f"Symlink base path {symlink_base_path} does not exist. Maintenance cannot proceed.")
             return
+
+        try:
+            dir_contents = os.listdir(symlink_base_path)
+            if not dir_contents:
+                logging.error(f"Symlink base path {symlink_base_path} is empty. Maintenance will not proceed as this might indicate an issue.")
+                return
+            logging.info(f"Symlink base path {symlink_base_path} is accessible and contains {len(dir_contents)} item(s).")
+        except OSError as e:
+            logging.error(f"Error accessing symlink base path {symlink_base_path}: {str(e)}. Maintenance cannot proceed.")
+            return
+
+        # Get and check original files path
+        original_files_path = get_setting('File Management', 'original_files_path')
+        if not original_files_path:
+            logging.warning("Original files path ('File Management.original_files_path') not configured. Target accessibility checks might be affected.")
+        else:
+            if not os.path.exists(original_files_path):
+                logging.error(f"Original files path {original_files_path} does not exist. Maintenance cannot proceed as target files cannot be verified.")
+                return
+            try:
+                os.listdir(original_files_path) # Check accessibility
+                logging.info(f"Original files path {original_files_path} is accessible.")
+            except OSError as e:
+                logging.error(f"Error accessing original files path {original_files_path}: {str(e)}. Maintenance cannot proceed as target files cannot be verified.")
+                return
             
         # Connect to database
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -1205,11 +1232,7 @@ def run_library_maintenance():
     logging.info("Starting library maintenance task")
     
     try:
-        from settings import get_setting
-        from utilities.plex_removal_cache import process_removal_cache
-
-        # Remove previous Plex removals
-        process_removal_cache()
+        from utilities.settings import get_setting
 
         # Get collection management type
         collection_type = get_setting('File Management', 'file_collection_management')

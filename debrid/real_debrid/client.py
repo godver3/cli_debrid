@@ -8,6 +8,9 @@ from urllib.parse import unquote
 import hashlib
 import bencodepy
 import inspect
+import asyncio
+import math
+import json
 
 from ..base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError, TorrentAdditionError
 from ..common import (
@@ -19,8 +22,34 @@ from ..common import (
     is_unwanted_file
 )
 from ..status import TorrentStatus
-from .api import make_request
-from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from .api import make_request, get_all_torrents, get_all_downloads
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
+from utilities.settings import get_setting
+
+# Import the new types and function from the .torrent module
+from .torrent import (
+    TorrentInfoStatus,
+    get_torrent_info_status as rd_get_torrent_info_status
+)
+
+# Define the path for the size cache file
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+SIZE_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'library_size_cache.json')
+
+# Helper function to write the cache
+def _write_size_cache(size_str: str):
+    try:
+        data = {
+            'size_str': size_str,
+            'timestamp': datetime.utcnow().isoformat() # Store timestamp
+        }
+        os.makedirs(os.path.dirname(SIZE_CACHE_FILE), exist_ok=True) # Ensure dir exists
+        with open(SIZE_CACHE_FILE, 'w') as f:
+            json.dump(data, f, indent=2) # Use indent for readability
+        logging.debug(f"Successfully wrote library size '{size_str}' to cache file: {SIZE_CACHE_FILE}")
+    except Exception as e:
+        logging.error(f"Failed to write library size cache to {SIZE_CACHE_FILE}: {e}")
 
 class RealDebridProvider(DebridProvider):
     """Real-Debrid implementation of the DebridProvider interface"""
@@ -33,6 +62,13 @@ class RealDebridProvider(DebridProvider):
         self._cached_torrent_ids = {}  # Store torrent IDs for cached content
         self._cached_torrent_titles = {}  # Store torrent titles for cached content
         self._all_torrent_ids = {}  # Store all torrent IDs for tracking
+        # Only initialize phalanx cache if enabled
+        self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
+        self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
+        
+        # Store the loaded API key in a "private" attribute
+        # This avoids issues if 'api_key' is a property without a setter.
+        self._internal_api_key = self._load_api_key()
         
     def _load_api_key(self) -> str:
         """Load API key from settings"""
@@ -40,13 +76,23 @@ class RealDebridProvider(DebridProvider):
             from .api import get_api_key
             return get_api_key()
         except Exception as e:
+            logging.error(f"Failed to load API key: {str(e)}", exc_info=True)
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
 
-    def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True) -> Union[bool, Dict[str, bool], None]:
+    @property
+    def api_key(self) -> str:
+        """Provides access to the loaded API key."""
+        if not hasattr(self, '_internal_api_key') or not self._internal_api_key:
+            # This case should ideally be handled by _load_api_key raising an error
+            # or by __init__ failing if the key isn't loaded.
+            logging.error("API key accessed before it was loaded or is missing.")
+            raise ProviderUnavailableError("API key is not available.")
+        return self._internal_api_key
+
+    async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
         """
         Check if one or more magnet links or torrent files are cached on Real-Debrid.
-        If a single input is provided, returns a boolean or None (for error).
-        If a list of inputs is provided, returns a dict mapping hashes to booleans or None (for error).
+        First checks PhalanxDB for cached results, falls back to Real-Debrid API if needed.
         
         Args:
             magnet_links: Either a magnet link or list of magnet links
@@ -54,6 +100,9 @@ class RealDebridProvider(DebridProvider):
             result_title: Optional title of the result being checked (for logging)
             result_index: Optional index of the result in the list (for logging)
             remove_uncached: Whether to remove uncached torrents after checking (default: True)
+            remove_cached: Whether to remove cached torrents after checking (default: False)
+            skip_phalanx_db: Whether to skip checking PhalanxDB (default: False)
+            imdb_id: Optional IMDb ID to check against the database to prevent removal.
             
         Returns:
             - True: Torrent is cached
@@ -69,8 +118,6 @@ class RealDebridProvider(DebridProvider):
         elif result_title:
             log_prefix = f"[{result_title}]"
         
-        logging.debug(f"{log_prefix} Starting cache check for {len([magnet_links] if isinstance(magnet_links, str) else magnet_links)} magnet(s)")
-        logging.debug(f"{log_prefix} Temp file path: {temp_file_path}")
         
         # If single magnet link, convert to list
         if isinstance(magnet_links, str):
@@ -99,11 +146,13 @@ class RealDebridProvider(DebridProvider):
                         magnet_link = None  # Clear magnet link if we have a valid temp file
                 except Exception as e:
                     logging.error(f"{log_prefix} Could not extract hash from torrent file: {str(e)}")
-            elif magnet_link and magnet_link.startswith('magnet:'):
-                hash_value = extract_hash_from_magnet(magnet_link)
-            elif magnet_link and len(magnet_link) == 40 and all(c in '0123456789abcdefABCDEF' for c in magnet_link):
-                hash_value = magnet_link
-                magnet_link = f"magnet:?xt=urn:btih:{magnet_link}"
+            # Only process magnet_link if we don't have a hash_value yet and magnet_link exists
+            elif not hash_value and magnet_link:
+                if magnet_link.startswith('magnet:'):
+                    hash_value = extract_hash_from_magnet(magnet_link)
+                elif len(magnet_link) == 40 and all(c in '0123456789abcdefABCDEF' for c in magnet_link):
+                    hash_value = magnet_link
+                    magnet_link = f"magnet:?xt=urn:btih:{magnet_link}"
             
             if not hash_value:
                 logging.error(f"{log_prefix} Could not extract hash from input: {magnet_link}")
@@ -116,32 +165,80 @@ class RealDebridProvider(DebridProvider):
                 
             logging.debug(f"{log_prefix} Extracted hash: {hash_value}")
             
+            # Check PhalanxDB cache first if enabled and not skipped
+            phalanx_cache_hit = False
+            try:
+                if not skip_phalanx_db and self.phalanx_enabled and self.phalanx_cache:
+                    phalanx_cache_result = self.phalanx_cache.get_cache_status(hash_value)
+                    if phalanx_cache_result is not None:
+                        if phalanx_cache_result['is_cached']:
+                            logging.info(f"{log_prefix} Found cached status in PhalanxDB: {phalanx_cache_result['is_cached']}")
+                            results[hash_value] = True
+                            phalanx_cache_hit = True
+                            continue
+                        else:
+                            logging.debug(f"{log_prefix} Found uncached status in PhalanxDB, verifying with Real-Debrid")
+            except Exception as e:
+                logging.error(f"{log_prefix} Error checking PhalanxDB cache: {str(e)}")
+                # Continue with normal cache check if PhalanxDB fails
+            
+            # If not cached in PhalanxDB or PhalanxDB failed, check Real-Debrid
             torrent_id = None
             try:
-                # Add the magnet/torrent to RD
-                logging.info(f"{log_prefix} PHASE: Addition - Adding to Real-Debrid for cache check")
-                torrent_id = self.add_torrent(magnet_link if magnet_link and magnet_link.startswith('magnet:') else None, temp_file_path)
+                # Add the magnet/torrent to RD with retry for 429 errors
+                max_retries = 3
+                retry_delay = 5  # Start with 5 seconds delay
+                for retry_attempt in range(max_retries):
+                    try:
+                        torrent_id = self.add_torrent(magnet_link if magnet_link and magnet_link.startswith('magnet:') else None, temp_file_path)
+                        break  # Success, exit retry loop
+                    except ProviderUnavailableError as e:
+                        if "429" in str(e) and retry_attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                            logging.warning(f"{log_prefix} Rate limit (429) hit when adding torrent. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                            time.sleep(wait_time)
+                        else:
+                            # Re-raise if it's not a 429 error or we've exhausted retries
+                            raise
                 
                 if not torrent_id:
                     # If add_torrent returns None, the torrent might already be added
                     # Try to get the hash and look up existing torrent
                     if hash_value:
-                        logging.info(f"{log_prefix} PHASE: Lookup - Checking for existing torrent")
                         # Search for existing torrent with this hash
                         torrents = make_request('GET', '/torrents', self.api_key) or []
                         for torrent in torrents:
                             if torrent.get('hash', '').lower() == hash_value.lower():
                                 torrent_id = torrent['id']
-                                logging.info(f"{log_prefix} Found existing torrent with ID {torrent_id}")
                                 break
                     
                     if not torrent_id:
                         results[hash_value] = False
+                        # Update PhalanxDB with uncached status if enabled
+                        if self.phalanx_enabled and self.phalanx_cache:
+                            try:
+                                self.phalanx_cache.update_cache_status(hash_value, False)
+                            except Exception as e:
+                                logging.error(f"{log_prefix} Failed to update PhalanxDB: {str(e)}")
                         continue
                     
-                # Get torrent info
-                logging.info(f"{log_prefix} PHASE: Info Fetch - Getting torrent info")
-                info = self.get_torrent_info(torrent_id)
+                # Get torrent info with retry for 429 errors
+                max_retries = 3
+                retry_delay = 5  # Start with 5 seconds delay
+                info = None
+                for retry_attempt in range(max_retries):
+                    try:
+                        info = self.get_torrent_info(torrent_id)
+                        break  # Success, exit retry loop
+                    except ProviderUnavailableError as e:
+                        if "429" in str(e) and retry_attempt < max_retries - 1:
+                            wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                            logging.warning(f"{log_prefix} Rate limit (429) hit when getting torrent info. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                            time.sleep(wait_time)
+                        else:
+                            # Not a 429 error or we've exhausted retries
+                            break
+                
                 if not info:
                     logging.error(f"{log_prefix} Failed to get torrent info for ID: {torrent_id}")
                     try:
@@ -155,7 +252,6 @@ class RealDebridProvider(DebridProvider):
                     
                 # Check if it's already cached
                 status = info.get('status', '')
-                logging.debug(f"{log_prefix} Torrent status: {status}")
                 
                 # Handle error statuses
                 if status in ['magnet_error', 'error', 'virus', 'dead']:
@@ -184,7 +280,31 @@ class RealDebridProvider(DebridProvider):
                     continue
                 
                 is_cached = status == 'downloaded'
-                logging.info(f"{log_prefix} Cache status: {'Cached' if is_cached else 'Not cached'}")
+                
+                # --- START EDIT: Check against DB using filenames before deciding on removal ---
+                is_in_db = False
+                if imdb_id:
+                    from database.database_reading import is_any_file_in_db_for_item
+                    torrent_filenames = [f.get('path', '') for f in info.get('files', [])]
+                    logging.info(f"Comparing {torrent_filenames} to DB for IMDb ID {imdb_id}")
+                    if is_any_file_in_db_for_item(imdb_id, torrent_filenames):
+                        is_in_db = True
+                        logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id}. Disabling removal.")
+
+                # Override removal flags if item is in DB
+                local_remove_uncached = remove_uncached
+                local_remove_cached = remove_cached
+                if is_in_db:
+                    local_remove_uncached = False
+                    local_remove_cached = False
+                # --- END EDIT ---
+
+                # Update PhalanxDB with new cache status if enabled
+                if self.phalanx_enabled and self.phalanx_cache:
+                    try:
+                        self.phalanx_cache.update_cache_status(hash_value, is_cached)
+                    except Exception as e:
+                        logging.error(f"{log_prefix} Failed to update PhalanxDB: {str(e)}")
                 
                 # Update status tracking
                 self.update_status(
@@ -199,8 +319,16 @@ class RealDebridProvider(DebridProvider):
                 if is_cached:
                     self._cached_torrent_ids[hash_value] = torrent_id
                     self._cached_torrent_titles[hash_value] = info.get('filename', '')
+                    
+                    # Remove cached torrents if requested
+                    if local_remove_cached:
+                        try:
+                            self.remove_torrent(torrent_id, "Torrent is cached - removed after cache check due to remove_cached=True")
+                        except Exception as e:
+                            logging.error(f"{log_prefix} Error removing cached torrent: {str(e)}")
+                            self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                 else:
-                    if remove_uncached:
+                    if local_remove_uncached:
                         try:
                             self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
                             from database.torrent_tracking import update_cache_check_removal
@@ -208,9 +336,6 @@ class RealDebridProvider(DebridProvider):
                         except Exception as e:
                             logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
                             self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
-                    else:
-                        # Keep the torrent for later use
-                        logging.info(f"{log_prefix} Keeping uncached torrent (ID: {torrent_id}) for later use")
                 
                 results[hash_value] = is_cached
                 
@@ -462,7 +587,7 @@ class RealDebridProvider(DebridProvider):
         """Get number of active downloads and download limit"""
         try:
             # Get active torrents count and limit
-            from settings import get_setting
+            from utilities.settings import get_setting
             if get_setting("Debrid Provider", "api_key") == "demo_key":
                 return 0, 0
 
@@ -491,7 +616,7 @@ class RealDebridProvider(DebridProvider):
     def get_user_traffic(self) -> Dict:
         """Get user traffic information"""
         try:
-            from settings import get_setting
+            from utilities.settings import get_setting
             if get_setting("Debrid Provider", "api_key") == "demo_key":
                 return {'downloaded': 0, 'limit': None}
 
@@ -533,6 +658,7 @@ class RealDebridProvider(DebridProvider):
     def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
         """Get information about a specific torrent"""
         try:
+            # Use the api_key property (or self._internal_api_key directly)
             info = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
             
             # Update status based on response
@@ -574,6 +700,16 @@ class RealDebridProvider(DebridProvider):
                 logging.error(f"Error getting torrent info: {str(e)}")
                 self.update_status(torrent_id, TorrentStatus.ERROR)
             return None
+
+    def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
+        """
+        Get detailed information about a torrent, including fetch status,
+        using the Real-Debrid provider.
+        """
+        # Import here if needed for type hint resolution at runtime and not just static analysis
+        from debrid.status import TorrentInfoStatus 
+        # Use the api_key property (or self._internal_api_key directly)
+        return rd_get_torrent_info_status(self.api_key, torrent_id)
 
     def verify_torrent_presence(self, hash_value: str = None) -> bool:
         """
@@ -624,16 +760,30 @@ class RealDebridProvider(DebridProvider):
             # Get torrent info before removal to get the hash
             hash_value = None
             try:
-                info = self.get_torrent_info(torrent_id)
+                # Use the api_key property
+                info = self.get_torrent_info(torrent_id) # This already uses self.api_key (property)
                 if info:
                     hash_value = info.get('hash', '').lower()
             except Exception as e:
                 logging.warning(f"Could not get torrent info before removal: {str(e)}")
 
-            logging.info(f"Attempting to remove torrent {torrent_id} from Real-Debrid")
-            make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
-            logging.info(f"Successfully removed torrent {torrent_id} from Real-Debrid")
-            
+            # Make the deletion request with retries for rate limiting
+            max_retries = 3
+            retry_delay = 5  # Start with 5 seconds delay
+            for retry_attempt in range(max_retries):
+                try:
+                    # Use the api_key property
+                    make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
+                    break  # Success, exit retry loop
+                except ProviderUnavailableError as e:
+                    if "429" in str(e) and retry_attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
+                        logging.warning(f"Rate limit (429) hit when removing torrent {torrent_id}. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
+                        time.sleep(wait_time)
+                    else:
+                        # Re-raise if it's not a 429 error or we've exhausted retries
+                        raise
+
             # Update status and tracking
             self.update_status(torrent_id, TorrentStatus.REMOVED)
             
@@ -665,6 +815,71 @@ class RealDebridProvider(DebridProvider):
                 logging.error(f"Remove torrent failed when called from {caller_info}")
             raise
 
+    def get_torrent_file_list(self, magnet_link: str) -> Optional[Tuple[List[Dict], str, str]]:
+        """
+        Adds a torrent via magnet link, retrieves its file list and basic info, 
+        and then removes it.
+
+        Args:
+            magnet_link: The magnet link of the torrent.
+
+        Returns:
+            A tuple containing: (list of file dictionaries, torrent filename, torrent ID), 
+            or None if an error occurs.
+        """
+        torrent_id = None
+        info = None
+        try:
+            logging.info(f"Adding torrent for file listing: {magnet_link[:60]}...")
+            torrent_id = self.add_torrent(magnet_link)
+            if not torrent_id:
+                logging.error("Failed to add torrent for file listing.")
+                return None
+
+            # Wait a moment for RD to process the torrent before getting info
+            # Increased wait time slightly for potentially larger torrents
+            time.sleep(3) 
+
+            logging.info(f"Getting info for torrent ID: {torrent_id}")
+            info = self.get_torrent_info(torrent_id)
+            if not info:
+                logging.error(f"Failed to get torrent info for ID: {torrent_id}")
+                # Attempt removal even if info fetch failed
+                return None 
+
+            files = info.get('files', [])
+            filename = info.get('filename', 'Unknown Filename') # Get filename
+            
+            # Ensure files is a list
+            if isinstance(files, dict):
+                files = list(files.values())
+            elif not isinstance(files, list):
+                files = []
+                
+            logging.info(f"Successfully retrieved {len(files)} files for torrent ID: {torrent_id} (Filename: {filename})")
+            # Return files, filename, and torrent_id BEFORE the finally block removes it
+            return files, filename, torrent_id
+
+        except TorrentAdditionError as e:
+            logging.error(f"Error adding torrent during file listing: {str(e)}")
+            return None
+        except Exception as e:
+            logging.error(f"An unexpected error occurred during torrent file listing: {str(e)}")
+            return None
+        finally:
+            # Ensure removal happens even if info retrieval failed but torrent_id was obtained
+            if torrent_id:
+                try:
+                    logging.info(f"Removing temporary torrent ID: {torrent_id} (after file listing)")
+                    # Use a specific removal reason
+                    reason = "Temporary add for file listing" 
+                    if not info: # Add context if info fetch failed
+                        reason += " (info fetch failed)"
+                    self.remove_torrent(torrent_id, reason)
+                except Exception as e:
+                    logging.error(f"Error removing temporary torrent {torrent_id} after file listing: {str(e)}")
+                    self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED) 
+
     def cleanup(self) -> None:
         """Clean up status tracking only"""
         try:
@@ -675,3 +890,117 @@ class RealDebridProvider(DebridProvider):
         finally:
             # Always clean up status tracking
             super().cleanup()
+
+    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
+        """Synchronous version of is_cached"""
+        try:
+            # Create a new event loop for this thread if one doesn't exist
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the async method in the event loop
+            return loop.run_until_complete(
+                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, remove_cached, skip_phalanx_db, imdb_id)
+            )
+        except Exception as e:
+            logging.error(f"Error in is_cached_sync: {str(e)}")
+            return None
+
+    # Add a helper method to verify removal state
+    def verify_removal_state(self) -> None:
+        """Verify removal state by listing all torrents in the account"""
+        try:
+            torrents = make_request('GET', '/torrents', self.api_key) or []
+            
+            for torrent in torrents[:5]:  # Log the first 5 torrents for debugging
+                torrent_id = torrent.get('id', 'unknown')
+                hash_value = torrent.get('hash', 'unknown')
+                status = torrent.get('status', 'unknown')
+                filename = torrent.get('filename', 'unknown')
+        except Exception as e:
+            logging.error(f"Error verifying removal state: {str(e)}")
+
+    # Keep cache decorator commented out as requested
+    # @timed_lru_cache(seconds=3600)
+    async def get_total_library_size(self) -> Optional[str]:
+        """
+        Calculates the total size of the user's library on Real-Debrid asynchronously
+        by fetching and summing all items in the /torrents list. Writes successful
+        result to a cache file.
+
+        Returns:
+            Optional[str]: Human-readable total size, or specific error strings.
+        """
+        total_size_bytes = 0
+        calculated_size_str = None # Variable to hold the successful result before returning
+        error_result = None # Variable to hold error string
+
+        try:
+            logging.info("Executing get_total_library_size (fetching /torrents - all)...")
+            torrents = await get_all_torrents(self.api_key)
+
+            if torrents is None:
+                logging.error("Failed to fetch torrents from Real-Debrid API for size calculation.")
+                error_result = "Error (API)"
+                # Don't return yet, let the finally block (outside try) handle logic
+
+            elif not torrents:
+                 logging.info("No torrents found in the account.")
+                 calculated_size_str = "0 B" # Successful calculation of 0
+
+            else:
+                # Calculation logic remains the same
+                processed_hashes = set()
+                item_count = 0
+                for item in torrents:
+                    item_hash = item.get('hash')
+                    if item_hash and item_hash in processed_hashes:
+                        continue
+
+                    item_size = item.get('bytes', 0)
+
+                    if isinstance(item_size, (int, float)) and item_size >= 0:
+                        total_size_bytes += item_size
+                        item_count += 1
+                        if item_hash:
+                            processed_hashes.add(item_hash)
+                    else:
+                         logging.warning(f"Invalid or missing 'bytes' field value '{item_size}' for torrent: {item.get('filename', item.get('id', 'N/A'))}")
+
+                logging.info(f"Processed {item_count} unique torrent items. Total calculated size: {total_size_bytes} bytes.")
+
+                # Convert bytes to human-readable format
+                if total_size_bytes == 0:
+                    calculated_size_str = "0 B"
+                else:
+                    size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+                    if total_size_bytes <= 0:
+                         calculated_size_str = "0 B"
+                    else:
+                        try:
+                            i = int(math.floor(math.log(total_size_bytes, 1024)))
+                            i = max(0, min(i, len(size_name) - 1))
+                            p = math.pow(1024, i)
+                            s = round(total_size_bytes / p, 2)
+                            calculated_size_str = f"{s} {size_name[i]}" # Store successful result
+                        except ValueError:
+                             logging.error(f"Math error converting bytes: {total_size_bytes}", exc_info=True)
+                             error_result = "Error (Math)"
+
+        except Exception as e:
+            logging.error(f"Error fetching/processing torrents for library size: {e}", exc_info=True)
+            error_result = "Error (Server)"
+            # Don't return yet
+
+        # --- Post-calculation Logic ---
+        if calculated_size_str is not None:
+             # Write successful result to cache
+             _write_size_cache(calculated_size_str)
+             return calculated_size_str # Return the fresh calculation
+        else:
+             # Return the specific error encountered
+             # The caller (API route) will handle reading from cache if needed
+             return error_result if error_result else "Error (Unknown)"

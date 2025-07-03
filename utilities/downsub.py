@@ -99,6 +99,9 @@ def download_subtitles(files):
     for f in files:
         try:
             video = scan_video(f)
+            if isinstance(video.title, list):
+                logging.warning(f"Detected list title for {f}: {video.title}. Joining into a string.")
+                video.title = ' '.join(video.title)
             videos.append((video, f))  # Keep the original file path (symlink)
         except ValueError as e:
             logging.error(f"⚠️ Could not parse file: {f} - {e}")
@@ -134,13 +137,17 @@ def main(specific_file=None):
         specific_file (str, optional): Path to a specific file to process. If provided and ONLY_CURRENT_FILE is True,
                                       only this file will be processed. Defaults to None.
     """
+    # Reload settings before processing
+    from .config.downsub_config import reload_settings
+    config = reload_settings()
+    
     # Skip everything if subtitles are not enabled
-    if not SUBTITLES_ENABLED:
+    if not config['SUBTITLES_ENABLED']:
         logging.info("Subtitle downloading is disabled in settings")
         return
 
     # If we're only processing the current file and a specific file is provided
-    if ONLY_CURRENT_FILE and specific_file:
+    if config['ONLY_CURRENT_FILE'] and specific_file:
         logging.info(f"Only processing specific file: {specific_file}")
         if os.path.isfile(specific_file) and specific_file.lower().endswith(VIDEO_EXTENSIONS):
             download_subtitles([specific_file])
@@ -155,7 +162,7 @@ def main(specific_file=None):
     files_to_process = []
     
     # Process each configured video folder
-    for folder_path in VIDEO_FOLDERS:
+    for folder_path in config['VIDEO_FOLDERS']:
         # Check if video folder exists
         if not os.path.isdir(folder_path):
             logging.error(f"❌ Invalid video folder path: {folder_path}")

@@ -1,5 +1,4 @@
 import logging
-from guessit import guessit
 from typing import List, Dict, Any, Tuple
 
 class AnimeMatcher:

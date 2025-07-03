@@ -1,8 +1,8 @@
-from api_tracker import api
+from routes.api_tracker import api
 import logging
 import re
 from typing import List, Dict, Any, Tuple
-from settings import get_setting
+from utilities.settings import get_setting
 
 KNIGHTCRAWLER_URL = get_setting('Knightcrawler', 'url')
 

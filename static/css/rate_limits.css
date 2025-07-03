@@ -159,7 +159,7 @@
 }
 
 /* Mobile responsiveness */
-@media (max-width: 768px) {
+@media (max-width: 1245px) {
     .rate-limits-section {
         display: none !important;
         pointer-events: none !important;

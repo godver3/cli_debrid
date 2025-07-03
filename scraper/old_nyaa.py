@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
 from typing import List, Dict, Any, Optional
-from api_tracker import api
+from routes.api_tracker import api
 from urllib.parse import quote, urlencode
 from bs4 import BeautifulSoup
 import re

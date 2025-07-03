@@ -24,8 +24,8 @@ from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
 from .video_routes import video_routes
-from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
-from extensions import app
+from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
+from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
@@ -35,6 +35,8 @@ from .performance_routes import performance_bp
 from .torrent_status_routes import torrent_status_bp
 from .settings_validation_routes import settings_validation_bp
 from .content_requestor_routes import content_requestor_bp
+from .connections_routes import connections_bp
+from .user_token_routes import user_token_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -152,7 +154,9 @@ def register_blueprints(app):
         (magnet_bp, '/magnet'),
         (performance_bp, '/performance'),
         (torrent_status_bp, '/torrent_status'),
-        (settings_validation_bp, '/settings_validation')
+        (settings_validation_bp, '/settings_validation'),
+        (connections_bp, '/connections'),
+        (user_token_bp, '/user_token')
     ]
     
     for blueprint, url_prefix in blueprints:

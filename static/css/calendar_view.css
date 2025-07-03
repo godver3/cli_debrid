@@ -1,0 +1,37 @@
+.calendar-event.status-premiered_uncollected {
+    border-left-color: #e74c3c; /* Example: A soft red for premiered but not collected */
+    opacity: 0.9;
+}
+.calendar-event.status-premiered_uncollected .event-title {
+    /* Optional: different color or style */
+}
+.event-status-badge.status-premiered_uncollected {
+    background-color: #e74c3c;
+    color: white;
+}
+
+
+.calendar-event.status-upcoming_uncollected {
+    /* Movies that are upcoming and not yet marked as collected/wanted in a special way */
+    /* Often similar to default 'upcoming' or 'uncollected' for TV */
+    border-left-color: #3498db; /* Default blue for movies */
+}
+.event-status-badge.status-upcoming_uncollected {
+    background-color: #5dade2; /* Lighter blue for badge */
+    color: white;
+}
+
+.calendar-event.status-upcoming_collected {
+    /* For upcoming movies that are somehow already marked collected */
+    border-left-color: #2ecc71; /* Green for collected */
+    opacity: 0.7;
+}
+.event-status-badge.status-upcoming_collected {
+    background-color: #2ecc71;
+}
+
+/* Ensure existing collected styles also apply if status is just 'collected' */
+.calendar-event.event-type-movie.status-collected .event-title {
+    text-decoration: line-through;
+    color: #888;
+}

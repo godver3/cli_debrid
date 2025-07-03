@@ -1,5 +1,6 @@
 import sys
 import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import appdirs
 import threading
 import time
@@ -11,6 +12,8 @@ import webbrowser
 import socket
 import sqlite3
 from datetime import datetime
+import json
+import tracemalloc
 
 # Import Windows-specific modules only on Windows
 if platform.system() == 'Windows':
@@ -22,17 +25,18 @@ import shutil
 import requests
 import re
 import subprocess
-from settings import set_setting
-from settings import get_setting
+from utilities.settings import set_setting
+from utilities.settings import get_setting
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 from content_checkers.plex_watchlist import validate_plex_tokens
-from notifications import (
+from routes.notifications import (
     setup_crash_handler, 
     register_shutdown_handler, 
     register_startup_handler,
     send_program_stop_notification
 )
+from database import schema_management
 
 if sys.platform.startswith('win'):
     app_name = "cli_debrid"  # Replace with your app's name
@@ -58,20 +62,20 @@ import logging
 import shutil
 import signal
 import time
-from api_tracker import api
-from settings import get_setting
+from routes.api_tracker import api
+from utilities.settings import get_setting
 import requests
 import re
-from settings import set_setting
+from utilities.settings import set_setting
 import subprocess
 import threading
 from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 
 # Global variables
-program_runner = None
 metadata_process = None
 metadata_lock = threading.Lock()
+global_program_runner_instance = None
 
 def get_babelfish_data_dir():
     return os.path.join(os.path.dirname(babelfish.__file__), 'data')
@@ -192,41 +196,6 @@ def update_web_ui_state(state):
     except api.exceptions.RequestException:
         logging.error("Failed to update web UI state")
 
-def check_metadata_service():
-    grpc_url = get_setting('Metadata Battery', 'url')
-    battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
-    
-    # Remove leading "http://" or "https://"
-    grpc_url = re.sub(r'^https?://', '', grpc_url)
-    
-    # Remove any trailing port numbers and slashes
-    grpc_url = re.sub(r':\d+/?$', '', grpc_url)
-    
-    # Append ":50051"
-    grpc_url += ':50051'
-    
-    try:
-        channel = grpc.insecure_channel(grpc_url)
-        stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
-        # Try to make a simple call to check connectivity
-        stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
-        logging.info(f"Successfully connected to metadata service at {grpc_url}")
-        return grpc_url
-    except grpc.RpcError:
-        logging.warning(f"Failed to connect to {grpc_url}, falling back to localhost")
-        fallback_urls = ['localhost:50051', 'cli_battery_app:50051']
-        for url in fallback_urls:
-            try:
-                channel = grpc.insecure_channel(url)
-                stub = metadata_service_pb2_grpc.MetadataServiceStub(channel)
-                stub.TMDbToIMDb(metadata_service_pb2.TMDbRequest(tmdb_id="1"), timeout=5)
-                logging.info(f"Successfully connected to metadata service at {url}")
-                return url
-            except grpc.RpcError:
-                logging.warning(f"Failed to connect to metadata service at {url}")
-        logging.error("Failed to connect to metadata service on all fallback options")
-        return None
-
 def package_app():
     try:
         # Determine the path to version.txt and other resources
@@ -333,6 +302,11 @@ def setup_tray_icon():
     def delayed_browser_launch():
         time.sleep(2)  # Wait for 2 seconds
         try:
+            # Check if auto browser launch is disabled in settings
+            if get_setting('UI Settings', 'disable_auto_browser', False):
+                logging.info("Automatic browser launch is disabled in settings")
+                return
+                
             port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
             if check_localhost_binding(port):
                 webbrowser.open(f'http://localhost:{port}')
@@ -367,6 +341,9 @@ def setup_tray_icon():
             if "cli_debrid" in window_text.lower() and window_text.lower().endswith(".exe"):
                 logging.info(f"Hiding window: {window_text}")
                 win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            elif "npm" in window_text.lower():
+                logging.info(f"Hiding window: {window_text}")
+                win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
         win32gui.EnumWindows(enum_windows_callback, None)
 
     def restore_from_tray(icon):
@@ -374,6 +351,9 @@ def setup_tray_icon():
         def enum_windows_callback(hwnd, _):
             window_text = win32gui.GetWindowText(hwnd)
             if "cli_debrid" in window_text.lower() and window_text.lower().endswith(".exe"):
+                win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+                win32gui.SetForegroundWindow(hwnd)
+            elif "npm" in window_text.lower():
                 win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
                 win32gui.SetForegroundWindow(hwnd)
         win32gui.EnumWindows(enum_windows_callback, None)
@@ -385,18 +365,38 @@ def setup_tray_icon():
         minimize_to_tray()
 
     def on_exit(icon, item):
+        print("Exit initiated. Generating memory usage report...")
+        
+        # Only collect a snapshot if tracemalloc is actively tracing
+        try:
+            import tracemalloc
+            if tracemalloc.is_tracing():
+                snapshot = tracemalloc.take_snapshot()
+                top_stats = snapshot.statistics('lineno')
+
+                print("\n[ Top 10 memory consuming locations ]")
+                for stat in top_stats[:10]:
+                    print(stat)
+            else:
+                print("tracemalloc is not tracing; skipping memory snapshot.")
+        except Exception as e:
+            print(f"Could not collect tracemalloc snapshot: {e}")
+
         logging.info("Exit option selected from system tray")
         icon.stop()
         # Stop all processes
-        global program_runner, metadata_process
+        # Access ProgramRunner singleton directly
+        from queues.run_program import ProgramRunner 
+        program_runner_instance = ProgramRunner() # Get singleton instance
         print("\nStopping the program...")
 
-        # Stop the main program runner
-        if 'program_runner' in globals() and program_runner:
-            program_runner.stop()
+        # Stop the main program runner using the instance
+        if program_runner_instance and program_runner_instance.is_running():
+            program_runner_instance.stop()
             print("Main program stopped.")
 
         # Terminate the metadata battery process
+        global metadata_process # Keep metadata_process global for now
         with metadata_lock:
             if metadata_process and metadata_process.poll() is None:
                 print("Stopping metadata battery...")
@@ -406,6 +406,31 @@ def setup_tray_icon():
                 except subprocess.TimeoutExpired:
                     metadata_process.kill()
                 print("Metadata battery stopped.")
+
+        # Terminate any running phalanx_db_hyperswarm processes
+        try:
+            # Find any node/npm processes running phalanx_db_hyperswarm
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    cmdline = proc.cmdline()
+                    # Check for both direct node processes and npm start processes
+                    is_target = (
+                        (any('node' in cmd.lower() for cmd in cmdline) and any('phalanx_db' in cmd.lower() for cmd in cmdline)) or
+                        (any('node' in cmd.lower() for cmd in cmdline) and any('--expose-gc' in cmd.lower() for cmd in cmdline))
+                    )
+                    if is_target:
+                        print(f"Stopping process: {proc.pid} - {' '.join(cmdline)}")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except psutil.TimeoutExpired:
+                            print(f"Force killing process: {proc.pid}")
+                            proc.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+            print("Phalanx DB service stopped.")
+        except Exception as e:
+            print(f"Error stopping phalanx_db service: {e}")
 
         # Find and terminate all related processes
         current_process = psutil.Process()
@@ -427,8 +452,15 @@ def setup_tray_icon():
         if is_frozen():
             exe_name = os.path.basename(sys.executable)
         else:
-            exe_name = "cli_debrid-" + get_version() + ".exe"
-        subprocess.run(['taskkill', '/F', '/IM', exe_name], shell=True)
+            # Construct the expected executable name if not frozen (adjust if needed)
+            version = get_version() 
+            exe_name = f"cli_debrid-{version}.exe" # Or adjust based on actual name
+            # Fallback if version reading fails or name is different
+            if exe_name == "cli_debrid-0.0.0.exe": 
+                exe_name = "cli_debrid.exe" # Common fallback
+        
+        # Use shell=True carefully on Windows for taskkill
+        subprocess.run(['taskkill', '/F', '/IM', exe_name], shell=True, check=False) 
 
     # Create the menu
     menu = (
@@ -467,7 +499,8 @@ def setup_tray_icon():
         image = Image.open(icon_path)
         import socket
         ip_address = socket.gethostbyname(socket.gethostname())
-        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:{os.environ.get('CLI_DEBRID_PORT', '5000')}\nBattery: localhost:{os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')}", menu)
+        battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
+        icon = pystray.Icon("CLI Debrid", image, f"CLI Debrid\nMain app: localhost:{os.environ.get('CLI_DEBRID_PORT', '5000')}\nBattery: {battery_host}:{os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001')}", menu)
         
         # Set up double-click handler
         icon.on_activate = restore_from_tray
@@ -493,12 +526,33 @@ def check_localhost_binding(port=5000):
 
 # Modify the stop_program function
 def stop_program(from_signal=False):
-    global program_runner, metadata_process
+    print("Exit initiated. Generating memory usage report...")
+    
+    # Only collect a snapshot if tracemalloc is actively tracing
+    try:
+        import tracemalloc
+        if tracemalloc.is_tracing():
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = snapshot.statistics('lineno')
+
+            print("\n[ Top 10 memory consuming locations ]")
+            for stat in top_stats[:10]:
+                print(stat)
+        else:
+            print("tracemalloc is not tracing; skipping memory snapshot.")
+    except Exception as e:
+        print(f"Could not collect tracemalloc snapshot: {e}")
+
+    # Access ProgramRunner singleton directly
+    from queues.run_program import ProgramRunner
+    program_runner_instance = ProgramRunner() # Get singleton instance
+    # Keep metadata_process global for now
+    global metadata_process 
     print("\nStopping the program...")
 
-    # Stop the main program runner
-    if 'program_runner' in globals() and program_runner:
-        program_runner.stop()
+    # Stop the main program runner using the instance
+    if program_runner_instance and program_runner_instance.is_running():
+        program_runner_instance.stop()
         print("Main program stopped.")
 
     # Terminate the metadata battery process
@@ -691,7 +745,7 @@ def open_log_file():
 def fix_notification_settings():
     """Check and fix notification settings during startup."""
     try:
-        from settings import load_config, save_config
+        from utilities.settings import load_config, save_config
         config = load_config()
         needs_update = False
 
@@ -791,41 +845,300 @@ def verify_database_health():
     logging.info("Database health check completed successfully")
     return True
 
+def migrate_upgrade_rationale():
+    """
+    Migrates rationale strings in torrent_additions table from
+    'Upgrading from version X to None' to 'Upgrading version X'.
+    """
+    conn = None
+    updated_count = 0
+    try:
+        from database.core import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Find entries with the specific rationale pattern
+        cursor.execute("""
+            SELECT id, rationale 
+            FROM torrent_additions 
+            WHERE rationale LIKE 'Upgrading from version % to None'
+        """)
+        
+        rows_to_update = []
+        for row_id, old_rationale in cursor.fetchall():
+            try:
+                # Extract the original version part
+                # Example: "Upgrading from version 1080p to None"
+                # prefix = "Upgrading from version " (23 chars)
+                # suffix = " to None" (8 chars)
+                version_part = old_rationale[23:-8] 
+                
+                # Construct the new rationale
+                new_rationale = f"Upgrading version {version_part}"
+                rows_to_update.append((new_rationale, row_id))
+            except Exception as e:
+                logging.warning(f"Could not process rationale migration for row ID {row_id}: {e}")
+
+        if rows_to_update:
+            logging.info(f"Found {len(rows_to_update)} torrent tracking entries to migrate rationale...")
+            cursor.executemany("""
+                UPDATE torrent_additions 
+                SET rationale = ? 
+                WHERE id = ?
+            """, rows_to_update)
+            conn.commit()
+            updated_count = cursor.rowcount
+            logging.info(f"Successfully migrated rationale for {updated_count} entries.")
+        else:
+            logging.info("No torrent tracking entries found needing rationale migration.")
+
+    except sqlite3.Error as e:
+        logging.error(f"Database error during rationale migration: {e}")
+        if conn:
+            conn.rollback()
+    except Exception as e:
+        logging.error(f"Unexpected error during rationale migration: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+def migrate_task_toggles():
+    """
+    Ensures task_toggles.json exists and contains the migration version marker.
+    If the file is missing or the marker is absent/incorrect, it resets the file.
+    """
+    MIGRATION_VERSION = "0.6.34"
+    VERSION_KEY = "_migration_version"
+    
+    try:
+        import os
+        import json
+        
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
+        
+        needs_reset = False
+        current_data = {}
+
+        if os.path.exists(toggles_file_path):
+            try:
+                with open(toggles_file_path, 'r') as f:
+                    current_data = json.load(f)
+                if not isinstance(current_data, dict) or current_data.get(VERSION_KEY) != MIGRATION_VERSION:
+                    logging.info(f"Task toggles file found but missing or incorrect version marker ({current_data.get(VERSION_KEY)} != {MIGRATION_VERSION}). Resetting.")
+                    needs_reset = True
+            except json.JSONDecodeError:
+                logging.warning(f"Task toggles file exists but is corrupted. Resetting.")
+                needs_reset = True
+            except Exception as e:
+                 logging.error(f"Error reading task toggles file: {e}. Resetting.")
+                 needs_reset = True
+        else:
+            logging.info(f"Task toggles file not found. Creating with version {MIGRATION_VERSION}.")
+            needs_reset = True
+
+        if needs_reset:
+            try:
+                with open(toggles_file_path, 'w') as f:
+                    json.dump({VERSION_KEY: MIGRATION_VERSION}, f, indent=4)
+                    # Log SUCCESS only *after* successful dump and *before* exiting 'with'
+                    logging.info(f"Successfully reset task_toggles.json with version {MIGRATION_VERSION}.")
+            except Exception as e:
+                # This log will catch errors during open() or json.dump()
+                logging.error(f"Failed to write reset task toggles file: {e}")
+        # else:
+        #     logging.debug(f"Task toggles file already at migration version {MIGRATION_VERSION}. No reset needed.")
+
+    except Exception as e:
+        logging.error(f"Unexpected error during task toggles migration check: {e}")
+
+def migrate_content_source_versions():
+    """
+    Verifies that all versions assigned to content sources are still active
+    in the main Scraping versions list. Removes any inactive versions.
+    """
+    try:
+        from queues.config_manager import load_config, save_config
+        config = load_config()
+        config_updated = False
+
+        # Get the set of currently active/defined version names
+        active_versions = set(config.get('Scraping', {}).get('versions', {}).keys())
+        
+        if not active_versions:
+            logging.debug("No active scraping versions found. Skipping content source version migration.")
+            return
+
+        if 'Content Sources' in config and isinstance(config.get('Content Sources'), dict):
+            content_sources = config['Content Sources']
+            
+            # Iterate over a copy of items as we might modify the dict
+            for source_id, source_config in list(content_sources.items()):
+                if isinstance(source_config, dict) and 'versions' in source_config:
+                    source_versions = source_config['versions']
+                    
+                    # Handle dictionary format {version_name: enabled_boolean}
+                    if isinstance(source_versions, dict):
+                        # Find versions in the content source that are no longer active
+                        inactive_keys = [key for key in source_versions if key not in active_versions]
+                        if inactive_keys:
+                            config_updated = True
+                            for key in inactive_keys:
+                                del source_versions[key]
+                                logging.info(f"Migration: Removed inactive version '{key}' from Content Source '{source_id}'.")
+                    
+                    # Handle list format [version_name, ...]
+                    elif isinstance(source_versions, list):
+                        original_count = len(source_versions)
+                        # Filter the list to keep only active versions
+                        active_source_versions = [v for v in source_versions if v in active_versions]
+                        if len(active_source_versions) < original_count:
+                            config_updated = True
+                            source_config['versions'] = active_source_versions
+                            removed_count = original_count - len(active_source_versions)
+                            logging.info(f"Migration: Removed {removed_count} inactive version(s) from Content Source '{source_id}'.")
+
+        if config_updated:
+            save_config(config)
+            logging.info("Successfully migrated Content Sources to remove inactive versions.")
+        else:
+            logging.info("Content source versions are all active. No migration needed.")
+
+    except Exception as e:
+        logging.error(f"Unexpected error during content source version migration: {e}", exc_info=True)
+
 def main():
-    global program_runner, metadata_process
-    metadata_process = None
+    # Remove global program_runner from here as well
+    global metadata_process 
+    metadata_process = None 
 
     logging.info("Starting the program...")
+
+    # --- START EDIT: Import flask_app and _execute_start_program here ---
+    from routes.extensions import app as flask_app 
+    from routes.program_operation_routes import _execute_start_program
+    import os
+    # --- END EDIT ---
 
     setup_directories()
     backup_config()
     backup_database()
     
+    # Delete not wanted files on startup
+    try:
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        not_wanted_files = ['not_wanted_magnets.pkl', 'not_wanted_urls.pkl']
+        for not_wanted_file in not_wanted_files:
+            file_path = os.path.join(db_content_dir, not_wanted_file)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logging.info(f"Deleted not wanted file on startup: {file_path}")
+    except Exception as e:
+        logging.warning(f"Could not delete not wanted files on startup: {str(e)}")
+    
+    # Purge content source cache files on startup
+    # try:
+    #     logging.info("Purging content source cache files on startup...")
+    #     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    #     deleted_count = 0
+    #     for filename in os.listdir(db_content_dir):
+    #         if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+    #             file_path = os.path.join(db_content_dir, filename)
+    #             try:
+    #                 os.remove(file_path)
+    #                 logging.debug(f"Deleted cache file: {file_path}")
+    #                 deleted_count += 1
+    #             except OSError as e:
+    #                 logging.warning(f"Could not delete cache file {file_path}: {e}")
+    #     logging.info(f"Deleted {deleted_count} content source cache files.")
+    # except Exception as e:
+    #     logging.error(f"Error purging content source cache files: {str(e)}")
+    
     # Verify database health before proceeding
     if not verify_database_health():
         logging.error("Database health check failed. Please check the logs and resolve any issues.")
-        return False
+        return
     
-    # Set up notification handlers
+    # Run specific data migrations first if they don't depend on full schema being present
+    # (Keep these if they are safe before full schema verify/migrate)
+    migrate_upgrade_rationale()
+    migrate_task_toggles()
+
+    # Ensure the main schema (including notifications table) is verified and migrated
+    try:
+        logging.info("Running database schema verification and migration...")
+        # This call implicitly runs migrate_schema() which creates the notifications table
+        schema_management.verify_database() 
+        logging.info("Database schema verification and migration completed.")
+    except Exception as e:
+        logging.critical(f"Database verification/migration failed: {e}", exc_info=True)
+        return # Stop if DB setup fails
+
+    # Run content source version migration after main schema is ready
+    migrate_content_source_versions()
+
+    # Initialize statistics tables/indexes AFTER main schema is verified
+    try:
+        from database.statistics import get_cached_download_stats # Moved import local
+        from database.statistics import update_statistics_summary # Moved import local
+        # create_statistics_indexes() # Already called within verify_database via migrate_schema potentially, or needs specific call
+        # schema_management.create_statistics_summary_table() # Already called within verify_database via migrate_schema potentially
+        logging.info("Initializing statistics summary...")
+        update_statistics_summary()
+        logging.info("Statistics summary initialized.")
+        # Initialize download stats cache
+        logging.info("Initializing download stats cache...")
+        get_cached_download_stats()
+        logging.info("Download stats cache initialized successfully")
+    except Exception as e:
+        logging.error(f"Error during statistics summary/cache initialization: {e}")
+
+    from utilities.settings import ensure_settings_file, get_setting, set_setting
+    # from database import verify_database # No longer needed here
+    from database.not_wanted_magnets import validate_not_wanted_entries
+    from queues.config_manager import load_config, save_config
+    
+    # Set Debug.max_upgrading_score to 0.0 if missing
+    debug_settings = get_setting('Debug')
+    if 'max_upgrading_score' not in debug_settings:
+        set_setting('Debug', 'max_upgrading_score', 0.0)
+        logging.info("Set missing Debug.max_upgrading_score to default value 0.0")
+
+    # Set up notification handlers NOW THAT DB IS READY
     setup_crash_handler()
     register_shutdown_handler()
-    register_startup_handler()
+    register_startup_handler() # This should now succeed
 
-    from settings import ensure_settings_file, get_setting, set_setting
-    from database import verify_database
-    from database.statistics import get_cached_download_stats
-    from not_wanted_magnets import validate_not_wanted_entries
-    from config_manager import load_config, save_config
+    # Add migration for media_type setting
+    config = load_config()
+
+    # --- MIGRATION: Set default monitor_mode for enabled Collected content sources ---
+    if 'Content Sources' in config:
+        updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            # Check if this is a Collected content source and is enabled
+            if (
+                (source_id == 'Collected' or source_id.startswith('Collected_'))
+                and isinstance(source_config, dict)
+                and source_config.get('enabled', False)
+            ):
+                if 'monitor_mode' not in source_config:
+                    source_config['monitor_mode'] = 'Monitor All Episodes'
+                    updated = True
+                    logging.info(f"Set default monitor_mode for {source_id} to 'Monitor All Episodes'")
+        if updated:
+            save_config(config)
+            logging.info("Saved config after setting default monitor_mode for Collected content sources.")
 
     # Batch set deprecated settings
     set_setting('Debug', 'skip_initial_plex_update', False)
     set_setting('Scraping', 'jackett_seeders_only', True)
     set_setting('Scraping', 'enable_upgrading_cleanup', True)
-    set_setting('Staleness Threshold', 'staleness_threshold', 7)
     set_setting('Sync Deletions', 'sync_deletions', True)
     set_setting('Debrid Provider', 'provider', 'RealDebrid')
-    set_setting('Debug', 'rescrape_missing_files', True)
+    set_setting('Debug', 'rescrape_missing_files', False)
     set_setting('Debug', 'anime_renaming_using_anidb', True)
+    set_setting('Debug', 'symlink_organize_by_type', True)
 
     # Add check for Hybrid uncached management setting
     if get_setting('Scraping', 'uncached_content_handling') == 'Hybrid':
@@ -863,8 +1176,36 @@ def main():
             save_config(config)
         logging.info("Migrating enable_separate_anime_folders to True and removing old key")
 
-    # Add migration for media_type setting
+    # Migrate Emby settings to Emby/Jellyfin settings
     config = load_config()
+    if 'Debug' in config:
+        emby_settings_updated = False
+        
+        # Check for old 'emby_url' setting and migrate to 'emby_jellyfin_url'
+        if 'emby_url' in config['Debug']:
+            emby_url = config['Debug']['emby_url']
+            if 'emby_jellyfin_url' not in config['Debug'] or not config['Debug']['emby_jellyfin_url']:
+                config['Debug']['emby_jellyfin_url'] = emby_url
+                emby_settings_updated = True
+                logging.info(f"Migrating 'emby_url' to 'emby_jellyfin_url': {emby_url}")
+            # Remove the old setting
+            del config['Debug']['emby_url']
+            emby_settings_updated = True
+        
+        # Check for old 'emby_token' setting and migrate to 'emby_jellyfin_token'
+        if 'emby_token' in config['Debug']:
+            emby_token = config['Debug']['emby_token']
+            if 'emby_jellyfin_token' not in config['Debug'] or not config['Debug']['emby_jellyfin_token']:
+                config['Debug']['emby_jellyfin_token'] = emby_token
+                emby_settings_updated = True
+                logging.info(f"Migrating 'emby_token' to 'emby_jellyfin_token'")
+            # Remove the old setting
+            del config['Debug']['emby_token']
+            emby_settings_updated = True
+        
+        if emby_settings_updated:
+            save_config(config)
+            logging.info("Successfully migrated Emby settings to Emby/Jellyfin settings")
 
     # Add migration for folder locations
     if 'Debug' in config:
@@ -954,7 +1295,7 @@ def main():
             save_config(config)
             logging.info("Added/fixed require_physical_release setting in existing versions")
 
-    # Add migration for notification settings
+    # Add migration for notification settings (can run later, doesn't affect DB structure)
     if 'Notifications' in config:
         notifications_updated = False
         default_notify_on = {
@@ -1071,35 +1412,204 @@ def main():
             save_config(config)
             logging.info("Successfully migrated version settings to include bitrate filters")
 
+    # Add migration for language_code in versions
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'language_code' not in version_config:
+                version_config['language_code'] = 'en'
+                versions_updated = True
+                logging.info(f"Adding default language_code 'en' to version {version_name}")
+
+        # Save the updated config if changes were made
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include language_code")
+
+    # --- Add migration for fallback_version in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'fallback_version' not in version_config:
+                version_config['fallback_version'] = 'None'
+                versions_updated = True
+                logging.info(f"Adding default fallback_version 'None' to version {version_name}")
+
+        # Save the updated config if changes were made
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include fallback_version")
+    # --- End fallback_version migration ---
+
+    # --- Add migration for allow_specials in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'allow_specials' not in source_config:
+                source_config['allow_specials'] = False
+                content_sources_updated = True
+                logging.info(f"Adding default allow_specials=False to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include allow_specials setting")
+    # --- End allow_specials migration ---
+
+    # --- Add migration for custom_symlink_subfolder in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'custom_symlink_subfolder' not in source_config:
+                source_config['custom_symlink_subfolder'] = ''
+                content_sources_updated = True
+                logging.info(f"Adding default custom_symlink_subfolder='' to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include custom_symlink_subfolder setting")
+    # --- End custom_symlink_subfolder migration ---
+
+    # --- Add migration for cutoff_date in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'cutoff_date' not in source_config:
+                source_config['cutoff_date'] = ''
+                content_sources_updated = True
+                logging.info(f"Adding default cutoff_date='' to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include cutoff_date setting")
+    # --- End cutoff_date migration ---
+
+    # --- MIGRATION: Standardize 'Plex Watchlist' type to 'My Plex Watchlist' with fixed key 'My Plex Watchlist_1' ---
+    plex_watchlist_migration_updated = False
+    if 'Content Sources' in config and isinstance(config.get('Content Sources'), dict):
+        content_sources = config['Content Sources']
+        
+        keys_to_delete_for_plex_migration = []
+        # Stores the dictionary data that will be used for the "My Plex Watchlist_1" key.
+        # The last processed "Plex Watchlist" type source will define this data.
+        data_for_my_plex_watchlist_1_entry = None 
+
+        # Iterate over a copy of items because we might delete keys from the original dict
+        for key, source_config_item in list(content_sources.items()):
+            if isinstance(source_config_item, dict) and source_config_item.get('type') == "Plex Watchlist": # Corrected type to search for
+                plex_watchlist_migration_updated = True # Mark that a change is happening
+                
+                # Prepare the updated data for this source. Work on a copy.
+                updated_source_data_for_plex = source_config_item.copy()
+                updated_source_data_for_plex['type'] = "My Plex Watchlist" # Corrected target type
+                
+                # Standardize display_name as well for consistency
+                if updated_source_data_for_plex.get('display_name') != "My Plex Watchlist":
+                    updated_source_data_for_plex['display_name'] = "My Plex Watchlist"
+                    logging.info(f"Content source migration: Updating display_name for source (original key: {key}, original type: 'Plex Watchlist') to 'My Plex Watchlist'.")
+                
+                # This item is a candidate to become/update "My Plex Watchlist_1".
+                # The last one processed with type "Plex Watchlist" will "win".
+                data_for_my_plex_watchlist_1_entry = updated_source_data_for_plex
+                
+                if key != "My Plex Watchlist_1":
+                    keys_to_delete_for_plex_migration.append(key)
+                # If key is "My Plex Watchlist_1", it will be correctly updated by the assignment later if this was the last one.
+                
+        # Perform deletions of old keys that are being consolidated
+        for key_to_del in keys_to_delete_for_plex_migration:
+            if key_to_del in content_sources: # Should always be true
+                del content_sources[key_to_del]
+                logging.info(f"Content source migration: Removed old entry '{key_to_del}' (original type 'Plex Watchlist') as it's being consolidated into 'My Plex Watchlist_1'.")
+
+        # Assign the final "My Plex Watchlist_1" data if any "Plex Watchlist" type was found
+        if data_for_my_plex_watchlist_1_entry is not None:
+            # Check if we are overwriting an existing "My Plex Watchlist_1" or creating it.
+            existing_entry_for_target_key = content_sources.get("My Plex Watchlist_1")
+            if existing_entry_for_target_key is not None and existing_entry_for_target_key is not data_for_my_plex_watchlist_1_entry:
+                logging.info(f"Content source migration: Updating/Overwriting entry 'My Plex Watchlist_1' with data from a consolidated source (original type 'Plex Watchlist').")
+            elif existing_entry_for_target_key is None: # Check if it's a new creation
+                 logging.info(f"Content source migration: Creating new entry 'My Plex Watchlist_1' from a source with original type 'Plex Watchlist'.")
+            # If existing_entry_for_target_key is data_for_my_plex_watchlist_1_entry, it means the item was already "My Plex Watchlist_1" and just got its internals updated.
+
+            content_sources["My Plex Watchlist_1"] = data_for_my_plex_watchlist_1_entry
+            # plex_watchlist_migration_updated is already true if data_for_my_plex_watchlist_1_entry is not None
+        
+    if plex_watchlist_migration_updated:
+        save_config(config)
+        logging.info("Successfully migrated 'Plex Watchlist' content sources to the standardized 'My Plex Watchlist' type and key ('My Plex Watchlist_1').")
+    # --- End 'Plex Watchlist' key and type migration ---
+
+    # --- Add migration for year_match_weight in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'year_match_weight' not in version_config:
+                version_config['year_match_weight'] = 3 # Default to int
+                versions_updated = True
+                logging.info(f"Adding default year_match_weight 3 to version {version_name}")
+            # Convert to int if it's not already an int
+            elif not isinstance(version_config['year_match_weight'], int):
+                try:
+                    # Round float before converting to int
+                    if isinstance(version_config['year_match_weight'], float):
+                        version_config['year_match_weight'] = int(round(version_config['year_match_weight']))
+                    else: # Handle strings or other types
+                        version_config['year_match_weight'] = int(round(float(version_config['year_match_weight'])))
+                    versions_updated = True
+                    logging.info(f"Converting year_match_weight to int for version {version_name}")
+                except (ValueError, TypeError):
+                    version_config['year_match_weight'] = 3 # Reset to default int if conversion fails
+                    versions_updated = True
+                    logging.warning(f"Invalid year_match_weight value in version {version_name}, resetting to 3")
+
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include year_match_weight")
+    # --- End year_match_weight migration ---
+
+    # --- Add migration for anime_filter_mode in versions ---
+    if 'Scraping' in config and 'versions' in config['Scraping']:
+        versions_updated = False
+        for version_name, version_config in config['Scraping']['versions'].items():
+            if 'anime_filter_mode' not in version_config:
+                version_config['anime_filter_mode'] = 'None'
+                versions_updated = True
+                logging.info(f"Adding default anime_filter_mode 'None' to version {version_name}")
+
+        if versions_updated:
+            save_config(config)
+            logging.info("Successfully migrated version settings to include anime_filter_mode")
+    # --- End anime_filter_mode migration ---
+
     # Check and set upgrading_percentage_threshold if blank
     threshold_value = get_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
     if not str(threshold_value).strip():
         set_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
         logging.info("Set blank upgrading_percentage_threshold to default value of 0.1")
 
+    import os
     # Get battery port from environment variable
     battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
+    battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
     
     # Set metadata battery URL with the correct port
-    set_setting('Metadata Battery', 'url', f'http://localhost:{battery_port}')
-    #logging.info(f"Set metadata battery URL to http://localhost:{battery_port}")
+    set_setting('Metadata Battery', 'url', f'http://{battery_host}:{battery_port}')
+    logging.info(f"Set metadata battery URL to http://{battery_host}:{battery_port}")
 
     ensure_settings_file()
-    verify_database()
+    # verify_database() # No longer needed here
     validate_not_wanted_entries()
 
-    # Initialize download stats cache
-    try:
-        #logging.info("Initializing download stats cache...")
-        get_cached_download_stats()
-        #logging.info("Download stats cache initialized successfully")
-    except Exception as e:
-        logging.error(f"Error initializing download stats cache: {str(e)}")
+    # Initialize download stats cache # Moved earlier
+    # ...
 
-    # Add delay to ensure server is ready
-    time.sleep(2)
+    # Initialize statistics summary # Moved earlier
+    # ...
 
-    # Fix notification settings if needed
+    # Add delay to ensure server is ready # Maybe less critical now
+    time.sleep(1) # Reduced delay slightly
+
+    # Fix notification settings if needed (can run later)
     fix_notification_settings()
 
     # Validate Plex tokens on startup
@@ -1109,7 +1619,7 @@ def main():
             logging.error(f"Invalid Plex token for user {username}")
 
     # Add the update_media_locations call here
-    # update_media_locations()
+    # update_media_locations() # Keep commented unless needed at startup
 
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -1159,30 +1669,166 @@ def main():
     print("Running in console mode.")
 
     if get_setting('Debug', 'auto_run_program'):
-        # Add delay to ensure server is ready
-        time.sleep(2)  # Wait for server to initialize
-        # Call the start_program route
+        # Add delay to ensure server is ready for app_context usage
+        time.sleep(3)  # Increased delay slightly to ensure Flask app is fully up for app_context
+        
+        # --- START EDIT: Directly call _execute_start_program ---
+        # The readiness check via HTTP is less critical if we call the Python function directly,
+        # but ensuring flask_app.program_runner is ready is vital.
+        # The __main__ block should have set up flask_app.program_runner and its listeners.
+
+        logging.info("Auto-start: Attempting to start program by directly calling _execute_start_program...")
         try:
-            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
-            response = requests.post(f'http://localhost:{port}/program_operation/api/start_program')
-            if response.status_code == 200:
-                print("Program started successfully")
-            else:
-                print(f"Failed to start program. Status code: {response.status_code}")
-                print(f"Response: {response.text}")
-        except requests.RequestException as e:
-            print(f"Error calling start_program route: {e}")
+            # Run the internal start function within the Flask app context
+            with flask_app.app_context():
+                # Ensure current_app.program_runner (via flask_app.program_runner) is available
+                if not getattr(flask_app, 'program_runner', None):
+                    logging.error("CRITICAL [main.py auto-start]: flask_app.program_runner not set before calling _execute_start_program. Aborting.")
+                    print("Failed to auto-start program: Internal setup error (runner not found on app).")
+                elif not getattr(flask_app.program_runner, 'initial_listeners_setup_complete', False):
+                    logging.error("CRITICAL [main.py auto-start]: flask_app.program_runner listeners not confirmed setup. Aborting direct start.")
+                    print("Failed to auto-start program: Internal setup error (runner listeners not ready).")
+                else:
+                    start_result = _execute_start_program(skip_connectivity_check=True) # Direct call, skip initial connectivity check for auto-start
+
+                    if start_result.get("status") == "success":
+                        print("Program started successfully via auto-start (direct call).")
+                        logging.info("Program started successfully via auto-start (direct call).")
+                    else:
+                        message = start_result.get("message", "Unknown error from _execute_start_program.")
+                        print(f"Failed to auto-start program (direct call): {message}")
+                        logging.error(f"Failed to auto-start program (direct call): {message}. Details: {start_result.get('failed_services_details')}")
+        except Exception as e_direct_call:
+            print(f"Critical error during direct call to _execute_start_program for auto-start: {e_direct_call}")
+            logging.error(f"Critical error during direct call to _execute_start_program for auto-start: {e_direct_call}", exc_info=True)
+        # --- END EDIT ---
 
     # Set up signal handling
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
+    # --- START EDIT: Supervisor attributes ---
+    # Using function attributes for state to keep them local to main() context
+    if not hasattr(main, 'last_supervisor_check_time'):
+        main.last_supervisor_check_time = 0
+    if not hasattr(main, 'supervisor_resume_attempts'):
+        main.supervisor_resume_attempts = 0
+    SUPERVISOR_CHECK_INTERVAL = 300 # 5 minutes
+    SUPERVISOR_MAX_RESUME_ATTEMPTS = 3 
+    # --- END EDIT ---
+
+    # Prepare MemProbe timing
+    if not hasattr(main, 'last_memprobe_time'):
+        main.last_memprobe_time = 0.0
+
     # Main loop
     try:
         while True:
-            time.sleep(5)
+            time.sleep(5) # Main loop poll interval
+
+            # ─── MEM-PROBE #2: per-process allocations ─────────────
+            try:
+                now = time.time()
+                # Only run the periodic memory probe if tracemalloc tracking is enabled via settings
+                if now - main.last_memprobe_time > 60 and get_setting('Debug', 'enable_tracemalloc', False):
+                    main.last_memprobe_time = now
+                    import tracemalloc, psutil, os, gc
+                    if not tracemalloc.is_tracing():
+                        tracemalloc.start()
+                    current, peak = tracemalloc.get_traced_memory()
+                    rss_bytes = psutil.Process(os.getpid()).memory_info().rss
+                    obj_count = len(gc.get_objects())
+                    logging.info(
+                        f"[MemProbe-Main] rss={rss_bytes/1048576:,.0f} MB "
+                        f"tracemalloc={current/1048576:,.0f}/{peak/1048576:,.0f} MB "
+                        f"py_objects={obj_count}")
+
+                    # Log top 5 files by new allocations since start
+                    try:
+                        snapshot = tracemalloc.take_snapshot()
+                        top_stats = snapshot.statistics('filename')[:5]
+                        for stat in top_stats:
+                            logging.info(f"[MemProbe-Main]    {stat}")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            # ────────────────────────────────────────────────────────
+
+            # --- START EDIT: Supervisor Logic ---
+            # No 'global' keyword needed here to access the module-level variable
+            if global_program_runner_instance and global_program_runner_instance.is_running() and False:
+                if global_program_runner_instance.queue_paused and global_program_runner_instance.pause_info.get("error_type"):
+                    current_time = time.time()
+                    if current_time - main.last_supervisor_check_time > SUPERVISOR_CHECK_INTERVAL:
+                        main.last_supervisor_check_time = current_time
+                        logging.info("[Supervisor] ProgramRunner is paused. Verifying pause conditions.")
+                        
+                        pause_error_type = global_program_runner_instance.pause_info.get("error_type")
+                        pause_reason_str = global_program_runner_instance.pause_info.get("reason_string", "Unknown reason")
+                        should_attempt_resume = False
+
+                        if pause_error_type == "CONNECTION_ERROR":
+                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking service connectivity...")
+                            from routes.program_operation_routes import check_service_connectivity # Import locally
+                            connectivity_ok, failed_services = check_service_connectivity()
+                            if connectivity_ok:
+                                logging.info("[Supervisor] Connectivity restored.")
+                                should_attempt_resume = True
+                            else:
+                                logging.info(f"[Supervisor] Connectivity issues persist: {failed_services}")
+                        
+                        elif pause_error_type == "DB_HEALTH":
+                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking database health...")
+                            if verify_database_health(): # verify_database_health is in main.py
+                                logging.info("[Supervisor] Database health is OK.")
+                                should_attempt_resume = True
+                            else:
+                                logging.info("[Supervisor] Database health issues persist.")
+
+                        elif pause_error_type == "SYSTEM_SCHEDULED":
+                            logging.info(f"[Supervisor] Pause due to {pause_error_type}. Re-checking system pause schedule...")
+                            if not global_program_runner_instance._is_within_pause_schedule():
+                                logging.info("[Supervisor] System pause schedule has ended.")
+                                should_attempt_resume = True
+                            else:
+                                logging.info("[Supervisor] Still within system pause schedule.")
+                        
+                        # Add other specific checks if ProgramRunner introduces new pause_info error_types
+
+                        if should_attempt_resume:
+                            main.supervisor_resume_attempts += 1
+                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) no longer met. Attempting to resume ProgramRunner (Attempt {main.supervisor_resume_attempts}/{SUPERVISOR_MAX_RESUME_ATTEMPTS}).")
+                            try:
+                                global_program_runner_instance.resume_queue()
+                                # resume_queue() clears pause_info if successful
+                                if not global_program_runner_instance.queue_paused:
+                                    logging.info("[Supervisor] ProgramRunner resumed successfully by supervisor.")
+                                    main.supervisor_resume_attempts = 0 # Reset attempts on success
+                                else:
+                                    logging.warning(f"[Supervisor] Called resume_queue(), but ProgramRunner is still paused. Current pause reason: {global_program_runner_instance.pause_info.get('reason_string')}")
+                                    if main.supervisor_resume_attempts >= SUPERVISOR_MAX_RESUME_ATTEMPTS:
+                                        logging.error(f"[Supervisor] Max resume attempts ({SUPERVISOR_MAX_RESUME_ATTEMPTS}) reached. ProgramRunner remains paused. Manual intervention may be required. Last pause reason: {pause_reason_str}")
+                                        # Optionally, send a critical notification here
+                            except Exception as e_resume:
+                                logging.error(f"[Supervisor] Error attempting to resume ProgramRunner: {e_resume}", exc_info=True)
+                        else:
+                            # Conditions for pause still met, reset resume attempts for this specific pause reason if it changes.
+                            # This might be too complex; for now, attempts are general.
+                            logging.info(f"[Supervisor] Conditions for pause '{pause_reason_str}' (Type: {pause_error_type}) still appear to be met.")
+                            # If pause reason changes, supervisor_resume_attempts should ideally reset.
+                            # For simplicity, we're not tracking changes in pause_info string here.
+                elif not global_program_runner_instance.queue_paused:
+                    # If queue is not paused, reset supervisor attempts.
+                    if main.supervisor_resume_attempts > 0:
+                        logging.info("[Supervisor] ProgramRunner is no longer paused. Resetting resume attempts.")
+                        main.supervisor_resume_attempts = 0
+                    main.last_supervisor_check_time = time.time() # Update check time even if not paused to delay next check
+
+            # --- END EDIT: Supervisor Logic ---
+
     except KeyboardInterrupt:
-        from program_operation_routes import cleanup_port
+        from routes.program_operation_routes import cleanup_port
         cleanup_port()
         stop_program()
         stop_global_profiling()
@@ -1202,32 +1848,69 @@ def print_version():
         print("Version: Unknown\n")
 
 if __name__ == "__main__":
+    # Start tracemalloc only if explicitly enabled in settings to avoid the default overhead
+    if get_setting('Debug', 'enable_tracemalloc', False):
+        tracemalloc.start()
     try:
-        # Choose whether to run the normal app or package it
         if len(sys.argv) > 1 and sys.argv[1] == "--package":
             package_main()
         else:
             setup_logging()
             start_global_profiling()
             
-            from api_tracker import setup_api_logging
+            from routes.api_tracker import setup_api_logging
             setup_api_logging()
-            from web_server import start_server
-            
+            from routes.web_server import start_server
+            from routes.extensions import app as flask_app
+            from queues.run_program import ProgramRunner, _setup_scheduler_listeners
+
             print_version()
-            print("\ncli_debrid is initialized.")
+
+            program_runner_instance = ProgramRunner()
+            program_runner_instance.initial_listeners_setup_complete = False 
+            flask_app.program_runner = program_runner_instance # flask_app is now defined
+            global_program_runner_instance = program_runner_instance
             
+            try:
+                _setup_scheduler_listeners(global_program_runner_instance)
+                global_program_runner_instance.initial_listeners_setup_complete = True
+                logging.info("Initial scheduler listeners set up successfully in __main__ for flask_app.program_runner.")
+            except Exception as e_listeners:
+                logging.error(f"Failed to set up initial scheduler listeners in __main__: {e_listeners}", exc_info=True)
+            
+            print("\ncli_debrid Python environment initialized.")
+
             def run_flask():
-                if not start_server():
+                if not start_server(): 
                     return False
                 return True
 
             if not run_flask():
-                stop_program()
+                logging.critical("Flask server failed to start. Exiting.")
                 sys.exit(1)
                 
-            print("The web UI is available at http://localhost:5000")
-            main()
+            port = int(os.environ.get('CLI_DEBRID_PORT', 5000))
+            print(f"The web UI is available at http://localhost:{port}")
+            main() 
     except KeyboardInterrupt:
+        print("KeyboardInterrupt received. Generating memory usage report...")
+        
+        try:
+            import tracemalloc
+            if tracemalloc.is_tracing():
+                snapshot = tracemalloc.take_snapshot()
+                top_stats = snapshot.statistics('lineno')
+
+                print("\n[ Top 10 memory consuming locations ]")
+                for stat in top_stats[:10]:
+                    print(stat)
+            else:
+                print("tracemalloc is not tracing; skipping memory snapshot.")
+        except Exception as e:
+            print(f"Could not collect tracemalloc snapshot: {e}")
+
         stop_global_profiling()
-        print("Program stopped.")
+        print("Program stopped by KeyboardInterrupt in __main__.")
+    except Exception as e_main_startup:
+        logging.critical(f"Unhandled exception during __main__ startup: {e_main_startup}", exc_info=True)
+        print(f"Critical startup error: {e_main_startup}")

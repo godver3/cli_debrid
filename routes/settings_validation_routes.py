@@ -183,14 +183,36 @@ def validate_onboarding_settings():
         })
 
     # Common checks for all non-skip options
+    # Check if update_plex_on_file_discovery is enabled
+    update_plex = settings_data.get('Plex.update_plex_on_file_discovery') == 'on'
     original_path = settings_data.get('original_files_path', '')
-    original_valid, original_message = validate_path_exists(original_path)
-    validation_checks.append({
-        'name': 'Original Files Path',
-        'valid': original_valid,
-        'message': original_message
-    })
-    all_valid = all_valid and original_valid
+
+    # If update_plex_on_file_discovery is enabled, original_files_path is required
+    if update_plex:
+        if not original_path:
+            validation_checks.append({
+                'name': 'Original Files Path',
+                'valid': False,
+                'message': 'Original files path is required when "Update Plex on file discovery" is enabled'
+            })
+            all_valid = False
+        else:
+            original_valid, original_message = validate_path_exists(original_path)
+            validation_checks.append({
+                'name': 'Original Files Path',
+                'valid': original_valid,
+                'message': original_message
+            })
+            all_valid = all_valid and original_valid
+    # If update_plex_on_file_discovery is not enabled, only validate if path is provided
+    elif original_path:
+        original_valid, original_message = validate_path_exists(original_path)
+        validation_checks.append({
+            'name': 'Original Files Path',
+            'valid': original_valid,
+            'message': original_message
+        })
+        all_valid = all_valid and original_valid
 
     if management_type in ['plex_direct', 'plex_symlink', 'Plex']:
         # Validate Plex settings
@@ -240,13 +262,22 @@ def validate_onboarding_settings():
         # Validate symlink settings
         symlink_path = settings_data.get('symlinked_files_path', '')
         
-        symlink_valid, symlink_message = validate_symlink_setup(original_path, symlink_path)
-        validation_checks.append({
-            'name': 'Symlink Configuration',
-            'valid': symlink_valid,
-            'message': symlink_message
-        })
-        all_valid = all_valid and symlink_valid
+        # Only validate symlink setup if both paths are provided
+        if symlink_path and original_path:
+            symlink_valid, symlink_message = validate_symlink_setup(original_path, symlink_path)
+            validation_checks.append({
+                'name': 'Symlink Configuration',
+                'valid': symlink_valid,
+                'message': symlink_message
+            })
+            all_valid = all_valid and symlink_valid
+        elif symlink_path:
+            # If only symlink path is provided (original path is optional)
+            validation_checks.append({
+                'name': 'Symlink Configuration',
+                'valid': True,
+                'message': 'Symlink path is configured'
+            })
 
         # If Plex integration is configured for symlinks, validate those settings
         plex_url = settings_data.get('plex_url_for_symlink', '')

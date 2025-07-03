@@ -3,6 +3,43 @@ import { showPopup, POPUP_TYPES } from './notifications.js';
 // Declare settingsData globally
 let settingsData = {};
 
+// Helper function for splitting strings while respecting parentheses
+export function splitRespectingParentheses(str, delimiter = ',') {
+    const result = [];
+    let currentToken = "";
+    let parenthesesCount = 0;
+
+    for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (char === '(') {
+            parenthesesCount++;
+        } else if (char === ')') {
+            parenthesesCount--;
+            if (parenthesesCount < 0) {
+                // Gracefully handle mismatched parentheses, though ideally input is well-formed
+                parenthesesCount = 0; 
+            }
+        }
+
+        if (char === delimiter && parenthesesCount === 0) {
+            const trimmedToken = currentToken.trim();
+            if (trimmedToken !== "") {
+                result.push(trimmedToken);
+            }
+            currentToken = "";
+        } else {
+            currentToken += char;
+        }
+    }
+    
+    const trimmedToken = currentToken.trim();
+    if (trimmedToken !== "") {
+        result.push(trimmedToken);
+    }
+    
+    return result;
+}
+
 // Function to load settings data
 function loadSettingsData() {
     return fetch('/settings/api/program_settings')
@@ -100,10 +137,15 @@ export function updateSettings() {
         const name = input.name;
         if (!name) return; // Skip inputs without names
         
+        // Skip radio buttons that are not checked
+        if (input.type === 'radio' && !input.checked) return;
+        
         let value = input.value;
         
         if (input.type === 'checkbox') {
             value = input.checked;
+        } else if (input.type === 'number') {
+            value = parseFloat(value) || 0;
         } else if (value.toLowerCase() === 'true') {
             value = true;
         } else if (value.toLowerCase() === 'false') {
@@ -123,6 +165,20 @@ export function updateSettings() {
         current[nameParts[nameParts.length - 1]] = value;
     });
 
+    // Ensure Staleness Threshold section exists and has a value
+    if (!settingsData['Staleness Threshold']) {
+        settingsData['Staleness Threshold'] = {};
+    }
+    const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
+    if (stalenessThresholdInput) {
+        const value = parseInt(stalenessThresholdInput.value) || 7;
+        settingsData['Staleness Threshold']['staleness_threshold'] = value;
+        console.log(`Setting staleness threshold to: ${value}`);
+    } else {
+        settingsData['Staleness Threshold']['staleness_threshold'] = 7; // Default value
+        console.log('Using default staleness threshold: 7');
+    }
+
     // Create Custom Post-Processing section if it doesn't exist
     if (!settingsData['Custom Post-Processing']) {
         settingsData['Custom Post-Processing'] = {};
@@ -136,7 +192,7 @@ export function updateSettings() {
     });
 
     console.log('Final Custom Post-Processing settings:', settingsData['Custom Post-Processing']);
-
+    
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
         settingsData['UI Settings'] = {};
@@ -146,6 +202,17 @@ export function updateSettings() {
     const userSystemEnabledCheckbox = document.querySelector('input[name="UI Settings.enable_user_system"]');
     if (userSystemEnabledCheckbox) {
         settingsData['UI Settings']['enable_user_system'] = userSystemEnabledCheckbox.checked;
+    }
+    
+    // Ensure program_logo is correctly captured from radio buttons
+    const selectedLogoRadio = document.querySelector('input[name="UI Settings.program_logo"]:checked');
+    if (selectedLogoRadio) {
+        settingsData['UI Settings']['program_logo'] = selectedLogoRadio.value;
+        console.log("Program logo set to:", selectedLogoRadio.value);
+    } else {
+        // Fallback to default if no radio is checked
+        settingsData['UI Settings']['program_logo'] = 'Default';
+        console.log("No program logo radio selected, using default");
     }
 
     // Process Notification settings
@@ -226,7 +293,7 @@ export function updateSettings() {
             const sourceData = {};
             sourceData.versions = [];
 
-            section.querySelectorAll('input, select').forEach(input => {
+            section.querySelectorAll('input, select, textarea').forEach(input => {
                 const nameParts = input.name.split('.');
                 const fieldName = nameParts[nameParts.length - 1];
                 console.log(`Processing field: ${fieldName}, Type: ${input.type}, Value: ${input.value}, Checked: ${input.checked}`);
@@ -341,17 +408,18 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
-            if (settingsData['Scrapers'][key] && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+            if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+                console.log(`Removing invalid scraper type: ${settingsData['Scrapers'][key].type} for ID: ${key}`);
                 delete settingsData['Scrapers'][key];
             }
         });
     }
-
+    
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing', 'System Load Regulation'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -394,6 +462,45 @@ export function updateSettings() {
         Object.entries(settingsData.Debug.content_source_check_period).forEach(([key, value]) => {
             console.log(`${key}: value=${value}, type=${typeof value}`);
         });
+    }
+
+    // Validate symlink templates
+    const movieTemplateInput = document.getElementById('additional-symlink_movie_template');
+    const episodeTemplateInput = document.getElementById('additional-symlink_episode_template');
+
+    if (movieTemplateInput && episodeTemplateInput) {
+        const movieTemplate = movieTemplateInput.value;
+        const episodeTemplate = episodeTemplateInput.value;
+
+        if (movieTemplate.trim() !== '' && !movieTemplate.includes('{imdb_id}')) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Validation Error',
+                message: 'Symlink Movie Template must include {imdb_id}. Settings not saved.'
+            });
+            return; // Stop processing and do not save
+        }
+
+        if (episodeTemplate.trim() !== '' && !episodeTemplate.includes('{imdb_id}')) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Validation Error',
+                message: 'Symlink Episode Template must include {imdb_id}. Settings not saved.'
+            });
+            return; // Stop processing and do not save
+        }
+        
+        // Ensure Debug section exists if not already created by other inputs
+        if (!settingsData['Debug']) {
+            settingsData['Debug'] = {};
+        }
+        settingsData['Debug']['symlink_movie_template'] = movieTemplate;
+        settingsData['Debug']['symlink_episode_template'] = episodeTemplate;
+
+    } else {
+        console.warn('Symlink template input fields not found. Skipping validation.');
+        // Decide if you want to proceed or error out if fields are missing
+        // For now, we'll proceed but log a warning.
     }
 
     const versions = {};
@@ -611,22 +718,43 @@ export function updateSettings() {
     // Handle Reverse Parser settings
     const reverseParserSettings = {
         version_terms: {},
-        default_version: document.getElementById('default-version').value,
-        version_order: [] // New array to store the order
+        default_version: '', // Initialize with a default value
+        version_order: [] 
     };
+
+    const defaultVersionInputElement = document.getElementById('default-version');
+    if (defaultVersionInputElement) {
+        reverseParserSettings.default_version = defaultVersionInputElement.value;
+    } else {
+        console.warn("Element with ID 'default-version' not found. Reverse Parser default_version will use an empty or previously loaded value if available.");
+        // Attempt to preserve existing value if settingsData['Reverse Parser'] was pre-loaded and not cleared
+        // However, settingsData is cleared at the beginning of this function.
+        // A default or handling on the backend for missing value might be necessary.
+    }
 
     // Get the container of all version inputs
     const versionContainer = document.querySelector('#version-terms-container');
     
-    // Get all version inputs in their current order
-    const versionInputs = Array.from(versionContainer.children);
+    if (versionContainer) {
+        const versionInputs = Array.from(versionContainer.children);
     
-    versionInputs.forEach((input, index) => {
-        const version = input.getAttribute('data-version');
-        const terms = input.querySelector('.version-terms').value.split(',').map(term => term.trim()).filter(term => term);
-        reverseParserSettings.version_terms[version] = terms;
-        reverseParserSettings.version_order.push(version); // Add version to order array
-    });
+        versionInputs.forEach((inputElement) => { // index removed as it's not used
+            const version = inputElement.getAttribute('data-version');
+            const termsInputElement = inputElement.querySelector('.version-terms');
+            if (version && termsInputElement) {
+                const termsValue = termsInputElement.value;
+                const terms = splitRespectingParentheses(termsValue);
+                reverseParserSettings.version_terms[version] = terms;
+                reverseParserSettings.version_order.push(version); // Add version to order array
+            } else {
+                console.warn("Skipping a version input in Reverse Parser settings due to missing 'data-version' attribute or '.version-terms' child element.");
+            }
+        });
+    } else {
+        console.warn("Element with ID 'version-terms-container' not found. Reverse Parser version terms and order will be empty or based on pre-loaded data if available.");
+        // As settingsData is cleared at the function start, this will likely result in empty version_terms and version_order
+        // if the container is not found, potentially clearing these settings on save.
+    }
 
     settingsData['Reverse Parser'] = reverseParserSettings;
 
@@ -654,7 +782,7 @@ export function updateSettings() {
         console.warn("Disable Content Source Caching checkbox element not found!");
     }
 
-    const enableUpgrading = document.getElementById('scraping-enable_upgrading'); 
+    const enableUpgrading = document.getElementById('scraping-enable_upgrading');
     console.log("Enable Upgrading element:", enableUpgrading);
     
     if (enableUpgrading) {
@@ -677,7 +805,7 @@ export function updateSettings() {
     }
 
 
-    const stalenessThreshold = document.getElementById('staleness threshold-staleness_threshold');
+    const stalenessThreshold = document.getElementById('debug-staleness_threshold');
     console.log("Staleness Threshold element:", stalenessThreshold);
     
     if (stalenessThreshold) {
@@ -1062,6 +1190,16 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     loadSettingsData().then(() => {
+        // Setup radio button handling for program_logo
+        const logoRadioButtons = document.querySelectorAll('input[type="radio"][name="UI Settings.program_logo"]');
+        logoRadioButtons.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.checked) {
+                    saveSingleSetting('UI Settings', 'program_logo', this.value);
+                }
+            });
+        });
+        
         // Initial toggle of Plex section
         togglePlexSection();
         
@@ -1152,6 +1290,7 @@ function syncDebugSettings() {
     // Get the debug settings from the true_debug tab
     const ultimateSortOrderSelect = document.getElementById('debug-ultimate_sort_order');
     const softMaxSizeGbCheckbox = document.getElementById('debug-soft_max_size_gb');
+    const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
     
     if (ultimateSortOrderSelect && softMaxSizeGbCheckbox) {
         // Add change event listeners to sync with the original settings
@@ -1171,8 +1310,81 @@ function syncDebugSettings() {
             }
         });
     }
+
+    // Handle staleness threshold sync
+    if (stalenessThresholdInput) {
+        stalenessThresholdInput.addEventListener('change', function() {
+            // Update the settingsData object
+            if (!settingsData['Staleness Threshold']) {
+                settingsData['Staleness Threshold'] = {};
+            }
+            settingsData['Staleness Threshold']['staleness_threshold'] = parseInt(stalenessThresholdInput.value) || 7;
+        });
+    }
 }
 
 // Add event listener for the true_debug tab content loaded event
 document.addEventListener('trueDebugContentLoaded', syncDebugSettings);
 document.addEventListener('DOMContentLoaded', syncDebugSettings);
+
+// Function to save a single setting
+function saveSingleSetting(section, key, value) {
+    console.log(`Saving setting: ${section}.${key} = ${value}`);
+    const formData = new FormData();
+    formData.append('section', section);
+    formData.append('key', key);
+    formData.append('value', value);
+    
+    return fetch('/settings/save_single_setting', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            console.log(`Setting ${section}.${key} saved successfully`);
+            
+            // Show a small notification
+            const notification = document.createElement('div');
+            notification.className = 'setting-saved-notification';
+            notification.textContent = 'Setting saved!';
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.backgroundColor = '#4CAF50';
+            notification.style.color = 'white';
+            notification.style.padding = '10px 20px';
+            notification.style.borderRadius = '4px';
+            notification.style.zIndex = '1000';
+            notification.style.boxShadow = '0 2px 10px rgba(0, 0, 0, 0.3)';
+            notification.style.opacity = '1';
+            notification.style.transition = 'opacity 0.5s';
+            
+            document.body.appendChild(notification);
+            
+            // Remove notification after a delay
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => {
+                    notification.remove();
+                }, 500);
+            }, 2000);
+            
+            // Special handling for program_logo - reload the page to show the change
+            if (section === 'UI Settings' && key === 'program_logo') {
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }
+            
+            return true;
+        } else {
+            console.error(`Error saving setting: ${data.message || 'Unknown error'}`);
+            return false;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        return false;
+    });
+}

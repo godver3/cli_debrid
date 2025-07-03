@@ -90,10 +90,39 @@ def init_db():
         Session.remove()  # Clear any existing sessions
         Session.configure(bind=engine)
 
-        # Create tables
-        Base.metadata.create_all(engine)
+        # Check if tables exist and create them if they don't
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        required_tables = {'items', 'metadata', 'seasons', 'episodes', 'posters', 'tmdb_to_imdb_mapping', 'tvdb_to_imdb_mapping'}
+        
+        if not all(table in existing_tables for table in required_tables):
+            logger.info("Some required tables are missing. Creating all tables...")
+            try:
+                Base.metadata.create_all(engine)
+                logger.info("Successfully created all required tables.")
+            except Exception as table_error:
+                logger.error(f"Error creating tables: {str(table_error)}")
+                raise
+        else:
+            logger.debug("All required tables already exist.")
 
         return engine
+    except OperationalError as oe:
+        if "no such table" in str(oe).lower():
+            logger.warning("Database tables don't exist. Attempting to create them...")
+            try:
+                Base.metadata.create_all(engine)
+                logger.info("Successfully created database tables.")
+                return engine
+            except Exception as create_error:
+                logger.error(f"Failed to create database tables: {str(create_error)}")
+                engine = None
+                raise
+        else:
+            logger.error(f"Database operational error: {str(oe)}")
+            engine = None
+            raise
     except Exception as e:
         logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
         engine = None  # Reset engine on failure
@@ -140,20 +169,18 @@ class Season(Base):
 
 class Episode(Base):
     __tablename__ = 'episodes'
+    __table_args__ = (UniqueConstraint('season_id', 'episode_number', name='uix_season_episode'),)
 
     id = Column(Integer, primary_key=True)
     season_id = Column(Integer, ForeignKey('seasons.id'), nullable=False)
     episode_number = Column(Integer, nullable=False)
-    episode_imdb_id = Column(String, unique=True, index=True)
+    episode_imdb_id = Column(String, unique=True, index=True, nullable=True)
     title = Column(String)
     overview = Column(Text)
     runtime = Column(Integer)
     first_aired = Column(DateTime)
+    imdb_id = Column(String)
     season = relationship("Season", back_populates="episodes")
-    imdb_id = Column(String)  # Add this line to include the imdb_id column
-
-    # Relationships
-    season = relationship('Season', back_populates='episodes')
 
 class Poster(Base):
     __tablename__ = 'posters'
@@ -183,6 +210,12 @@ class DatabaseManager:
     @staticmethod
     @retry_on_db_lock()
     def add_or_update_item(imdb_id, title, year=None, item_type=None):
+        if engine is None:
+            init_db()
+            if engine is None:
+                 logger.error("Database engine not initialized in add_or_update_item.")
+                 raise Exception("Database engine not initialized.")
+
         with Session() as session:
             try:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
@@ -198,43 +231,73 @@ class DatabaseManager:
                     session.add(item)
                 session.commit()
                 return item.id
+            except OperationalError as oe:
+                session.rollback()
+                logger.error(f"OperationalError in add_or_update_item: {oe}")
+                raise
             except Exception as e:
                 session.rollback()
+                logger.error(f"Error in add_or_update_item: {e}")
                 raise
 
     @staticmethod
     @retry_on_db_lock()
     def add_or_update_metadata(imdb_id, metadata_dict, provider):
+        if engine is None:
+            init_db()
+            if engine is None:
+                 logger.error("Database engine not initialized in add_or_update_metadata.")
+                 raise Exception("Database engine not initialized.")
+
         with Session() as session:
             try:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                created_new_item = False
                 if not item:
-                    item = Item(imdb_id=imdb_id, title=metadata_dict.get('title', ''))
+                    item_title = metadata_dict.get('title')
+                    if not item_title:
+                        logger.warning(f"Attempting to create item for {imdb_id} via metadata but title is missing.")
+                        item_title = "Unknown Title - Created from Metadata"
+                    item = Item(imdb_id=imdb_id, title=item_title)
                     session.add(item)
                     session.flush()
+                    created_new_item = True
 
                 item_type = metadata_dict.get('type')
                 if item_type:
                     item.type = item_type
                 elif 'aired_episodes' in metadata_dict:
                     item.type = 'show'
-                else:
-                    item.type = 'movie'
 
-                now = get_timezone_aware_now()
+                existing_metadata_keys = {md.key for md in item.item_metadata}
+                new_metadata_keys = set()
+
                 for key, value in metadata_dict.items():
-                    if key != 'type':
-                        metadata = session.query(Metadata).filter_by(item_id=item.id, key=key).first()
-                        if metadata:
-                            metadata.value = value
-                            metadata.last_updated = now
-                        else:
-                            metadata = Metadata(item_id=item.id, key=key, value=value, provider=provider, last_updated=now)
-                            session.add(metadata)
-
+                    new_metadata_keys.add(key)
+                    meta_record = session.query(Metadata).filter_by(item_id=item.id, key=key, provider=provider).first()
+                    if meta_record:
+                        if meta_record.value != value:
+                            meta_record.value = value
+                            meta_record.last_updated = get_timezone_aware_now()
+                    else:
+                        new_meta = Metadata(
+                            item_id=item.id, 
+                            key=key, 
+                            value=value, 
+                            provider=provider,
+                            last_updated=get_timezone_aware_now()
+                        )
+                        session.add(new_meta)
+                
                 session.commit()
+                return item.id
+            except OperationalError as oe:
+                session.rollback()
+                logger.error(f"OperationalError in add_or_update_metadata: {oe}")
+                raise
             except Exception as e:
                 session.rollback()
+                logger.error(f"Error in add_or_update_metadata: {e}")
                 raise
 
     @staticmethod
@@ -245,9 +308,16 @@ class DatabaseManager:
     @staticmethod
     def get_all_items():
         with Session() as session:
-            items = session.query(Item).options(joinedload(Item.item_metadata)).all()
+            # Use selectinload for better performance with relationships
+            items = session.query(Item).options(
+                selectinload(Item.item_metadata),
+                selectinload(Item.seasons).selectinload(Season.episodes) # Load seasons and episodes
+            ).all()
+            # Assign display_year for potential use, though it's handled again in the route
             for item in items:
                 year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
+                # You might not need this if display_year is consistently set in the route
+                # item.display_year = year_metadata or item.year
             return items
 
     @staticmethod
@@ -296,35 +366,38 @@ class DatabaseManager:
                 return False
 
     @staticmethod
-    @retry_on_db_lock(max_attempts=10, initial_wait=0.2)  # Increased retries and initial wait time
+    @retry_on_db_lock(max_attempts=10, initial_wait=0.2)
     def remove_metadata(imdb_id: str) -> bool:
-        """Remove all metadata entries for a given IMDB ID."""
+        if engine is None:
+            init_db()
+            if engine is None:
+                 logger.error("Database engine not initialized in remove_metadata.")
+                 raise Exception("Database engine not initialized.")
+
         with Session() as session:
             try:
-                # Get the item
-                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                item = session.query(Item).options(selectinload(Item.item_metadata)).filter_by(imdb_id=imdb_id).first()
                 if not item:
-                    logger.warning(f"No item found with IMDB ID {imdb_id}")
+                    logger.warning(f"Item with IMDB ID {imdb_id} not found. Cannot remove metadata.")
                     return False
 
-                # Delete metadata first in smaller batches
-                batch_size = 50
-                metadata_items = session.query(Metadata).filter_by(item_id=item.id).all()
-                for i in range(0, len(metadata_items), batch_size):
-                    batch = metadata_items[i:i + batch_size]
-                    for metadata in batch:
-                        session.delete(metadata)
-                    session.flush()
+                if not item.item_metadata:
+                    logger.info(f"No metadata found for item IMDB ID {imdb_id} to remove.")
+                    return True
 
-                # Delete the item itself - this will cascade delete remaining related items
-                session.delete(item)
-                session.commit()
+                for meta_record in item.item_metadata:
+                    session.delete(meta_record)
                 
-                logger.info(f"Successfully removed item and all metadata for IMDB ID {imdb_id}")
+                session.commit()
+                logger.info(f"Successfully removed all metadata for item IMDB ID {imdb_id}.")
                 return True
-            except Exception as e:
-                logger.error(f"Error removing metadata for IMDB ID {imdb_id}: {str(e)}")
+            except OperationalError as oe:
                 session.rollback()
+                logger.error(f"OperationalError in remove_metadata for {imdb_id}: {oe}")
+                raise
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Error removing metadata for {imdb_id}: {e}")
                 return False
 
     @staticmethod

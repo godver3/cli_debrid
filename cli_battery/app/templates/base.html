@@ -45,15 +45,19 @@
             <div class="stats-display">
                 <span class="stat-item">
                     <i class="fas fa-database"></i>
-                    Items: {{ stats.total_items }}
+                    Items: <span id="total-items">{{ stats.total_items }}</span>
                 </span>
                 <span class="stat-item">
                     <i class="fas fa-tags"></i>
-                    Metadata: {{ stats.total_metadata }}
+                    Metadata: <span id="total-metadata">{{ stats.total_metadata }}</span>
                 </span>
                 <span class="stat-item">
                     <i class="fas fa-clock"></i>
-                    Last Update: {{ stats.last_update }}
+                    Last Update: <span id="last-update">{{ stats.last_update }}</span>
+                </span>
+                <span class="stat-item">
+                    <i class="fas fa-history"></i>
+                    Staleness: <span id="staleness-threshold">{{ stats.staleness_threshold }}</span>
                 </span>
             </div>
         </div>
@@ -91,6 +95,22 @@
                 nav.classList.remove('active');
             }
         });
+
+        // Function to update stats
+        function updateStats() {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(stats => {
+                    document.getElementById('total-items').textContent = stats.total_items;
+                    document.getElementById('total-metadata').textContent = stats.total_metadata;
+                    document.getElementById('last-update').textContent = stats.last_update;
+                    document.getElementById('staleness-threshold').textContent = stats.staleness_threshold;
+                })
+                .catch(error => console.error('Error updating stats:', error));
+        }
+
+        // Update stats every 30 seconds
+        setInterval(updateStats, 30000);
     });
     </script>
 </body>

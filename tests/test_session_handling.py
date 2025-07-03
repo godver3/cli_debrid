@@ -3,13 +3,13 @@ import os
 import shutil
 import tempfile
 from flask import session
-from web_server import app
+from routes.web_server import app
 import logging
 from unittest.mock import patch, MagicMock
 from flask_session import Session
 from cachelib.file import FileSystemCache
-import api_tracker
-from extensions import StaleFileHandleSessionInterface
+import routes.api_tracker as api_tracker
+from routes.extensions import StaleFileHandleSessionInterface
 
 class TestSessionHandling(unittest.TestCase):
     def setUp(self):

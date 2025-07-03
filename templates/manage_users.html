@@ -124,7 +124,7 @@
     </table>
     <div class="add-user-form">
         <h3>Add New User</h3>
-        <form action="{{ url_for('user_management.add_user') }}" method="POST">
+        <form action="{{ url_for('user_management.add_user') }}" method="POST" id="addUserForm">
             <input type="text" name="username" placeholder="Username" required autocomplete="new-username">
             <input type="password" name="password" placeholder="Password" required autocomplete="new-password">
             <select name="role" required>
@@ -133,6 +133,15 @@
                 <option value="admin">Admin</option>
             </select>
             <input type="submit" value="Add User">
+        </form>
+    </div>
+
+    <div class="add-user-form" style="margin-top: 30px;">
+        <h3>Change My Password</h3>
+        <form id="changeOwnPasswordForm">
+            <input type="password" name="new_password" placeholder="New Password" required autocomplete="new-password">
+            <input type="password" name="confirm_password" placeholder="Confirm New Password" required autocomplete="new-password">
+            <input type="submit" value="Change Password">
         </form>
     </div>
 </div>
@@ -144,55 +153,62 @@ import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
     // Add user form handling
-    const addUserForm = document.querySelector('.add-user-form form');
-    addUserForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const formData = new FormData(this);
-        const username = formData.get('username');
-        const role = formData.get('role');
+    const addUserForm = document.getElementById('addUserForm');
+    if (addUserForm) {
+        addUserForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            const username = formData.get('username');
+            const role = formData.get('role');
 
-        showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            title: "Add User",
-            message: `Are you sure you want to add user "${username}" with role "${role}"?`,
-            onConfirm: function() {
-                fetch("{{ url_for('user_management.add_user') }}", {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Reload the page immediately
-                        window.location.reload();
-                    } else {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: "Add User",
+                message: `Are you sure you want to add user "${username}" with role "${role}"?`,
+                onConfirm: function() {
+                    fetch("{{ url_for('user_management.add_user') }}", {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Success',
+                                message: 'User added successfully. Page will reload.',
+                                onConfirm: () => window.location.reload()
+                            });
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                title: 'Error',
+                                message: data.error || 'An error occurred while adding the user.'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
                         showPopup({
                             type: POPUP_TYPES.ERROR,
                             title: 'Error',
-                            message: data.error || 'An error occurred while adding the user.'
+                            message: 'An unexpected error occurred.'
                         });
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        title: 'Error',
-                        message: 'An unexpected error occurred.'
                     });
-                });
-            }
+                }
+            });
         });
-    });
+    }
 
     // Delete user handling
     document.querySelectorAll('.delete-button').forEach(button => {
         button.addEventListener('click', function() {
             const userId = this.dataset.userId;
+            const username = this.closest('tr').querySelector('td:first-child').textContent;
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
                 title: "Delete User",
-                message: "Are you sure you want to delete this user?",
+                message: `Are you sure you want to delete user "${username}"?`,
                 onConfirm: function() {
                     fetch(`/user_management/delete_user/${userId}`, {
                         method: 'POST',
@@ -200,8 +216,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     .then(response => response.json())
                     .then(data => {
                         if (data.success) {
-                            // Reload the page immediately
-                            window.location.reload();
+                             showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Success',
+                                message: 'User deleted successfully. Page will reload.',
+                                onConfirm: () => window.location.reload()
+                            });
                         } else {
                             showPopup({
                                 type: POPUP_TYPES.ERROR,
@@ -222,6 +242,80 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     });
+
+    // Change own password form handling
+    const changeOwnPasswordForm = document.getElementById('changeOwnPasswordForm');
+    if (changeOwnPasswordForm) {
+        changeOwnPasswordForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const newPassword = this.elements.new_password.value;
+            const confirmPassword = this.elements.confirm_password.value;
+
+            if (newPassword !== confirmPassword) {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Passwords do not match.'
+                });
+                return;
+            }
+            
+            if (!newPassword) {
+                 showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Password cannot be empty.'
+                });
+                return;
+            }
+
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: "Change Password",
+                message: "Are you sure you want to change your password?",
+                onConfirm: function() {
+                    fetch("{{ url_for('user_management.change_own_password') }}", {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            new_password: newPassword,
+                            confirm_password: confirmPassword
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                title: 'Success',
+                                message: data.message || 'Password changed successfully!',
+                                onConfirm: () => {
+                                    changeOwnPasswordForm.reset(); // Reset form fields
+                                }
+                            });
+                        } else {
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                title: 'Error',
+                                message: data.error || 'An error occurred.'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error',
+                            message: 'An unexpected error occurred.'
+                        });
+                    });
+                }
+            });
+        });
+    }
 });
 </script>
 {% endblock %}

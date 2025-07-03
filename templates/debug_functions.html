@@ -46,7 +46,7 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Get Collected from Library</h3>
+            <h3>Get Collected from Library (Plex)</h3>
             <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
                 <div class="form-group">
                     <label for="collection_type">Collection Type:</label>
@@ -55,7 +55,7 @@
                         <option value="recent">Recent</option>
                     </select>
                 </div>
-                <button type="submit">Get Collected</button>
+                <button type="submit">Get Plex Collected</button>
             </form>
         </div>
         <div class="debug_item">
@@ -67,7 +67,13 @@
                         <option value="all">All Enabled Sources</option>
                         {% for source in content_sources %}
                             {% if content_sources[source].enabled %}
-                                <option value="{{ source }}">{{ source }}</option>
+                                {% set display_name = content_sources[source].get('display_name') %}
+                                {% if display_name %}
+                                    <option value="{{ source }}">{{ display_name }}</option>
+                                {% else %}
+                                    {% set formatted_name = source.replace('_', ' ') %}
+                                    <option value="{{ source }}">{{ formatted_name | title }}</option>
+                                {% endif %}
                             {% endif %}
                         {% endfor %}
                     </select>
@@ -179,7 +185,7 @@
                     <select id="media_type" name="media_type" required>
                         <option value="all">All</option>
                         <option value="movie">Movies Only</option>
-                        <option value="show">Episodes Only</option>
+                        <option value="episode">Episodes Only</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -216,6 +222,7 @@
                 <p>This function will convert an existing Plex library to use symlinks. This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.</p>
                 <button type="submit">Convert to Symlinks</button>
             </form>
+            <div id="convert-to-symlinks-progress" class="progress-area" style="margin-top: 15px;"></div>
         </div>
         <div class="debug_item">
             <h3>Plex Token Status</h3>
@@ -240,12 +247,120 @@
                 <button id="refresh-trakt-tokens" class="btn">Refresh Status</button>
             </div>
         </div>
+        <div class="debug_item">
+            <h3>Direct Emby/Jellyfin Scan</h3>
+            <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
+            <form action="{{ url_for('debug.direct_emby_scan') }}" method="POST" id="direct-emby-scan-form">
+                <button type="submit">Run Emby/Jellyfin Scan</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Manage Cache Files</h3>
+            <form id="manage-cache-files-form">
+                <div id="cache_files_container" class="cache-files-container">
+                    <h4>Select Cache Files:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_cache_btn">Select All</button>
+                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
+                    </div>
+                    <div id="cache_files_list">
+                        {% if cache_files %}
+                            {% for filename in cache_files %}
+                                <div class="cache-file-item">
+                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
+                                    <label for="cache_file_{{ loop.index }}">{{ filename }}</label>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p>No cache files found.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Symlink Library Recovery</h3>
+            <p class="description">Recover database entries from your existing symlink structure if the database was lost. You must ensure that your symlink settings under Additional Settings match the structure of your folders to be recovered.</p>
+            <a href="{{ url_for('debug.recover_symlinks_page') }}" class="btn">Recover Symlink Library</a>
+        </div>
+        <div class="debug_item">
+            <h3>Riven Symlink Library Recovery</h3>
+            <p class="description">Recover database entries from your existing Riven symlink structure.</p>
+            <a href="{{ url_for('debug.recover_riven_symlinks_page') }}" class="btn">Recover Riven Symlink Library</a>
+        </div>
+        <div class="debug_item">
+            <h3>Modify Symlink Base Paths</h3>
+            <p class="description">Update the base paths for symlinks and original file locations in the database. Use carefully!</p>
+            <form id="modify-symlink-paths-form">
+                <div class="form-group form-group-horizontal">
+                    <label for="current_symlink_base">Current Symlink Base:</label>
+                    <input type="text" id="current_symlink_base" name="current_symlink_base" placeholder="/mnt/symlinked">
+                    <label for="new_symlink_base">New Symlink Base:</label>
+                    <input type="text" id="new_symlink_base" name="new_symlink_base" placeholder="/mnt/new_symlinked">
+                </div>
+                 <div class="form-group form-group-horizontal">
+                    <label for="current_original_base">Current Original Base:</label>
+                    <input type="text" id="current_original_base" name="current_original_base" placeholder="/mnt/zurg/__all__">
+                    <label for="new_original_base">New Original Base:</label>
+                    <input type="text" id="new_original_base" name="new_original_base" placeholder="/mnt/rclone/__all__">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Modify Paths</button>
+                <div id="modify-symlink-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Resync Symlinks with New Settings</h3>
+            <p class="description">Resyncs symlinks for collected items. If old/new original paths are provided, it first updates the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.</p>
+            <form id="resync-symlinks-form" action="{{ url_for('debug.resync_symlinks_route') }}" method="POST">
+                <button type="submit">Resync Symlinks</button>
+                <div id="resync-symlinks-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Delete Battery Database Files</h3>
+            <p class="description">Deletes the cli_battery.db, cli_battery.db-shm, and cli_battery.db-wal files from the db_content directory.</p>
+            <form id="delete-battery-db-form" action="{{ url_for('debug.delete_battery_db_files') }}" method="POST">
+                <button type="submit" class="btn btn-danger">Delete Battery DB Files</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Rclone Mount to Symlinks</h3>
+            <p class="description">Scan an Rclone mount, fetch metadata, create DB entries, and generate symlinks.</p>
+            <form id="rclone-to-symlinks-form">
+                <div class="form-group">
+                    <label for="rclone_mount_path">Rclone Mount Path:</label>
+                    <input type="text" id="rclone_mount_path" name="rclone_mount_path" placeholder="/mnt/rclone_mount" required>
+                </div>
+                <div class="form-group">
+                    <label for="symlink_base_path">Symlink Base Path:</label>
+                    <input type="text" id="symlink_base_path" name="symlink_base_path" placeholder="/mnt/symlinked_media" required>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="rclone_dry_run" name="dry_run">
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Start Scan</button>
+                <div id="rclone-scan-progress" class="progress-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
     </div>
 </div>
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
     import { showPopup, POPUP_TYPES } from "{{ url_for('static', filename='js/notifications.js') }}";
+    // The 'Loading' object will be accessed from the global scope,
+    // assuming loading.js makes it available there (e.g., window.Loading = Loading)
+    // and is loaded before this module script.
     
     // Define showToast function for notifications
     function showToast(message, type = 'info') {
@@ -268,15 +383,23 @@
     }
     
     document.addEventListener('DOMContentLoaded', function() {
-        const forms = document.querySelectorAll('form:not(#bulk-queue-action-form)');
-        
-        forms.forEach(form => {
-            if (form.id !== 'send-test-notification-form' && 
-                form.id !== 'get-collected-form' && 
-                form.id !== 'get-wanted-form' && 
-                form.id !== 'run-task-form' && 
-                form.id !== 'bulk-queue-action-form' &&
-                form.id !== 'convert-to-symlinks-form') {
+        // --- Generic Form Handler (with Confirmation Popup) ---
+        // Select only forms intended for the generic handler
+        const genericFormIds = [
+            'bulk-delete-form',
+            'download-logs-form', 
+            'delete-database-form',
+            'refresh-release-dates-form',
+            'move-to-upgrading-form',
+            'version-propagator-form',
+            'direct-emby-scan-form',
+            'resync-symlinks-form'
+            // Add other form IDs here if they follow the simple submitForm pattern
+        ];
+
+        genericFormIds.forEach(formId => {
+            const form = document.getElementById(formId);
+            if (form) {
                 form.addEventListener('submit', function(e) {
                     e.preventDefault();
                     const url = form.action;
@@ -389,7 +512,6 @@
                     });
                 });
         }
-
 
         function checkProgramStatus() {
             fetch('/program_operation/api/program_status')
@@ -519,7 +641,6 @@
 
             lastChecked = e.target;
         }
-
 
         const bulkActionForm = document.getElementById('bulk-queue-action-form');
         if (bulkActionForm) {
@@ -837,6 +958,7 @@
         getCollectedForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
+            const collectionType = formData.get('collection_type');
 
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
@@ -844,9 +966,12 @@
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();
-                    fetch(this.action, {
+                    fetch(this.action, { // this.action is /debug/api/get_collected_from_plex
                         method: 'POST',
-                        body: formData
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ collection_type: collectionType })
                     })
                     .then(response => response.json())
                     .then(data => {
@@ -879,17 +1004,31 @@
         getWantedForm.addEventListener('submit', function(e) {
             e.preventDefault();
             const formData = new FormData(this);
+            const sourceId = formData.get('source');
+            
+            // Get the selected source text (display name) and value
+            const sourceSelect = document.getElementById('wanted_source');
+            const sourceValue = sourceSelect.value;
+            const sourceDisplayName = sourceSelect.options[sourceSelect.selectedIndex].textContent;
+            
+            let confirmMessage = 'Are you sure you want to get wanted items?';
+            if (sourceValue !== 'all') {
+                confirmMessage = `Are you sure you want to get wanted items from "${sourceDisplayName}"?`;
+            }
 
-            // Adding a confirmation popup similar to getCollectedForm
+            // Adding a confirmation popup
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
-                message: 'Are you sure you want to get wanted items?',
+                message: confirmMessage,
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();
-                    fetch(this.action, {
+                    fetch(this.action, { // this.action is /debug/api/get_wanted_content
                         method: 'POST',
-                        body: formData
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ source_id: sourceId })
                     })
                     .then(response => response.json())
                     .then(data => {
@@ -922,12 +1061,40 @@
             .then(response => response.json())
             .then(data => {
                 const taskSelect = document.getElementById('task_select');
-                data.tasks.forEach(task => {
-                    const option = document.createElement('option');
-                    option.value = task;
-                    option.textContent = task;
-                    taskSelect.appendChild(option);
-                });
+                
+                // Clear any existing options
+                taskSelect.innerHTML = '';
+                
+                // Check if we have the new structured format
+                if (data.task_map) {
+                    // Sort tasks alphabetically by display name
+                    data.task_map.sort((a, b) => a.display_name.localeCompare(b.display_name));
+                    
+                    // Add options with display names
+                    data.task_map.forEach(task => {
+                        const option = document.createElement('option');
+                        option.value = task.id;
+                        option.textContent = task.display_name;
+                        taskSelect.appendChild(option);
+                    });
+                } else {
+                    // Fallback to old format if task_map is not available
+                    data.tasks.forEach(task => {
+                        const option = document.createElement('option');
+                        option.value = task;
+                        
+                        // Format the task name
+                        let displayName = task;
+                        if (task.startsWith('task_')) {
+                            displayName = task.replace('task_', '').replace(/_/g, ' ');
+                            // Capitalize first letter of each word
+                            displayName = displayName.replace(/\b\w/g, c => c.toUpperCase());
+                        }
+                        
+                        option.textContent = displayName;
+                        taskSelect.appendChild(option);
+                    });
+                }
             })
             .catch(error => console.error('Error fetching available tasks:', error));
 
@@ -935,11 +1102,13 @@
         const runTaskForm = document.getElementById('run-task-form');
         runTaskForm.addEventListener('submit', function(e) {
             e.preventDefault();
-            const taskName = document.getElementById('task_select').value;
+            const taskSelect = document.getElementById('task_select');
+            const taskName = taskSelect.value;
+            const taskDisplayName = taskSelect.options[taskSelect.selectedIndex].textContent;
             
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
-                message: `Are you sure you want to run the task "${taskName}"?`,
+                message: `Are you sure you want to run the task "${taskDisplayName}"?`,
                 title: 'Confirmation',
                 onConfirm: () => {
                     Loading.show();
@@ -956,13 +1125,25 @@
                     .then(data => {
                         Loading.hide();
                         if (data.success) {
+                            // --- START EDIT: Update success message for "Run Task Manually" ---
+                            let successMessage = data.message; // Default to message from backend (e.g., "Task 'X' queued...")
+                            if (data.job_id) {
+                                successMessage += ` (Job ID: ${data.job_id})`;
+                            }
                             showPopup({
                                 type: POPUP_TYPES.SUCCESS,
-                                message: data.message,
-                                title: 'Success'
+                                message: successMessage, // Display the "queued" message
+                                title: 'Task Action' // Changed title from 'Success' to 'Task Action'
                             });
+                            // We might not want to poll here by default for all manually run tasks,
+                            // as some are quick. Polling could be added selectively if needed.
+                            // If polling is desired, here's where you could initiate it:
+                            // if (data.job_id) {
+                            //     pollTaskStatus(data.job_id); // Assuming pollTaskStatus handles Loading.hide()
+                            // }
+                            // --- END EDIT ---
                         } else {
-                            throw new Error(data.error);
+                            throw new Error(data.error || 'Failed to run task');
                         }
                     })
                     .catch(error => {
@@ -1018,14 +1199,15 @@
         // Load versions when the page loads
         loadVersions();
 
-        // Removed the duplicate handler for version propagator form since it's handled by the generic form handler
-
         // Add event listener for convert to symlinks form
         const convertToSymlinksForm = document.getElementById('convert-to-symlinks-form');
-        if (convertToSymlinksForm) {
+        const convertProgressDiv = document.getElementById('convert-to-symlinks-progress');
+
+        if (convertToSymlinksForm && convertProgressDiv) {
             convertToSymlinksForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                
+                convertProgressDiv.innerHTML = ''; // Clear previous progress
+
                 showPopup({
                     type: POPUP_TYPES.CONFIRM,
                     message: 'Are you sure you want to convert library items to use symlinks? This is ONLY intended for converting existing Plex libraries to a Symlinked library, and should only be done once. This action is not reversible.',
@@ -1036,39 +1218,118 @@
                             method: 'POST',
                         })
                         .then(response => {
-                            const contentType = response.headers.get('content-type');
                             if (!response.ok) {
+                                // Try to get error text, then throw
                                 return response.text().then(text => {
-                                    throw new Error(text || 'An error occurred');
+                                     throw new Error(text || `Server responded with status ${response.status}`);
                                 });
                             }
-                            if (contentType && contentType.includes('application/json')) {
+                            // Check content type BEFORE parsing
+                            const contentType = response.headers.get('content-type');
+                             if (contentType && contentType.includes('application/json')) {
                                 return response.json();
                             }
-                            return response.text();
+                             throw new Error('Server response was not JSON'); // Or handle non-JSON if expected
                         })
                         .then(data => {
                             Loading.hide();
-                            const message = typeof data === 'object' ? data.message : data;
-                            showPopup({
-                                type: POPUP_TYPES.SUCCESS,
-                                message: message,
-                                title: 'Success'
-                            });
+                            // --- Start Task Monitoring ---
+                            if (data.success && data.task_id) {
+                                convertProgressDiv.innerHTML = `<p>Conversion task started (ID: ${data.task_id}). Monitoring progress...</p>`;
+                                monitorConversionProgress(data.task_id, convertProgressDiv); // Call the monitoring function
+                            } else {
+                                throw new Error(data.error || 'Failed to start conversion task.');
+                            }
+                            // --- End Task Monitoring ---
                         })
                         .catch(error => {
                             Loading.hide();
-                            console.error('Error:', error);
+                            console.error('Error starting conversion:', error);
                             showPopup({
                                 type: POPUP_TYPES.ERROR,
-                                message: error.message || 'An error occurred',
+                                message: error.message || 'An error occurred while starting the conversion.',
                                 title: 'Error'
                             });
+                             convertProgressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
                         });
                     }
                 });
             });
         }
+
+        // --- Add New Monitoring Function ---
+        function monitorConversionProgress(taskId, targetDiv) {
+            targetDiv.innerHTML = `<p>Connecting to progress stream for task ${taskId}...</p>`;
+            const eventSource = new EventSource(`/debug/api/conversion_progress/${taskId}`); // Use the correct endpoint
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
+
+                    // Display specific counts if available
+                    progressHtml += `<p>Files Scanned: ${data.total_files_scanned || 0}</p>`;
+                    progressHtml += `<p>Media Files Found: ${data.media_files_found || 0}</p>`;
+                    progressHtml += `<p>Items Processed: ${data.items_processed || 0}</p>`;
+                    progressHtml += `<p>DB Entries Added: ${data.items_added_to_db || 0}</p>`;
+                    progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                    progressHtml += `<p>Skipped (Duplicates): ${data.skipped_duplicates || 0}</p>`;
+
+                    let errorsHtml = '';
+                    if (data.parser_errors > 0) errorsHtml += `<li>Parser Errors: ${data.parser_errors}</li>`;
+                    if (data.metadata_errors > 0) errorsHtml += `<li>Metadata Errors: ${data.metadata_errors}</li>`;
+                    if (data.db_errors > 0) errorsHtml += `<li>Database Errors: ${data.db_errors}</li>`;
+                    if (data.symlink_errors > 0) errorsHtml += `<li>Symlink Errors: ${data.symlink_errors}</li>`;
+                    if (data.errors && data.errors.length > 0) {
+                         errorsHtml += `<li>General Errors: ${data.errors.length}</li>`;
+                         // Optionally list first few general errors
+                         // data.errors.slice(0, 3).forEach(err => { errorsHtml += `<li style="margin-left: 15px;">- ${err}</li>`; });
+                    }
+
+                    if (errorsHtml) {
+                        progressHtml += `<p class="error">Errors Encountered:</p><ul>${errorsHtml}</ul>`;
+                    }
+
+                    // Display Dry Run Preview
+                    if (data.preview && data.preview.length > 0) {
+                        progressHtml += '<h4>Dry Run Preview (First 5):</h4><ul>';
+                        data.preview.forEach(item => {
+                            progressHtml += `<li>${item.original_file} -> ${item.symlink_path || 'Error'} (Title: ${item.fetched_title || 'N/A'})</li>`;
+                        });
+                        progressHtml += '</ul>';
+                    }
+
+
+                    targetDiv.innerHTML = progressHtml;
+
+                    if (data.complete) {
+                        eventSource.close();
+                        console.log(`Progress stream closed for conversion task ${taskId}`);
+                        showPopup({
+                             type: data.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
+                             message: data.message || (data.success ? 'Conversion complete.' : 'Conversion failed or finished with errors.'),
+                             title: data.success ? 'Conversion Complete' : 'Conversion Finished'
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error parsing progress update:", e, "Raw data:", event.data);
+                    targetDiv.innerHTML = `<p class="error">Error receiving progress update.</p>`;
+                    eventSource.close(); // Close on parsing error
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error("EventSource failed:", error);
+                targetDiv.innerHTML = `<p class="error">Connection to progress stream lost.</p>`;
+                eventSource.close();
+                 showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Lost connection to the progress stream. Please check server logs.',
+                    title: 'Connection Error'
+                });
+            };
+        }
+        // --- End New Monitoring Function ---
 
         function updatePlexTokenStatus(data) {
             const container = document.querySelector('.token-status-container');
@@ -1388,6 +1649,360 @@
         
         // Initial fetch of verification queue
         fetchVerificationQueue();
+
+        // --- Cache File Management Logic ---
+        const cacheFilesList = document.getElementById('cache_files_list');
+        const selectAllCacheBtn = document.getElementById('select_all_cache_btn');
+        const unselectAllCacheBtn = document.getElementById('unselect_all_cache_btn');
+        const manageCacheFilesForm = document.getElementById('manage-cache-files-form');
+
+        if (cacheFilesList && selectAllCacheBtn && unselectAllCacheBtn) {
+            selectAllCacheBtn.addEventListener('click', function() {
+                toggleAllCacheCheckboxes(true);
+            });
+
+            unselectAllCacheBtn.addEventListener('click', function() {
+                toggleAllCacheCheckboxes(false);
+            });
+        }
+
+        function toggleAllCacheCheckboxes(checked) {
+            if (!cacheFilesList) return;
+            const checkboxes = cacheFilesList.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = checked;
+            });
+        }
+
+        if (manageCacheFilesForm) {
+            manageCacheFilesForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                if (!cacheFilesList) return;
+                const selectedCheckboxes = cacheFilesList.querySelectorAll('input[name="selected_files"]:checked');
+                
+                if (selectedCheckboxes.length === 0) {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Please select at least one cache file to delete.',
+                        title: 'No Files Selected'
+                    });
+                    return;
+                }
+
+                const fileCount = selectedCheckboxes.length;
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: `Are you sure you want to delete ${fileCount} selected cache file(s)? This action cannot be undone.`,
+                    title: 'Confirm Deletion',
+                    onConfirm: () => {
+                        Loading.show();
+                        const formData = new FormData(manageCacheFilesForm);
+                        fetch('/debug/api/delete_cache_files', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            if (data.success) {
+                                showPopup({
+                                    type: data.errors ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                                    message: data.message,
+                                    title: data.errors ? 'Partial Success' : 'Success'
+                                });
+                                // Refresh the page or just the list after deletion
+                                setTimeout(() => { 
+                                    window.location.reload(); // Simple page reload
+                                }, 2000); 
+                            } else {
+                                throw new Error(data.error || 'Failed to delete cache files');
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message || 'An error occurred while deleting cache files.',
+                                title: 'Error'
+                            });
+                        });
+                    }
+                });
+            });
+        }
+        // --- End Cache File Management Logic ---
+
+        // --- Symlink Path Modification Logic ---
+        const modifySymlinkForm = document.getElementById('modify-symlink-paths-form');
+        const modifySymlinkResultsDiv = document.getElementById('modify-symlink-results');
+
+        if (modifySymlinkForm) {
+            modifySymlinkForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                modifySymlinkResultsDiv.innerHTML = ''; // Clear previous results
+                Loading.show();
+
+                const formData = new FormData(modifySymlinkForm);
+                const isDryRun = formData.get('dry_run') === 'on';
+                const currentSymlink = formData.get('current_symlink_base').trim();
+                const newSymlink = formData.get('new_symlink_base').trim();
+                const currentOriginal = formData.get('current_original_base').trim();
+                const newOriginal = formData.get('new_original_base').trim();
+
+                // Basic validation
+                if (!(currentSymlink && newSymlink) && !(currentOriginal && newOriginal)) {
+                    Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Please provide at least one complete pair (current and new) of base paths to modify.',
+                        title: 'Input Error'
+                    });
+                    return;
+                }
+                if ((currentSymlink && !newSymlink) || (!currentSymlink && newSymlink) || (currentOriginal && !newOriginal) || (!currentOriginal && newOriginal)){
+                     Loading.hide();
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'If modifying a path type (symlink or original), both current and new paths must be provided.',
+                        title: 'Input Error'
+                    });
+                    return;
+                }
+
+                fetch('/debug/api/modify_symlink_paths', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    Loading.hide();
+                    if (data.success) {
+                        showPopup({
+                            type: data.dry_run ? POPUP_TYPES.INFO : POPUP_TYPES.SUCCESS,
+                            message: data.message,
+                            title: data.dry_run ? 'Dry Run Results' : 'Update Complete',
+                            autoClose: false
+                        });
+
+                        if (data.dry_run) {
+                            let previewHtml = `<h4>Preview of Changes (${data.items_to_update_count} items affected):</h4>`;
+                            if (data.preview && data.preview.length > 0) {
+                                // Use a more descriptive class for modal tables
+                                previewHtml += '<table class="preview-results-table"><thead><tr><th>ID</th><th>Old Location</th><th>New Location</th><th>Old Original</th><th>New Original</th></tr></thead><tbody>';
+                                data.preview.forEach(item => {
+                                    previewHtml += `<tr>
+                                        <td>${item.id}</td>
+                                        <td class="path-cell">${item.old_location || 'N/A'}</td>
+                                        <td class="path-cell">${item.new_location || 'N/A'}</td>
+                                        <td class="path-cell">${item.old_original || 'N/A'}</td>
+                                        <td class="path-cell">${item.new_original || 'N/A'}</td>
+                                    </tr>`;
+                                });
+                                previewHtml += '</tbody></table>';
+                                if (data.items_to_update_count > data.preview.length) {
+                                    previewHtml += `<p><i>(Showing first ${data.preview.length} changes)</i></p>`;
+                                }
+                            } else {
+                                previewHtml += '<p>No items would be changed with these inputs.</p>';
+                            }
+                            // Show the preview in a popup instead of the results div
+                            showPopup({
+                                type: POPUP_TYPES.INFO,
+                                title: 'Dry Run Preview',
+                                message: previewHtml,
+                                large: true,
+                                autoClose: false
+                            });
+                            modifySymlinkResultsDiv.innerHTML = '<p>Dry run preview displayed in popup.</p>'; // Update results div
+                        } else {
+                            // Optionally clear form or results after successful update
+                            // modifySymlinkForm.reset(); // Uncomment to clear form
+                            modifySymlinkResultsDiv.innerHTML = `<p>${data.message}</p>`;
+                        }
+                    } else {
+                        throw new Error(data.error || 'An unknown error occurred.');
+                    }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    console.error('Error modifying symlink paths:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error',
+                        autoClose: false
+                    });
+                    modifySymlinkResultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                });
+            });
+        }
+        // --- End Symlink Path Modification Logic ---
+
+        // --- Rclone Mount to Symlinks Logic ---
+        const rcloneScanForm = document.getElementById('rclone-to-symlinks-form');
+        const rcloneProgressDiv = document.getElementById('rclone-scan-progress');
+
+        if (rcloneScanForm) {
+            rcloneScanForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                rcloneProgressDiv.innerHTML = ''; // Clear previous progress
+                const isDryRun = document.getElementById('rclone_dry_run').checked;
+                const confirmMessage = isDryRun
+                    ? 'Start Rclone mount scan (Dry Run)? This will analyze files but make no changes.'
+                    : 'Start Rclone mount scan and create symlinks? This will add items to the database and create symlinks on your filesystem.';
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: confirmMessage,
+                    title: 'Confirm Rclone Scan',
+                    onConfirm: () => {
+                        Loading.show();
+                        const formData = new FormData(rcloneScanForm);
+
+                        fetch('/debug/api/rclone_to_symlinks', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            if (data.success && data.task_id) {
+                                rcloneProgressDiv.innerHTML = `<p>Scan task started (ID: ${data.task_id}). Monitoring progress...</p>`;
+                                monitorRcloneScanProgress(data.task_id, rcloneProgressDiv);
+                            } else {
+                                throw new Error(data.error || 'Failed to start Rclone scan task.');
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error starting Rclone scan:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message,
+                                title: 'Error'
+                            });
+                            rcloneProgressDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                        });
+                    }
+                });
+            });
+        }
+
+        function monitorRcloneScanProgress(taskId, targetDiv) {
+            targetDiv.innerHTML = `<p>Connecting to progress stream for task ${taskId}...</p>`;
+            const eventSource = new EventSource(`/debug/api/rclone_scan_progress/${taskId}`); // Use the correct endpoint
+
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    let progressHtml = `<p>Status: ${data.status || 'N/A'}</p><p>Message: ${data.message || 'N/A'}</p>`;
+
+                    // Display specific counts if available
+                    progressHtml += `<p>Files Scanned: ${data.total_files_scanned || 0}</p>`;
+                    progressHtml += `<p>Media Files Found: ${data.media_files_found || 0}</p>`;
+                    progressHtml += `<p>Items Processed: ${data.items_processed || 0}</p>`;
+                    progressHtml += `<p>DB Entries Added: ${data.items_added_to_db || 0}</p>`;
+                    progressHtml += `<p>Symlinks Created: ${data.symlinks_created || 0}</p>`;
+                    progressHtml += `<p>Skipped (Duplicates): ${data.skipped_duplicates || 0}</p>`;
+
+                    let errorsHtml = '';
+                    if (data.parser_errors > 0) errorsHtml += `<li>Parser Errors: ${data.parser_errors}</li>`;
+                    if (data.metadata_errors > 0) errorsHtml += `<li>Metadata Errors: ${data.metadata_errors}</li>`;
+                    if (data.db_errors > 0) errorsHtml += `<li>Database Errors: ${data.db_errors}</li>`;
+                    if (data.symlink_errors > 0) errorsHtml += `<li>Symlink Errors: ${data.symlink_errors}</li>`;
+                    if (data.errors && data.errors.length > 0) {
+                         errorsHtml += `<li>General Errors: ${data.errors.length}</li>`;
+                         // Optionally list first few general errors
+                         // data.errors.slice(0, 3).forEach(err => { errorsHtml += `<li style="margin-left: 15px;">- ${err}</li>`; });
+                    }
+
+                    if (errorsHtml) {
+                        progressHtml += `<p class="error">Errors Encountered:</p><ul>${errorsHtml}</ul>`;
+                    }
+
+                    // Display Dry Run Preview
+                    if (data.preview && data.preview.length > 0) {
+                        progressHtml += '<h4>Dry Run Preview (First 5):</h4><ul>';
+                        data.preview.forEach(item => {
+                            progressHtml += `<li>${item.original_file} -> ${item.symlink_path || 'Error'} (Title: ${item.fetched_title || 'N/A'})</li>`;
+                        });
+                        progressHtml += '</ul>';
+                    }
+
+
+                    targetDiv.innerHTML = progressHtml;
+
+                    if (data.complete) {
+                        eventSource.close();
+                        console.log(`Progress stream closed for Rclone scan task ${taskId}`);
+                        showPopup({
+                             type: data.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.ERROR,
+                             message: data.message || (data.success ? 'Scan complete.' : 'Scan failed or finished with errors.'),
+                             title: data.success ? 'Scan Complete' : 'Scan Finished'
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error parsing progress update:", e, "Raw data:", event.data);
+                    targetDiv.innerHTML = `<p class="error">Error receiving progress update.</p>`;
+                    eventSource.close(); // Close on parsing error
+                }
+            };
+
+            eventSource.onerror = function(error) {
+                console.error("EventSource failed:", error);
+                targetDiv.innerHTML = `<p class="error">Connection to progress stream lost.</p>`;
+                eventSource.close();
+                 showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: 'Lost connection to the progress stream. Please check server logs.',
+                    title: 'Connection Error'
+                });
+            };
+        }
+        // --- End Rclone Mount to Symlinks Logic ---
+
+        // --- Handler for Delete Battery DB Form ---
+        const deleteBatteryDbForm = document.getElementById('delete-battery-db-form');
+        if (deleteBatteryDbForm) {
+            deleteBatteryDbForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const url = this.action;
+                const method = this.method;
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: 'Are you sure you want to delete the battery database files (cli_battery.db, -shm, -wal)? This might resolve certain issues but will reset some internal states.',
+                    title: 'Confirm Deletion',
+                    onConfirm: () => {
+                        Loading.show();
+                        submitForm(url, method, new FormData(this)); // Use the generic submitForm
+                    }
+                });
+            });
+        }
+        // --- End Handler for Delete Battery DB Form ---
+
+        // --- Resync Symlinks with New Settings Logic ---
+        const resyncSymlinksForm = document.getElementById('resync-symlinks-form');
+        if (resyncSymlinksForm) {
+            resyncSymlinksForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                const oldOriginalPath = this.elements['old_original_path'].value;
+                const newOriginalPath = this.elements['new_original_path'].value;
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: `Are you sure you want to resync symlinks with new settings? This will update the stored original file paths in the database for matching items. Then, it regenerates symlinks for relevant collected items based on current symlink settings and these (potentially updated) original paths. If no paths are provided, it attempts to resync all collected items.`,
+                    title: 'Confirm Resync',
+                    onConfirm: () => {
+                        Loading.show();
+                        submitForm(this.action, 'POST', new FormData(this));
+                    }
+                });
+            });
+        }
+        // --- End Resync Symlinks with New Settings Logic ---
     });
 </script>
 

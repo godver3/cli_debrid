@@ -1,0 +1,364 @@
+{% extends "base.html" %}
+{% block title %}Collect User Plex Tokens{% endblock %}
+
+{% block content %}
+<style>
+    .token-collection-container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background-color: var(--card-bg);
+        border-radius: 8px;
+        color: var(--text-color);
+    }
+    .token-collection-container h2 {
+        color: var(--primary-color);
+        margin-bottom: 15px;
+        text-align: center;
+    }
+    .instructions {
+        margin-bottom: 20px;
+        padding: 15px;
+        background-color: var(--input-bg);
+        border-radius: 5px;
+        border-left: 4px solid var(--info-color);
+    }
+    .generate-section, .auth-status-section, .stored-tokens-section {
+        margin-bottom: 25px;
+    }
+    .btn-generate {
+        background-color: var(--primary-color);
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 1em;
+    }
+    .btn-generate:disabled {
+        background-color: #888;
+        cursor: not-allowed;
+    }
+    #auth-details {
+        margin-top: 15px;
+        padding: 15px;
+        background-color: #2a2a2a;
+        border-radius: 5px;
+        display: none; /* Hidden initially */
+    }
+    #auth-details code {
+        background-color: #1a1a1a;
+        padding: 3px 6px;
+        border-radius: 3px;
+        color: #e5a00d; /* Plex yellow */
+        word-break: break-all;
+    }
+     #auth-details a {
+         color: #e5a00d;
+         word-break: break-all;
+     }
+    #polling-status {
+        margin-top: 10px;
+        font-style: italic;
+    }
+    .stored-tokens-list {
+        list-style: none;
+        padding: 0;
+    }
+    .stored-tokens-list li {
+        background-color: var(--input-bg);
+        padding: 10px 15px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .btn-delete {
+        background-color: var(--danger-color);
+        color: white;
+        padding: 5px 10px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9em;
+    }
+    .warning {
+        color: var(--warning-color);
+        font-weight: bold;
+        margin-top: 15px;
+        padding: 10px;
+        background-color: rgba(255, 193, 7, 0.1);
+        border: 1px solid var(--warning-color);
+        border-radius: 4px;
+    }
+    /* Styles for .btn and .btn-primary are inherited from base.css */
+    
+    /* Keep specific padding/font-size if the base .btn style isn't quite right */
+    #generate-btn {
+        padding: 10px 15px; /* Adjust if needed */
+        font-size: 1em; /* Adjust if needed */
+    }
+
+    /* Override disabled state for this specific button */
+    #generate-btn:disabled {
+        background-color: #888; /* Standard disabled gray */
+        border-color: #888;   /* Match border color */
+        cursor: not-allowed;
+        opacity: 0.65;       /* Common opacity for disabled elements */
+    }
+</style>
+
+<div class="token-collection-container">
+    <h2>Collect User Plex Tokens</h2>
+
+    <div class="instructions">
+        <h4>How to Use:</h4>
+        <ol>
+            <li>Click "Generate User Login Link".</li>
+            <li>Copy the generated <strong>Code</strong> or the full <strong>Link</strong>.</li>
+            <li>Send the Code or Link to the Plex user you want to authorize (e.g., via Discord, Email).</li>
+            <li>Instruct the user to visit the link (or go to <code>plex.tv/link</code> and enter the code) and sign in to their Plex account to grant access.</li>
+            <li>This page will automatically check if the user has completed the authorization.</li>
+            <li>Once authorized, the user's Plex username will appear in the "Stored Tokens" list below.</li>
+        </ol>
+        <p class="warning"><strong>Security Warning:</strong> User tokens are stored in a local JSON file. While convenient, this is less secure than encrypted storage. Ensure your server's file system is properly secured.</p>
+    </div>
+
+    <div class="generate-section">
+        <button id="generate-btn" class="btn btn-primary">Generate User Login Link</button>
+        <div id="auth-details">
+            <p>Send this code to the user:</p>
+            <p>Code: <code id="plex-code"></code></p>
+            <p>Or, send this direct link:</p>
+            <p><a id="plex-link" href="#" target="_blank"></a></p>
+            <div id="polling-status">Waiting for user to authorize... (Do not close this page)</div>
+        </div>
+         <div id="auth-error" class="alert alert-danger" style="display: none; margin-top: 15px;"></div>
+         <div id="auth-success" class="alert alert-success" style="display: none; margin-top: 15px;"></div>
+    </div>
+
+    <div class="stored-tokens-section">
+        <h4>Stored User Tokens</h4>
+        <ul id="stored-tokens-list" class="stored-tokens-list">
+            {% if stored_usernames %}
+                {% for username in stored_usernames %}
+                <li data-username="{{ username }}">
+                    <span>{{ username }}</span>
+                    <button class="btn-delete" data-username="{{ username }}">Delete</button>
+                </li>
+                {% endfor %}
+            {% endif %}
+        </ul>
+        <p id="no-tokens-message" {% if stored_usernames %}style="display: none;"{% endif %}>
+            No user tokens have been stored yet.
+        </p>
+    </div>
+
+</div>
+
+<script type="module">
+    import { showPopup, POPUP_TYPES } from '/static/js/notifications.js'; // Assuming you use this
+
+    const generateBtn = document.getElementById('generate-btn');
+    const authDetailsDiv = document.getElementById('auth-details');
+    const plexCodeEl = document.getElementById('plex-code');
+    const plexLinkEl = document.getElementById('plex-link');
+    const pollingStatusEl = document.getElementById('polling-status');
+    const authErrorEl = document.getElementById('auth-error');
+    const authSuccessEl = document.getElementById('auth-success');
+    const storedTokensList = document.getElementById('stored-tokens-list');
+    const noTokensMessage = document.getElementById('no-tokens-message');
+
+    let pollIntervalId = null;
+    let currentPinId = null;
+    let currentClientId = null;
+
+    function stopPolling() {
+        if (pollIntervalId) {
+            clearInterval(pollIntervalId);
+            pollIntervalId = null;
+        }
+        generateBtn.disabled = false; // Re-enable generate button
+        pollingStatusEl.textContent = ''; // Clear status text
+        // Keep auth details visible for reference unless explicitly hidden
+    }
+
+    function updateStoredTokensList(username) {
+        if (noTokensMessage) {
+            noTokensMessage.style.display = 'none';
+        }
+        if (!storedTokensList) { // If the list didn't exist initially
+             const listContainer = document.querySelector('.stored-tokens-section');
+             const newList = document.createElement('ul');
+             newList.id = 'stored-tokens-list';
+             newList.className = 'stored-tokens-list';
+             listContainer.appendChild(newList);
+             // Re-assign the global variable
+             window.storedTokensList = newList; // Use window scope if needed, or pass list around
+        }
+
+        // Check if user already exists
+        if (document.querySelector(`li[data-username="${username}"]`)) {
+             console.log(`Token for ${username} updated.`);
+             return; // Already in list, just updated silently
+        }
+
+        const listItem = document.createElement('li');
+        listItem.setAttribute('data-username', username);
+        listItem.innerHTML = `
+            <span>${username}</span>
+            <button class="btn-delete" data-username="${username}">Delete</button>
+        `;
+        storedTokensList.appendChild(listItem);
+
+        // Add event listener to the new delete button
+        const deleteBtn = listItem.querySelector('.btn-delete');
+        addDeleteEventListener(deleteBtn);
+    }
+
+    async function checkPinStatus(pinId, clientId) {
+        console.log(`Checking status for PIN: ${pinId}, Client: ${clientId}`);
+        try {
+            const response = await fetch('/user_token/collect_tokens/check_pin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pin_id: pinId, client_id: clientId })
+            });
+
+            if (!response.ok && response.status !== 404) { // Allow 404 (pin expired/invalid) to be handled as an error below
+                 throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            console.log("Pin check response:", data);
+
+            if (data.success && data.status === 'authorized') {
+                pollingStatusEl.textContent = `User ${data.username} successfully authorized! Token stored.`;
+                pollingStatusEl.style.color = 'var(--success-color)';
+                authSuccessEl.textContent = `Authorization complete for ${data.username}.`;
+                authSuccessEl.style.display = 'block';
+                authErrorEl.style.display = 'none';
+                updateStoredTokensList(data.username);
+                stopPolling();
+            } else if (data.success && data.status === 'waiting') {
+                pollingStatusEl.textContent = 'Waiting for user to authorize... (Checking again soon)';
+                pollingStatusEl.style.color = 'inherit'; // Reset color
+            } else {
+                // Handle errors like expired pin or other failures
+                pollingStatusEl.textContent = `Authorization failed or expired: ${data.error || 'Unknown reason'}`;
+                pollingStatusEl.style.color = 'var(--danger-color)';
+                authErrorEl.textContent = `Error: ${data.error || 'Failed to complete authorization.'}`;
+                authErrorEl.style.display = 'block';
+                authSuccessEl.style.display = 'none';
+                stopPolling();
+            }
+        } catch (error) {
+            console.error('Error checking pin status:', error);
+            pollingStatusEl.textContent = `Error checking status: ${error.message}`;
+            pollingStatusEl.style.color = 'var(--danger-color)';
+            authErrorEl.textContent = `Error: ${error.message}`;
+            authErrorEl.style.display = 'block';
+            authSuccessEl.style.display = 'none';
+            stopPolling();
+        }
+    }
+
+    generateBtn.addEventListener('click', async () => {
+        generateBtn.disabled = true;
+        authDetailsDiv.style.display = 'none';
+        pollingStatusEl.textContent = 'Generating link...';
+        authErrorEl.style.display = 'none'; // Clear previous errors
+        authSuccessEl.style.display = 'none'; // Clear previous success
+        stopPolling(); // Clear any previous polling
+
+        try {
+            const response = await fetch('/user_token/collect_tokens/initiate', { method: 'POST' });
+            const data = await response.json();
+
+            if (data.success) {
+                currentPinId = data.pin_id;
+                currentClientId = data.client_id; // Store client ID for checking
+                plexCodeEl.textContent = data.code;
+                plexLinkEl.href = data.auth_url;
+                plexLinkEl.textContent = data.auth_url;
+                authDetailsDiv.style.display = 'block';
+                pollingStatusEl.textContent = 'Waiting for user to authorize...';
+                pollingStatusEl.style.color = 'inherit';
+
+                // Start polling
+                pollIntervalId = setInterval(() => {
+                    checkPinStatus(currentPinId, currentClientId);
+                }, 5000); // Poll every 5 seconds
+
+                 // Optional: Auto-stop polling after a timeout (e.g., 5 minutes)
+                 setTimeout(() => {
+                     if (pollIntervalId) { // Check if still polling
+                        console.log("Stopping polling due to timeout.");
+                        pollingStatusEl.textContent = 'Authorization timed out. Please generate a new link.';
+                        pollingStatusEl.style.color = 'var(--warning-color)';
+                        stopPolling();
+                     }
+                 }, 300000); // 300000 ms = 5 minutes
+
+            } else {
+                throw new Error(data.error || 'Failed to generate link');
+            }
+        } catch (error) {
+            console.error('Error generating link:', error);
+            authErrorEl.textContent = `Error: ${error.message}`;
+            authErrorEl.style.display = 'block';
+            generateBtn.disabled = false;
+            pollingStatusEl.textContent = '';
+        }
+        // Keep generate button disabled while polling is active
+    });
+
+     // --- Delete Functionality ---
+    async function deleteToken(username) {
+        if (!confirm(`Are you sure you want to delete the stored token for user "${username}"?`)) {
+            return;
+        }
+        try {
+            const response = await fetch('/user_token/collect_tokens/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: username })
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                // Remove the list item from the page
+                const listItem = document.querySelector(`li[data-username="${username}"]`);
+                if (listItem) {
+                    listItem.remove();
+                }
+                 // Show message if list becomes empty
+                 if (storedTokensList && storedTokensList.children.length === 0 && noTokensMessage) {
+                     noTokensMessage.style.display = 'block';
+                 }
+                showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Token Deleted', message: `Token for ${username} removed.` });
+            } else {
+                throw new Error(data.error || 'Failed to delete token');
+            }
+        } catch (error) {
+            console.error('Error deleting token:', error);
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'Deletion Failed', message: error.message });
+        }
+    }
+
+    // Add event listeners to existing delete buttons
+    function addDeleteEventListener(button) {
+         button.addEventListener('click', (event) => {
+             const username = event.target.dataset.username;
+             deleteToken(username);
+         });
+    }
+
+    document.querySelectorAll('.btn-delete').forEach(button => {
+        addDeleteEventListener(button);
+    });
+
+
+</script>
+{% endblock %}

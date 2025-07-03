@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 from datetime import datetime
 import os
 import subprocess
-from settings import get_setting
+from utilities.settings import get_setting
 from .downsub import main as downsub_main
 
 def validate_cinesync_path(path: str) -> bool:
@@ -131,31 +131,29 @@ def handle_state_change(item: Dict[str, Any]) -> None:
         #logging.info(f"Running post-processing for {state} state - Item ID: {item_id}")
         
         # Get fresh item data from database to ensure we have latest state
-        from database import get_media_item_by_id
-        fresh_item = get_media_item_by_id(item_id)
-        if not fresh_item:
-            logging.error(f"Could not find item {item_id} in database for post-processing")
-            return
-            
-        # Log state change details
+        # Lazy import to avoid circular dependency
         if state == 'Collected' or state == 'Upgrading':
+            from database import get_media_item_by_id
+            fresh_item = get_media_item_by_id(item_id)
+            if not fresh_item:
+                logging.error(f"Could not find item {item_id} in database for post-processing")
+                return
+                
             # Run CineSync for items
             run_cinesync(dict(fresh_item))
             
             # Run subtitle downloader
             try:
-                logging.info("Running subtitle downloader - this may take some time if it has never been run.")
-                # Get the file path based on collection management setting
-                file_path = None
                 if get_setting('File Management', 'file_collection_management') == 'Plex':
-                    if fresh_item.get('location_on_disk'):
-                        file_path = fresh_item['location_on_disk']
+                    pass
                 else:
-                    if fresh_item.get('original_path_for_symlink'):
-                        file_path = fresh_item['original_path_for_symlink']
-                
-                # Run downsub with the specific file path
-                downsub_main(file_path)
+                    logging.info("Running subtitle downloader - this may take some time if it has never been run.")
+                    # Always use location_on_disk for subtitle downloads
+                    file_path = fresh_item.get('location_on_disk')
+                    if file_path:
+                        downsub_main(file_path)
+                    else:
+                        logging.warning("No location_on_disk found for item, skipping subtitle download")
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")

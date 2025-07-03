@@ -1,4 +1,4 @@
-from flask import jsonify, Blueprint
+from flask import jsonify, Blueprint, request
 from app.settings import Settings
 from app.metadata_manager import MetadataManager
 from app.logger_config import logger
@@ -37,21 +37,6 @@ def get_movie_release_dates(imdb_id):
             return jsonify({"error": "Movie release dates not found"}), 404
     except Exception as e:
         logger.error(f"Error fetching movie release dates: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@api_bp.route('/api/episode/metadata/<imdb_id>', methods=['GET'])
-def get_episode_metadata(imdb_id):
-    try:
-        print(f"Fetching episode metadata for IMDB ID: {imdb_id}")
-        metadata, source = MetadataManager.get_metadata_by_episode_imdb(imdb_id)
-        if metadata:
-            print(f"Successfully retrieved episode metadata for IMDB ID: {imdb_id} from {source}")
-            return jsonify({"data": metadata, "source": source})
-        else:
-            logger.warning(f"Episode metadata not found for IMDB ID: {imdb_id}")
-            return jsonify({"error": "Episode metadata not found"}), 404
-    except Exception as e:
-        logger.error(f"Error fetching episode metadata: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @api_bp.route('/api/show/metadata/<imdb_id>', methods=['GET'])
@@ -123,3 +108,17 @@ def delete_all_items():
     except Exception as e:
         logger.error(f"Error deleting all items: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+@api_bp.route('/api/stats', methods=['GET'])
+def get_stats():
+    # Create a new settings instance to ensure fresh values
+    current_settings = Settings()
+    db_stats = MetadataManager.get_stats()
+    stats = {
+        'total_items': db_stats['total_items'],
+        'total_metadata': db_stats['total_metadata'],
+        'last_update': db_stats['last_update'].strftime('%Y-%m-%d %H:%M:%S') if db_stats['last_update'] else 'N/A',
+        'staleness_threshold': f"{current_settings.staleness_threshold} days"
+    }
+    logger.debug(f"Current staleness threshold: {current_settings.staleness_threshold}")
+    return jsonify(stats)

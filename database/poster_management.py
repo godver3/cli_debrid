@@ -1,10 +1,10 @@
 import logging
-from settings import get_setting
+from utilities.settings import get_setting
 import asyncio
 from aiohttp import ClientConnectorError, ServerTimeoutError, ClientResponseError
 
 async def get_poster_url(session, tmdb_id, media_type):
-    from poster_cache import get_cached_poster_url, cache_poster_url, cache_unavailable_poster, UNAVAILABLE_POSTER
+    from routes.poster_cache import get_cached_poster_url, cache_poster_url, cache_unavailable_poster, UNAVAILABLE_POSTER
 
     # Log incoming parameters
     #logging.info(f"get_poster_url called with tmdb_id: {tmdb_id}, original media_type: {media_type}")

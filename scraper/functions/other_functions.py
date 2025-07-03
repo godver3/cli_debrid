@@ -1,10 +1,10 @@
 import logging
 import re
-from api_tracker import api
+from routes.api_tracker import api
 from typing import Dict, Any, Tuple, Optional, Union
-from guessit import guessit
 import pykakasi
 from scraper.functions.common import round_size, trim_magnet
+from PTT import parse_title
 
 def romanize_japanese(text):
     kks = pykakasi.kakasi()
@@ -100,35 +100,41 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
 
     if isinstance(parsed_info, str):
         try:
-            parsed_info = guessit(parsed_info)
+            parsed_info = parse_title(parsed_info)
         except Exception as e:
-            logging.error(f"Error parsing title with guessit: {str(e)}")
+            logging.error(f"Error parsing title with parse_title: {str(e)}")
             return result
 
-    season_info = parsed_info.get('season')
-    episode_info = parsed_info.get('episode')
+    # Extract season information from parse_title format
+    seasons = parsed_info.get('seasons', [])
+    episodes = parsed_info.get('episodes', [])
+    complete = parsed_info.get('complete', False)
     
     # Handle season information
-    if season_info is not None:
-        if isinstance(season_info, list):
-            result['season_pack'] = ','.join(str(s) for s in sorted(set(season_info)))
-            result['seasons'] = sorted(set(season_info))
+    if seasons:
+        if len(seasons) > 1:
+            result['season_pack'] = ','.join(str(s) for s in sorted(set(seasons)))
+            result['seasons'] = sorted(set(seasons))
         else:
-            result['season_pack'] = str(season_info)
-            result['seasons'] = [season_info]
+            result['season_pack'] = str(seasons[0])
+            result['seasons'] = seasons
+        
+        # Mark as season pack if complete is True or no episodes specified
+        if complete or (not episodes and seasons):
+            result['season_pack'] = ','.join(str(s) for s in sorted(set(seasons)))
     else:
         # Assume season 1 if no season is detected but episode is present
-        if episode_info is not None:
+        if episodes:
             result['season_pack'] = '1'
             result['seasons'] = [1]
     
     # Handle episode information
-    if episode_info is not None:
-        if isinstance(episode_info, list):
+    if episodes:
+        if len(episodes) > 1:
             result['multi_episode'] = True
-            result['episodes'] = sorted(set(episode_info))
+            result['episodes'] = episodes
         else:
-            result['episodes'] = [episode_info]
+            result['episodes'] = episodes
             if not result['seasons']:  # If seasons is still empty, assume season 1
                 result['seasons'] = [1]
             result['season_pack'] = 'N/A'  # Indicate it's a single episode, not a pack
@@ -136,22 +142,22 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     return result
 
 def extract_season_episode(parsed_info: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
-    season = parsed_info.get('season')
-    episode = parsed_info.get('episode')
+    seasons = parsed_info.get('seasons', [])
+    episodes = parsed_info.get('episodes', [])
     
-    # Convert to int if present, otherwise keep as None
-    season = int(season) if season is not None else None
-    episode = int(episode) if episode is not None else None
+    # Get first season and episode if available
+    season = seasons[0] if seasons else None
+    episode = episodes[0] if episodes else None
     
     return season, episode
 
 def extract_title_and_se(parsed_info: Dict[str, Any]) -> Tuple[str, Optional[int], Optional[int]]:
     title = parsed_info.get('title', '')
-    season = parsed_info.get('season')
-    episode = parsed_info.get('episode')
+    seasons = parsed_info.get('seasons', [])
+    episodes = parsed_info.get('episodes', [])
     
-    # Convert to int if present, otherwise keep as None
-    season = int(season) if season is not None else None
-    episode = int(episode) if episode is not None else None
+    # Get first season and episode if available
+    season = seasons[0] if seasons else None
+    episode = episodes[0] if episodes else None
     
     return title, season, episode

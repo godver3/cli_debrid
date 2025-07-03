@@ -1,4 +1,4 @@
-from api_tracker import api
+from routes.api_tracker import api
 import logging
 import re
 from typing import Dict, Any, List
@@ -42,6 +42,10 @@ def scrape_mediafusion_instance(instance: str, settings: Dict[str, Any], imdb_id
         return []
 
 def construct_url(base_url: str, imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
+    logging.info(f"Constructing MediaFusion URL for {imdb_id} with content_type: {content_type}, season: {season}, episode: {episode}")
+    if season is not None and episode is None:
+        logging.info(f"Multi-episode mode detected. Setting episode to 1 for {imdb_id}")
+        episode = 1
     if content_type == "movie":
         return f"{base_url}stream/movie/{imdb_id}.json"
     elif content_type == "episode" and season is not None and episode is not None:
@@ -56,7 +60,8 @@ def fetch_data(url: str) -> Dict:
     try:
         response = api.get(url)
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            return data
         else:
             logging.error(f"Failed to fetch data from URL: {url} with status {response.status_code}")
     except api.exceptions.RequestException as e:
@@ -125,12 +130,16 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
     }
     
     for stream in streams:
+        parsed_info = {}
         try:
             stats['total_processed'] += 1
             description = stream.get('description', '')
-            name = stream.get('name', '')
+            name = stream.get('name', '') # Often contains quality info like '2160P'
             behavior_hints = stream.get('behaviorHints', {})
             
+            parsed_info['filename'] = behavior_hints.get('filename')
+            parsed_info['bingeGroup'] = behavior_hints.get('bingeGroup') # Contains structured metadata
+
             if not description and not name:
                 stats['no_title_count'] += 1
                 continue
@@ -139,41 +148,64 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             description_parts = description.split('\n') if description else []
             
             # Get title from the first line of description or filename
-            raw_title = description_parts[0].strip() if description_parts else behavior_hints.get('filename', name)
+            raw_title = description_parts[0].strip() if description_parts else parsed_info.get('filename', name)
             
             # Clean up the title
             title = raw_title
-            if title.startswith('📂'):
+            if title and title.startswith('📂'):
                 title = title[1:].strip()
-            if title.startswith('[ ') and title.endswith(' ]'):
+            if title and title.startswith('[ ') and title.endswith(' ]'):
                 title = title[2:-2].strip()
             
             # Initialize metadata values
             size = 0.0
             seeders = 0
+            languages = []
+            source_link = None
             
-            # Try to get size from behaviorHints first
+            # Try to get size from behaviorHints first (more reliable as it's in bytes)
             if 'videoSize' in behavior_hints:
                 try:
-                    size = float(behavior_hints['videoSize']) / (1024 * 1024 * 1024)  # Convert bytes to GB
+                    size_bytes = float(behavior_hints['videoSize'])
+                    if size_bytes > 0:
+                         size = size_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
                 except (ValueError, TypeError):
-                    pass
+                    pass # Will try parsing from description later
             
             # Parse metadata from description parts
             for part in description_parts:
                 part = part.strip()
+                # Parse size if not already found from videoSize
                 if size == 0:
                     size_info = parse_size(part)
                     if size_info > 0:
                         size = size_info
                 
+                # Parse seeders
                 seeder_info = parse_seeder(part)
                 if seeder_info > 0:
                     seeders = seeder_info
-            
+                
+                # Extract Languages
+                lang_match = re.search(r'🌐\s*(.+)', part)
+                if lang_match:
+                    lang_text = lang_match.group(1).strip()
+                    # Simple split for multiple languages, might need refinement
+                    languages = [lang.strip() for lang in re.split(r'[+,]', lang_text)]
+                    parsed_info['languages'] = languages
+
+                # Extract Source Link/Contributor
+                source_match = re.search(r'🔗\s*(.+)', part)
+                if source_match:
+                    source_link = source_match.group(1).strip()
+                    # Remove contributor part if present
+                    source_link = re.sub(r'🧑.*$', '', source_link).strip() 
+                    parsed_info['source_link'] = source_link
+
             # Extract info hash from URL
             url = stream.get('url', '')
-            info_hash_match = re.search(r'/stream/([a-f0-9]{40})(?:/|$)', url)
+            # More robust regex to find hash potentially followed by filename
+            info_hash_match = re.search(r'/stream/([a-f0-9]{40})(?:/|$)', url) 
             
             if not info_hash_match:
                 stats['no_info_hash_count'] += 1
@@ -182,19 +214,41 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             info_hash = info_hash_match.group(1)
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
             
-            results.append({
+            # Add filename as dn if available
+            if parsed_info.get('filename'):
+                 magnet_link += f'&dn={parsed_info["filename"]}'
+
+            result = {
                 'title': title,
-                'size': size,
+                'size': round(size, 2), # Round to 2 decimal places
                 'seeders': seeders,
-                'source': instance,
+                 # Append source_link to instance name if available
+                'source': f'{instance}{f" - {source_link}" if source_link else ""}', 
                 'magnet': magnet_link,
-                'info_hash': info_hash
-            })
+                'info_hash': info_hash,
+                'parsed_info': parsed_info # Store all extra details
+            }
+            if languages:
+                 result['languages'] = languages
+
+            results.append(result)
             
         except Exception as e:
             stats['parse_error_count'] += 1
             logging.error(f"Error parsing result: {str(e)}", exc_info=True)
+            if 'title' in stream:
+                logging.error(f"Failed stream title: {stream['title']}")
+            if 'description' in stream:
+                 logging.error(f"Failed stream description: {stream['description']}")
             continue
     
-    #logging.debug(f"MediaFusion parsing stats for {instance}: processed={stats['total_processed']}, success={len(results)}, errors={stats['parse_error_count']}")
+    # Log summary (optional, uncomment if needed)
+    # if stats['no_title_count'] > 0 or stats['no_info_hash_count'] > 0 or stats['parse_error_count'] > 0:
+    #     logging.debug(f"MediaFusion parsing summary for {instance}:")
+    #     logging.debug(f"- Total streams processed: {stats['total_processed']}")
+    #     logging.debug(f"- Successfully parsed: {len(results)}")
+    #     logging.debug(f"- Skipped (no title/desc): {stats['no_title_count']}")
+    #     logging.debug(f"- Skipped (no info hash): {stats['no_info_hash_count']}")
+    #     logging.debug(f"- Parse errors: {stats['parse_error_count']}")
+
     return results

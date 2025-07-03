@@ -1,9 +1,9 @@
 from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash, abort, session
 from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash
-from settings import load_config, get_setting, save_config
-from settings_schema import SETTINGS_SCHEMA
-from config_manager import add_scraper, add_content_source, load_config
+from utilities.settings import load_config, get_setting, save_config
+from utilities.settings_schema import SETTINGS_SCHEMA
+from queues.config_manager import add_scraper, add_content_source, load_config
 import logging
 import platform
 from routes.trakt_routes import check_trakt_auth_status
@@ -11,6 +11,7 @@ import json
 import requests
 import uuid
 import urllib.parse
+from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
@@ -28,8 +29,6 @@ def get_next_onboarding_step():
         ('Plex', 'token'),
         ('Plex', 'shows_libraries'),
         ('Plex', 'movie_libraries'),
-        ('Plex', 'update_plex_on_file_discovery'),
-        ('Plex', 'mounted_file_location'),
         ('Debrid Provider', 'provider'),
         ('Debrid Provider', 'api_key'),
         ('Trakt', 'client_id'),
@@ -172,13 +171,20 @@ def onboarding_step(step):
                     'plex_token_for_symlink': plex_token
                 }
 
+                # Process Plex library strings
+                raw_movie_libraries = request.form.get('movie_libraries', '')
+                processed_movie_libraries = ','.join([lib.strip() for lib in raw_movie_libraries.split(',') if lib.strip()]) if raw_movie_libraries else ''
+                
+                raw_shows_libraries = request.form.get('shows_libraries', '')
+                processed_shows_libraries = ','.join([lib.strip() for lib in raw_shows_libraries.split(',') if lib.strip()]) if raw_shows_libraries else ''
+
                 # Set up Plex section with all fields
                 config['Plex'] = {
                     'url': plex_url,
                     'token': plex_token,
-                    'shows_libraries': request.form.get('shows_libraries', ''),
-                    'movie_libraries': request.form.get('movie_libraries', ''),
-                    'update_plex_on_file_discovery': request.form.get('update_plex_on_file_discovery', 'false') == 'on',
+                    'shows_libraries': processed_shows_libraries,
+                    'movie_libraries': processed_movie_libraries,
+                    'update_plex_on_file_discovery': request.form.get('Plex.update_plex_on_file_discovery', 'false') == 'on',
                     'mounted_file_location': original_files_path
                 }
 
@@ -232,13 +238,17 @@ def onboarding_step(step):
         # Get Trakt auth status
         trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
         
+        # Determine if Windows symlinks are allowed
+        allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
+        
         return render_template('onboarding_step_2.html', 
                                current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
                                trakt_status=trakt_status,
                                is_onboarding=True,
-                               is_windows=is_windows)
+                               is_windows=is_windows,
+                               allow_windows_symlinks=allow_windows_symlinks_value)
 
     elif step_num == 3:
         config = load_config()
@@ -261,11 +271,17 @@ def onboarding_step(step):
     elif step_num == 4:
         config = load_config()
         can_proceed = 'Content Sources' in config and bool(config['Content Sources'])
+        # Get the dictionary of version configurations
+        versions_dict = config.get('Scraping', {}).get('versions', {})
+        # Extract the names (keys) into a list
+        configured_versions = list(versions_dict.keys())
         return render_template('onboarding_step_4.html', 
                                current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
-                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
+                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, 
+                               configured_versions=configured_versions,
+                               is_onboarding=True)
 
     elif step_num == 5:
         # Library Management step
@@ -299,8 +315,11 @@ def update_can_proceed():
     step = data.get('step')
     can_proceed = data.get('can_proceed')
     
-    if step in [1, 2, 3, '3a', 4]:
-        session[f'onboarding_step_{step}_can_proceed'] = can_proceed
+    # Convert step to string to match the check list
+    step_str = str(step)
+    
+    if step_str in ['1', '2', '3', '3a', '4', '5']:
+        session[f'onboarding_step_{step_str}_can_proceed'] = can_proceed
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Invalid step'}), 400
@@ -365,6 +384,7 @@ def setup_admin():
     return render_template('setup_admin.html', is_onboarding=True)
 
 @onboarding_bp.route('/content_sources/add', methods=['POST'])
+@admin_required
 def add_onboarding_content_source():
     from routes.auth_routes import db
 
@@ -375,7 +395,26 @@ def add_onboarding_content_source():
     if not source_type or not source_config:
         return jsonify({'success': False, 'error': 'Invalid content source data'}), 400
 
+    # --- Convert versions list to dictionary format --- START
+    # if 'versions' in source_config:
+    #     if isinstance(source_config['versions'], list):
+    #         source_config['versions'] = {v: True for v in source_config['versions']}
+    #     elif not isinstance(source_config['versions'], dict):
+    #         # Import logging if not already imported at the top
+    #         import logging 
+    #         logging.warning(f"Onboarding: Invalid 'versions' format for {source_type}: {source_config['versions']}. Resetting to empty dict.")
+    #         source_config['versions'] = {}
+    # --- Convert versions list to dictionary format --- END
+
     try:
+        # Ensure 'versions' is present and is a list if it exists in source_config
+        if 'versions' in source_config and not isinstance(source_config['versions'], list):
+             # If it's not a list (e.g., the frontend somehow sent it wrong),
+             # default to an empty list or handle error as appropriate.
+             # For now, let's ensure it's at least an empty list if present but not list.
+             logging.warning(f"Onboarding: Received non-list 'versions' for {source_type}. Ensuring list format.")
+             source_config['versions'] = list(source_config.get('versions', [])) # Attempt conversion or default
+
         new_source_id = add_content_source(source_type, source_config)
         
         # Mark onboarding as complete
@@ -386,6 +425,9 @@ def add_onboarding_content_source():
 
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
+        # Log the error including traceback for better debugging
+        import traceback
+        logging.error(f"Error in add_onboarding_content_source: {str(e)}\\n{traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/content_sources/get', methods=['GET'])
@@ -401,6 +443,7 @@ def get_onboarding_content_sources():
     })
 
 @onboarding_bp.route('/scrapers/add', methods=['POST'])
+@admin_required
 def add_onboarding_scraper():
     logging.info(f"Received request to add scraper during onboarding. Content-Type: {request.content_type}")
     logging.info(f"Request data: {request.data}")
@@ -443,6 +486,7 @@ def get_onboarding_scrapers():
     })
 
 @onboarding_bp.route('/settings/api/update', methods=['POST'])
+@admin_required
 def update_settings():
     try:
         data = request.json
@@ -525,21 +569,16 @@ def validate_onboarding_settings():
             
             # Validate based on setup type
             if management_type == 'plex_direct':
-                # Check for direct mount requirements
+                # Check for direct mount requirements - only validate if path is provided
                 mount_path = config.get('File Management', {}).get('original_files_path')
-                if not mount_path:
-                    is_valid = False
-                    checks.append({
-                        'name': 'Mount Configuration',
-                        'valid': False,
-                        'message': 'Direct mount path is not configured.'
-                    })
-                else:
+                # Since original_files_path is optional, we don't need to validate it if it's empty
+                if mount_path:
                     checks.append({
                         'name': 'Mount Configuration',
                         'valid': True,
-                        'message': 'Mount path is properly configured.'
+                        'message': 'Mount path is configured. Note: Path existence cannot be verified within Docker.'
                     })
+                # Don't add any validation check if mount_path is empty since it's optional
                     
             elif management_type == 'plex_symlink':
                 # Check for symlink requirements
@@ -555,7 +594,16 @@ def validate_onboarding_settings():
                     checks.append({
                         'name': 'Symlink Configuration',
                         'valid': True,
-                        'message': 'Symlink path is properly configured.'
+                        'message': 'Symlink path is configured. Note: Path existence cannot be verified within Docker.'
+                    })
+                    
+                # Check original files path only if provided (optional)
+                original_path = config.get('File Management', {}).get('original_files_path')
+                if original_path:
+                    checks.append({
+                        'name': 'Original Files Path',
+                        'valid': True,
+                        'message': 'Original files path is configured. Note: Path existence cannot be verified within Docker.'
                     })
                     
             return jsonify({
@@ -709,6 +757,7 @@ def get_plex_libraries():
         }), 500
 
 @onboarding_bp.route('/plex/auth/pin', methods=['POST'])
+@admin_required
 def create_plex_pin():
     try:
         import uuid
@@ -803,6 +852,7 @@ def plex_auth_callback():
                              error=str(e))
 
 @onboarding_bp.route('/plex/verify_token', methods=['POST'])
+@admin_required
 def verify_plex_token():
     """Verify if a Plex token is valid."""
     try:
@@ -858,6 +908,7 @@ def verify_plex_token():
         })
 
 @onboarding_bp.route('/plex/auth/pin/check', methods=['POST'])
+@admin_required
 def check_plex_pin():
     """Check the status of a Plex auth pin."""
     try:
@@ -917,3 +968,18 @@ def check_plex_pin():
             'success': False,
             'error': str(e)
         }), 500
+
+@onboarding_bp.route('/skip', methods=['GET', 'POST'])
+@login_required
+def skip_onboarding():
+    from routes.auth_routes import db
+
+    if request.method == 'GET':
+        return render_template('skip_onboarding.html', is_onboarding=True)
+
+    try:
+        current_user.onboarding_complete = True
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Onboarding skipped successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

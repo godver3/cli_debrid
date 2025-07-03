@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Scraper{% endblock %}
+{% block title %}Add Media{% endblock %}
 {% block content %}
 <meta name="theme-color" content="#333333">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -115,7 +115,7 @@
     }
 
     .cache-status.check-unavailable {
-        background-color: #7a00e6;
+        background-color: #607D8B;
         color: white;
     }
 
@@ -144,8 +144,13 @@
         vertical-align: middle !important;
     }
 
-    .checkbox-container {
+    #skip-cache-check-container {
         display: none !important;
+    }
+
+
+    .checkbox-container input[type="checkbox"] {
+        all: revert !important;
     }
 
     /* Request icon styling - Current blue plus style */
@@ -203,12 +208,12 @@
 
     /* Make request icon follow poster hover animation */
     .media-poster:hover .request-icon {
-        transform: translateY(-8px);
+        transform: translateY(0px);
     }
 
     /* Combine hover effects when hovering directly on the icon */
     .media-poster:hover .request-icon:hover {
-        transform: translateY(-8px) scale(1.1);
+        transform: translateY(0px) scale(1);
         background-color: #2980b9; /* Match the darker blue for consistency */
     }
 
@@ -351,7 +356,7 @@
     
     /* Apply hover effects to search results - THE ENTIRE CARD */
     .sresult:hover {
-        transform: translateY(-8px);
+        transform: translateY(0px);
         z-index: 2;
     }
     
@@ -479,6 +484,7 @@
         grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
         gap: var(--spacing-md);
         justify-items: center;
+        row-gap: 40px;
     }
     
     /* Adjust sresult for grid layout */
@@ -487,6 +493,41 @@
         padding: 0;
         display: flex;
         justify-content: center;
+    }
+
+    /* DB Status Pip Styles */
+    .poster-container {
+        position: relative; /* Ensure the container is positioned for the absolute pip */
+    }
+    
+    .db-status-pip {
+        position: absolute;
+        top: 8px; /* Adjust as needed */
+        right: 8px; /* Adjust as needed */
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1px solid rgba(0, 0, 0, 0.5); /* Optional border */
+        z-index: 10; /* Ensure it's above the poster image/overlay */
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .db-status-collected {
+        background-color: #4CAF50; /* Green */
+    }
+    
+    .db-status-blacklisted {
+        background-color: #f44336; /* Red */
+    }
+    
+    .db-status-processing {
+        background-color: #f39c12; /* Yellow/Orange */
+    }
+
+    /* New: partially collected (mix) */
+    .db-status-partial {
+        background-color: #2196F3; /* Blue */
+        color: white;
     }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
@@ -500,7 +541,11 @@
                 {% endfor %}
                 <option value="No Version">No Version</option>
             </select>
-            <div class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+            <div class="checkbox-container specials-checkbox" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+                <input type="checkbox" id="allow-specials" name="allow_specials">
+                <label for="allow-specials" style="color: #ccc; font-size: 0.9em;">Allow Specials</label>
+            </div>
+            <div id="skip-cache-check-container" class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
                 <input type="checkbox" id="skip-cache-check" name="skip_cache_check">
                 <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
             </div>
@@ -544,6 +589,22 @@
                     <div class="scroll-container" id="showContainer"></div>
                 </div>
             </div>
+            <div class="trending-anime">
+                <div class="trending-header">
+                    <h2 class="trending-title">Trending Anime</h2>
+                    <div class="trending-navigation">
+                        <button id="scrollLeft_anime" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                        </button>
+                        <button id="scrollRight_anime" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="anime-list">
+                    <div class="scroll-container" id="animeContainer"></div>
+                </div>
+            </div>
         </div>
         <div id="seasonResults" style="display: none;">
             <div id="season-info"></div>
@@ -556,7 +617,7 @@
         </div>
         <div id="overlay" class="overlay">
             <div class="overlay-content">                
-                <span class="close-btn">&times;</span>
+                <button class="close-btn" aria-label="Close">&times;</button>
                 <div id="overlayContent"></div>
             </div>
         </div>
@@ -581,6 +642,20 @@
                 <div class="version-modal-buttons">
                     <button id="confirmVersions">Request</button>
                     <button id="cancelVersions">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scrape Version Selection Modal -->
+        <div id="scrapeVersionModal" class="version-modal">
+            <div class="version-modal-content">
+                <h3>Select Scrape Version</h3>
+                <div id="scrapeVersionRadios">
+                    <!-- Version radio buttons will be dynamically inserted here -->
+                </div>
+                <div class="version-modal-buttons">
+                    <button id="confirmScrapeVersion">Scrape</button>
+                    <button id="cancelScrapeVersion">Cancel</button>
                 </div>
             </div>
         </div>

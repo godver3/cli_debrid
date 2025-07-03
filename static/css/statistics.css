@@ -654,13 +654,13 @@ input:checked + .toggle-slider:before {
     background-color: rgba(0, 0, 0, 0.7);
 }
 
-.modal-content {
+#external-links-modal-content {
     background-color: var(--bg-color, #1e1e1e);
     margin: 15% auto;
     padding: 20px;
     border: 1px solid var(--border-color, #444);
     border-radius: 8px;
-    width: 300px;
+    width: 300px !important;
     max-width: 80%;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
 }

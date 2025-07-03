@@ -361,7 +361,7 @@
 
     <div id="plex-direct-setup-info" class="setup-info">
         <h4>Direct Mount Library Setup</h4>
-        {% with management_type = settings.get('File Management', {}).get('file_collection_management', 'Plex') %}
+        {% with management_type = settings.get('File Management', {}).get('file_collection_management', 'Plex'), plex_url = settings.get('Plex', {}).get('url'), plex_token = settings.get('Plex', {}).get('token') %}
         {% if management_type == 'Symlinked/Local' %}
         <p>You can continue to use your existing Plex library as is. cli_debrid will create a symlink folder and content that you will need to point Plex to.</p>
         <div class="setup-note" style="margin-top: 10px; margin-bottom: 20px;">
@@ -372,28 +372,60 @@
         <p>Here's your current configuration:</p>
         <ul class="info-list">
             <li><span class="var-label">Library Management:</span> <span class="var-value">{% if management_type == 'Symlinked/Local' %}Symlinked/Local{% else %}{{ management_type }}{% endif %}</span></li>
-            {% if settings.get('Plex', {}).get('url') %}
-            <li><span class="var-label">Server URL:</span> <span class="var-value">{{ settings.get('Plex', {}).get('url') }}</span></li>
+            {% if plex_url %}
+            <li><span class="var-label">Server URL:</span> <span class="var-value">{{ plex_url }}</span></li>
             {% endif %}
-            {% if settings.get('Plex', {}).get('token') %}
+            {% if plex_token %}
             <li><span class="var-label">Authentication:</span> <span class="var-value">Token configured</span></li>
             {% endif %}
             {% if settings.get('Plex', {}).get('mounted_file_location') %}
             <li><span class="var-label">Mount Location:</span> <span class="var-value">{{ settings.get('Plex', {}).get('mounted_file_location') }}</span></li>
             {% endif %}
         </ul>
-        {% endwith %}
-
+        
+        {% if not plex_url or not plex_token %}
+        <div class="setup-note" style="color: var(--warning-color);">
+            <p>⚠️ Please configure your Plex settings first (URL and Token in Step 2).</p>
+            <p>Scanning requires a connection to your Plex server.</p>
+        </div>
+        {% else %}
         <div class="info-note">
             <p style="margin-top: 15px;">Here's how it works:</p>
             <ul class="info-list" style="margin-top: 10px;">
-                <li>cli_debrid will scan your existing Plex libraries to build its collection database</li>
+                <li>First, scan your existing Plex libraries to build the cli_debrid collection database.</li>
                 <li>New content will be downloaded directly to your mount at <span class="var-value">{{ settings.get('Plex', {}).get('mounted_file_location') }}</span></li>
                 <li>Plex will automatically detect and scan the new content (if configured)</li>
                 <li>Your existing library structure and organization remains unchanged</li>
             </ul>
+            <form id="scan-plex-library-form-direct" data-results-id="scan-results-direct" data-shows-stat-id="shows-stat-direct" data-movies-stat-id="movies-stat-direct" data-episodes-stat-id="episodes-stat-direct" data-scan-timestamp-id="scan-timestamp-direct" style="margin-top: 20px;">
+                <button type="submit" class="btn btn-primary" id="scan-library-btn-direct">Scan Plex Library</button>
+            </form>
+            
+            <div id="scan-results-direct" class="scan-results">
+                <h5>Last Scan Results</h5>
+                <div class="scan-stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="shows-stat-direct">0/0</div>
+                        <div class="stat-label">Shows Processed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="movies-stat-direct">0/0</div>
+                        <div class="stat-label">Movies Processed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="episodes-stat-direct">0</div>
+                        <div class="stat-label">Episodes Found</div>
+                    </div>
+                </div>
+                <div class="scan-timestamp" style="margin-top: 10px; text-align: center; color: var(--text-muted);">
+                    Completed at: <span id="scan-timestamp-direct"></span>
+                </div>
+            </div>
         </div>
+        {% endif %}
+        
         <div class="setup-note">You can adjust these settings at any time through the Settings menu.</div>
+        {% endwith %}
     </div>
 
     <div id="plex-symlink-setup-info" class="setup-info">
@@ -409,6 +441,13 @@
             {% if plex_token %}
             <li><span class="var-label">Authentication:</span> <span class="var-value">Token configured</span></li>
             {% endif %}
+            <!-- Display configured libraries if they exist -->
+            {% if settings.get('Plex', {}).get('movie_libraries') %}
+            <li><span class="var-label">Movie Libraries:</span> <span class="var-value">{{ settings.get('Plex', {}).get('movie_libraries') }}</span></li>
+            {% endif %}
+            {% if settings.get('Plex', {}).get('shows_libraries') %}
+            <li><span class="var-label">Show Libraries:</span> <span class="var-value">{{ settings.get('Plex', {}).get('shows_libraries') }}</span></li>
+            {% endif %}
         </ul>
 
         {% if not plex_url or not plex_token %}
@@ -421,41 +460,104 @@
             <p>You can configure these in the Settings menu.</p>
         </div>
         {% else %}
-        <div class="info-note">
-            <p>Ready to scan your Plex library. This will:</p>
-            <ul class="info-list">
-                <li>Connect to your Plex server</li>
-                <li>Scan all your existing media</li>
-                <li>The first scan will take 10-15 minutes (due to loading metadata), subsequent scans will take approximately 90 seconds</lie>
-            </ul>
-            <form id="scan-plex-library-form" style="margin-top: 20px;">
-                <button type="submit" class="btn btn-primary" id="scan-library-btn">Scan Plex Library</button>
-            </form>
-            
-            <div id="scan-results" class="scan-results">
-                <h5>Last Scan Results</h5>
-                <div class="scan-stats">
-                    <div class="stat-item">
-                        <div class="stat-value" id="shows-stat">0/0</div>
-                        <div class="stat-label">Shows Processed</div>
+            <!-- Check if libraries are configured -->
+            {% set movie_libs_set = settings.get('Plex', {}).get('movie_libraries') %}
+            {% set show_libs_set = settings.get('Plex', {}).get('shows_libraries') %}
+
+            {% if not movie_libs_set or not show_libs_set %}
+            <div id="plex-library-selection-prompt">
+                <h5 style="margin-top: 20px;">Enter Plex Libraries</h5>
+                <p>Please enter the names of your Plex libraries containing movies and TV shows, separated by commas.</p>
+                <form id="plex-library-selection-form">
+                    <div class="form-group">
+                        <label for="plex-movie-libraries">Movie Libraries:</label>
+                        <input type="text" id="plex-movie-libraries" class="form-control" required placeholder="e.g., Movies, 4K Movies">
+                        <small class="form-text text-muted">Enter one or more movie library names, separated by commas.</small>
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="movies-stat">0/0</div>
-                        <div class="stat-label">Movies Processed</div>
+                    <div class="form-group">
+                        <label for="plex-show-libraries">TV Show Libraries:</label>
+                        <input type="text" id="plex-show-libraries" class="form-control" required placeholder="e.g., TV Shows, Kids Shows">
+                        <small class="form-text text-muted">Enter one or more TV show library names, separated by commas.</small>
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-value" id="episodes-stat">0</div>
-                        <div class="stat-label">Episodes Found</div>
+                    <button type="submit" class="btn btn-primary" id="save-plex-libraries-btn">Save Libraries</button>
+                </form>
+            </div>
+            <!-- Scan section initially hidden -->
+            <div id="plex-scan-section-symlink" style="display: none; margin-top: 20px;">
+                <div class="info-note">
+                    <p>Ready to scan your Plex library. This will:</p>
+                    <ul class="info-list">
+                        <li>Connect to your Plex server</li>
+                        <li>Scan all your existing media</li>
+                        <li>The first scan will take 10-15 minutes (due to loading metadata), subsequent scans will take approximately 90 seconds</li>
+                    </ul>
+                    <form id="scan-plex-library-form" data-results-id="scan-results" data-shows-stat-id="shows-stat" data-movies-stat-id="movies-stat" data-episodes-stat-id="episodes-stat" data-scan-timestamp-id="scan-timestamp" style="margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" id="scan-library-btn">Scan Plex Library</button>
+                    </form>
+                    
+                    <div id="scan-results" class="scan-results">
+                        <h5>Last Scan Results</h5>
+                        <div class="scan-stats">
+                            <div class="stat-item">
+                                <div class="stat-value" id="shows-stat">0/0</div>
+                                <div class="stat-label">Shows Processed</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="movies-stat">0/0</div>
+                                <div class="stat-label">Movies Processed</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="episodes-stat">0</div>
+                                <div class="stat-label">Episodes Found</div>
+                            </div>
+                        </div>
+                        <div class="scan-timestamp" style="margin-top: 10px; text-align: center; color: var(--text-muted);">
+                            Completed at: <span id="scan-timestamp"></span>
+                        </div>
                     </div>
-                </div>
-                <div class="scan-timestamp" style="margin-top: 10px; text-align: center; color: var(--text-muted);">
-                    Completed at: <span id="scan-timestamp"></span>
                 </div>
             </div>
-        </div>
-        <div class="setup-note">⚠️ Ensure that you use a new symlink location for your cli_debrid library.</div>
-        <div class="setup-note">Once scanned, this will allow cli_debrid to avoid redownloading items that already exist in your current symlink library.</div>
-        <div class="setup-note">You can adjust these settings at any time through the Settings menu.</div>
+            {% else %}
+            <!-- Scan section shown if libraries are already set -->
+            <div id="plex-scan-section-symlink" style="margin-top: 20px;">
+                <div class="info-note">
+                    <p>Ready to scan your Plex library. This will:</p>
+                    <ul class="info-list">
+                        <li>Connect to your Plex server</li>
+                        <li>Scan all your existing media</li>
+                        <li>The first scan will take 10-15 minutes (due to loading metadata), subsequent scans will take approximately 90 seconds</li>
+                    </ul>
+                    <form id="scan-plex-library-form" data-results-id="scan-results" data-shows-stat-id="shows-stat" data-movies-stat-id="movies-stat" data-episodes-stat-id="episodes-stat" data-scan-timestamp-id="scan-timestamp" style="margin-top: 20px;">
+                        <button type="submit" class="btn btn-primary" id="scan-library-btn">Scan Plex Library</button>
+                    </form>
+                    
+                    <div id="scan-results" class="scan-results">
+                        <h5>Last Scan Results</h5>
+                        <div class="scan-stats">
+                            <div class="stat-item">
+                                <div class="stat-value" id="shows-stat">0/0</div>
+                                <div class="stat-label">Shows Processed</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="movies-stat">0/0</div>
+                                <div class="stat-label">Movies Processed</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value" id="episodes-stat">0</div>
+                                <div class="stat-label">Episodes Found</div>
+                            </div>
+                        </div>
+                        <div class="scan-timestamp" style="margin-top: 10px; text-align: center; color: var(--text-muted);">
+                            Completed at: <span id="scan-timestamp"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="setup-note" style="margin-top: 20px;">⚠️ Ensure that you use a new symlink location for your cli_debrid library.</div>
+            <div class="setup-note">Once scanned, this will allow cli_debrid to avoid redownloading items that already exist in your current symlink library.</div>
+            <div class="setup-note">You can adjust these settings at any time through the Settings menu.</div>
         {% endif %}
         {% endwith %}
     </div>
@@ -620,159 +722,201 @@
     document.addEventListener('DOMContentLoaded', () => {
         setupOptionSelection();
         setupConversionHandlers();
+        setupPlexLibrarySelection(); // Add call to new setup function
 
-        // Add handler for scan Plex library forms
+        // Add handler for ALL scan Plex library forms using their IDs
         const scanPlexLibraryForms = document.querySelectorAll('[id^="scan-plex-library-form"]');
         scanPlexLibraryForms.forEach(form => {
-            setupScanHandler(form);
+            setupScanHandler(form); // Pass the form element to the handler
         });
     });
 
-    function setupScanHandler(formElement) {
-        formElement.addEventListener('submit', function(e) {
-            e.preventDefault();
-                showPopup({
-                    type: POPUP_TYPES.CONFIRM,
-                    message: 'This will scan your entire Plex library. This process may take some time depending on your library size. Do you want to continue?',
-                    title: 'Confirmation',
-                    onConfirm: () => {
-                        Loading.show('Initializing Plex library scan...', 'Starting scan process...');
-                        fetch('/debug/api/direct_plex_scan', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            }
-                        })
-                        .then(response => response.json())
-                        .then(data => {
-                            if (data.success && data.scan_id) {
-                                // Set up SSE for progress updates
-                                const eventSource = new EventSource(`/debug/api/plex_scan_progress/${data.scan_id}`);
-                                let progressTimeout;
+    // Define the actual submit logic as a separate function
+    function handleScanSubmit(event, formElement) {
+        event.preventDefault();
+
+        // Get result element IDs from data attributes (moved inside)
+        const resultsId = formElement.dataset.resultsId;
+        const showsStatId = formElement.dataset.showsStatId;
+        const moviesStatId = formElement.dataset.moviesStatId;
+        const episodesStatId = formElement.dataset.episodesStatId;
+        const scanTimestampId = formElement.dataset.scanTimestampId;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: 'This will scan your entire Plex library. This process may take some time depending on your library size. Do you want to continue?',
+            title: 'Confirmation',
+            onConfirm: () => {
+                Loading.show('Initializing Plex library scan...', 'Starting scan process...');
+                fetch('/debug/api/direct_plex_scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.scan_id) {
+                        // Set up SSE for progress updates
+                        const eventSource = new EventSource(`/debug/api/plex_scan_progress/${data.scan_id}`);
+                        console.log(`[Client SSE] EventSource connection initiated to /debug/api/plex_scan_progress/${data.scan_id}`);
+                        let progressTimeout;
+                        let taskCompletedSuccessfully = false; // Flag to track successful completion
+                        
+                        // Set a timeout to close the connection if no updates for 30 seconds
+                        const resetTimeout = () => {
+                            if (progressTimeout) clearTimeout(progressTimeout);
+                            progressTimeout = setTimeout(() => {
+                                console.log('Progress updates timed out - treating as complete');
+                                eventSource.close();
+                                Loading.hide();
                                 
-                                // Set a timeout to close the connection if no updates for 30 seconds
-                                const resetTimeout = () => {
-                                    if (progressTimeout) clearTimeout(progressTimeout);
-                                    progressTimeout = setTimeout(() => {
-                                        console.log('Progress updates timed out - treating as complete');
-                                        eventSource.close();
-                                        Loading.hide();
-                                        
                                 showPopup({
                                     type: POPUP_TYPES.SUCCESS,
                                     message: 'Library scan completed. If any items appear to be missing, you can try scanning again.',
                                     title: 'Scan Complete'
                                 });
-                                    }, 30000); // 30 second timeout
-                                };
+                            }, 30000); // 30 second timeout
+                        };
 
-                                // Reset timeout on each message
-                                eventSource.onmessage = function(event) {
-                                    resetTimeout(); // Reset timeout on each message
-                                    const progress = JSON.parse(event.data);
-                                    console.log('Progress update received:', progress);
-                                    
-                                    // Update loading message with detailed progress
-                                    if (progress.message) {
-                                        let mainMessage = progress.message;
-                                        let details = [];
-                                        
-                                        // Add phase-specific progress details
-                                        if (progress.phase === 'collection') {
-                                            if (progress.shows_processed !== undefined && progress.total_shows !== undefined) {
-                                                details.push(`Shows: ${progress.shows_processed}/${progress.total_shows}`);
-                                            }
-                                            if (progress.movies_processed !== undefined && progress.total_movies !== undefined) {
-                                                details.push(`Movies: ${progress.movies_processed}/${progress.total_movies}`);
-                                            }
-                                            if (progress.episodes_found !== undefined) {
-                                                details.push(`Total Episodes Found: ${progress.episodes_found}`);
-                                            }
-                                        } else if (progress.phase === 'database' || progress.status === 'adding') {
-                                            details.push(`Adding items to database...`);
-                                            if (progress.total_items) {
-                                                details.push(`Total items to process: ${progress.total_items}`);
-                                            }
-                                        }
-                                        
-                                        Loading.show(mainMessage, details.join('\n'));
-                                    }
-                                    
-                                    // Handle completion or error
-                                    if (progress.complete) {
-                                        if (progressTimeout) {
-                                            clearTimeout(progressTimeout);
-                                        }
-                                        eventSource.close();
-                                        Loading.hide();
-                                        
-                                        // Update and show scan results
-                                        try {
-                                            document.getElementById('shows-stat').textContent = `${progress.shows_processed}/${progress.total_shows}`;
-                                            document.getElementById('movies-stat').textContent = `${progress.movies_processed}/${progress.total_movies}`;
-                                            document.getElementById('episodes-stat').textContent = progress.episodes_found;
-                                            document.getElementById('scan-timestamp').textContent = new Date().toLocaleString();
-                                            document.getElementById('scan-results').classList.add('active');
-                                        
-                                        // Mark scan as complete
-                                        markScanComplete();
-
-                                        // Enable save config button if we're in conversion mode
-                                        const selectedOption = document.querySelector('.setup-option.selected');
-                                        if (selectedOption && selectedOption.dataset.option === 'convert-to-symlink') {
-                                            const saveConfigBtn = document.getElementById('save-config-btn');
-                                            if (saveConfigBtn) {
-                                                saveConfigBtn.disabled = false;
-                                            }
-                                        }
-                                        } catch (error) {
-                                            console.error('Error updating scan results:', error);
-                                        }
-                                        
-                                        showPopup({
-                                            type: POPUP_TYPES.SUCCESS,
-                                            message: `${progress.message}\n\nStats:\n` +
-                                                    `Shows: ${progress.shows_processed}/${progress.total_shows}\n` +
-                                                    `Movies: ${progress.movies_processed}/${progress.total_movies}\n` +
-                                                    `Episodes Found: ${progress.episodes_found}`,
-                                            title: 'Success'
-                                        });
-                                    } else if (progress.status === 'adding') {
-                                        Loading.show(progress.message);
-                                    }
-                                };
+                        // Reset timeout on each message
+                        eventSource.onmessage = function(event) {
+                            console.log('[Client SSE] onmessage received raw data:', event.data);
+                            resetTimeout(); // Reset timeout on each message
+                            const progress = JSON.parse(event.data);
+                            console.log('[Client SSE] Parsed progress:', progress);
+                            
+                            // Update loading message with detailed progress
+                            if (progress.message) {
+                                let mainMessage = progress.message;
+                                let details = [];
                                 
-                                eventSource.onerror = function(error) {
-                                    console.error('EventSource error:', error);
-                                    eventSource.close();
-                                    Loading.hide();
-                                    showPopup({
-                                        type: POPUP_TYPES.ERROR,
-                                        message: 'Lost connection to server while monitoring progress',
-                                        title: 'Error'
-                                    });
-                                };
-                            } else {
-                                Loading.hide();
-                                showPopup({
-                                    type: POPUP_TYPES.ERROR,
-                                    message: data.error || 'Failed to start library scan',
-                                    title: 'Error'
-                                });
+                                // Add phase-specific progress details
+                                if (progress.phase === 'collection') {
+                                    if (progress.shows_processed !== undefined && progress.total_shows !== undefined) {
+                                        details.push(`Shows: ${progress.shows_processed}/${progress.total_shows}`);
+                                    }
+                                    if (progress.movies_processed !== undefined && progress.total_movies !== undefined) {
+                                        details.push(`Movies: ${progress.movies_processed}/${progress.total_movies}`);
+                                    }
+                                    if (progress.episodes_found !== undefined) {
+                                        details.push(`Total Episodes Found: ${progress.episodes_found}`);
+                                    }
+                                } else if (progress.phase === 'database' || progress.status === 'adding') {
+                                    details.push(`Adding items to database...`);
+                                    if (progress.total_items) {
+                                        details.push(`Total items to process: ${progress.total_items}`);
+                                    }
+                                }
+                                
+                                Loading.show(mainMessage, details.join('\n'));
                             }
-                        })
-                        .catch(error => {
-                            Loading.hide();
-                            console.error('Error:', error);
-                            showPopup({
-                                type: POPUP_TYPES.ERROR,
-                                message: 'An error occurred while starting the library scan',
-                                title: 'Error'
-                            });
+                            
+                            console.log('[Client SSE] Checking progress.complete...', progress.complete);
+                            // Handle completion or error
+                            if (progress.complete) {
+                                console.log('[Client SSE] progress.complete is true. Setting flag.');
+                                taskCompletedSuccessfully = true; // Set flag on success
+                                
+                                // Use setTimeout to defer success handling slightly
+                                setTimeout(() => {
+                                    console.log('[Client SSE] Executing deferred success handling (setTimeout callback).');
+                                    if (progressTimeout) {
+                                        clearTimeout(progressTimeout);
+                                    }
+                                    // eventSource.close(); // <-- Keep this commented out
+                                    Loading.hide();
+                                    
+                                    // Update and show scan results using IDs from data attributes
+                                    try {
+                                        document.getElementById(showsStatId).textContent = `${progress.shows_processed}/${progress.total_shows}`;
+                                        document.getElementById(moviesStatId).textContent = `${progress.movies_processed}/${progress.total_movies}`;
+                                        document.getElementById(episodesStatId).textContent = progress.episodes_found;
+                                        document.getElementById(scanTimestampId).textContent = new Date().toLocaleString();
+                                        document.getElementById(resultsId).classList.add('active');
+                                    
+                                    // Mark scan as complete (generic function)
+                                    markScanComplete();
+
+                                    // Enable save config button if we're in conversion mode
+                                    const selectedOption = document.querySelector('.setup-option.selected');
+                                    if (selectedOption && selectedOption.dataset.option === 'convert-to-symlink') {
+                                        const saveConfigBtn = document.getElementById('save-config-btn');
+                                        if (saveConfigBtn) {
+                                            saveConfigBtn.disabled = false;
+                                        }
+                                    }
+                                    } catch (error) {
+                                        console.error('Error updating scan results:', error);
+                                    }
+                                    
+                                    showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        message: `${progress.message}\n\nStats:\n` +
+                                                `Shows: ${progress.shows_processed}/${progress.total_shows}\n` +
+                                                `Movies: ${progress.movies_processed}/${progress.total_movies}\n` +
+                                                `Episodes Found: ${progress.episodes_found}`,
+                                        title: 'Success'
+                                    });
+                                }, 0); // Delay of 0 milliseconds (yields execution)
+
+                            } else if (progress.status === 'adding') {
+                                Loading.show(progress.message);
+                            }
+                        };
+                        
+                        eventSource.onerror = function(error) {
+                            console.log('[Client SSE] onerror triggered. Checking flag...', taskCompletedSuccessfully);
+                            if (!taskCompletedSuccessfully) { // Only handle error if task didn't complete successfully
+                                console.error('[Client SSE] EventSource error (task did not complete): ', error);
+                                if (eventSource.readyState !== EventSource.CLOSED) { eventSource.close(); }
+                            } else {
+                                console.log('[Client SSE] EventSource error occurred after successful completion, ignoring.');
+                                // Ensure connection is closed if browser didn't handle it
+                                if (eventSource.readyState !== EventSource.CLOSED) {
+                                    console.log('[Client SSE] Closing eventSource from onerror (after success).');
+                                    eventSource.close();
+                                }
+                            }
+                        };
+                    } else {
+                        Loading.hide();
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: data.error || 'Failed to start library scan',
+                            title: 'Error'
                         });
                     }
+                })
+                .catch(error => {
+                    Loading.hide();
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'An error occurred while starting the library scan',
+                        title: 'Error'
+                    });
                 });
-            });
+            }
+        });
+    }
+
+    function setupScanHandler(formElement) {
+        // Check if a handler is already attached and remove it
+        if (formElement._scanSubmitHandler) {
+            console.log(`[setupScanHandler] Removing existing listener for form ${formElement.id || 'no-id'}`);
+            formElement.removeEventListener('submit', formElement._scanSubmitHandler);
+        }
+
+        // Create the new handler function for this specific form
+        const newHandler = (event) => handleScanSubmit(event, formElement);
+
+        // Store the new handler reference on the element
+        formElement._scanSubmitHandler = newHandler;
+
+        // Add the new listener
+        console.log(`[setupScanHandler] Adding new listener for form ${formElement.id || 'no-id'}`);
+        formElement.addEventListener('submit', newHandler);
     }
 
     function setupOptionSelection() {
@@ -807,6 +951,38 @@
                     // Then show the info section
                     setTimeout(() => {
                         infoSection.classList.add('active');
+                        
+                        // Simplified logic: Ensure scan handler is attached ONLY when the button is visible and ready
+                        // Remove handler attachment from here for plex-symlink initially.
+                        // It will be attached either if pre-configured OR after saving.
+                        
+                        // Attach handler immediately if the scan section is visible from the start (pre-configured)
+                        if (setupType === 'plex-symlink') {
+                            const scanSection = document.getElementById('plex-scan-section-symlink');
+                            const scanForm = scanSection?.querySelector('#scan-plex-library-form'); // Use scanSection context
+                            if (scanSection && scanSection.style.display !== 'none' && scanForm && !scanForm.dataset.scanHandlerAttached) {
+                                console.log('[setupOptionSelection] Attaching handler for pre-configured symlink scan');
+                                setupScanHandler(scanForm);
+                                scanForm.dataset.scanHandlerAttached = 'true';
+                            }
+                        } else if (setupType === 'plex-direct') {
+                             // Attach handler for direct mount scan form if present
+                             const scanFormDirect = infoSection.querySelector('#scan-plex-library-form-direct');
+                             if (scanFormDirect && !scanFormDirect.dataset.scanHandlerAttached) {
+                                 console.log('[setupOptionSelection] Attaching handler for direct scan');
+                                 setupScanHandler(scanFormDirect);
+                                 scanFormDirect.dataset.scanHandlerAttached = 'true';
+                             }
+                        } else if (setupType === 'convert-to-symlink') {
+                            // Attach handler for convert scan form if present
+                            const scanFormConvert = infoSection.querySelector('#scan-plex-library-form-convert');
+                            if (scanFormConvert && !scanFormConvert.dataset.scanHandlerAttached) {
+                                console.log('[setupOptionSelection] Attaching handler for convert scan');
+                                setupScanHandler(scanFormConvert);
+                                scanFormConvert.dataset.scanHandlerAttached = 'true';
+                            }
+                        }
+
                     }, 50);
 
                     // Control next step button state based on setup type
@@ -814,8 +990,8 @@
                         // For conversion, disable until conversion is complete
                         window.conversionComplete = false;
                         if (nextStepBtn) nextStepBtn.disabled = true;
-                    } else if (setupType === 'plex-symlink') {
-                        // For existing symlink library, disable until scan is complete
+                    } else if (setupType === 'plex-symlink' || setupType === 'plex-direct') { // Updated condition
+                        // For existing symlink or direct library, disable until scan is complete
                         window.scanComplete = false;
                         if (nextStepBtn) nextStepBtn.disabled = true;
                     } else {
@@ -1062,5 +1238,129 @@
             });
         }
     }
+
+    // --- UPDATED Plex Library Selection Functions ---
+    function setupPlexLibrarySelection() {
+        const form = document.getElementById('plex-library-selection-form');
+        if (form) {
+            form.addEventListener('submit', handleSavePlexLibraries);
+        }
+        // Removed fetchPlexLibraries call
+    }
+
+    function handleSavePlexLibraries(event) {
+        event.preventDefault();
+        // Get input elements instead of select
+        const movieInput = document.getElementById('plex-movie-libraries');
+        const showInput = document.getElementById('plex-show-libraries');
+        
+        // Get trimmed values directly from input fields
+        const movieLibrariesStr = movieInput.value.trim();
+        const showLibrariesStr = showInput.value.trim();
+
+        // Updated validation for non-empty strings
+        if (!movieLibrariesStr || !showLibrariesStr) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Please enter names for both movie and show libraries.',
+                title: 'Input Required'
+            });
+            return;
+        }
+
+        // Settings object remains the same
+        const settingsToUpdate = {
+            'Plex.movie_libraries': movieLibrariesStr,
+            'Plex.shows_libraries': showLibrariesStr
+        };
+
+        console.log('Saving Plex library settings:', settingsToUpdate);
+        Loading.show('Saving Plex library configuration...');
+
+        // Fetch call remains the same
+        fetch('/onboarding/settings/api/update', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settingsToUpdate)
+        })
+        .then(response => response.json())
+        .then(data => {
+            Loading.hide();
+            if (data.success) {
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    message: 'Plex libraries saved successfully.',
+                    title: 'Success'
+                });
+                // Hide the selection prompt and show the scan section
+                const promptDiv = document.getElementById('plex-library-selection-prompt');
+                const scanSection = document.getElementById('plex-scan-section-symlink'); // Target specific scan section
+                if (promptDiv) promptDiv.style.display = 'none';
+                if (scanSection) scanSection.style.display = 'block';
+
+                 // Update displayed libraries in the list using standard DOM methods
+                 const listItems = document.querySelectorAll('#plex-symlink-setup-info .info-list li');
+                 let movieLiFound = false;
+                 let showLiFound = false;
+
+                 listItems.forEach(li => {
+                     const labelSpan = li.querySelector('span.var-label');
+                     if (labelSpan) {
+                         if (labelSpan.textContent.trim() === 'Movie Libraries:') {
+                             const valueSpan = labelSpan.nextElementSibling;
+                             if (valueSpan && valueSpan.classList.contains('var-value')) {
+                                 valueSpan.textContent = movieLibrariesStr;
+                                 movieLiFound = true;
+                             }
+                         } else if (labelSpan.textContent.trim() === 'Show Libraries:') {
+                             const valueSpan = labelSpan.nextElementSibling;
+                             if (valueSpan && valueSpan.classList.contains('var-value')) {
+                                 valueSpan.textContent = showLibrariesStr;
+                                 showLiFound = true;
+                             }
+                         }
+                     }
+                 });
+
+                 // Add the list items if they weren't found
+                 const list = document.querySelector('#plex-symlink-setup-info .info-list');
+                 if (list) {
+                     if (!movieLiFound) {
+                         list.insertAdjacentHTML('beforeend', `<li><span class="var-label">Movie Libraries:</span> <span class="var-value">${movieLibrariesStr}</span></li>`);
+                     }
+                     if (!showLiFound) {
+                         list.insertAdjacentHTML('beforeend', `<li><span class="var-label">Show Libraries:</span> <span class="var-value">${showLibrariesStr}</span></li>`);
+                     }
+                 }
+
+                 // Attach handler ONLY here after save, ensuring it wasn't attached before
+                 const scanForm = document.getElementById('scan-plex-library-form'); // Get scan form within the symlink section
+                 if (scanForm && !scanForm.dataset.scanHandlerAttached) {
+                    console.log('[handleSavePlexLibraries] Attaching handler for symlink scan after save');
+                    setupScanHandler(scanForm);
+                    scanForm.dataset.scanHandlerAttached = 'true';
+                 }
+
+            } else {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: `Failed to save libraries: ${data.error || 'Unknown error'}`,
+                    title: 'Error'
+                });
+            }
+        })
+        .catch(error => {
+            Loading.hide();
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: `An error occurred: ${error.message}`,
+                title: 'Error'
+            });
+        });
+    }
+    // --- END UPDATED Plex Library Selection Functions ---
+
 </script>
 {% endblock %} 

@@ -1,6 +1,6 @@
 import logging
 import logging.handlers
-from settings import get_setting
+from utilities.settings import get_setting
 import psutil
 import os
 import time
@@ -8,7 +8,10 @@ import threading
 import cProfile
 import pstats
 import io
-from performance_monitor import monitor, start_performance_monitoring
+import json
+import re
+from datetime import datetime
+from queues.performance_monitor import monitor, start_performance_monitoring
 
 # Global profiler
 global_profiler = cProfile.Profile()
@@ -75,6 +78,71 @@ class DynamicConsoleHandler(logging.StreamHandler):
         except Exception:
             self.handleError(record)
 
+class APSchedulerQueueJobFilter(logging.Filter):
+    """
+    Filters out INFO level logs regarding the start and successful
+    completion of known queue-related jobs, regardless of the
+    originating logger.
+    """
+    # !!! IMPORTANT: Verify and update this set with the exact names
+    # of all your queue-related APScheduler jobs !!!
+    QUEUE_JOB_NAMES = {
+        "Wanted",
+        "Scraping",
+        "Adding",
+        "task_send_notifications",
+        "task_process_scraping_adding",
+        "task_process_pending_rclone_paths",
+        # Add other queue job names here if necessary
+    }
+
+    def filter(self, record):
+        if record.levelno == logging.INFO:
+            try:
+                msg = record.getMessage()
+                if "Running job" in msg or "executed successfully" in msg:
+                    # Corrected regex to capture only the job name
+                    match = re.search(r'(?:Running job|Job) "(.+?)\s*\(' , msg)
+                    job_name = match.group(1) if match else None
+
+                    if job_name and job_name in self.QUEUE_JOB_NAMES:
+                        return False # Don't log this record
+            except Exception:
+                 # In case of error during filtering, allow the log to pass
+                 pass
+
+        # For all other records, allow them to be logged
+        return True
+
+# --- Add Filter for APScheduler DEBUG noise ---
+class APSchedulerDebugNoiseFilter(logging.Filter):
+    """
+    Filters out specific DEBUG messages from apscheduler.scheduler.
+    """
+    def filter(self, record):
+        # Check if the log record is from apscheduler.scheduler and is DEBUG level
+        if record.levelno == logging.DEBUG and record.name == 'apscheduler.scheduler':
+            msg = record.getMessage()
+            # Check if it's one of the messages we want to suppress
+            if "Looking for jobs to run" in msg or "Next wakeup is due at" in msg:
+                return False # Suppress these specific messages
+
+        # Allow all other records
+        return True
+# --- End of APSchedulerDebugNoiseFilter ---
+
+class APSchedulerMaxInstancesWarningFilter(logging.Filter):
+    """
+    Filters out all WARNING messages about maximum number of running instances reached from APScheduler.
+    """
+    def filter(self, record):
+        if (
+            record.levelno == logging.WARNING
+            and ("maximum number of running instances reached" in record.getMessage() or "Job Max Instances Reached" in record.getMessage())
+        ):
+            return False  # Suppress this warning
+        return True
+
 def log_system_stats():
     """Start the performance monitoring system"""
     monitor.start_monitoring()
@@ -90,7 +158,32 @@ class ExcludeFilter(logging.Filter):
         if record.filename == 'settings_routes.py' and record.funcName == 'get_enabled_notifications' and 'Working outside of application context' in str(record.msg):
             return False
             
+        # Exclude logs from the item_tracker logger from other handlers
+        if record.name == 'item_tracker':
+            return False
+            
         return True
+
+# Create a new JSONFormatter
+class JSONFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            'timestamp': datetime.utcfromtimestamp(record.created).isoformat() + 'Z',
+            'level': record.levelname,
+            'name': record.name,
+        }
+        if isinstance(record.msg, dict):
+            log_record.update(record.msg) # Merge the dictionary message
+        else:
+            log_record['message'] = record.getMessage()
+
+        # Include exception info if available
+        if record.exc_info:
+            log_record['exception'] = self.formatException(record.exc_info)
+        if record.stack_info:
+            log_record['stack_info'] = self.formatStack(record.stack_info)
+            
+        return json.dumps(log_record)
 
 def setup_debug_logging(log_dir):
     # Debug file handler with immediate flush
@@ -111,6 +204,9 @@ def setup_debug_logging(log_dir):
     # Add filters to exclude unwanted messages
     debug_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     debug_handler.addFilter(ExcludeFilter())
+    debug_handler.addFilter(APSchedulerQueueJobFilter())
+    debug_handler.addFilter(APSchedulerDebugNoiseFilter())
+    debug_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
     formatter = logging.Formatter('%(asctime)s - %(filename)s:%(funcName)s:%(lineno)d - %(levelname)s - %(message)s')
     debug_handler.setFormatter(formatter)
@@ -124,6 +220,8 @@ def setup_info_logging(log_dir):
     # Add filters to exclude unwanted messages
     console_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
     console_handler.addFilter(ExcludeFilter())
+    console_handler.addFilter(APSchedulerQueueJobFilter())
+    console_handler.addFilter(APSchedulerMaxInstancesWarningFilter())
     
     # Add handler to root logger
     logging.getLogger().addHandler(console_handler)
@@ -145,8 +243,8 @@ def setup_performance_logging(log_dir):
     performance_formatter = logging.Formatter('%(message)s')
     performance_handler = logging.handlers.RotatingFileHandler(
         os.path.join(log_dir, 'performance.log'), 
-        maxBytes=50*1024*1024, 
-        backupCount=0, 
+        maxBytes=10*1024*1024, # Limit to 10MB
+        backupCount=1,         # Keep one backup file
         encoding='utf-8', 
         errors='replace'
     )
@@ -158,6 +256,25 @@ def setup_performance_logging(log_dir):
     performance_logger.setLevel(logging.INFO)
     performance_logger.addHandler(performance_handler)
     performance_logger.propagate = False  # Prevent performance logs from propagating to root logger
+
+def setup_item_tracker_logging(log_dir):
+    """Sets up the logger for tracking item lifecycle events."""
+    tracker_file = os.path.join(log_dir, 'item_tracker.log')
+    tracker_handler = logging.handlers.RotatingFileHandler(
+        tracker_file,
+        maxBytes=50*1024*1024, # 50 MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    tracker_handler.setLevel(logging.INFO) # Log INFO level and above
+    
+    formatter = JSONFormatter()
+    tracker_handler.setFormatter(formatter)
+    
+    tracker_logger = logging.getLogger('item_tracker')
+    tracker_logger.setLevel(logging.INFO) # Set logger level
+    tracker_logger.addHandler(tracker_handler)
+    tracker_logger.propagate = False # Prevent logs from going to root logger/console
 
 def setup_logging():
     """Initialize logging configuration"""
@@ -179,6 +296,7 @@ def setup_logging():
     setup_error_logging(log_dir)
     setup_queue_logging(log_dir)
     setup_performance_logging(log_dir)
+    setup_item_tracker_logging(log_dir)
     
     # Start performance monitoring after logging is set up
     start_performance_monitoring()

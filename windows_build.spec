@@ -26,7 +26,9 @@ directories = [
     'scraper',
     'static',
     'utilities',
-    'utilities/config'  # Ensure config directory is included
+    'utilities/config',  # Ensure config directory is included
+    'phalanx_db_hyperswarm',  # Add phalanx_db_hyperswarm directory
+    'help_content'  # <--- ADD THIS LINE
 ]
 
 for directory in directories:
@@ -49,7 +51,9 @@ individual_files = [
     ('cli_battery/main.py', 'cli_battery'),
     ('optional_default_versions.json', '.'),
     ('utilities/config/downsub_config.py', 'utilities/config'),
-    ('utilities/config/__init__.py', 'utilities/config')  # Explicitly include __init__.py
+    ('utilities/config/__init__.py', 'utilities/config'),  # Explicitly include __init__.py
+    ('phalanx_db_hyperswarm/package.json', 'phalanx_db_hyperswarm'),  # Include package.json for phalanx_db_hyperswarm
+    ('phalanx_db_hyperswarm/package-lock.json', 'phalanx_db_hyperswarm')  # Include package-lock.json for phalanx_db_hyperswarm
 ]
 
 for src, dst in individual_files:
@@ -76,6 +80,8 @@ additional_imports = [
     'psutil',
     'gc',
     'datetime',
+    'ctypes',
+    'platform',
     'multiprocessing.pool',
     'multiprocessing.managers',
     'multiprocessing.popen_spawn_win32',  # Windows-specific multiprocessing
@@ -183,7 +189,6 @@ a = Analysis(
         'aiohttp',
         'bs4',
         'grpc',
-        'guessit',
         'urwid',
         'plexapi',
         'PIL',
@@ -242,7 +247,8 @@ a = Analysis(
         'dogpile.cache.memory',
         'dogpile.cache.backends',
         'dogpile.cache.backends.memory',
-        'dogpile.core'
+        'dogpile.core',
+        'phalanx_db_hyperswarm'  # Add phalanx_db_hyperswarm module
     ] + additional_imports,
     hookspath=['hooks'],
     hooksconfig={},

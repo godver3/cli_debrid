@@ -1,0 +1,121 @@
+.manual-assignment-container {
+    max-width: 900px;
+    margin: 20px auto;
+    padding: 20px;
+    background: rgba(40, 40, 40, 0.9);
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    color: #f4f4f4;
+}
+
+.manual-assignment-container h3 {
+    text-align: center;
+    margin-bottom: 15px;
+    color: #2196F3;
+}
+
+.manual-assignment-container p {
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.assignment-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px 20px; /* row-gap column-gap */
+    border: 1px solid #555;
+    padding: 15px;
+    border-radius: 4px;
+    margin-bottom: 20px;
+}
+
+.assignment-header {
+    font-weight: bold;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #666;
+    margin-bottom: 10px;
+    color: #bbb;
+}
+
+.media-item-info {
+    padding: 10px 0;
+    line-height: 1.4;
+    border-bottom: 1px dashed #444; /* Differentiate rows slightly */
+}
+
+.media-item-info:last-of-type {
+    border-bottom: none;
+}
+
+.media-item-info strong {
+    color: #fff;
+}
+
+.media-item-info em {
+    color: #aaa;
+    font-size: 0.9em;
+    display: block; /* Ensure it appears on a new line */
+    margin-top: 4px;
+}
+
+.file-selector {
+    display: flex;
+    align-items: center; /* Vertically center the select */
+    padding: 10px 0;
+    border-bottom: 1px dashed #444;
+}
+
+.file-selector:last-of-type {
+    border-bottom: none;
+}
+
+.file-selector .form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #333;
+    color: #f4f4f4;
+}
+
+.no-items {
+    grid-column: 1 / -1; /* Span both columns */
+    text-align: center;
+    color: #ffc107; /* Warning color */
+    padding: 20px;
+}
+
+.form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.btn-primary {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.btn-primary:hover {
+    background-color: #1976D2;
+}
+
+.btn-secondary {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.btn-secondary:hover {
+    background-color: #5a6268;
+} 

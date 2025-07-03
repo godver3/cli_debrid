@@ -19,7 +19,7 @@ import pathlib
 from pathlib import Path
 
 # Add api_tracker import
-from api_tracker import setup_api_logging, api
+from routes.api_tracker import setup_api_logging, api
 
 class TestUpgradingQueueDuplicateAddition(unittest.TestCase):
     def setUp(self):

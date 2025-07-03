@@ -3,18 +3,15 @@ import logging
 from debrid import get_debrid_provider
 from debrid.real_debrid.client import RealDebridProvider
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
-from settings import get_setting, get_all_settings, load_config, save_config
-from database.database_reading import get_all_season_episode_counts
-from web_scraper import trending_movies, trending_shows, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
-from web_scraper import get_media_details
+from utilities.settings import get_setting, get_all_settings, load_config, save_config
+from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall
+from utilities.web_scraper import trending_movies, trending_shows, trending_anime, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
+from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
-from web_scraper import search_trakt
-from database.database_reading import get_all_season_episode_counts
-from metadata.metadata import get_imdb_id_if_missing, get_metadata, get_release_date, _get_local_timezone, DirectAPI
+from utilities.web_scraper import search_trakt
 from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
-from guessit import guessit
 from typing import Dict, Any, Tuple
 import requests
 import tempfile
@@ -25,14 +22,51 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 from flask_login import current_user
+import asyncio
+from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
+import time
+import json
+from utilities.web_scraper import get_media_meta
+from typing import List, Dict, Any, Optional
+import iso8601
+from utilities.reverse_parser import parse_filename_for_version # Added import
 
 scraper_bp = Blueprint('scraper', __name__)
 
+# Initialize cache manager only if enabled
+_phalanx_cache_manager = PhalanxDBClassManager() if get_setting('UI Settings', 'enable_phalanx_db', default=False) else None
+
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
-    imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
-    return jsonify({'imdb_id': imdb_id or 'N/A'})
+    from metadata.metadata import get_imdb_id_if_missing
+    max_retries = 1
+    base_delay = 0.1  # Base delay in seconds
+    
+    for attempt in range(max_retries):
+        try:
+            imdb_id = get_imdb_id_if_missing({'tmdb_id': tmdb_id})
+            if imdb_id:
+                return jsonify({'imdb_id': imdb_id})
+            
+            # If we get None but no exception, try again with backoff
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logging.warning(f"TMDB to IMDB conversion attempt {attempt + 1} failed, retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logging.error(f"Error in TMDB to IMDB conversion attempt {attempt + 1}: {str(e)}, retrying in {delay} seconds...")
+                time.sleep(delay)
+                continue
+            else:
+                logging.error(f"All TMDB to IMDB conversion attempts failed: {str(e)}")
+                break
+    
+    return jsonify({'imdb_id': 'N/A'})
 
 def obfuscate_magnet_link(magnet_link: str) -> str:
     """
@@ -130,6 +164,7 @@ def _download_and_get_hash(url: str) -> str:
 @user_required
 @scraper_permission_required
 def add_torrent_to_debrid():
+    from metadata.metadata import get_metadata, _get_local_timezone, get_release_date
     try:
         magnet_link = request.form.get('magnet_link')
         title = request.form.get('title')
@@ -137,16 +172,40 @@ def add_torrent_to_debrid():
         media_type = request.form.get('media_type')
         season = request.form.get('season')
         episode = request.form.get('episode')
-        version = request.form.get('version')
+        version_from_form = request.form.get('version') # Renamed to avoid conflict
         tmdb_id = request.form.get('tmdb_id')
+        original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
+        # --- START EDIT: Get current_score from form data ---
+        current_score_str = request.form.get('current_score', '0') # Default to '0'
+        try:
+            current_score = float(current_score_str)
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid current_score value received: '{current_score_str}'. Defaulting to 0.")
+            current_score = 0.0
+        # --- END EDIT ---
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
+
+        # Determine the final version for the item
+        final_version_for_item = version_from_form
+        if version_from_form == "No Version":
+            if original_scraped_torrent_title:
+                logging.info(f"Attempting to reverse parse version for torrent '{original_scraped_torrent_title}' as 'No Version' was selected.")
+                final_version_for_item = parse_filename_for_version(original_scraped_torrent_title)
+            else:
+                logging.warning("'No Version' selected, but original_scraped_torrent_title is missing. Attempting reverse parse with empty string.")
+                final_version_for_item = parse_filename_for_version("") # reverse_parser will use its default
+            logging.info(f"Version to be assigned: {final_version_for_item}")
 
         # Get metadata to determine genres
         metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type) if tmdb_id else {}
         genres = metadata.get('genres', [])
-        genres_str = ','.join(genres) if genres else ''
-        logging.info(f"Genres from metadata: {genres_str}")
+        if isinstance(genres, str):
+            # If genres come as comma-separated string, convert to list
+            genres = [g.strip() for g in genres.split(',')]
+        elif not isinstance(genres, list):
+            genres = []
+        logging.info(f"Genres from metadata: {genres}")
 
         # Convert season and episode to integers or None
         try:
@@ -167,31 +226,63 @@ def add_torrent_to_debrid():
         logging.info(f"Link: {obfuscated_link}")
 
         temp_file = None
+        actual_magnet_to_add = magnet_link # Assume initially it's the one to add
+
         # If it's a URL rather than a magnet link
         if magnet_link.startswith('http'):
             try:
-                # For Jackett URLs or any other torrent URLs, download to temp file
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
-                    response = requests.get(magnet_link, timeout=30)
-                    response.raise_for_status()
-                    tmp.write(response.content)
-                    tmp.flush()
-                    temp_file = tmp.name
-                    logging.info("Downloaded torrent file")
+                # For Jackett URLs or any other torrent URLs, attempt to download
+                # but handle redirects to magnet links.
+                response = requests.get(magnet_link, timeout=30, allow_redirects=False) # Key change: allow_redirects=False
+                
+                if response.status_code >= 200 and response.status_code < 300:
+                    # Direct download successful
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                        tmp.write(response.content)
+                        tmp.flush()
+                        temp_file = tmp.name
+                        logging.info(f"Downloaded torrent file to {temp_file}")
+                        actual_magnet_to_add = None # We'll use the temp_file for adding
+                elif response.status_code >= 300 and response.status_code < 400 and 'Location' in response.headers:
+                    redirect_url = response.headers['Location']
+                    if redirect_url.startswith('magnet:'):
+                        logging.info(f"HTTP link redirected to magnet link: {redirect_url[:60]}...")
+                        actual_magnet_to_add = redirect_url # This is the magnet link to add
+                        temp_file = None # No temp file in this case
+                    elif redirect_url.startswith('http'):
+                        # Handle HTTP to HTTP redirect if necessary, or error out
+                        # For simplicity, we'll try to download from the new HTTP URL once.
+                        logging.info(f"HTTP link redirected to another HTTP URL: {redirect_url}. Attempting download again.")
+                        response = requests.get(redirect_url, timeout=30) # Allow redirects for this second attempt by default
+                        response.raise_for_status() # Raise an error if this also fails or redirects badly
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.torrent') as tmp:
+                            tmp.write(response.content)
+                            tmp.flush()
+                            temp_file = tmp.name
+                            logging.info(f"Downloaded torrent file from redirected URL to {temp_file}")
+                            actual_magnet_to_add = None # Use temp_file
+                    else:
+                        raise Exception(f"Unhandled redirect location: {redirect_url}")
+                else:
+                    response.raise_for_status() # Raise an exception for other error codes
+
             except Exception as e:
                 error_message = str(e)
-                logging.error(f"Failed to process torrent URL: {error_message}")
+                logging.error(f"Failed to process torrent URL '{magnet_link}': {error_message}")
                 if temp_file and os.path.exists(temp_file):
                     try:
                         os.unlink(temp_file)
-                    except Exception as e:
-                        logging.warning(f"Failed to delete temp file {temp_file}: {e}")
+                    except Exception as e_del:
+                        logging.warning(f"Failed to delete temp file {temp_file}: {e_del}")
                 return jsonify({'error': error_message}), 400
 
         # Add magnet/torrent to debrid provider
         debrid_provider = get_debrid_provider()
         try:
-            torrent_id = debrid_provider.add_torrent(magnet_link, temp_file)
+            # Use 'actual_magnet_to_add' which could be the original magnet, 
+            # the redirected magnet, or None if a temp_file was successfully created.
+            # The debrid_provider.add_torrent method should prioritize temp_file if provided.
+            torrent_id = debrid_provider.add_torrent(actual_magnet_to_add, temp_file)
             logging.info(f"Torrent result: {torrent_id}")
             
             if not torrent_id:
@@ -201,9 +292,9 @@ def add_torrent_to_debrid():
 
             # Extract torrent hash from magnet link or torrent file
             torrent_hash = None
-            if magnet_link.startswith('magnet:'):
+            if actual_magnet_to_add and actual_magnet_to_add.startswith('magnet:'):
                 # Extract hash from magnet link
-                hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
+                hash_match = re.search(r'btih:([a-fA-F0-9]{40})', actual_magnet_to_add)
                 if hash_match:
                     torrent_hash = hash_match.group(1).lower()
             elif temp_file:
@@ -225,7 +316,7 @@ def add_torrent_to_debrid():
                     'media_type': media_type,
                     'season': season_number,
                     'episode': episode_number,
-                    'version': version,
+                    'version': final_version_for_item, # Use the determined version
                     'tmdb_id': tmdb_id,
                     'genres': genres
                 }
@@ -333,31 +424,42 @@ def add_torrent_to_debrid():
                 
                 # Get release date from metadata
                 if media_type in ['tv', 'show']:
+                    release_date = 'Unknown'  # Initialize to 'Unknown'
                     # For TV shows, get episode-specific release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
-                        season_data = metadata['seasons'].get(str(season_number), {})
-                        episode_data = season_data.get('episodes', {}).get(str(episode_number), {})
-                        release_date = episode_data.get('first_aired')
-                        if release_date:
+                        # Use integer keys directly since that's how the data is structured
+                        season_data = metadata['seasons'].get(season_number, {})
+                        
+                        # Use integer keys for episodes as well
+                        episode_data = season_data.get('episodes', {}).get(episode_number, {})
+                        
+                        first_aired_str = episode_data.get('first_aired')
+                        
+                        if first_aired_str:
                             try:
-                                # Parse the UTC datetime string
-                                first_aired_utc = datetime.strptime(release_date, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
-
+                                # Use iso8601 library for robust parsing
+                                first_aired_utc = iso8601.parse_date(first_aired_str)
+                                # Ensure it's timezone-aware
+                                if first_aired_utc.tzinfo is None:
+                                    first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                
                                 # Convert UTC to local timezone
                                 local_tz = _get_local_timezone()
-                                local_dt = first_aired_utc.astimezone(local_tz)
+                                premiere_dt_local_tz = first_aired_utc.astimezone(local_tz)
                                 
-                                # Format the local date as string
-                                release_date = local_dt.strftime("%Y-%m-%d")
-                            except ValueError:
-                                release_date = 'Unknown'
+                                # Format the local date
+                                release_date = premiere_dt_local_tz.strftime("%Y-%m-%d")
+                                logging.info(f"Successfully parsed release date: {release_date}")
+                            except (ValueError, iso8601.ParseError) as e:
+                                logging.warning(f"Could not parse first_aired_val: '{first_aired_str}' for episode S{season_number}E{episode_number}: {e}")
                 else:
                     # For movies, get movie release date
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata:
                         release_date = get_release_date(metadata, metadata.get('imdb_id'))
+                        if not release_date: # Ensure get_release_date didn't return None/empty
+                            release_date = 'Unknown'
                     else:
                         release_date = 'Unknown'
                 
@@ -381,16 +483,19 @@ def add_torrent_to_debrid():
                     'title': title,
                     'year': year,
                     'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
-                    'version': version,
+                    'version': final_version_for_item, # Use the determined version
                     'tmdb_id': tmdb_id,
                     'imdb_id': imdb_id,
                     'state': 'Checking',
-                    'filled_by_magnet': magnet_link,
+                    'filled_by_magnet': actual_magnet_to_add,
                     'filled_by_torrent_id': torrent_id,
                     'filled_by_title': filled_by_title,
                     'filled_by_file': filled_by_file,
+                    'original_scraped_torrent_title': original_scraped_torrent_title,
                     'release_date': release_date,
-                    'genres': genres_str
+                    'genres': json.dumps(genres),  # JSON encode the genres list
+                    'current_score': current_score,
+                    'real_debrid_original_title': torrent_info.get('original_filename')
                 }
 
                 # Add TV show specific fields if this is a TV show
@@ -407,19 +512,46 @@ def add_torrent_to_debrid():
                     # Get metadata for all episodes in the season
                     metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
                     if metadata and metadata.get('seasons'):
-                        season_data = metadata['seasons'].get(str(season_number), {})
+                        # --- START EDIT: Use integer season_number as key ---
+                        season_data = metadata['seasons'].get(season_number, {}) # Use integer season_number directly
+                        # --- END EDIT ---
                         episodes = season_data.get('episodes', {})
                         
-                        # Create a MediaMatcher instance to find matching files
+                        # Create a MediaMatcher instance
                         media_matcher = MediaMatcher()
                         
+                        # --- START EDIT: Pre-parse files ---
+                        # Pre-parse all files from the torrent info once
+                        parsed_files = []
+                        torrent_files = torrent_info.get('files', [])
+                        for file_dict in torrent_files:
+                            parsed_info = media_matcher._parse_file_info(file_dict)
+                            if parsed_info:
+                                parsed_files.append(parsed_info)
+                        
+                        if not parsed_files:
+                            logging.warning(f"No valid video files found in torrent for season pack processing for {title} S{season_number}.")
+                            # Decide if we should return an error or just continue
+                            # For now, let's return success as the torrent was added, but log the issue.
+                            return jsonify({
+                                'success': True,
+                                'message': 'Successfully added torrent, but no valid video files found for season pack processing.',
+                                'cache_status': cache_status
+                            })
+                        # --- END EDIT ---
+
                         # For each episode in the season
-                        for episode_num, episode_data in episodes.items():
+                        for episode_num_str, episode_data in episodes.items(): # Renamed episode_num to avoid clash
                             try:
-                                episode_num = int(episode_num)
+                                episode_num = int(episode_num_str) # Use a different variable name here
                                 # Create episode-specific item
                                 episode_item = item.copy()
                                 episode_item['episode_number'] = episode_num
+                                episode_item['current_score'] = current_score # Use the score passed for the pack
+                                episode_item['type'] = 'episode' # Ensure type is set for matching
+                                # --- START EDIT: Add content_source ---
+                                episode_item['content_source'] = 'content_requester'
+                                # --- END EDIT ---
                                 
                                 # Get episode-specific release date and title
                                 first_aired = episode_data.get('first_aired')
@@ -427,20 +559,29 @@ def add_torrent_to_debrid():
                                 
                                 if first_aired:
                                     try:
-                                        first_aired_utc = datetime.strptime(first_aired, "%Y-%m-%dT%H:%M:%S.%fZ")
-                                        first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                        # --- START EDIT: Use iso8601.parse_date for robust parsing ---
+                                        first_aired_utc = iso8601.parse_date(first_aired)
+                                        # Ensure it's timezone-aware (iso8601.parse_date might already return aware)
+                                        if first_aired_utc.tzinfo is None or first_aired_utc.tzinfo.utcoffset(first_aired_utc) is None:
+                                            first_aired_utc = first_aired_utc.replace(tzinfo=timezone.utc)
+                                        
                                         local_tz = _get_local_timezone()
                                         local_dt = first_aired_utc.astimezone(local_tz)
                                         
                                         # Format the local date as string
                                         episode_item['release_date'] = local_dt.strftime("%Y-%m-%d")
-                                    except ValueError:
+                                    except (ValueError, iso8601.ParseError) as e:
+                                        # --- END EDIT ---
                                         episode_item['release_date'] = 'Unknown'
+                                        logging.warning(f"Could not parse release date for S{season_number}E{episode_num}, value was: '{first_aired}'. Error: {e}")
                                 
-                                # Find matching file for this episode
-                                matches = media_matcher.match_content(files, episode_item)
-                                if matches:
-                                    episode_item['filled_by_file'] = matches[0][0]  # Use first match's path
+                                # --- START EDIT: Find matching file using find_best_match_from_parsed ---
+                                # Find matching file for this episode from the pre-parsed list
+                                match_result = media_matcher.find_best_match_from_parsed(parsed_files, episode_item)
+                                
+                                if match_result:
+                                    matching_filepath_basename, _ = match_result # Unpack the tuple
+                                    episode_item['filled_by_file'] = matching_filepath_basename # Use the basename
                                     
                                     # Add episode to database
                                     from database import add_media_item
@@ -451,12 +592,17 @@ def add_torrent_to_debrid():
                                         from queues.checking_queue import CheckingQueue
                                         checking_queue = CheckingQueue()
                                         checking_queue.add_item(episode_item)
-                                        logging.info(f"Added episode {episode_num} to checking queue")
+                                    else:
+                                         logging.error(f"Failed to add episode S{season_number}E{episode_num} to database.")
                                 else:
-                                    logging.warning(f"No matching file found for episode {episode_num}")
+                                    logging.warning(f"No matching file found for episode S{season_number}E{episode_num} in parsed files.")
+                                # --- END EDIT ---
                             except Exception as e:
-                                logging.error(f"Error processing episode {episode_num}: {str(e)}")
+                                logging.error(f"Error processing episode {title} S{season_number}E{episode_num}: {str(e)}", exc_info=True)
                                 continue
+                    else:
+                         logging.warning(f"No metadata or no 'seasons' key found in metadata for TMDB ID {tmdb_id} during season pack processing for {title} S{season_number}.") # Enhanced log
+
                     return jsonify({
                         'success': True,
                         'message': 'Successfully processed season pack',
@@ -497,34 +643,138 @@ def add_torrent_to_debrid():
 @user_required
 @scraper_view_access_required
 def movies_trending():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
+    # --- Import database reading function ---
+    from database.database_reading import get_media_item_presence_overall
+    # --- End import ---
 
     versions = get_available_versions()
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
     
     if request.method == 'GET':
-        trendingMovies = trending_movies()
-        if trendingMovies:
-            return jsonify(trendingMovies)
+        trendingMoviesData = trending_movies() # Rename original data
+        if trendingMoviesData and 'trendingMovies' in trendingMoviesData:
+            processed_movies = []
+            for item in trendingMoviesData['trendingMovies']:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
+                    except (ValueError, TypeError):
+                        db_state = 'Missing'
+
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]: 
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing' # Default if no ID
+                processed_movies.append(item)
+                
+            # Return processed data under the original key
+            return jsonify({'trendingMovies': processed_movies})
         else:
-            return jsonify({'error': 'Error retrieving trending movies'})
+            # Return original error structure or a default one
+            return jsonify(trendingMoviesData if trendingMoviesData else {'error': 'Error retrieving trending movies'})
+            
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/shows_trending', methods=['GET', 'POST'])
 @user_required
 @scraper_view_access_required
 def shows_trending():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
 
     versions = get_available_versions()
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
     
     if request.method == 'GET':
-        trendingShows = trending_shows()
-        if trendingShows:
-            return jsonify(trendingShows)
+        trendingShowsData = trending_shows() # Rename original data
+        if trendingShowsData and 'trendingShows' in trendingShowsData:
+            processed_shows = []
+            for item in trendingShowsData['trendingShows']:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
+                    except (ValueError, TypeError):
+                         db_state = 'Missing'
+                         
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]: 
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing' # Default if no ID
+                processed_shows.append(item)
+                
+            # Return processed data under the original key
+            return jsonify({'trendingShows': processed_shows})
         else:
-            return jsonify({'error': 'Error retrieving trending shows'})
+            # Return original error structure or a default one
+            return jsonify(trendingShowsData if trendingShowsData else {'error': 'Error retrieving trending shows'})
+            
+    return render_template('scraper.html', versions=versions, is_requester=is_requester)
+
+@scraper_bp.route('/anime_trending', methods=['GET', 'POST'])
+@user_required
+@scraper_view_access_required
+def anime_trending():
+    from utilities.web_scraper import get_available_versions
+
+    versions = get_available_versions()
+    is_requester = current_user.is_authenticated and current_user.role == 'requester'
+    
+    if request.method == 'GET':
+        trendingAnimeData = trending_anime() # Get trending anime data
+        if trendingAnimeData and 'trendingAnime' in trendingAnimeData:
+            processed_anime = []
+            for item in trendingAnimeData['trendingAnime']:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
+                    except (ValueError, TypeError):
+                         db_state = 'Missing'
+                         
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]: 
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing' # Default if no ID
+                processed_anime.append(item)
+                
+            # Return processed data under the original key
+            return jsonify({'trendingAnime': processed_anime})
+        else:
+            # Return original error structure or a default one
+            return jsonify(trendingAnimeData if trendingAnimeData else {'error': 'Error retrieving trending anime'})
+            
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
 
 @scraper_bp.route('/', methods=['GET', 'POST'])
@@ -532,7 +782,7 @@ def shows_trending():
 @scraper_view_access_required
 @onboarding_required
 def index():
-    from web_scraper import get_available_versions, web_scrape
+    from utilities.web_scraper import get_available_versions, web_scrape
 
     versions = get_available_versions()
     # Check if the user is a requester
@@ -547,6 +797,38 @@ def index():
             
             # Allow requesters to search and see results
             results = web_scrape(search_term, version)
+            
+            # --- Add status check ---
+            if isinstance(results, list):
+                processed_results = []
+                for item in results:
+                    # Assuming 'id' is the TMDB ID in search results
+                    tmdb_id = item.get('id') 
+                    if tmdb_id:
+                        try:
+                            # Ensure tmdb_id is integer if needed by the function
+                            tmdb_id_int = int(tmdb_id) 
+                            db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
+                        except (ValueError, TypeError):
+                             db_state = 'Missing' # Handle cases where ID might not be numeric
+                        
+                        # Map state to frontend status
+                        if db_state == 'Collected':
+                            item['db_status'] = 'collected'
+                        elif db_state == 'Partial':
+                            item['db_status'] = 'partial'
+                        elif db_state == 'Blacklisted':
+                            item['db_status'] = 'blacklisted'
+                        elif db_state not in ['Missing', 'Ignored', None]: 
+                            item['db_status'] = 'processing'
+                        else:
+                            item['db_status'] = 'missing'
+                    else:
+                        item['db_status'] = 'missing' # Default if no ID
+                    processed_results.append(item)
+                results = processed_results
+            # --- End status check ---
+                
             return jsonify({'results': results})  # Wrap results in a dictionary here
         else:
             return jsonify({'error': 'No search term provided'})
@@ -562,7 +844,7 @@ def index():
 @user_required
 @scraper_view_access_required
 def select_season():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
 
     versions = get_available_versions()
     # Check if the user is a requester
@@ -572,11 +854,14 @@ def select_season():
         media_id = request.form.get('media_id')
         title = request.form.get('title')
         year = request.form.get('year')
+        # Get allow_specials flag from form data
+        allow_specials = request.form.get('allow_specials', 'false').lower() == 'true'
         
         if media_id:
             try:
                 # Allow both requesters and regular users to get season data for browsing
-                results = web_scrape_tvshow(media_id, title, year)
+                # Pass the allow_specials flag to web_scrape_tvshow
+                results = web_scrape_tvshow(media_id, title, year, season=None, allow_specials=allow_specials)
                 if not results:
                     return jsonify({'error': 'No results found'}), 404
                 elif 'error' in results:
@@ -598,7 +883,7 @@ def select_season():
 @user_required
 @scraper_view_access_required
 def select_episode():
-    from web_scraper import get_available_versions
+    from utilities.web_scraper import get_available_versions
     
     versions = get_available_versions()
     # Check if the user is a requester
@@ -609,11 +894,14 @@ def select_episode():
         season = request.form.get('season')
         title = request.form.get('title')
         year = request.form.get('year')
+        # Get allow_specials flag from form data
+        allow_specials = request.form.get('allow_specials', 'false').lower() == 'true'
         
         if media_id:
             try:
                 # Allow episode data to be retrieved for both requesters and regular users
-                episodeResults = web_scrape_tvshow(media_id, title, year, season)
+                # Pass the allow_specials flag to web_scrape_tvshow
+                episodeResults = web_scrape_tvshow(media_id, title, year, season, allow_specials=allow_specials)
                 if not episodeResults:
                     return jsonify({'error': 'No results found'}), 404
                 elif 'error' in episodeResults:
@@ -643,13 +931,15 @@ def select_episode():
 @user_required
 @scraper_view_access_required  # Changed from scraper_permission_required to allow requesters to view but not scrape
 def select_media():
+    from metadata.metadata import get_metadata
     try:
         # Check if the user is a requester and block the scraping action if true
         is_requester = current_user.is_authenticated and current_user.role == 'requester'
         if is_requester:
             return jsonify({
                 'error': 'As a Requester, you can view content but cannot perform scraping actions.',
-                'torrent_results': []  # Return empty results to avoid errors in the UI
+                'torrent_results': [],
+                'filtered_out_torrent_results': [] # Ensure this key is present
             }), 403  # 403 Forbidden status code
             
         media_id = request.form.get('media_id')
@@ -662,15 +952,30 @@ def select_media():
         version = request.form.get('version', 'default')
         genre_ids = request.form.get('genre_ids', '')
         
-        # Parse skip_cache_check parameter
         skip_cache_check = request.form.get('skip_cache_check', 'false').lower() == 'true'
-        
-        # Parse background_check parameter
         background_check = request.form.get('background_check', 'true').lower() == 'true'
         
-        # Log the parameters
         logging.info(f"Select media: {media_id}, {title}, {year}, {media_type}, S{season or 'None'}E{episode or 'None'}, multi={multi}, version={version}")
+        
+        # --- START EDIT: Store imdb_id in session ---
+        if media_id:
+            try:
+                from metadata.metadata import get_imdb_id_if_missing
+                imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
+                if imdb_id:
+                    session['last_selected_imdb_id'] = imdb_id
+                    logging.info(f"Stored imdb_id {imdb_id} in session for tmdb_id {media_id}.")
+                else:
+                    # Clear session key if lookup fails to prevent using a stale ID
+                    if 'last_selected_imdb_id' in session:
+                        del session['last_selected_imdb_id']
+                    logging.warning(f"Could not resolve imdb_id for tmdb_id {media_id}. Cache check might be affected.")
+            except (ValueError, TypeError) as e:
+                logging.error(f"Error resolving imdb_id from tmdb_id '{media_id}': {e}")
+        # --- END EDIT ---
+
         logging.info(f"Cache check settings: skip_cache_check={skip_cache_check}, background_check={background_check}")
+        logging.debug(f"[select_media_route] Calling process_media_selection for '{title}'.")
         
         if not media_id or not title or not year or not media_type:
             return jsonify({'error': 'Missing required parameters'}), 400
@@ -680,16 +985,18 @@ def select_media():
         if episode:
             episode = int(episode)
             
-        # Parse genre_ids
         genres = []
         if genre_ids:
             try:
                 genres = [int(g) for g in genre_ids.split(',') if g]
             except ValueError:
-                logging.warning(f"Invalid genre_ids format: {genre_ids}")
+                genres = [g.strip() for g in genre_ids.split(',') if g.strip()]
+                logging.info(f"Using genre names: {genres}")
                 
-        # Process the media selection
-        result = process_media_selection(
+        # --- MODIFICATION: Assume process_media_selection now returns two lists ---
+        # result variable is a tuple: (passed_results, filtered_out_results_list)
+        # or an error dictionary.
+        result_tuple_or_error = process_media_selection(
             media_id, 
             title, 
             year, 
@@ -704,11 +1011,44 @@ def select_media():
         )
         
         # Check if there was an error
-        if isinstance(result, dict) and 'error' in result:
-            return jsonify(result), 400
+        if isinstance(result_tuple_or_error, dict) and 'error' in result_tuple_or_error:
+            logging.info(f"select_media: process_media_selection returned an error: {result_tuple_or_error.get('error')}")
+            # Ensure filtered_out_torrent_results is an empty list in case of error, if it's expected by frontend
+            if 'filtered_out_torrent_results' not in result_tuple_or_error:
+                 result_tuple_or_error['filtered_out_torrent_results'] = []
+            return jsonify(result_tuple_or_error), 400
+        
+        # Unpack the tuple if no error
+        try:
+            passed_results, filtered_out_results_list = result_tuple_or_error
+            logging.info(f"select_media: process_media_selection returned {len(passed_results)} passed and {len(filtered_out_results_list if filtered_out_results_list else [])} filtered_out results.")
+        except (TypeError, ValueError) as e:
+            logging.error(
+                f"select_media: CRITICAL - Failed to unpack results from process_media_selection. Expected 2-tuple. Got type: {type(result_tuple_or_error)}. Value (first 500 chars): {str(result_tuple_or_error)[:500]}... Exception: {e}",
+                exc_info=True
+            )
+            # This will be caught by the outer try/except and return a generic 500
+            raise # Re-raise to ensure the function exits with an error
             
+        # --- START DEBUGGING LOGS ---
+        logging.info(f"select_media: PRE-JSONIFY check. Type of passed_results: {type(passed_results)}, Type of filtered_out_results_list: {type(filtered_out_results_list)}")
+        if isinstance(passed_results, list):
+            logging.info(f"select_media: PRE-JSONIFY passed_results is a list with {len(passed_results)} items. First item (if any): {str(passed_results[0]) if passed_results else 'Empty list'}")
+        else:
+            logging.info(f"select_media: PRE-JSONIFY passed_results is NOT a list. Value: {str(passed_results)[:500]}")
+
+        if isinstance(filtered_out_results_list, list):
+            logging.info(f"select_media: PRE-JSONIFY filtered_out_results_list is a list with {len(filtered_out_results_list)} items. First item (if any): {str(filtered_out_results_list[0]) if filtered_out_results_list else 'Empty list'}")
+        else:
+            logging.info(f"select_media: PRE-JSONIFY filtered_out_results_list is NOT a list. Value: {str(filtered_out_results_list)[:500]}")
+        # --- END DEBUGGING LOGS ---
+
         # Return the results
-        return jsonify(result)
+        logging.debug(f"[select_media_route] Returning JSON for '{title}': passed_results={len(passed_results)}, filtered_out_results_list={len(filtered_out_results_list if filtered_out_results_list else [])}")
+        return jsonify({
+            'torrent_results': passed_results,
+            'filtered_out_torrent_results': filtered_out_results_list 
+        })
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
@@ -742,7 +1082,7 @@ def scraper_tester():
         
         if search_term:
             # Use the parse_search_term function from web_scraper
-            from web_scraper import parse_search_term
+            from utilities.web_scraper import parse_search_term
             base_title, season, episode, year, multi = parse_search_term(search_term)
             
             # Use the parsed title and year for search
@@ -774,7 +1114,9 @@ def scraper_tester():
     return render_template('scraper_tester.html', versions=versions)
 
 @scraper_bp.route('/get_item_details', methods=['POST'])
+@user_required
 def get_item_details():
+    from metadata.metadata import get_metadata, get_release_date
     item = request.json
     details = get_details(item)
     
@@ -792,11 +1134,64 @@ def get_item_details():
         return jsonify(response_data)
     else:
         return jsonify({'error': 'Could not fetch details'}), 400
+
+@scraper_bp.route('/get_media_meta', methods=['POST'])
+@user_required
+def get_media_meta_endpoint():
+    from metadata.metadata import get_metadata
+    from utilities.web_scraper import get_media_meta
+    data = request.json
+    tmdb_id = data.get('tmdb_id')
+    media_type = data.get('media_type')
+    
+    if not tmdb_id or not media_type:
+        return jsonify({'error': 'Missing tmdb_id or media_type'}), 400
+    
+    try:
+        # Get raw TMDB metadata first
+        media_meta = get_media_meta(str(tmdb_id), media_type)
+        if not media_meta:
+            return jsonify({'error': 'Could not fetch media metadata from TMDB'}), 400
+            
+        poster_url, overview, raw_tmdb_genres, vote_average, backdrop_path = media_meta
+        
+        # Start with raw TMDB genres (like the main scraper does)
+        final_genres = raw_tmdb_genres.copy() if raw_tmdb_genres else []
+        logging.info(f"get_media_meta_endpoint: Raw TMDB genres: {final_genres}")
+        
+        # Check for anime detection using get_metadata (same as main scraper)
+        try:
+            metadata = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+            if metadata and metadata.get('genres'):
+                processed_genres = metadata.get('genres', [])
+                logging.info(f"get_media_meta_endpoint: Processed metadata genres: {processed_genres}")
+                
+                # Check if anime was detected in processed metadata
+                if 'anime' in processed_genres and 'anime' not in final_genres:
+                    final_genres.append('anime')
+                    logging.info(f"get_media_meta_endpoint: Added anime to genres: {final_genres}")
+        except Exception as e:
+            logging.warning(f"Could not get processed metadata for anime detection: {e}")
+        
+        logging.info(f"get_media_meta_endpoint: Final combined genres: {final_genres}")
+        
+        return jsonify({
+            'poster_url': poster_url,
+            'overview': overview,
+            'genres': final_genres,  # Combined raw + anime detection
+            'vote_average': vote_average,
+            'backdrop_path': backdrop_path
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in get_media_meta_endpoint: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
     
 @scraper_bp.route('/run_scrape', methods=['POST'])
 @user_required
 @scraper_permission_required
 def run_scrape():
+    from metadata.metadata import get_metadata, get_release_date, _get_local_timezone, DirectAPI
     data = request.json
     try:
         imdb_id = data.get('imdb_id', '')
@@ -824,10 +1219,12 @@ def run_scrape():
         config = load_config()
         original_version_settings = config['Scraping']['versions'].get(version, {}).copy()
         
+        logging.debug(f"[run_scrape_route] Calling scrape for original settings, title '{title}'.")
         # Run first scrape with current settings
-        original_results, _ = scrape(
+        original_results, original_filtered_out_results = scrape(
             imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres, skip_cache_check
         )
+        logging.debug(f"[run_scrape_route] Original scrape returned: passed={len(original_results)}, filtered_out={len(original_filtered_out_results if original_filtered_out_results else [])}")
 
         # Update version settings with modified settings
         updated_version_settings = original_version_settings.copy()
@@ -850,9 +1247,11 @@ def run_scrape():
 
         # Run second scrape with modified settings
         try:
-            adjusted_results, _ = scrape(
+            logging.debug(f"[run_scrape_route] Calling scrape for adjusted settings, title '{title}'.")
+            adjusted_results, adjusted_filtered_out_results = scrape(
                 imdb_id, tmdb_id, title, year, media_type, version, season, episode, multi, genres, skip_cache_check
             )
+            logging.debug(f"[run_scrape_route] Adjusted scrape returned: passed={len(adjusted_results)}, filtered_out={len(adjusted_filtered_out_results if adjusted_filtered_out_results else [])}")
         finally:
             # Revert settings back to original
             config = load_config()
@@ -860,7 +1259,9 @@ def run_scrape():
             save_config(config)
 
         # Ensure score_breakdown is included in the results
-        for result in original_results + adjusted_results:
+        # Also process filtered out results for score_breakdown and cache status
+        all_results_to_process = original_results + adjusted_results + original_filtered_out_results + adjusted_filtered_out_results
+        for result in all_results_to_process:
             if 'score_breakdown' not in result:
                 result['score_breakdown'] = {'total_score': result.get('score', 0)}
             
@@ -868,7 +1269,7 @@ def run_scrape():
             if 'cached' not in result:
                 result['cached'] = 'N/A'
         
-        # Check cache status for the first 5 results of each list
+        # Check cache status for the first 5 results of each main list (not filtered out ones)
         if not skip_cache_check:
             try:
                 debrid_provider = get_debrid_provider()
@@ -898,9 +1299,14 @@ def run_scrape():
         else:
             logging.info("Skipping cache check as requested")
 
+        logging.debug(f"[run_scrape_route] Returning JSON for '{title}': "
+                      f"originalResults={len(original_results)}, originalFilteredOutResults={len(original_filtered_out_results if original_filtered_out_results else [])}, "
+                      f"adjustedResults={len(adjusted_results)}, adjustedFilteredOutResults={len(adjusted_filtered_out_results if adjusted_filtered_out_results else [])}")
         return jsonify({
             'originalResults': original_results,
-            'adjustedResults': adjusted_results
+            'adjustedResults': adjusted_results,
+            'originalFilteredOutResults': original_filtered_out_results,
+            'adjustedFilteredOutResults': adjusted_filtered_out_results
         })
     except Exception as e:
         logging.error(f"Error in run_scrape: {str(e)}", exc_info=True)
@@ -959,9 +1365,12 @@ def remove_uncached_item():
 
 @scraper_bp.route('/get_tv_details/<tmdb_id>')
 def get_tv_details(tmdb_id):
+    from metadata.metadata import get_metadata
+    from cli_battery.app.direct_api import DirectAPI
+    api = DirectAPI()
     try:
         # First get the IMDb ID from TMDB ID
-        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show')
+        imdb_id, _ = api.tmdb_to_imdb(str(tmdb_id), media_type='show')
         if not imdb_id:
             return jsonify({'success': False, 'error': 'Could not find IMDb ID for the given TMDB ID'}), 404
 
@@ -1050,7 +1459,10 @@ def tmdb_image_proxy(image_path):
 def check_cache_status():
     try:
         data = request.json
-        logging.info(f"Cache check request data: {data}")
+        logging.debug(f"Cache check request data: {data}")
+        
+        # Use the singleton cache manager
+        cache_manager = _phalanx_cache_manager
         
         # Handle single item cache check (new approach)
         if 'index' in data:
@@ -1058,32 +1470,113 @@ def check_cache_status():
             magnet_link = data.get('magnet_link')
             torrent_url = data.get('torrent_url')
             
-            logging.info(f"Processing cache check for item at index {index}")
-            if magnet_link:
-                logging.info(f"Magnet link: {magnet_link[:60]}...")
-            if torrent_url:
-                logging.info(f"Torrent URL: {torrent_url[:60]}...")
-                
+            # --- START EDIT: Get imdb_id from request and extract title ---
+            imdb_id = data.get('imdb_id')
+            if not imdb_id:
+                imdb_id = session.get('last_selected_imdb_id')
+                if imdb_id:
+                    logging.debug(f"Retrieved imdb_id {imdb_id} from session for cache check.")
+            
+            # Create the item dict for context if imdb_id is available
+            item_for_check = {'imdb_id': imdb_id} if imdb_id else None
+
+            logging.debug(f"Processing cache check for item at index {index}")
+            
             if not magnet_link and not torrent_url:
                 logging.warning(f"No magnet link or torrent URL provided for index {index}")
                 return jsonify({'status': 'check_unavailable'}), 200
             
+            # Extract hash from magnet link if present - do this up front
+            torrent_hash = None
+            file_hash = None
+            
+            if magnet_link:
+                # Fast hash extraction
+                btih_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link, re.IGNORECASE)
+                if btih_match:
+                    torrent_hash = btih_match.group(1).lower()
+                    
+                    # Check PhalanxDB immediately using the hash
+                    if _phalanx_cache_manager and torrent_hash:
+                        try:
+                            cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
+                            logging.debug(f"Found cache status in PhalanxDB for hash {torrent_hash}: {cache_status}")
+                            # If found in PhalanxDB, return early (assuming PhalanxDB is reliable)
+                            if cache_status is not None:
+                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
+                        except Exception as e:
+                            logging.error(f"Error checking PhalanxDB cache: {str(e)}")
+                
+                # Handle HTTP URLs - only extract file hash if we need to
+                if magnet_link.startswith('http'):
+                    file_param = magnet_link.split('&file=')[-1] if '&file=' in magnet_link else None
+                    if file_param:
+                        # Generate hash of the file name
+                        file_hash = f"FILE_HASH_{hashlib.sha1(file_param.encode()).hexdigest()}"
+                        
+                        # Check if this file hash is already cached
+                        # Add check for cache_manager being None
+                        if cache_manager: 
+                            cache_status = cache_manager.get_cache_status(file_hash)
+                            if cache_status is not None:
+                                logging.debug(f"File hash {file_hash} found in cache with status: {cache_status}")
+                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
+            
+            elif torrent_url:
+                # Try to get hash from torrent URL
+                try:
+                    torrent_hash = _download_and_get_hash(torrent_url)
+                    
+                    # Check PhalanxDB immediately using the hash
+                    if _phalanx_cache_manager and torrent_hash:
+                        try:
+                            cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
+                            logging.debug(f"Found cache status in PhalanxDB for torrent hash {torrent_hash}: {cache_status}")
+                            # If found in PhalanxDB, return early
+                            if cache_status is not None:
+                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
+                        except Exception as e:
+                            logging.error(f"Error checking PhalanxDB cache: {str(e)}")
+                except Exception as e:
+                    logging.warning(f"Could not extract hash from torrent URL: {e}")
+            
+            # If we reach here, we need to check with the debrid provider
             # Get the debrid provider
             debrid_provider = get_debrid_provider()
-            logging.info(f"Using debrid provider: {debrid_provider.__class__.__name__}")
             
             # Create a torrent processor with the debrid provider
             torrent_processor = TorrentProcessor(debrid_provider)
             
             # Check cache status based on what we have
+            is_cached = None
             if magnet_link:
                 logging.info(f"Checking cache status for magnet link at index {index}")
-                is_cached = torrent_processor.check_cache(magnet_link)
-                logging.info(f"Cache check result for magnet link: {is_cached}")
+                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=item_for_check)
+                
+                # Update PhalanxDB with new cache status if enabled
+                if cache_manager and torrent_hash: # Check cache_manager is not None
+                    try:
+                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                        logging.debug(f"Updated PhalanxDB cache status for hash {torrent_hash}: {bool(is_cached)}")
+                    except Exception as e:
+                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
+                
+                # Update cache status for file hash if it was a URL
+                if cache_manager and file_hash: # Check cache_manager is not None
+                    cache_manager.update_cache_status(file_hash, bool(is_cached))
+                    logging.debug(f"Updated cache status for file hash {file_hash}: {bool(is_cached)}")
+                    
             elif torrent_url:
                 logging.info(f"Checking cache status for torrent URL at index {index}")
-                is_cached = torrent_processor.check_cache_for_url(torrent_url)
-                logging.info(f"Cache check result for torrent URL: {is_cached}")
+                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True, item=item_for_check)
+                
+                # Update PhalanxDB with new cache status if enabled
+                if cache_manager and torrent_hash: # Check cache_manager is not None
+                    try:
+                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                        logging.debug(f"Updated PhalanxDB cache status for torrent hash {torrent_hash}: {bool(is_cached)}")
+                    except Exception as e:
+                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
             
             # Convert result to the expected format
             if is_cached is True:
@@ -1091,11 +1584,9 @@ def check_cache_status():
             elif is_cached is False:
                 status = 'not_cached'
             else:
-                # Handle None responses which can happen with download failures or empty torrents
-                logging.warning(f"Cache check returned None for index {index}")
                 status = 'check_unavailable'
                 
-            logging.info(f"Returning cache status for index {index}: {status}")
+            logging.debug(f"Returning cache status for index {index}: {status}")
             return jsonify({'status': status, 'index': index}), 200
             
         # Handle multiple hashes (legacy approach)
@@ -1105,111 +1596,416 @@ def check_cache_status():
             
         # Always limit to exactly 5 hashes, preserving the order
         if len(hashes) > 5:
-            logging.info(f"Limiting cache check from {len(hashes)} to exactly 5 hashes")
+            logging.debug(f"Limiting cache check from {len(hashes)} to exactly 5 hashes")
             hashes = hashes[:5]
-        elif len(hashes) < 5:
-            logging.info(f"Only {len(hashes)} hashes provided, less than the target of 5")
             
-        # Get the debrid provider and check its capabilities
-        debrid_provider = get_debrid_provider()
-        supports_cache_check = debrid_provider.supports_direct_cache_check
-        supports_bulk_check = debrid_provider.supports_bulk_cache_checking
-        
-        # Check if this is a RealDebridProvider
-        is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
-        
-        # Check cache status for all hashes
+        # First check PhalanxDB for all hashes at once with multi-status
         cache_status = {}
-        if hashes:
+        hashes_to_check = []
+        
+        # Get results for all hashes at once
+        if cache_manager: # Check cache_manager is not None
+            phalanx_results = cache_manager.get_multi_cache_status(hashes)
+            for hash_value, status in phalanx_results.items():
+                if status is not None:
+                    cache_status[hash_value] = 'Yes' if status.get('is_cached') else 'No' # Use .get() for safety
+                else:
+                    hashes_to_check.append(hash_value)
+        else:
+             hashes_to_check = hashes # If no cache manager, check all hashes with debrid
+                
+        if hashes_to_check:
+            logging.info(f"Need to check {len(hashes_to_check)} hashes with debrid provider")
+            # Get the debrid provider and check its capabilities
+            debrid_provider = get_debrid_provider()
+            supports_cache_check = debrid_provider.supports_direct_cache_check
+            supports_bulk_check = debrid_provider.supports_bulk_cache_checking
+            is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+            
             if supports_cache_check:
                 try:
-                    # Optimize for single hash requests which are common with our new frontend
-                    if len(hashes) == 1:
-                        hash_value = hashes[0]
+                    # Optimize for single hash requests
+                    if len(hashes_to_check) == 1:
+                        hash_value = hashes_to_check[0]
                         is_cached = debrid_provider.is_cached(hash_value)
-                        cache_status[hash_value] = is_cached
-                        logging.info(f"Single hash cache status for {hash_value}: {is_cached}")
+                        cache_status[hash_value] = 'Yes' if is_cached else 'No'
+                        # Update PhalanxDB
+                        if cache_manager: # Check cache_manager is not None
+                            try:
+                                cache_manager.update_cache_status(hash_value, bool(is_cached))
+                                logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(is_cached)}")
+                            except Exception as e:
+                                logging.error(f"Error updating PhalanxDB cache: {str(e)}")
                     elif supports_bulk_check:
-                        # If provider supports bulk checking, check all hashes at once
-                        # But we need to ensure we maintain the order in the response
-                        bulk_result = debrid_provider.is_cached(hashes)
+                        bulk_result = debrid_provider.is_cached(hashes_to_check)
                         if isinstance(bulk_result, bool):
-                            # If we got a single boolean back, convert to dict
-                            cache_status = {hash_value: bulk_result for hash_value in hashes}
+                            for hash_value in hashes_to_check:
+                                cache_status[hash_value] = 'Yes' if bulk_result else 'No'
+                                if cache_manager: # Check cache_manager is not None
+                                    try:
+                                        cache_manager.update_cache_status(hash_value, bool(bulk_result))
+                                        logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(bulk_result)}")
+                                    except Exception as e:
+                                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
                         else:
-                            # Make sure we preserve the order of hashes in the response
-                            cache_status = {}
-                            for hash_value in hashes:
-                                cache_status[hash_value] = bulk_result.get(hash_value, 'N/A')
-                        logging.info(f"Bulk cache status from provider: {cache_status}")
+                            for hash_value in hashes_to_check:
+                                result = bulk_result.get(hash_value, 'N/A')
+                                cache_status[hash_value] = 'Yes' if result is True else 'No' if result is False else 'N/A'
+                                if result is not None and result != 'N/A': # Check before updating
+                                    if cache_manager: # Check cache_manager is not None
+                                        try:
+                                            cache_manager.update_cache_status(hash_value, bool(result))
+                                            logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(result)}")
+                                        except Exception as e:
+                                            logging.error(f"Error updating PhalanxDB cache: {str(e)}")
                     else:
-                        # Check hashes individually for providers that don't support bulk checking
-                        # Process them in the exact order they were received
-                        cache_status = {}
-                        for hash_value in hashes:
+                        for hash_value in hashes_to_check:
                             try:
                                 is_cached = debrid_provider.is_cached(hash_value)
-                                cache_status[hash_value] = is_cached
-                                logging.info(f"Individual cache status for {hash_value}: {is_cached}")
+                                cache_status[hash_value] = 'Yes' if is_cached else 'No'
+                                if cache_manager: # Check cache_manager is not None
+                                    try:
+                                        cache_manager.update_cache_status(hash_value, bool(is_cached))
+                                        logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(is_cached)}")
+                                    except Exception as e:
+                                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
                             except Exception as e:
                                 logging.error(f"Error checking individual cache status for {hash_value}: {e}")
                                 cache_status[hash_value] = 'N/A'
                 except Exception as e:
                     logging.error(f"Error checking cache status: {e}")
-                    # Fall back to N/A on error
-                    cache_status = {hash_value: 'N/A' for hash_value in hashes}
-            else:
-                # If provider doesn't support direct checking but is RealDebrid, check first 5 results
-                if is_real_debrid:
-                    logging.info("Using RealDebridProvider's is_cached method")
-                    cache_status = {hash_value: 'N/A' for hash_value in hashes}  # Initialize all as N/A
-                    torrent_ids_to_remove = []  # Track torrent IDs for removal
-                    
-                    # Check each hash in the order provided
-                    for i, hash_value in enumerate(hashes):
-                        try:
-                            # Use the is_cached method which will add the torrent and return its cache status
-                            # But we need to capture the torrent ID for later removal
-                            magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
-                            cache_result = debrid_provider.is_cached(
-                                magnet_link, 
-                                result_title=f"Hash {hash_value}",
-                                result_index=i
-                            )
-                            # Convert None to 'No' for frontend display
-                            if cache_result is None:
-                                cache_result = 'No'
-                            cache_status[hash_value] = cache_result
-                            logging.info(f"Cache status for hash {hash_value}: {cache_result}")
-                            
-                            # Try to find the torrent ID using the hash
-                            torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
-                            if torrent_id:
-                                torrent_ids_to_remove.append(torrent_id)
-                                logging.info(f"Added torrent ID {torrent_id} to removal list")
-                        except Exception as e:
-                            logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
-                    
-                    # Remove all torrents after checking (even if they're cached)
-                    for torrent_id in torrent_ids_to_remove:
-                        try:
-                            debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
-                            logging.info(f"Removed torrent with ID {torrent_id} after cache check")
-                        except Exception as e:
-                            logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
-                else:
-                    # Mark all results as N/A if provider doesn't support direct checking
-                    cache_status = {hash_value: 'N/A' for hash_value in hashes}
-                    logging.info("Provider does not support direct cache checking, marking all as N/A")
-        
-        # Convert boolean values to strings for consistency with the frontend
-        for hash_value, status in cache_status.items():
-            if status is True:
-                cache_status[hash_value] = 'Yes'
-            elif status is False:
-                cache_status[hash_value] = 'No'
+                    for hash_value in hashes_to_check:
+                        cache_status[hash_value] = 'N/A'
+            elif is_real_debrid:
+                logging.info("Using RealDebridProvider's is_cached method")
+                torrent_ids_to_remove = []
                 
+                for i, hash_value in enumerate(hashes_to_check):
+                    try:
+                        magnet_link = f"magnet:?xt=urn:btih:{hash_value}"
+                        cache_result = debrid_provider.is_cached(
+                            magnet_link, 
+                            result_title=f"Hash {hash_value}",
+                            result_index=i,
+                            remove_uncached=True
+                        )
+                        result_str = 'Yes' if cache_result is True else 'No' if cache_result is False else 'N/A'
+                        cache_status[hash_value] = result_str
+                        
+                        if cache_result is not None and cache_result != 'N/A': # Check before updating
+                            if cache_manager: # Check cache_manager is not None
+                                try:
+                                    cache_manager.update_cache_status(hash_value, bool(cache_result))
+                                    logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {bool(cache_result)}")
+                                except Exception as e:
+                                    logging.error(f"Error updating PhalanxDB cache: {str(e)}")
+                        
+                        torrent_id = debrid_provider._all_torrent_ids.get(hash_value)
+                        if torrent_id:
+                            torrent_ids_to_remove.append(torrent_id)
+                    except Exception as e:
+                        logging.error(f"Error checking cache for hash {hash_value}: {str(e)}")
+                        cache_status[hash_value] = 'N/A'
+                
+                for torrent_id in torrent_ids_to_remove:
+                    try:
+                        debrid_provider.remove_torrent(torrent_id, "Removed after cache check")
+                    except Exception as e:
+                        logging.error(f"Error removing torrent {torrent_id}: {str(e)}")
+            else:
+                for hash_value in hashes_to_check:
+                    cache_status[hash_value] = 'N/A'
+                
+        # Removed redundant PhalanxDB checks here as they are now handled earlier
+        # Ensure PhalanxDB updates only happen if cache_manager exists
+        if cache_manager:
+            try:
+                for hash_value, status_str in cache_status.items():
+                    if status_str in ['Yes', 'No']: # Only update if we have a definitive status
+                        is_cached = status_str == 'Yes'
+                        # Check if this hash already exists in PhalanxDB to avoid redundant updates
+                        existing_status = cache_manager.get_cache_status(hash_value)
+                        if existing_status is None or existing_status.get('is_cached') != is_cached:
+                            cache_manager.update_cache_status(hash_value, is_cached)
+                            logging.debug(f"Updated PhalanxDB cache status for hash {hash_value}: {is_cached}")
+            except Exception as e:
+                logging.error(f"Error updating PhalanxDB cache after debrid check: {str(e)}")
+
         return jsonify({'cache_status': cache_status})
     except Exception as e:
         logging.error(f"Error in check_cache_status: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while checking cache status'}), 500
+
+async def _fetch_details_for_id_lookup(id_type: str, media_id: str) -> List[Dict[str, Any]]:
+    """
+    Helper to fetch media details based on IMDb or TMDb ID.
+    Returns a list containing a single result dict if found, else empty list.
+    """
+    from metadata.metadata import get_metadata
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    has_tmdb = bool(tmdb_api_key)
+    results = []
+    metadata_result = None
+    media_type = None
+
+    def is_better_tv_candidate(metadata):
+        """
+        Determine if metadata suggests this is better classified as a TV show.
+        Returns True if TV indicators are strong, False otherwise.
+        """
+        if not metadata:
+            return False
+            
+        # Strong TV indicators
+        airs_data = metadata.get('airs', {})
+        if airs_data and isinstance(airs_data, dict):
+            # Has day/time/timezone = TV show
+            if airs_data.get('day') or airs_data.get('time') or airs_data.get('timezone'):
+                logging.info(f"Strong TV indicator found: airs data = {airs_data}")
+                return True
+        
+        # Runtime analysis (episodes typically 20-70 mins, movies typically 80+ mins)
+        runtime = metadata.get('runtime')
+        if runtime and isinstance(runtime, int):
+            if runtime <= 70:  # Likely episode runtime
+                logging.info(f"TV runtime indicator: {runtime} minutes (typical episode length)")
+                return True
+            elif runtime >= 120:  # Likely movie runtime  
+                logging.info(f"Movie runtime indicator: {runtime} minutes (typical movie length)")
+                return False
+        
+        # Check for seasons data
+        seasons = metadata.get('seasons', {})
+        if seasons and isinstance(seasons, dict) and len(seasons) > 0:
+            logging.info(f"Strong TV indicator: seasons data found with {len(seasons)} seasons")
+            return True
+            
+        return False
+
+    def calculate_metadata_quality_score(metadata):
+        """Calculate a quality score for metadata completeness."""
+        if not metadata:
+            return 0
+            
+        score = 0
+        # Basic fields
+        if metadata.get('title'): score += 10
+        if metadata.get('year'): score += 10
+        if metadata.get('genres'): score += 5
+        if metadata.get('tmdb_id'): score += 15
+        
+        # Rich data indicators
+        if metadata.get('overview'): score += 5
+        if metadata.get('runtime'): score += 5
+        if metadata.get('airs'): score += 20  # TV shows have this
+        if metadata.get('seasons'): score += 25  # TV shows have this
+        if metadata.get('release_date') or metadata.get('first_aired'): score += 10
+        
+        return score
+
+    try:
+        movie_metadata = None
+        tv_metadata = None
+        
+        # Try both movie and TV lookups for IMDb IDs
+        if id_type == 'imdb':
+            logging.info(f"Trying both movie and TV lookups for IMDb ID: {media_id}")
+            
+            # Try movie lookup
+            try:
+                movie_metadata = get_metadata(imdb_id=media_id, item_media_type='movie')
+                if movie_metadata:
+                    logging.debug(f"Movie metadata found for {media_id}")
+            except Exception as e:
+                logging.debug(f"Movie lookup failed for {media_id}: {e}")
+            
+            # Try TV lookup  
+            try:
+                tv_metadata = get_metadata(imdb_id=media_id, item_media_type='tv')
+                if tv_metadata:
+                    logging.debug(f"TV metadata found for {media_id}")
+            except Exception as e:
+                logging.debug(f"TV lookup failed for {media_id}: {e}")
+                
+        elif id_type == 'tmdb':
+            try:
+                media_id_int = int(media_id)
+                logging.info(f"Trying both movie and TV lookups for TMDB ID: {media_id_int}")
+                
+                # Try movie lookup
+                try:
+                    movie_metadata = get_metadata(tmdb_id=media_id_int, item_media_type='movie')
+                    if movie_metadata:
+                        logging.debug(f"Movie metadata found for TMDB {media_id_int}")
+                except Exception as e:
+                    logging.debug(f"Movie lookup failed for TMDB {media_id_int}: {e}")
+                
+                # Try TV lookup
+                try:
+                    tv_metadata = get_metadata(tmdb_id=media_id_int, item_media_type='tv')
+                    if tv_metadata:
+                        logging.debug(f"TV metadata found for TMDB {media_id_int}")
+                except Exception as e:
+                    logging.debug(f"TV lookup failed for TMDB {media_id_int}: {e}")
+                    
+            except ValueError:
+                logging.error(f"Invalid TMDb ID format (after stripping prefix): {media_id}")
+                return []
+
+        # Now decide which result to use based on analysis
+        if movie_metadata and tv_metadata:
+            logging.info(f"Both movie and TV metadata found for {id_type}={media_id}, analyzing to determine best match...")
+            
+            # Check if TV metadata has strong TV indicators
+            if is_better_tv_candidate(tv_metadata):
+                logging.info(f"TV metadata has strong indicators, using TV result for {media_id}")
+                metadata_result = tv_metadata
+                media_type = 'tv'
+            elif is_better_tv_candidate(movie_metadata):
+                # This shouldn't happen often, but handle edge case
+                logging.warning(f"Movie metadata has TV indicators, switching to TV result for {media_id}")
+                metadata_result = tv_metadata if tv_metadata else movie_metadata
+                media_type = 'tv'
+            else:
+                # Compare quality scores
+                movie_score = calculate_metadata_quality_score(movie_metadata)
+                tv_score = calculate_metadata_quality_score(tv_metadata) 
+                
+                logging.info(f"Quality scores for {media_id}: movie={movie_score}, tv={tv_score}")
+                
+                if tv_score > movie_score:
+                    logging.info(f"TV metadata has higher quality score, using TV result for {media_id}")
+                    metadata_result = tv_metadata
+                    media_type = 'tv'
+                else:
+                    logging.info(f"Movie metadata has higher/equal quality score, using movie result for {media_id}")
+                    metadata_result = movie_metadata
+                    media_type = 'movie'
+                    
+        elif tv_metadata:
+            logging.info(f"Only TV metadata found for {media_id}")
+            metadata_result = tv_metadata
+            media_type = 'tv'
+        elif movie_metadata:
+            logging.info(f"Only movie metadata found for {media_id}")
+            metadata_result = movie_metadata
+            media_type = 'movie'
+        else:
+            logging.warning(f"No metadata found for {id_type} ID: {media_id}")
+            return []
+
+        if metadata_result and media_type:
+            tmdb_id = metadata_result.get('tmdb_id')
+            title = metadata_result.get('title', 'N/A')
+            year = metadata_result.get('year', 'N/A')
+            overview = metadata_result.get('overview', '')
+            release_date = metadata_result.get('release_date') if media_type == 'movie' else metadata_result.get('first_aired')
+
+            poster_path_final = None # Use a distinct variable name
+            genres = []
+            vote_average = 0.0
+            backdrop_path_full = None
+
+            media_meta_tuple = await asyncio.to_thread(
+                get_media_meta, str(tmdb_id), media_type
+            )
+
+            if media_meta_tuple:
+                 # Use distinct variable for poster path from tuple
+                 poster_path_from_meta, _, genres, vote_average, backdrop_path_rel = media_meta_tuple
+
+                 # Assign to final poster path, preferring the one from get_media_meta
+                 poster_path_final = poster_path_from_meta
+
+                 if not has_tmdb and (not poster_path_final or 'placeholder' not in poster_path_final):
+                     poster_path_final = "static/images/placeholder.png"
+                 elif has_tmdb and not poster_path_final:
+                      logging.warning(f"Could not retrieve poster for {media_type} {title} (TMDb: {tmdb_id})")
+                      poster_path_final = "static/images/placeholder.png"
+
+                 if backdrop_path_rel:
+                     backdrop_path_full = f"https://image.tmdb.org/t/p/original{backdrop_path_rel}"
+            else:
+                 if not has_tmdb:
+                      poster_path_final = "static/images/placeholder.png"
+                 else:
+                      logging.warning(f"get_media_meta failed for {media_type} {title} (TMDb: {tmdb_id}). Using placeholder.")
+                      poster_path_final = "static/images/placeholder.png"
+
+            formatted_result = {
+                'media_type': 'show' if media_type == 'tv' else media_type, # Normalize tv to show for JS
+                'id': str(tmdb_id),
+                'title': title,
+                'year': year,
+                'poster_path': poster_path_final, # Use final path with snake_case
+                'overview': overview, # Use corrected overview
+                'genres': genres,
+                'voteAverage': vote_average,
+                'backdrop_path': backdrop_path_full, # Use full URL
+                'release_date': release_date, # Use corrected release_date
+                'imdb_id': metadata_result.get('imdb_id')
+            }
+            results.append(formatted_result)
+            
+            # Log the final decision for debugging
+            logging.info(f"Final classification for {id_type}={media_id}: {media_type} - '{title}' ({year})")
+        else:
+            logging.warning(f"Could not find metadata for {id_type} ID: {media_id}")
+
+    except Exception as e:
+        logging.error(f"Error during ID lookup's async helper ({id_type}={media_id}): {e}", exc_info=True)
+    return results
+
+@scraper_bp.route('/lookup_by_id', methods=['POST'])
+@user_required
+@scraper_view_access_required
+@onboarding_required
+def lookup_by_id(): # This remains synchronous
+    id_type = request.form.get('id_type')
+    media_id = request.form.get('media_id')
+
+    if not id_type or not media_id or id_type not in ['imdb', 'tmdb']:
+        return jsonify({'error': 'Invalid ID type or ID provided'}), 400
+
+    logging.info(f"Performing ID lookup: type={id_type}, id={media_id}")
+
+    results = asyncio.run(_fetch_details_for_id_lookup(id_type, media_id))
+
+    if not results:
+        return jsonify({'error': 'Media not found for the provided ID'}), 404
+
+    # --- Simplify result processing - main processing done in helper ---
+    processed_results = []
+    for item in results: # item already has snake_case keys
+        tmdb_id_val = item.get('id')
+        db_state = 'Missing'
+        if tmdb_id_val:
+            try:
+                tmdb_id_int = int(tmdb_id_val)
+                db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
+            except (ValueError, TypeError):
+                logging.warning(f"Could not parse tmdb_id_val for db_state check: {tmdb_id_val}")
+                db_state = 'Missing'
+
+        item['db_status'] = {
+            'Collected': 'collected',
+            'Partial': 'partial',
+            'Blacklisted': 'blacklisted'
+        }.get(db_state, 'processing' if db_state not in ['Missing', 'Ignored', None] else 'missing')
+
+        # Ensure necessary fields are present (redundant check, but safe)
+        if 'poster_path' not in item or not item['poster_path']:
+             item['poster_path'] = "static/images/placeholder.png"
+        if 'year' not in item and item.get('release_date'):
+             item['year'] = str(item['release_date'])[:4]
+        # Remove inconsistent keys if they somehow slipped through (unlikely now)
+        item.pop('mediaType', None)
+        item.pop('posterPath', None)
+        item.pop('show_overview', None)
+        item.pop('backdropPath', None)
+
+        processed_results.append(item)
+    # --- End Simplified Processing ---
+
+    logging.info(f"ID lookup successful, returning {len(processed_results)} result(s).")
+    return jsonify({'results': processed_results})

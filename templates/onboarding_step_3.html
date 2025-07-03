@@ -367,7 +367,7 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/onboarding/scrapers/delete', {
+                fetch('/settings/scrapers/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
