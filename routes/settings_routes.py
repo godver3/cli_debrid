@@ -1769,11 +1769,10 @@ def get_enabled_notifications():
                     if notification_config.get('webhook_url'):
                         enabled_notifications[notification_id] = notification_config
                 elif notification_config['type'] == 'Email':
+                    # Only check required fields (smtp_username and smtp_password are optional)
                     if all([
                         notification_config.get('smtp_server'),
                         notification_config.get('smtp_port'),
-                        notification_config.get('smtp_username'),
-                        notification_config.get('smtp_password'),
                         notification_config.get('from_address'),
                         notification_config.get('to_address')
                     ]):
@@ -1821,11 +1820,10 @@ def get_enabled_notifications_for_category(category):
                     if notification_config.get('webhook_url'):
                         enabled_notifications[notification_id] = notification_config
                 elif notification_config['type'] == 'Email':
+                    # Only check required fields (smtp_username and smtp_password are optional)
                     if all([
                         notification_config.get('smtp_server'),
                         notification_config.get('smtp_port'),
-                        notification_config.get('smtp_username'),
-                        notification_config.get('smtp_password'),
                         notification_config.get('from_address'),
                         notification_config.get('to_address')
                     ]):
@@ -2164,7 +2162,8 @@ def test_notification():
                 success = True
                 
             elif notification_type == 'Email':
-                required_fields = ['smtp_server', 'smtp_port', 'smtp_username', 'smtp_password', 'from_address', 'to_address']
+                # Only smtp_username and smtp_password are optional
+                required_fields = ['smtp_server', 'smtp_port', 'from_address', 'to_address']
                 missing_fields = [field for field in required_fields if not notification_config.get(field)]
                 
                 if missing_fields:
@@ -2188,8 +2187,15 @@ def test_notification():
                     'to_address': notification_config['to_address']
                 }
                 
-                send_email_notification(smtp_config, content, 'test')
-                success = True
+                email_result = send_email_notification(smtp_config, content, 'test')
+                if email_result:
+                    success = True
+                else:
+                    # Email sending failed - check if it's likely due to authentication
+                    if not notification_config.get('smtp_username') or not notification_config.get('smtp_password'):
+                        return jsonify({'success': False, 'error': 'SMTP Authentication failed. This server requires authentication - please provide username and password.'}), 400
+                    else:
+                        return jsonify({'success': False, 'error': 'Email sending failed. Please check your SMTP configuration and credentials.'}), 400
             
             else:
                 return jsonify({'success': False, 'error': f'Unknown notification type: {notification_type}'}), 400

@@ -10,6 +10,15 @@ cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is desi
 
 cli_debrid will always be free.
 
+## Need Help? Hitting a Brick Wall?
+
+If you're struggling with setup or configuration, consider using [Debridify](https://debridify.xyz) - a hosted service that offers:
+
+- **Monthly Hosted Service**: Ready-to-use cli_debrid/Jellyfin/Jellyseerr instance with full support
+- **One-Time Setup**: Custom deployment with your own equipment
+
+Both options provide a hassle-free way to get cli_debrid running without the complexity of manual setup. This is a service provided directly by the creator of cli_debrid.
+
 ## Version Information
 
 *Main Branch*
@@ -49,7 +58,7 @@ cli_debrid will always be free.
 
 The core functionality of the software. When started, it:
 
-1. Scans your Plex library for existing content.
+1. Determines your current existing content.
 2. Checks content sources for any wanted content that isn't already collected.
 3. Scrapes various sources for the best quality versions of wanted content.
 4. Manages downloads through your Debrid provider.
@@ -57,11 +66,11 @@ The core functionality of the software. When started, it:
 
 ### dev vs main
 
-dev is the latest version of cli_debrid. It is not recommended for production use, unless you are brave.
+dev is the latest version of cli_debrid. It is generally recommended for day to day use as issues are most quickly identified in dev.
 
-main is the stable version of cli_debrid. It is recommended for production use.
+main is the stable version of cli_debrid. main tends to fall behind dev and is not highly recommended.
 
-Development generally works on a 2-3 week cycle, with dev being moved to main at the end of each cycle.
+Development generally works on a 6-8 week cycle, with dev being moved to main at the end of each cycle.
 
 ### Library Management
 
@@ -69,7 +78,7 @@ Supports either a Plex or Symlinked library:
 
 - Plex: Uses Plex's API to get your library and track what you have.
 - Symlinked: Uses a local folder structure to track your library.
-- *Important - if running on Windows, Developer Mode must be enabled to allow symlinking!*
+- *Important - if running on Windows, Developer Mode must be enabled to allow symlinking! Additionally Plex does not support symlinks on Windows, meaning Jellyfin is the best option on Windows when using symlinks*
 
 ### Settings
 
@@ -83,6 +92,7 @@ A settings menu allows you to configure all program settings:
 - Advanced settings
 - Notifications (Discord, Email, Telegram, NTFY)
 - Reverse Parser (used to assign versions to existing content through regex terms)
+- Debug settings
 
 ### Manual/Testing Scraper
 
@@ -117,6 +127,7 @@ Additional task information:
 - Debug Log: Every 1 minute (60 seconds)
 - Refresh Release Dates: Every 1 hour (3600 seconds)
 - Collected Wanted Content Check: Every 24 hours (86400 seconds)
+- Tasks can be managed/enabled through the Task Manager page
 
 </details>
 <details>
@@ -149,7 +160,7 @@ Items are blacklisted (moved to the Blacklisted state) when:
 - They exceed the wake limit in the Sleeping Queue
 - Their release date is more than one week old and weren't found on first scrape
 
-Blacklisted items are no longer processed by the queue system. Blacklisted items are woken per your Blacklist Duration.
+Blacklisted items are no longer processed by the queue system. Blacklisted items are woken per your Blacklist Duration if enabled.
 </details>
 <details>
 <summary>Multi-pack Processing</summary>
@@ -170,29 +181,9 @@ cli_debrid supports webhooks from Overseerr:
 - Processes the webhook data and adds new items to the Wanted Queue
 - To use, enable the Webhook agent in Overseerr, set the URL to https://localhost:5000/webhook (or wherever Overseerr can see your cli_debrid instance at) and enable Notifications for "Request Pending Approval" and "Request Automatically Approved"
 
-cli_debrid also supports webhooks from Zurg if using a Symlinked library (for a Plex library use the typical Zurg Plex update script):
+cli_debrid can also receive webhooks from Zurg to process non-cli_debrid added items (i.e. through DebridMediaManager)
 
-- Receives notifications for quick matching and symlinking from Zurg
-- To use, in the Zurg config.yml add:
-```on_library_update: sh ./update.sh "$@"```
-- Then create an update.sh file in the same location as the Zurg config.yml
-```#!/bin/bash
-
-# Configuration
-webhook_url="https://cli-debrid.godver3.xyz/webhook/rclone"  # Replace with your actual webhook URL
-
-# First notify our webhook for each file
-for arg in "$@"
-do
-    arg_clean=$(echo "$arg" | sed 's/\\//g')
-    echo "Notifying webhook for: $arg_clean"
-    encoded_webhook_arg=$(echo -n "$arg_clean" | python3 -c "import sys, urllib.parse as ul; print(ul.quote(sys.stdin.read()))")
-    curl -s -X GET "$webhook_url?file=$encoded_webhook_arg"
-done
-
-echo "Updates completed!"
-```
-- This will notify cli_debrid for each file that is updated, and cli_debrid will then process the file and process its symlink.
+See the [Wiki](https://github.com/godver3/cli_debrid/wiki/Webhooks) for more details
 
 </details>
 
@@ -200,20 +191,18 @@ echo "Updates completed!"
 
 ### Database and "I Know What I Got"
 
-cli_debrid maintains a local database of your media collection, keeping track of what you have and what quality it's in. This "I Know What I Got" approach allows cli_debrid to maintain a list of what you have, and what you want. Other philosophies include minimized API calls, high specificity in scraping, and an easy to use interface, with a highly complex backend.
+cli_debrid maintains a local database of your media collection, keeping track of what you have and what quality it's in. This "I Know What I Got" approach allows cli_debrid to maintain a list of what you have, and what you want. Other philosophies include minimized API calls, high specificity in scraping, and an easy to use interface, with a fulsome backend.
 
 ## Required Components
 
-- **Plex**: Used as the primary source of information about your current media collection.
+- **Plex or Jellyfin**: Used as the primary source of information about your current media collection.
 - **Trakt Account**: Used by our Metadata Battery to retrieve all needed Metadata.
 - **Debrid Provider**: A Real-Debrid API key.
 - **Method to Mount Media from Debrid Provider**: While we don't require Zurg, we highly recommend this as a very effective way to locally mount your Debrid Provider's content locally for Plex to see.
 
-## Optional Content Sources/Other Settings
+## Other Settings
 
 - **TMDB API Key**: Used to retrieve Home Screen posters.
-- **Collected**: Can be used as an additional source. Essentially this is a way to take your current library and flag all items for metadata processing. If you have a season of a show, this will then mark any other seasons/episodes as wanted.
-- **Debug Settings**: Many, many debug settings beneath the hood, most of which should be left alone.
 
 ## Getting Started
 
@@ -245,12 +234,6 @@ cli_debrid maintains a local database of your media collection, keeping track of
    docker-compose up -d
    ```
 
-5. Connect to the container to view logs (or view through Portainer/your log viewer of choice):
-
-   ```
-   docker attach cli_debrid
-   ```
-
 5. Access the web interface:
    Open a web browser and navigate to `http://your-server-ip:5000`
 
@@ -265,11 +248,11 @@ cli_debrid is built for both AMD64 and ARM64 using tags:
   - godver3/cli_debrid:main-arm64 (arm64)
   - godver3/cli_debrid:main (amd64)
 
-Alternatively cli_debrid is built for Windows.
+latest can also be used which is pinned to the newest dev build. Alternatively cli_debrid is built for Windows as a frozen Python application
 
 ### Post-Setup
 
-- Monitor the logs at `${HOME}/cli_debrid/user/logs`
+- Monitor the logs at `/host/location/logs` or wherever you have configured for log storage
 - Check the content of your queues in the webUI
 - Adjust settings as needed to scrape for exactly the results you want
 
@@ -287,7 +270,7 @@ This will pull the latest image and restart the container with the updated versi
 
 ## Issues
 
-Submit issues through GitHub issues. Try to include relevant logging, or at minimum error Tracebacks where possible.
+Submit issues through Discord or GitHub issues. Try to include relevant logging, or at minimum error Tracebacks where possible. Preference is for Discord submission.
 
 ## Contributing
 

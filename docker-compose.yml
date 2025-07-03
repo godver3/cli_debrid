@@ -12,8 +12,7 @@ services:
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
       - /mnt:/mnt
-      - /host/location/p2p-db-storage:/app/p2p-db-storage
-      - /host/location/db_data:/app/db_data
+      - /host/location/phalanx_db_hyperswarm/autobase_storage_v4:/app/phalanx_db_hyperswarm/autobase_storage_v4
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

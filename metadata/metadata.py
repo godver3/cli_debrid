@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 from collections import defaultdict
 import iso8601
+from collections import Counter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -860,8 +861,27 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
                 except ValueError:
                     logging.warning(f"Invalid date format: {release_date_str}")
 
-    if digital_physical_releases:
-        return min(digital_physical_releases).strftime("%Y-%m-%d")
+    median_theatrical_date = None
+    if theatrical_releases:
+        theatrical_releases.sort()
+        median_index = len(theatrical_releases) // 2
+        if median_index < len(theatrical_releases):
+            median_theatrical_date = theatrical_releases[median_index]
+            logging.debug(f"Median theatrical release date for {imdb_id}: {median_theatrical_date.strftime('%Y-%m-%d')}")
+
+    # Filter out digital releases that are too close to the median theatrical release
+    if median_theatrical_date and len(digital_physical_releases) == 1:
+        plausible_digital_releases = [
+            d for d in digital_physical_releases 
+            if abs((d - median_theatrical_date).days) > 3
+        ]
+        if len(plausible_digital_releases) < len(digital_physical_releases):
+            logging.info(f"Ignored {len(digital_physical_releases) - len(plausible_digital_releases)} digital release(s) for {imdb_id} due to proximity to median theatrical release.")
+    else:
+        plausible_digital_releases = digital_physical_releases
+
+    if plausible_digital_releases:
+        return min(plausible_digital_releases).strftime("%Y-%m-%d")
 
     old_theatrical_releases = [date for date in theatrical_releases if date < current_date - timedelta(days=180)]
     if old_theatrical_releases:
