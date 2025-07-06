@@ -26,7 +26,6 @@ from collections import deque
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
 REQUEST_TIMEOUT = 10  # seconds
-trakt_auth = TraktAuth()
 
 class TraktMetadata:
     def __init__(self):
@@ -59,6 +58,9 @@ class TraktMetadata:
             time.sleep(300)  # Wait for 5 minutes
             return self._make_request(url)  # Retry the request
 
+        # Always get fresh auth data before making requests
+        self.trakt_auth.reload_auth()
+        
         if not self.trakt_auth.is_authenticated():
             logger.info("Not authenticated. Attempting to refresh token.")
             if not self.trakt_auth.refresh_access_token():
@@ -75,6 +77,8 @@ class TraktMetadata:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 401:
                 logger.warning("Received 401 Unauthorized. Attempting to refresh token.")
+                # Reload auth data and try to refresh
+                self.trakt_auth.reload_auth()
                 if self.trakt_auth.refresh_access_token():
                     # Update the header with the new token and retry the request
                     headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'

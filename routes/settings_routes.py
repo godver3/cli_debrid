@@ -1103,6 +1103,9 @@ def index():
 
         content_source_settings = content_source_settings_response.get_json() if isinstance(content_source_settings_response, Response) else content_source_settings_response
 
+        # Get environment mode from environment variable
+        environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+        
         return render_template('settings_base.html', 
                                settings=config, 
                                notification_settings=config['Notifications'],
@@ -1113,7 +1116,8 @@ def index():
                                version_names=scraping_versions,
                                settings_schema=SETTINGS_SCHEMA,
                                is_windows=is_windows,
-                               allow_windows_symlinks=allow_windows_symlinks_value)
+                               allow_windows_symlinks=allow_windows_symlinks_value,
+                               environment_mode=environment_mode)
     except Exception as e:
         current_app.logger.error(f"Error in settings route: {str(e)}")
         current_app.logger.error(traceback.format_exc())
@@ -1288,6 +1292,17 @@ def update_settings():
         save_config(config)
         logging.info("Main configuration saved successfully.")
         
+        # Check if program was running before reinitialization
+        was_program_running = False
+        try:
+            from routes.program_operation_routes import get_program_runner
+            runner = get_program_runner()
+            if runner and runner.is_running():
+                was_program_running = True
+                logging.info("Program was running before settings save. Will restart after reinitialization.")
+        except Exception as e:
+            logging.warning(f"Could not check program status before reinitialization: {e}")
+        
         # Reinitialize components that depend on the config
         try:
             from debrid import reset_provider
@@ -1301,6 +1316,21 @@ def update_settings():
              logging.error(f"Error during component reinitialization after settings save: {reinit_e}", exc_info=True)
              # Consider if the response should indicate partial success/failure
              # return jsonify({"status": "warning", "message": f"Settings updated but failed to reinitialize components: {reinit_e}"}), 500
+
+        # Restart program if it was running before
+        if was_program_running:
+            try:
+                from routes.program_operation_routes import _execute_start_program
+                start_result = _execute_start_program(skip_connectivity_check=True)
+                if start_result.get("status") == "success":
+                    logging.info("Program restarted successfully after settings save.")
+                    return jsonify({"status": "success", "message": "Settings updated successfully and program restarted"})
+                else:
+                    logging.warning(f"Failed to restart program after settings save: {start_result.get('message', 'Unknown error')}")
+                    return jsonify({"status": "warning", "message": f"Settings updated successfully but failed to restart program: {start_result.get('message', 'Unknown error')}"})
+            except Exception as restart_e:
+                logging.error(f"Error restarting program after settings save: {restart_e}", exc_info=True)
+                return jsonify({"status": "warning", "message": f"Settings updated successfully but failed to restart program: {str(restart_e)}"})
 
         return jsonify({"status": "success", "message": "Settings updated successfully"})
     except Exception as e:

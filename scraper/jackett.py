@@ -6,6 +6,7 @@ from urllib.parse import quote, urlencode
 import json
 import re
 from database.database_reading import get_episode_details
+from scraper.functions.common import trim_magnet
 
 JACKETT_FILTER = "!status:failing,test:passed"
 
@@ -159,12 +160,14 @@ def parse_jackett_results(data: List[Dict[str, Any]], ins_name: str, seeders_onl
         is_torrent_url = False
 
         if magnet:
-             primary_link = magnet
+             primary_link = trim_magnet(magnet)
         elif link:
              primary_link = link
              # Check if the Link is actually a magnet link
              if not primary_link.startswith('magnet:'):
                  is_torrent_url = True
+             else:
+                 primary_link = trim_magnet(primary_link)
         else:
             filtered_no_magnet += 1
             logging.debug(f"Skipping result '{title}' - No magnet or link found")

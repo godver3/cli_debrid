@@ -867,9 +867,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const originalResultsDiv = document.getElementById('original-results');
         const adjustedResultsDiv = document.getElementById('adjusted-results');
 
-        // Clear previous results and set main headings
-        if (originalResultsDiv) originalResultsDiv.innerHTML = '<h3>Original Results</h3>';
-        if (adjustedResultsDiv) adjustedResultsDiv.innerHTML = '<h3>Adjusted Results</h3>';
+        // Clear previous results and set main headings with counts
+        const originalPassedCount = (data.originalResults || []).length;
+        const originalFilteredCount = (data.originalFilteredOutResults || []).length;
+        const adjustedPassedCount = (data.adjustedResults || []).length;
+        const adjustedFilteredCount = (data.adjustedFilteredOutResults || []).length;
+        
+        if (originalResultsDiv) originalResultsDiv.innerHTML = `<h3>Original Results (${originalPassedCount} passed, ${originalFilteredCount} filtered)</h3>`;
+        if (adjustedResultsDiv) adjustedResultsDiv.innerHTML = `<h3>Adjusted Results (${adjustedPassedCount} passed, ${adjustedFilteredCount} filtered)</h3>`;
 
         console.log("Original Results Div:", originalResultsDiv);
         console.log("Adjusted Results Div:", adjustedResultsDiv);
@@ -908,8 +913,8 @@ document.addEventListener('DOMContentLoaded', function() {
             scrapeResultsElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     
-        // Add click event listeners to result items (non-filtered out)
-        document.querySelectorAll('.result-item:not(.filtered-out-item)').forEach(item => {
+        // Add click event listeners to result items (both passed and filtered out)
+        document.querySelectorAll('.result-item').forEach(item => {
             const new_item = item.cloneNode(true); // Clone to remove old listeners
             item.parentNode.replaceChild(new_item, item);
 
@@ -927,30 +932,39 @@ document.addEventListener('DOMContentLoaded', function() {
                 let resultData;
                 const displayedItems = (tableId === 'original-results') ? allOriginalDisplayItems : allAdjustedDisplayItems;
                 const originalPassedItems = (tableId === 'original-results') ? (data.originalResults || []) : (data.adjustedResults || []);
+                const originalFilteredOutItems = (tableId === 'original-results') ? (data.originalFilteredOutResults || []) : (data.adjustedFilteredOutResults || []);
                 
-                const rowIndex = Array.from(this.parentNode.children).indexOf(this); // Index in the displayed table
+                // Get the index from the tbody (now properly structured)
+                const tbody = tableElement.querySelector('tbody');
+                const rowIndex = Array.from(tbody.children).indexOf(this); // Index in the displayed table (excluding header)
                 const clickedItemData = displayedItems[rowIndex];
 
-                if (clickedItemData && !clickedItemData.__isActuallyFilteredOut) {
-                    // To find the correct item in the original non-filtered array,
-                    // we need to count how many non-filtered items appeared before this one.
-                    let originalIndex = -1;
-                    let nonFilteredCount = 0;
-                    for(let i=0; i <= rowIndex; i++) {
-                        if (displayedItems[i] && !displayedItems[i].__isActuallyFilteredOut) {
-                            if (i === rowIndex) {
-                                originalIndex = nonFilteredCount;
+                if (clickedItemData) {
+                    if (clickedItemData.__isActuallyFilteredOut) {
+                        // For filtered out items, show the filter reason
+                        displayFilterReason(clickedItemData);
+                    } else {
+                        // For passed items, show score breakdown
+                        // To find the correct item in the original non-filtered array,
+                        // we need to count how many non-filtered items appeared before this one.
+                        let originalIndex = -1;
+                        let nonFilteredCount = 0;
+                        for(let i=0; i <= rowIndex; i++) {
+                            if (displayedItems[i] && !displayedItems[i].__isActuallyFilteredOut) {
+                                if (i === rowIndex) {
+                                    originalIndex = nonFilteredCount;
+                                }
+                                nonFilteredCount++;
                             }
-                            nonFilteredCount++;
+                        }
+                        if (originalIndex !== -1 && originalIndex < originalPassedItems.length) {
+                             resultData = originalPassedItems[originalIndex];
+                        }
+                        
+                        if (resultData) {
+                            displayScoreBreakdown(resultData);
                         }
                     }
-                    if (originalIndex !== -1 && originalIndex < originalPassedItems.length) {
-                         resultData = originalPassedItems[originalIndex];
-                    }
-                }
-                
-                if (resultData) {
-                    displayScoreBreakdown(resultData);
                 }
             });
         });
@@ -960,27 +974,26 @@ document.addEventListener('DOMContentLoaded', function() {
         const table = document.createElement('table');
         table.className = 'settings-table';
         
-        // Header is always Title and Score
-        table.innerHTML = `
-            <thead>
-                <tr>
-                    <th>Title</th>
-                    <th>Source</th>
-                    <th>Score</th>
-                </tr>
-            </thead>
-            <tbody>
-            </tbody>
+        // Create proper table structure with thead and tbody
+        const thead = document.createElement('thead');
+        const tbody = document.createElement('tbody');
+        
+        // Header (no Filter Reason column)
+        const headerRow = thead.insertRow();
+        headerRow.innerHTML = `
+            <th>Title</th>
+            <th>Source</th>
+            <th>Score</th>
         `;
-
-        const tbody = table.querySelector('tbody');
+        
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        
         results.forEach((result, index) => {
-            // Use the marker to determine if the item was truly filtered out
             const isFilteredOut = result.__isActuallyFilteredOut; 
 
             const row = tbody.insertRow();
             row.className = 'result-item' + (isFilteredOut ? ' filtered-out-item' : '');
-            // Update dataset for clarity, though not strictly used by click handler anymore
             row.dataset.type = type + (isFilteredOut ? '-filtered-out-actual' : '-passed-actual');
             row.dataset.index = index;
 
@@ -992,7 +1005,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             const scoreCell = row.insertCell();
             if (isFilteredOut) {
-                scoreCell.textContent = 'N/A';
+                scoreCell.textContent = result.filter_reason || 'Filtered';
+                scoreCell.className = 'filter-reason-cell';
+                scoreCell.title = result.filter_reason || 'Filtered';
             } else {
                 scoreCell.textContent = result.score_breakdown && result.score_breakdown.total_score !== undefined 
                     ? result.score_breakdown.total_score.toFixed(2) 
@@ -1002,6 +1017,61 @@ document.addEventListener('DOMContentLoaded', function() {
         return table;
     }
     
+    function displayFilterReason(result) {
+        const scoreBreakdown = document.getElementById('score-breakdown');
+        scoreBreakdown.innerHTML = '<h3 class="score-breakdown-title">Filter Reason</h3>';
+        scoreBreakdown.className = 'settings-section score-breakdown-container';
+
+        const filterReasonDiv = document.createElement('div');
+        filterReasonDiv.className = 'filter-reason-display';
+
+        const titleElement = document.createElement('h4');
+        titleElement.textContent = result.title || result.original_title || 'Unknown Title';
+        titleElement.className = 'filtered-item-title';
+        filterReasonDiv.appendChild(titleElement);
+
+        const reasonElement = document.createElement('div');
+        reasonElement.className = 'filter-reason-text';
+        reasonElement.innerHTML = `<strong>Reason for filtering:</strong> ${result.filter_reason || 'Unknown reason'}`;
+        filterReasonDiv.appendChild(reasonElement);
+
+        // Add additional details if available
+        const detailsList = document.createElement('ul');
+        detailsList.className = 'filter-details-list';
+
+        if (result.source) {
+            const sourceItem = document.createElement('li');
+            sourceItem.innerHTML = `<strong>Source:</strong> ${result.source}`;
+            detailsList.appendChild(sourceItem);
+        }
+
+        if (result.size !== undefined) {
+            const sizeItem = document.createElement('li');
+            sizeItem.innerHTML = `<strong>Size:</strong> ${result.size.toFixed(2)} GB`;
+            detailsList.appendChild(sizeItem);
+        }
+
+        if (result.parsed_info) {
+            const parsedInfo = result.parsed_info;
+            if (parsedInfo.resolution) {
+                const resolutionItem = document.createElement('li');
+                resolutionItem.innerHTML = `<strong>Resolution:</strong> ${parsedInfo.resolution}`;
+                detailsList.appendChild(resolutionItem);
+            }
+            if (parsedInfo.year) {
+                const yearItem = document.createElement('li');
+                yearItem.innerHTML = `<strong>Year:</strong> ${parsedInfo.year}`;
+                detailsList.appendChild(yearItem);
+            }
+        }
+
+        if (detailsList.children.length > 0) {
+            filterReasonDiv.appendChild(detailsList);
+        }
+
+        scoreBreakdown.appendChild(filterReasonDiv);
+    }
+
     function displayScoreBreakdown(result) {
         const scoreBreakdown = document.getElementById('score-breakdown');
         scoreBreakdown.innerHTML = '<h3 class="score-breakdown-title">Score Breakdown</h3>';

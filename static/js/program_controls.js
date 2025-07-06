@@ -115,28 +115,29 @@ export function initializeProgramControls() {
     }
 
     function updateSettingsManagement(isBusy) {
-        const buttons = document.querySelectorAll('#saveSettingsButton, .add-scraper-link, .add-version-link, .add-source-link, .delete-scraper-btn, .delete-version-btn, .duplicate-version-btn, .delete-source-btn, .import-versions-link');
-        buttons.forEach(button => {
-            button.disabled = isBusy;
-            button.style.opacity = isBusy ? '0.5' : '1';
-            button.style.cursor = isBusy ? 'not-allowed' : 'pointer';
-        });
+        // DISABLED: Allow settings changes while program is running for testing
+        // const buttons = document.querySelectorAll('#saveSettingsButton, .add-scraper-link, .add-version-link, .add-source-link, .delete-scraper-btn, .delete-version-btn, .duplicate-version-btn, .delete-source-btn, .import-versions-link');
+        // buttons.forEach(button => {
+        //     button.disabled = isBusy;
+        //     button.style.opacity = isBusy ? '0.5' : '1';
+        //     button.style.cursor = isBusy ? 'not-allowed' : 'pointer';
+        // });
     
-        const runningMessage = document.getElementById('programRunningMessage');
-        const settingsContainer = document.querySelector('.settings-container');
+        // const runningMessage = document.getElementById('programRunningMessage');
+        // const settingsContainer = document.querySelector('.settings-container');
     
-        if (isBusy) {
-            if (!runningMessage && settingsContainer) {
-                const message = document.createElement('div');
-                message.id = 'programRunningMessage';
-                message.textContent = 'Program is running. Settings management is disabled.';
-                message.style.color = 'red';
-                message.style.marginBottom = '10px';
-                settingsContainer.prepend(message);
-            }
-        } else if (runningMessage) {
-            runningMessage.remove();
-        }
+        // if (isBusy) {
+        //     if (!runningMessage && settingsContainer) {
+        //         const message = document.createElement('div');
+        //         message.id = 'programRunningMessage';
+        //         message.textContent = 'Program is running. Settings management is disabled.';
+        //         message.style.color = 'red';
+        //         message.style.marginBottom = '10px';
+        //         settingsContainer.prepend(message);
+        //     }
+        // } else if (runningMessage) {
+        //     runningMessage.remove();
+        // }
     }
 
     function checkRequiredConditions() {

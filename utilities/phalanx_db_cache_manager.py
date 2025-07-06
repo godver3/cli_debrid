@@ -26,7 +26,13 @@ class PhalanxDBClassManager:
         
         # Determine the base URL
         if phalanx_base_url is None:
-            phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
+            # Check for the new host environment variable first (for Docker containers)
+            phalanx_host = os.environ.get('CLI_DEBRID_PHALANX_HOST')
+            if phalanx_host:
+                phalanx_base_url = f'http://{phalanx_host}'
+            else:
+                # Fall back to the old URL environment variable
+                phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
         self._base_url = phalanx_base_url.rstrip('/')
         
         # Construct the single full URL

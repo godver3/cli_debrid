@@ -424,10 +424,14 @@
         <option value="scraping">Version Settings</option>
         <option value="content-sources">Content Sources</option>
         <option value="additional">Additional Settings</option>
+        {% if environment_mode == 'full' %}
         <option value="debug">Advanced Settings</option>
+        {% endif %}
         <option value="notifications">Notifications</option>
+        {% if environment_mode == 'full' %}
         <option value="reverse-parser">Reverse Parser</option>
         <option value="true-debug">Debug</option>
+        {% endif %}
     </select>
     <div class="settings-tabs settings-tabs-desktop">
         <button type="button" class="btn btn-secondary settings-tab-button active" data-tab="required">Required Settings</button>
@@ -435,10 +439,14 @@
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="scraping">Version Settings</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="content-sources">Content Sources</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="additional">Additional Settings</button>
+        {% if environment_mode == 'full' %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="debug">Advanced Settings</button>
+        {% endif %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="notifications">Notifications</button>
+        {% if environment_mode == 'full' %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="reverse-parser">Reverse Parser</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="true-debug">Debug</button>
+        {% endif %}
     </div>
     
     <div id="settingsForm">
@@ -454,18 +462,22 @@
         <div id="additional" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/additional.html' %}
         </div>
+        {% if environment_mode == 'full' %}
         <div id="debug" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/debug.html' %}
         </div>
+        {% endif %}
         <div id="notifications" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/notifications.html' %}
         </div>
+        {% if environment_mode == 'full' %}
         <div id="reverse-parser" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/reverse_parser.html' %}
         </div>
         <div id="true-debug" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/true_debug.html' %}
         </div>
+        {% endif %}
     </div>
 
     <div id="scrapers" class="settings-tab-content" style="display: none;">

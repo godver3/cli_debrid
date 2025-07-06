@@ -341,7 +341,15 @@ def check_phalanx_db_connection():
     if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
         return None # Return None if the service is disabled
 
-    host = 'localhost'
+    # Determine host based on environment mode
+    environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+    if environment_mode == 'full':
+        host = 'localhost'
+    else:
+        # For non-full environments (e.g., Docker containers), use environment variable or fallback
+        # This follows the same pattern as CLI Battery connection
+        host = os.environ.get('CLI_DEBRID_PHALANX_HOST', 'host.docker.internal')
+    
     port = 8888
     url = f'http://{host}:{port}'
 

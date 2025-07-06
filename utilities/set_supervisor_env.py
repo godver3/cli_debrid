@@ -4,6 +4,11 @@ import subprocess
 import time
 
 def load_config():
+    # Check environment mode first
+    env_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', '')
+    if env_mode != 'full':
+        return False
+    
     try:
         with open('/user/config/config.json', 'r') as f:
             config = json.load(f)

@@ -28,16 +28,25 @@ class TraktAuth:
         config_dir = os.environ.get('USER_CONFIG', '/user/config')
         self.pytrakt_file = os.path.join(config_dir, '.pytrakt.json')
         
+        # Initialize instance variables
+        self.access_token = None
+        self.refresh_token = None
+        self.expires_at = None
+        self.last_refresh = None
+        
+        # Load fresh data from file
         self.load_auth()
-        
+
     def load_auth(self):
-        self.access_token = self.settings.Trakt['access_token']
-        self.refresh_token = self.settings.Trakt['refresh_token']
-        self.expires_at = self.settings.Trakt['expires_at']
-        self.last_refresh = self.settings.Trakt.get('last_refresh')
+        # Always load fresh data from file first, then fall back to settings
+        self.load_from_pytrakt()
         
+        # If file loading failed, try settings as fallback
         if not self.access_token:
-            self.load_from_pytrakt()
+            self.access_token = self.settings.Trakt['access_token']
+            self.refresh_token = self.settings.Trakt['refresh_token']
+            self.expires_at = self.settings.Trakt['expires_at']
+            self.last_refresh = self.settings.Trakt.get('last_refresh')
 
     def load_from_pytrakt(self):
         if os.path.exists(self.pytrakt_file):
@@ -53,7 +62,7 @@ class TraktAuth:
             self.expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
             self.last_refresh = pytrakt_data.get('LAST_REFRESH')
             
-            # Update settings with the loaded data
+            # Update settings with the loaded data for consistency
             self.settings.Trakt['access_token'] = self.access_token
             self.settings.Trakt['refresh_token'] = self.refresh_token
             self.settings.Trakt['expires_at'] = self.expires_at
@@ -62,6 +71,11 @@ class TraktAuth:
             
         else:
             logger.warning(f".pytrakt.json file not found at {self.pytrakt_file}")
+            # Clear instance variables if file doesn't exist
+            self.access_token = None
+            self.refresh_token = None
+            self.expires_at = None
+            self.last_refresh = None
 
     def save_token_data(self, token_data):
         now = datetime.now(timezone.utc)
@@ -75,6 +89,8 @@ class TraktAuth:
         self.save_trakt_credentials()  # Also update the .pytrakt.json file
 
     def is_authenticated(self):
+        """Check if authenticated - always fresh from file"""
+        self.load_auth()  # Ensure fresh data
 
         if not self.access_token or not self.expires_at:
             logger.warning(f"Missing authentication data: access_token={bool(self.access_token)}, expires_at={self.expires_at}")
@@ -189,7 +205,8 @@ class TraktAuth:
             json.dump(credentials, f)
 
     def get_token_data(self):
-        """Get the current token data"""
+        """Get the current token data - always fresh from file"""
+        self.load_auth()  # Ensure fresh data
         return {
             'access_token': self.access_token,
             'refresh_token': self.refresh_token,
@@ -198,8 +215,9 @@ class TraktAuth:
         }
 
     def get_last_refresh_time(self):
-        """Get the last refresh time"""
-        last_refresh = self.settings.Trakt.get('last_refresh')
+        """Get the last refresh time - always fresh from file"""
+        self.load_auth()  # Ensure fresh data
+        last_refresh = self.last_refresh
         if not last_refresh:
             # If no last_refresh, use the token data to estimate it
             if self.expires_at:
@@ -220,7 +238,8 @@ class TraktAuth:
         return last_refresh
 
     def get_expiration_time(self):
-        """Get the token expiration time"""
+        """Get the token expiration time - always fresh from file"""
+        self.load_auth()  # Ensure fresh data
         if not self.expires_at:
             return None
         try:
@@ -232,3 +251,8 @@ class TraktAuth:
         except Exception as e:
             logger.error(f"Error formatting expiration time: {str(e)}")
             return None
+
+    def reload_auth(self):
+        """Force reload authentication data from file"""
+        logger.debug("Forcing reload of Trakt authentication data from file")
+        self.load_auth()

@@ -74,17 +74,24 @@ def get_trakt_friend_headers(auth_id: str) -> Dict[str, str]:
         with open(state_file, 'r') as file:
             state = json.load(file)
         
-        # Check if the token is expired
+        # Check if the token is expired or nearing expiration (within 1 hour)
         if state.get('expires_at'):
             expires_at_ts = _to_timestamp(state.get('expires_at'))
-            # Token is expired if timestamp is in the past
-            if expires_at_ts and time.time() > expires_at_ts:
-                # Token is expired, try to refresh it
-                logging.info(f"Friend's Trakt token for {auth_id} appears expired. Attempting refresh.")
-                refresh_friend_token(auth_id)
-                # Reload the state
-                with open(state_file, 'r') as file:
-                    state = json.load(file)
+            
+            # Check if token should be refreshed (expired or nearing expiration)
+            if _should_refresh_token(expires_at_ts):
+                current_time = time.time()
+                if current_time > expires_at_ts:
+                    logging.info(f"Friend's Trakt token for {auth_id} is expired. Attempting refresh.")
+                else:
+                    logging.info(f"Friend's Trakt token for {auth_id} is nearing expiration (within 1 hour). Attempting refresh.")
+                
+                if refresh_friend_token(auth_id):
+                    # Reload the state after successful refresh
+                    with open(state_file, 'r') as file:
+                        state = json.load(file)
+                else:
+                    logging.error(f"Failed to refresh friend's Trakt token for {auth_id}")
         
         # Get client ID from friend's state
         client_id = state.get('client_id')
@@ -479,6 +486,28 @@ def _to_timestamp(value: Any) -> float | None:
                 return None
     return None
 
+def _should_refresh_token(expires_at_ts: float, refresh_threshold_hours: int = None) -> bool:
+    """
+    Check if a token should be refreshed based on its expiration time.
+    
+    Args:
+        expires_at_ts: Token expiration timestamp
+        refresh_threshold_hours: Hours before expiration to start refreshing (default: from settings or 1)
+    
+    Returns:
+        True if token should be refreshed, False otherwise
+    """
+    if not expires_at_ts:
+        return False
+    
+    # Get refresh threshold from settings, default to 1 hour
+    if refresh_threshold_hours is None:
+        refresh_threshold_hours = get_setting('Trakt', 'refresh_threshold_hours', 1)
+    
+    current_time = time.time()
+    refresh_threshold = expires_at_ts - (refresh_threshold_hours * 3600)
+    return current_time >= refresh_threshold
+
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
     
@@ -506,11 +535,14 @@ def ensure_trakt_auth():
     # This is the key change: ensure the library's variable is a timestamp.
     trakt.core.OAUTH_EXPIRES_AT = expires_at_ts
 
-    current_time = int(time.time())
-    
-    # Now this comparison uses the timestamp directly from the library's variable
-    if current_time > (trakt.core.OAUTH_EXPIRES_AT - 3600):
-        logging.info("Token expired or nearing expiration, refreshing")
+    # Check if token should be refreshed (expired or nearing expiration)
+    if _should_refresh_token(expires_at_ts):
+        current_time = int(time.time())
+        if current_time > expires_at_ts:
+            logging.info("Token expired, refreshing")
+        else:
+            logging.info("Token nearing expiration (within 1 hour), refreshing")
+        
         try:
             # The trakt library should handle the refresh automatically if needed
             trakt.core._validate_token(trakt.core.CORE)

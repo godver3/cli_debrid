@@ -344,7 +344,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     <button ${isFilteredOut ? 'disabled style="cursor:default;"' : ''}>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                        <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | ${isFilteredOut ? 'N/A' : (torrent.score_breakdown?.total_score || 'N/A')}</p>
+                        <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
                         <p class="torresult-item">${torrent.source || 'N/A'}</p>
                         <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                       torrent.cached === 'No' ? 'not-cached' :
@@ -424,7 +424,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     </td>
                     <td style="color: rgb(191 191 190); text-align: right;">${(torrent.size || 0).toFixed(1)} GB</td>
                     <td style="color: rgb(191 191 190);">${torrent.source || 'N/A'}</td>
-                    <td style="color: rgb(191 191 190); text-align: right;">${isFilteredOut ? 'N/A' : (torrent.score_breakdown?.total_score || 'N/A')}</td>
+                    <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
                     </td>
@@ -503,6 +503,104 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
 
 
     checkCacheStatusInBackground(null, allDisplayItems);
+    
+    // Setup tooltips for filter reasons
+    setupFilterReasonTooltips();
+}
+
+// Function to setup tooltip positioning for filter reasons
+function setupFilterReasonTooltips() {
+    // Desktop tooltips
+    const filteredCells = document.querySelectorAll('.filtered-out-item td:nth-child(4)');
+    
+    filteredCells.forEach(cell => {
+        cell.addEventListener('mouseenter', function(e) {
+            const tooltipText = this.getAttribute('data-tooltip');
+            if (tooltipText) {
+                const rect = this.getBoundingClientRect();
+                
+                // Create tooltip element
+                const tooltipEl = document.createElement('div');
+                tooltipEl.className = 'filter-reason-tooltip';
+                tooltipEl.textContent = tooltipText;
+                tooltipEl.style.cssText = `
+                    position: fixed;
+                    background-color: #2a2a2a;
+                    color: #f4f4f4;
+                    padding: 8px 12px;
+                    border-radius: 6px;
+                    font-size: 0.85em;
+                    font-style: normal;
+                    white-space: normal;
+                    word-wrap: break-word;
+                    max-width: 300px;
+                    z-index: 99999;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    pointer-events: none;
+                    left: ${rect.left + rect.width / 2}px;
+                    top: ${rect.top - 10}px;
+                    transform: translateX(-50%);
+                `;
+                
+                document.body.appendChild(tooltipEl);
+                this._tooltip = tooltipEl;
+            }
+        });
+        
+        cell.addEventListener('mouseleave', function(e) {
+            if (this._tooltip) {
+                this._tooltip.remove();
+                this._tooltip = null;
+            }
+        });
+    });
+    
+    // Mobile tooltips
+    const mobileFilteredItems = document.querySelectorAll('.torresult.filtered-out-item .torresult-item:first-of-type');
+    
+    mobileFilteredItems.forEach(item => {
+        item.addEventListener('mouseenter', function(e) {
+            const tooltipText = this.getAttribute('data-tooltip');
+            if (tooltipText) {
+                const rect = this.getBoundingClientRect();
+                
+                // Create tooltip element
+                const tooltipEl = document.createElement('div');
+                tooltipEl.className = 'filter-reason-tooltip';
+                tooltipEl.textContent = tooltipText;
+                tooltipEl.style.cssText = `
+                    position: fixed;
+                    background-color: #2a2a2a;
+                    color: #f4f4f4;
+                    padding: 8px 12px;
+                    border-radius: 6px;
+                    font-size: 0.85em;
+                    font-style: normal;
+                    white-space: normal;
+                    word-wrap: break-word;
+                    max-width: 300px;
+                    z-index: 99999;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    pointer-events: none;
+                    left: ${rect.left + rect.width / 2}px;
+                    top: ${rect.top - 10}px;
+                    transform: translateX(-50%);
+                `;
+                
+                document.body.appendChild(tooltipEl);
+                this._tooltip = tooltipEl;
+            }
+        });
+        
+        item.addEventListener('mouseleave', function(e) {
+            if (this._tooltip) {
+                this._tooltip.remove();
+                this._tooltip = null;
+            }
+        });
+    });
 }
 
 // Function to close the overlay

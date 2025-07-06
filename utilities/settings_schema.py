@@ -911,6 +911,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Collected": {
@@ -946,6 +951,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Trakt Watchlist": {
@@ -967,6 +977,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Trakt Lists": {
@@ -989,6 +1004,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Trakt Collection": {
@@ -1010,6 +1030,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Overseerr": {
@@ -1033,6 +1058,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "My Plex Watchlist": {
@@ -1054,6 +1084,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Other Plex Watchlist": {
@@ -1077,6 +1112,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "My Plex RSS Watchlist": {
@@ -1099,6 +1139,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "My Friends Plex RSS Watchlist": {
@@ -1121,6 +1166,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Friends Trakt Watchlist": {
@@ -1144,6 +1194,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             },
             "Special Trakt Lists": {
@@ -1185,6 +1240,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
                     "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
                 }
             }
         }
