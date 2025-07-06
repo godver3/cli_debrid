@@ -1496,6 +1496,7 @@ class ProgramRunner:
         versions_from_config = data.get('versions', []) # Default to empty list if missing
         source_media_type = data.get('media_type', 'All')
         raw_cutoff_date = data.get('cutoff_date', '')
+        exclude_genres = data.get('exclude_genres', []) # Get exclude_genres setting
         parsed_cutoff_date = None
 
         if raw_cutoff_date:
@@ -1535,6 +1536,7 @@ class ProgramRunner:
             items_processed = 0
             total_items = 0
             media_type_skipped = 0
+            genre_skipped = 0
             cutoff_date_skipped = 0
 
             wanted_content = []
@@ -1633,15 +1635,10 @@ class ProgramRunner:
                             logging.warning(f"Unexpected format for versions in tuple for {source}. Using main source versions dict.")
                             versions_to_inject = versions_dict # Fallback to the converted source versions
 
-                        # Filter items by media type first
-                        if source_media_type != 'All' and not source_type.startswith('Collected'):
-                            items_filtered_type = [
-                                item for item in items
-                                if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
-                                   (source_media_type == 'Shows' and item.get('media_type') == 'tv')
-                            ]
-                            media_type_skipped += len(items) - len(items_filtered_type)
-                            items = items_filtered_type # Update items
+                        # Track genre filtering stats for this batch
+                        batch_genre_skipped = 0
+
+                        # Note: Media type and genre filtering moved to after metadata processing
                         
                         # Then filter items based on cache
                         items_to_process_raw = [
@@ -1668,6 +1665,42 @@ class ProgramRunner:
                                 for item in all_items:
                                     item['content_source'] = source
                                     item = append_content_source_detail(item, source_type=source_type)
+                                
+                                # Filter by media type after metadata processing
+                                if source_media_type != 'All' and not source_type.startswith('Collected'):
+                                    items_filtered_type = []
+                                    for item in all_items:
+                                        if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
+                                           (source_media_type == 'Shows' and item.get('media_type') == 'tv'):
+                                            items_filtered_type.append(item)
+                                        else:
+                                            media_type_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to media type mismatch: {item.get('media_type')} != {source_media_type}")
+                                    
+                                    all_items = items_filtered_type
+                                    if media_type_skipped > 0:
+                                        logging.debug(f"Batch {source}: Skipped {media_type_skipped} items due to media type mismatch")
+
+                                # Filter by excluded genres after metadata processing
+                                if exclude_genres:
+                                    items_filtered_genre = []
+                                    for item in all_items:
+                                        item_genres = item.get('genres', [])
+                                        if isinstance(item_genres, str):
+                                            # Handle comma-separated string format
+                                            item_genres = [genre.strip() for genre in item_genres.split(',') if genre.strip()]
+                                        
+                                        # Check if any of the item's genres are in the exclude list
+                                        excluded_genre_found = any(genre in exclude_genres for genre in item_genres)
+                                        if not excluded_genre_found:
+                                            items_filtered_genre.append(item)
+                                        else:
+                                            batch_genre_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to excluded genre(s): {[g for g in item_genres if g in exclude_genres]}")
+                                    
+                                    all_items = items_filtered_genre
+                                    if batch_genre_skipped > 0:
+                                        logging.debug(f"Batch {source}: Skipped {batch_genre_skipped} items due to excluded genres")
                                 
                                 # Update cache for the original items (pre-metadata processing)
                                 for item_raw in items_to_process_raw:
@@ -1701,19 +1734,12 @@ class ProgramRunner:
                                 add_wanted_items(all_items, versions_to_inject or versions_dict)
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
+                                genre_skipped += batch_genre_skipped
                 else:
                     # Handle single list of items
                     logging.debug(f"Processing batch of {len(wanted_content)} items from {source}")
                     
-                    # Filter items by media type first
-                    if source_media_type != 'All' and not source_type.startswith('Collected'):
-                        wanted_content_filtered_type = [
-                            item for item in wanted_content
-                            if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or
-                               (source_media_type == 'Shows' and item.get('media_type') == 'tv')
-                        ]
-                        media_type_skipped += len(wanted_content) - len(wanted_content_filtered_type)
-                        wanted_content = wanted_content_filtered_type # Update wanted_content after filtering
+                    # Note: Media type and genre filtering moved to after metadata processing
                     
                     # Then filter items based on cache
                     items_to_process_raw = [
@@ -1741,6 +1767,42 @@ class ProgramRunner:
                             for item in all_items:
                                 item['content_source'] = source
                                 item = append_content_source_detail(item, source_type=source_type)
+                            
+                            # Filter by media type after metadata processing
+                            if source_media_type != 'All' and not source_type.startswith('Collected'):
+                                items_filtered_type = []
+                                for item in all_items:
+                                    if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
+                                       (source_media_type == 'Shows' and item.get('media_type') == 'tv'):
+                                        items_filtered_type.append(item)
+                                    else:
+                                        media_type_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to media type mismatch: {item.get('media_type')} != {source_media_type}")
+                                
+                                all_items = items_filtered_type
+                                if media_type_skipped > 0:
+                                    logging.debug(f"{source}: Skipped {media_type_skipped} items due to media type mismatch")
+
+                            # Filter by excluded genres after metadata processing
+                            if exclude_genres:
+                                items_filtered_genre = []
+                                for item in all_items:
+                                    item_genres = item.get('genres', [])
+                                    if isinstance(item_genres, str):
+                                        # Handle comma-separated string format
+                                        item_genres = [genre.strip() for genre in item_genres.split(',') if genre.strip()]
+                                    
+                                    # Check if any of the item's genres are in the exclude list
+                                    excluded_genre_found = any(genre in exclude_genres for genre in item_genres)
+                                    if not excluded_genre_found:
+                                        items_filtered_genre.append(item)
+                                    else:
+                                        genre_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to excluded genre(s): {[g for g in item_genres if g in exclude_genres]}")
+                                
+                                all_items = items_filtered_genre
+                                if genre_skipped > 0:
+                                    logging.debug(f"{source}: Skipped {genre_skipped} items due to excluded genres")
                             
                             # Update cache for the original items (pre-metadata processing)
                             for item_raw in items_to_process_raw:
@@ -1784,6 +1846,8 @@ class ProgramRunner:
                     stats_msg += f", skipped {cache_skipped} cached items"
                 if media_type_skipped > 0:
                     stats_msg += f", skipped {media_type_skipped} items due to media type mismatch"
+                if genre_skipped > 0:
+                    stats_msg += f", skipped {genre_skipped} items due to excluded genres"
                 if cutoff_date_skipped > 0:
                     stats_msg += f", skipped {cutoff_date_skipped} items due to cutoff date"
                 stats_msg += ")"

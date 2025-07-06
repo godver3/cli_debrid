@@ -165,6 +165,13 @@ def login():
 
     show_login_reminder_flag = User.query.filter_by(is_default=False).count() == 0
     
+    # Check environment mode for login reminder message
+    environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+    if environment_mode == 'full' and show_login_reminder_flag:
+        login_reminder_message = "Initial login: username admin, password admin"
+    else:
+        login_reminder_message = "Login using your Debridify dashboard instance information"
+    
     from routes.extensions import get_root_domain
     domain = get_root_domain(request.host) if hasattr(request, 'host') else None
 
@@ -191,12 +198,12 @@ def login():
             return response
             
         flash('Please check your login details and try again.', 'error')
-        response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, posters=posters_data))
+        response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data))
         response.set_cookie('session', '', expires=0, path='/', domain=domain)
         response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
         return response
 
-    response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, posters=posters_data))
+    response = make_response(render_template('login.html', show_login_reminder=show_login_reminder_flag, login_reminder_message=login_reminder_message, posters=posters_data))
     response.set_cookie('session', '', expires=0, path='/', domain=domain)
     response.set_cookie('remember_token', '', expires=0, path='/', domain=domain)
     return response
