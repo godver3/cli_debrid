@@ -36,6 +36,9 @@ class TraktAuth:
         
         # Load fresh data from file
         self.load_auth()
+        
+        # Force sync settings if needed
+        self.sync_settings_if_needed()
 
     def load_auth(self):
         # Always load fresh data from file first, then fall back to settings
@@ -63,11 +66,14 @@ class TraktAuth:
             self.last_refresh = pytrakt_data.get('LAST_REFRESH')
             
             # Update settings with the loaded data for consistency
-            self.settings.Trakt['access_token'] = self.access_token
-            self.settings.Trakt['refresh_token'] = self.refresh_token
-            self.settings.Trakt['expires_at'] = self.expires_at
-            self.settings.Trakt['last_refresh'] = self.last_refresh
-            self.settings.save_settings()
+            # Only update if we actually have valid data
+            if self.access_token and self.refresh_token:
+                self.settings.Trakt['access_token'] = self.access_token
+                self.settings.Trakt['refresh_token'] = self.refresh_token
+                self.settings.Trakt['expires_at'] = self.expires_at
+                self.settings.Trakt['last_refresh'] = self.last_refresh
+                self.settings.save_settings()
+                logger.debug("Synced .pytrakt.json data to settings.json")
             
         else:
             logger.warning(f".pytrakt.json file not found at {self.pytrakt_file}")
@@ -84,13 +90,30 @@ class TraktAuth:
         self.settings.Trakt['expires_at'] = int((now + timedelta(seconds=token_data['expires_in'])).timestamp())
         self.settings.Trakt['last_refresh'] = now.isoformat()
         logger.debug(f"Saving token data - Last Refresh: {now.isoformat()}")
+        
+        # Update instance variables first
+        self.access_token = token_data['access_token']
+        self.refresh_token = token_data['refresh_token']
+        self.expires_at = int((now + timedelta(seconds=token_data['expires_in'])).timestamp())
+        self.last_refresh = now.isoformat()
+        
+        # Save to both locations
         self.settings.save_settings()
-        self.load_auth()  # Reload the auth data after saving
-        self.save_trakt_credentials()  # Also update the .pytrakt.json file
+        self.save_trakt_credentials()  # Save to .pytrakt.json file
 
     def is_authenticated(self):
         """Check if authenticated - always fresh from file"""
         self.load_auth()  # Ensure fresh data
+
+        # If we have a refresh token but no access token, try to refresh
+        if not self.access_token and self.refresh_token:
+            logger.info("Access token missing but refresh token available. Attempting to refresh...")
+            if self.refresh_access_token():
+                logger.info("Token refreshed successfully")
+                return True
+            else:
+                logger.error("Failed to refresh token")
+                return False
 
         if not self.access_token or not self.expires_at:
             logger.warning(f"Missing authentication data: access_token={bool(self.access_token)}, expires_at={self.expires_at}")
@@ -143,7 +166,29 @@ class TraktAuth:
             self.save_token_data(token_data)
             return True
         else:
-            logger.error(f"Failed to refresh access token: {response.text}")
+            # Check if this is a refresh token expiration error
+            try:
+                error_data = response.json()
+                error_description = error_data.get('error_description', '').lower()
+                # Only clear refresh token for specific refresh token errors, not general invalid_grant
+                if 'refresh_token' in error_description and ('invalid' in error_description or 'expired' in error_description or 'revoked' in error_description):
+                    logger.error(f"Refresh token has expired or is invalid. Manual re-authentication required: {response.text}")
+                    # Clear the expired tokens to force re-authentication
+                    self.access_token = None
+                    self.refresh_token = None
+                    self.expires_at = None
+                    self.last_refresh = None
+                    self.save_trakt_credentials()
+                    logger.info("Cleared expired tokens from config file")
+                elif 'invalid_grant' in error_description:
+                    # This might be an access token issue, not necessarily refresh token
+                    logger.warning(f"Invalid grant error - this might be an access token issue: {response.text}")
+                    logger.info("Attempting to refresh access token using refresh token...")
+                    # Don't clear the refresh token, just return False to indicate we need to retry
+                else:
+                    logger.error(f"Failed to refresh access token: {response.text}")
+            except (json.JSONDecodeError, KeyError):
+                logger.error(f"Failed to refresh access token: {response.text}")
             return False
 
     def get_device_code(self):
@@ -256,3 +301,34 @@ class TraktAuth:
         """Force reload authentication data from file"""
         logger.debug("Forcing reload of Trakt authentication data from file")
         self.load_auth()
+
+    def sync_settings_if_needed(self):
+        """Force sync settings.json with .pytrakt.json if there's a mismatch"""
+        if os.path.exists(self.pytrakt_file):
+            try:
+                with open(self.pytrakt_file, 'r') as f:
+                    pytrakt_data = json.load(f)
+                
+                pytrakt_token = pytrakt_data.get('OAUTH_TOKEN')
+                pytrakt_refresh = pytrakt_data.get('OAUTH_REFRESH')
+                settings_token = self.settings.Trakt.get('access_token')
+                settings_refresh = self.settings.Trakt.get('refresh_token')
+                
+                # If .pytrakt.json has tokens but settings.json doesn't, sync them
+                if pytrakt_token and pytrakt_refresh and (not settings_token or not settings_refresh):
+                    logger.info("Detected mismatch between .pytrakt.json and settings.json, syncing...")
+                    self.settings.Trakt['access_token'] = pytrakt_token
+                    self.settings.Trakt['refresh_token'] = pytrakt_refresh
+                    self.settings.Trakt['expires_at'] = pytrakt_data.get('OAUTH_EXPIRES_AT')
+                    self.settings.Trakt['last_refresh'] = pytrakt_data.get('LAST_REFRESH')
+                    self.settings.save_settings()
+                    logger.info("Successfully synced .pytrakt.json to settings.json")
+                    
+                    # Update instance variables
+                    self.access_token = pytrakt_token
+                    self.refresh_token = pytrakt_refresh
+                    self.expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
+                    self.last_refresh = pytrakt_data.get('LAST_REFRESH')
+                    
+            except Exception as e:
+                logger.error(f"Error syncing settings: {e}")
