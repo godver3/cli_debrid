@@ -172,7 +172,7 @@
         <input type="submit" value="Login">
     </form>
     {% if show_login_reminder %}
-    <p class="login-reminder">Initial login: username <strong>admin</strong>, password <strong>admin</strong></p>
+    <p class="login-reminder">{{ login_reminder_message }}</p>
     {% endif %}
 </div>
 {% with messages = get_flashed_messages(with_categories=true) %}

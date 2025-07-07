@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 from .models import admin_required
 from datetime import datetime, timedelta, timezone
+from content_checkers.trakt import _should_refresh_token
 
 trakt_bp = Blueprint('trakt', __name__)
 
@@ -100,14 +101,18 @@ def trakt_auth_status():
 # Add a new route to check if Trakt is already authorized
 @trakt_bp.route('/trakt_auth_status', methods=['GET'])
 def check_trakt_auth_status():
-    trakt_config = get_trakt_config()
-    if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
-        expires_at_raw = trakt_config['OAUTH_EXPIRES_AT']
-        expires_at_ts = _to_timestamp(expires_at_raw)
-
-        if expires_at_ts and expires_at_ts > time.time():
+    try:
+        # Use the standardized ensure_trakt_auth function which always reads fresh data
+        from content_checkers.trakt import ensure_trakt_auth
+        access_token = ensure_trakt_auth()
+        
+        if access_token:
             return jsonify({'status': 'authorized'})
-    return jsonify({'status': 'unauthorized'})
+        else:
+            return jsonify({'status': 'unauthorized'})
+    except Exception as e:
+        logging.error(f"Error checking Trakt auth status: {e}")
+        return jsonify({'status': 'unauthorized'})
 
 def _to_timestamp(value):
     """Converts an ISO 8601 string or a Unix timestamp to a float timestamp."""
@@ -147,9 +152,7 @@ def update_trakt_config(key, value):
     config[key] = value
     save_trakt_config(config)
 
-@trakt_bp.route('/push_trakt_auth_to_battery', methods=['POST'])
-@admin_required
-def push_trakt_auth_to_battery():
+def push_trakt_auth_to_battery_core():
     try:
         trakt_config = get_trakt_config()
         battery_url = get_setting('Metadata Battery', 'url')
@@ -158,7 +161,7 @@ def push_trakt_auth_to_battery():
 
         if not battery_url:
             logging.error("Battery URL not set in settings")
-            return jsonify({'error': 'Battery URL not set in settings'}), 400
+            return False, 'Battery URL not set in settings'
 
         auth_data = {
             'CLIENT_ID': trakt_config.get('CLIENT_ID'),
@@ -169,7 +172,6 @@ def push_trakt_auth_to_battery():
         }
 
         logging.info(f"Attempting to push Trakt auth to battery at URL: {battery_url}")
-        
         try:
             response = api.post(f"{battery_url}/receive_trakt_auth", json=auth_data)
             logging.info(f"Response status code: {response.status_code}")
@@ -178,17 +180,25 @@ def push_trakt_auth_to_battery():
             logging.error(f"Request to battery failed: {str(request_error)}")
             logging.error(f"Request exception type: {type(request_error).__name__}")
             logging.error(f"Request exception details: {traceback.format_exc()}")
-            return jsonify({'status': 'error', 'message': f'Request to battery failed: {str(request_error)}'}), 500
+            return False, f'Request to battery failed: {str(request_error)}'
         
         if response.status_code == 200:
             logging.info("Successfully pushed Trakt auth to battery")
-            return jsonify({'status': 'success', 'message': 'Trakt auth pushed to battery successfully'})
+            return True, 'Trakt auth pushed to battery successfully'
         else:
             logging.error(f"Failed to push Trakt auth to battery. Status code: {response.status_code}, Response: {response.text}")
-            return jsonify({'status': 'error', 'message': f'Failed to push Trakt auth to battery: {response.text}'}), 500
-
+            return False, f'Failed to push Trakt auth to battery: {response.text}'
     except Exception as e:
         logging.error(f"Error pushing Trakt auth to battery: {str(e)}")
         logging.error(f"Exception type: {type(e).__name__}")
         logging.error(f"Exception traceback: {traceback.format_exc()}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return False, str(e)
+
+@trakt_bp.route('/push_trakt_auth_to_battery', methods=['POST'])
+@admin_required
+def push_trakt_auth_to_battery():
+    success, message = push_trakt_auth_to_battery_core()
+    if success:
+        return jsonify({'status': 'success', 'message': message})
+    else:
+        return jsonify({'status': 'error', 'message': message}), 500

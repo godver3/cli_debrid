@@ -8,6 +8,8 @@ from scraper.functions import *
 from database.database_writing import update_anime_format, get_anime_format
 import threading
 import concurrent.futures
+import time
+import re
 
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
@@ -45,6 +47,109 @@ def process_torrent(torrent: Torrent) -> Dict[str, Any]:
         'downloads': int(torrent.completed_downloads) if torrent.completed_downloads is not None else 0,
         'url': torrent.url
     }
+
+def contains_target_episode(results: List[Dict[str, Any]], target_episode: int, target_season: int) -> bool:
+    """Check if any result contains the target episode number."""
+    if not results or target_episode is None or target_season is None:
+        return False
+        
+    for result in results:
+        title = result.get('title', '').lower()
+        
+        # First, check for explicit SxxExx patterns (most reliable)
+        explicit_patterns = [
+            f"s{target_season:02d}e{target_episode:02d}",  # S03E01
+            f"s{target_season}e{target_episode:02d}",      # S3E01
+            f"s{target_season:02d}e{target_episode}",      # S03E1
+            f"s{target_season}e{target_episode}"           # S3E1
+        ]
+        
+        for pattern in explicit_patterns:
+            if pattern in title:
+                logging.debug(f"Found explicit SxxExx pattern '{pattern}' in title: {result.get('title')}")
+                return True
+        
+        # For standalone episode patterns (E01, 01), we need to be more careful
+        # Only match if there's no conflicting season information
+        
+        # Check if title contains any season information
+        has_season_info = False
+        season_in_title = None
+        
+        # Look for season patterns in the title
+        season_patterns = [
+            rf"\bs{target_season:02d}\b",  # S03
+            rf"\bs{target_season}\b",      # S3
+            rf"\bseason\s+{target_season:02d}\b",  # Season 03
+            rf"\bseason\s+{target_season}\b",      # Season 3
+        ]
+        
+        for pattern in season_patterns:
+            if re.search(pattern, title):
+                has_season_info = True
+                season_in_title = target_season
+                break
+        
+        # Also check for other seasons that might conflict
+        other_season_patterns = [
+            r"\bs0?[1-9]\b",  # S01, S1, S02, S2, etc.
+            r"\bseason\s+0?[1-9]\b",  # Season 1, Season 01, etc.
+        ]
+        
+        for pattern in other_season_patterns:
+            match = re.search(pattern, title)
+            if match:
+                has_season_info = True
+                # Extract the season number
+                season_text = match.group()
+                if 'season' in season_text:
+                    season_num = season_text.replace('season', '').strip()
+                else:
+                    season_num = season_text[1:]  # Remove 's'
+                
+                try:
+                    season_in_title = int(season_num)
+                    if season_in_title != target_season:
+                        logging.debug(f"Found conflicting season {season_in_title} in title: {result.get('title')}")
+                        break
+                except ValueError:
+                    pass
+        
+        # If we found a conflicting season, don't match standalone episode patterns
+        if has_season_info and season_in_title != target_season:
+            continue
+        
+        # Now check for standalone episode patterns (only if no conflicting season)
+        episode_patterns = [
+            rf"\be{target_episode:02d}\b",  # E01 (word boundary)
+            rf"\be{target_episode}\b",      # E1 (word boundary)
+            rf"\b{target_episode:02d}\b",   # 01 (word boundary)
+        ]
+        
+        for pattern in episode_patterns:
+            if re.search(pattern, title):
+                # Additional context check to avoid false positives
+                match = re.search(pattern, title)
+                if match:
+                    start_pos = match.start()
+                    end_pos = match.end()
+                    
+                    # Check if preceded by 's' or 'season' (likely a season number)
+                    if start_pos > 0:
+                        before_match = title[start_pos-1:start_pos+1]
+                        if before_match.startswith('s') or before_match.startswith('season'):
+                            continue
+                    
+                    # Check if followed by 'e' (likely part of SxxExx format)
+                    if end_pos < len(title):
+                        after_match = title[end_pos-1:end_pos+1]
+                        if after_match.endswith('e'):
+                            continue
+                    
+                    logging.debug(f"Found standalone episode pattern '{pattern}' in title: {result.get('title')}")
+                    return True
+    
+    return False
 
 def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     """Scrape Nyaa using nyaapy."""
@@ -155,31 +260,55 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
             
         return format_type, results
     
-    # Use ThreadPoolExecutor to scrape all formats simultaneously
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        # Submit all scraping tasks
-        future_to_format = {
-            executor.submit(scrape_with_format, format_type, format_pattern): format_type
-            for format_type, format_pattern in episode_formats.items()
-        }
-        
-        # Collect results as they complete
-        for future in concurrent.futures.as_completed(future_to_format):
-            format_type, results = future.result()
+    # Try formats sequentially and check if results contain target episode
+    for format_type, format_pattern in episode_formats.items():
+        try:
+            # Add small delay between searches to prevent rate limiting
+            if format_type != list(episode_formats.keys())[0]:  # Skip delay for first format
+                time.sleep(0.3)  # 300ms delay
+                
+            format_type, results = scrape_with_format(format_type, format_pattern)
             format_results[format_type] = results
             all_results.extend(results)
             logging.info(f"Found {len(results)} results using format {format_type}")
+            
+            # Check if these results contain the target episode
+            if results and contains_target_episode(results, episode, season):
+                logging.info(f"Found target episode S{season}E{episode} in results from format {format_type}, stopping search")
+                break
+            elif len(results) >= 10:
+                # If we found many results but none contain the target episode, 
+                # continue searching other formats to find the actual episode
+                logging.info(f"Found {len(results)} results with format {format_type} but none contain target episode S{season}E{episode}, continuing search")
+                continue
+                
+        except Exception as e:
+            logging.error(f"Error scraping format {format_type}: {e}")
+            continue
     
-    # Determine best format based on number of results
-    if format_results:
+    # Determine best format based on number of results that contain target episode
+    best_format = None
+    best_count = 0
+    
+    for format_type, results in format_results.items():
+        if results and contains_target_episode(results, episode, season):
+            count = len([r for r in results if contains_target_episode([r], episode, season)])
+            if count > best_count:
+                best_format = format_type
+                best_count = count
+    
+    # If no format found target episode, use the one with most results
+    if not best_format and format_results:
         best_format = max(format_results.items(), key=lambda x: len(x[1]))[0]
         best_count = len(format_results[best_format])
-        logging.info(f"Best format for {title} is {best_format} with {best_count} results")
-        
-        # Update the database with the best format
-        if best_count > 0:
-            update_anime_format(tmdb_id, best_format)
-            logging.info(f"Updated anime format preference to {best_format} for {title}")
+        logging.warning(f"No format found target episode S{season}E{episode}, using {best_format} with {best_count} total results")
+    elif best_format:
+        logging.info(f"Best format for {title} S{season}E{episode} is {best_format} with {best_count} matching results")
+    
+    # Update the database with the best format
+    if best_format and best_count > 0:
+        update_anime_format(tmdb_id, best_format)
+        logging.info(f"Updated anime format preference to {best_format} for {title}")
     
     return all_results
 

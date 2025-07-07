@@ -23,7 +23,8 @@ def filter_results(
     translated_title: str = None,
     target_air_date: Optional[str] = None,
     check_pack_wantedness: bool = False,
-    current_scrape_target_version: Optional[str] = None
+    current_scrape_target_version: Optional[str] = None,
+    original_episode: Optional[int] = None  # Add original episode parameter
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
     # --- START Logging for season_episode_counts ---
@@ -62,7 +63,14 @@ def filter_results(
     normalized_translated_title = normalize_title(translated_title).lower() if translated_title else None
     
     # Determine base similarity threshold
-    base_similarity_threshold = float(version_settings.get('similarity_threshold_anime', 0.35)) if is_anime else float(version_settings.get('similarity_threshold', 0.8))
+    # Override anime similarity threshold to be more restrictive to prevent false matches
+    original_anime_setting = version_settings.get('similarity_threshold_anime', 0.60)
+    anime_threshold = max(0.60, float(original_anime_setting))
+    base_similarity_threshold = anime_threshold if is_anime else float(version_settings.get('similarity_threshold', 0.8))
+    
+    # Debug logging for threshold issues
+    if is_anime:
+        logging.info(f"DEBUG THRESHOLD: Original anime setting: {original_anime_setting}, enforced minimum: {anime_threshold}, is_anime: {is_anime}")
     
     # Adjust threshold for shorter titles if not anime/UFC (which have their own specific low threshold)
     # We'll check is_ufc later in the loop for each result, but for threshold setting,
@@ -245,6 +253,10 @@ def filter_results(
 
             # Deduplicate and log aliases
             item_aliases = {k: list(set(v)) for k, v in item_aliases.items()}
+            
+            # --- DEBUG: Log aliases for troubleshooting ---
+            if item_aliases:
+                logging.info(f"DEBUG: API aliases for '{title}' (IMDb: {imdb_id}): {item_aliases}")
 
             # -------------------------------------------------------------
             # Re-evaluate alias similarities with the newly fetched aliases
@@ -258,15 +270,26 @@ def filter_results(
             # best_alias_sim / best_sim prior to the threshold comparison.
 
             item_alias_similarities: list = []
+            alias_debug_info = []  # For debugging
             for alias_list in item_aliases.values():
                 for alias in alias_list:
                     normalized_api_alias = normalize_title(alias).lower()
                     alias_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_api_alias) / 100.0
                     if normalized_parsed_title:
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
-                        item_alias_similarities.append((alias_sim_set + alias_sim_sort) / 2.0)
+                        final_alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
+                        item_alias_similarities.append(final_alias_sim)
                     else:
-                        item_alias_similarities.append(alias_sim_set)
+                        final_alias_sim = alias_sim_set
+                        item_alias_similarities.append(final_alias_sim)
+                    
+                    # Store debug info for troublesome titles
+                    if "araiguma" in original_title.lower() or "calcal" in original_title.lower():
+                        alias_debug_info.append({
+                            'alias': alias,
+                            'normalized_alias': normalized_api_alias,
+                            'similarity': final_alias_sim
+                        })
 
             # Combine and (re)compute best alias / best overall similarity
             if item_alias_similarities:
@@ -277,6 +300,65 @@ def filter_results(
             # -------------------------------------------------------------
             # Check if the best similarity meets the threshold (now updated)
             # -------------------------------------------------------------
+            
+            # --- ANIME-SPECIFIC SANITY CHECK ---
+            # For anime, add additional validation to prevent false matches from fuzzy token overlap
+            if is_anime and best_sim >= similarity_threshold:
+                logging.info(f"DEBUG SANITY: Running anime sanity check for '{original_title}' (best_sim={best_sim:.3f}, threshold={similarity_threshold:.3f})")
+                
+                # Check if we have substantial character overlap, not just token fragments
+                query_chars = set(normalized_query_title.replace('.', ''))
+                result_chars = set(normalized_result_title.replace('.', ''))
+                
+                # Calculate character overlap ratio
+                common_chars = query_chars.intersection(result_chars)
+                char_overlap_ratio = len(common_chars) / len(query_chars) if query_chars else 0
+                
+                # Also check for meaningful word overlap (not just fragments)
+                query_words = [w for w in normalized_query_title.split('.') if len(w) > 2]  # Words longer than 2 chars
+                result_words = [w for w in normalized_result_title.split('.') if len(w) > 2]
+                
+                meaningful_word_matches = 0
+                for query_word in query_words:
+                    for result_word in result_words:
+                        # Check for exact word match or strong substring match (90%+ of the word)
+                        if (query_word == result_word or 
+                            (len(query_word) > 3 and query_word in result_word and len(query_word) / len(result_word) > 0.9) or
+                            (len(result_word) > 3 and result_word in query_word and len(result_word) / len(query_word) > 0.9)):
+                            meaningful_word_matches += 1
+                            break
+                
+                word_match_ratio = meaningful_word_matches / len(query_words) if query_words else 0
+                
+                logging.info(f"DEBUG SANITY: char_overlap={char_overlap_ratio:.3f}, word_match={word_match_ratio:.3f} for '{original_title}'")
+                
+                # Require either strong character overlap OR meaningful word matches for anime
+                if char_overlap_ratio < 0.4 and word_match_ratio < 0.5:
+                    result['filter_reason'] = f"Anime title failed sanity check (char_overlap={char_overlap_ratio:.2f}, word_match={word_match_ratio:.2f}, similarity={best_sim:.2f})"
+                    logging.info(f"Rejected: Anime sanity check failed for '{original_title}' - insufficient substantial overlap despite fuzzy similarity {best_sim:.2f} (Size: {result['size']:.2f}GB)")
+                    continue
+                else:
+                    logging.info(f"DEBUG SANITY: Sanity check passed for '{original_title}'")
+            elif is_anime:
+                logging.info(f"DEBUG SANITY: Skipping sanity check for '{original_title}' (best_sim={best_sim:.3f} < threshold={similarity_threshold:.3f})")
+            
+            # --- DEBUG: Log detailed similarity scores for troublesome titles ---
+            if "araiguma" in original_title.lower() or "calcal" in original_title.lower():
+                logging.info(f"DEBUG SIMILARITY: Analyzing '{original_title}'")
+                logging.info(f"  - Normalized result title: '{normalized_result_title}'")
+                logging.info(f"  - Normalized query title: '{normalized_query_title}'")
+                logging.info(f"  - Main title similarity: {main_title_sim:.3f}")
+                logging.info(f"  - Best alias similarity: {best_alias_sim:.3f}")
+                logging.info(f"  - Translated title similarity: {translated_title_sim:.3f}")
+                logging.info(f"  - Best overall similarity: {best_sim:.3f}")
+                logging.info(f"  - Similarity threshold: {similarity_threshold:.3f}")
+                if item_alias_similarities:
+                    logging.info(f"  - API alias similarities: {[f'{s:.3f}' for s in item_alias_similarities]}")
+                if alias_debug_info:
+                    for debug_info in alias_debug_info:
+                        if debug_info['similarity'] > 0.1:  # Only log aliases with some similarity
+                            logging.info(f"    - Alias '{debug_info['alias']}' (normalized: '{debug_info['normalized_alias']}') = {debug_info['similarity']:.3f}")
+            
             if best_sim < similarity_threshold:
                 # Log the failure reason including all comparison scores
                 result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
@@ -643,6 +725,7 @@ def filter_results(
                         # Accept the direct S/E match here; absolute-number logic below still
                         # provides an additional matching path when torrents use absolute numbers.
                         episode_match = True
+                        logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}'")
                     # --- Anime absolute-number fall-back -----------------------
                     elif is_anime:
                         try:
@@ -675,6 +758,18 @@ def filter_results(
                             logging.warning(f"Absolute-fallback error for "
                                             f"'{original_title}': {abs_err}")
                     # -----------------------------------------------------------------
+
+                    # --- Use original episode for final episode matching if available ---
+                    if not episode_match and original_episode is not None and original_episode != episode:
+                        logging.debug(f"Trying original episode fallback: original_episode={original_episode}, xem_episode={episode}, result_episodes={result_episodes} for '{original_title}'")
+                        # Try matching against the original episode number
+                        if original_episode in result_episodes:
+                            episode_match = True
+                            logging.info(f"Episode matched via original episode number {original_episode} for '{original_title}'")
+                        elif re.search(rf'\b{original_episode}\b', original_title):
+                            episode_match = True
+                            logging.info(f"Episode matched via original episode number {original_episode} found in title for '{original_title}'")
+                    # --- End original episode fallback ---
 
                     if not episode_match:
                         # Before rejecting, check if it was identified as a potential single season pack earlier

@@ -397,6 +397,40 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # --- START ADDED LOGGING ---
             logging.info(f"Pre-Scrape Check: Using XEM-mapped season={scene_season}, episode={scene_episode} for scraping.")
             # --- END ADDED LOGGING ---
+            
+            # --- REGENERATE ANIME EPISODE FORMATS AFTER XEM MAPPING ---
+            if is_anime and content_type.lower() == 'episode' and season is not None and episode is not None:
+                target_episode = episode if episode is not None else 1
+                logging.info(f"Regenerating anime episode formats after XEM mapping for S{season}E{episode}")
+                season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                
+                # Generate formats for XEM-mapped season/episode (S2E1)
+                xem_episode_formats = convert_anime_episode_format(season, target_episode, season_episode_counts)
+                logging.info(f"XEM-mapped episode formats: {xem_episode_formats}")
+                
+                # Also generate formats for original season/episode (S1E13) 
+                original_target_episode = original_episode if original_episode is not None else 1
+                original_episode_formats = convert_anime_episode_format(original_season, original_target_episode, season_episode_counts)
+                logging.info(f"Original episode formats: {original_episode_formats}")
+                
+                # For rate limiting, use a minimal approach:
+                # Only use the most essential formats - XEM-mapped regular format and original regular format
+                episode_formats = {}
+                
+                # Primary: XEM-mapped regular format (most likely to work)
+                if 'regular' in xem_episode_formats:
+                    episode_formats['regular'] = xem_episode_formats['regular']
+                
+                # Fallback: Original regular format (only if different from XEM)
+                if 'regular' in original_episode_formats and original_episode_formats['regular'] != xem_episode_formats.get('regular'):
+                    episode_formats['orig_regular'] = original_episode_formats['regular']
+                
+                # Only add one more format if we have space - prefer no_zeros for anime
+                if 'no_zeros' in xem_episode_formats:
+                    episode_formats['no_zeros'] = xem_episode_formats['no_zeros']
+                
+                logging.info(f"Minimal episode formats (rate limiting): {episode_formats}")
+            # --- END REGENERATE ANIME EPISODE FORMATS ---
         else:
             # --- START ADDED LOGGING ---
             logging.info(f"Pre-Scrape Check: No XEM mapping applied. Using original season={original_season}, episode={original_episode} for scraping.")
@@ -483,7 +517,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             target_air_date: Optional[str] = None,
             scene_season_map: Optional[int] = None,
             scene_episode_map: Optional[int] = None,
-            check_pack_wantedness: bool = False
+            check_pack_wantedness: bool = False,
+            original_episode: Optional[int] = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
@@ -637,7 +672,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 translated_title=translated_title,
                 target_air_date=target_air_date,
                 check_pack_wantedness=check_pack_wantedness,
-                current_scrape_target_version=version # Pass the 'version' from _do_scrape's scope
+                current_scrape_target_version=version, # Pass the 'version' from _do_scrape's scope
+                original_episode=original_episode  # Pass the original episode number for filtering
             )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
@@ -686,7 +722,6 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         if isinstance(alias_list, list):
                             for alias in alias_list:
                                 # Check if this alias looks like a romanized Japanese title
-                                import re
                                 if alias and re.match(r'^[a-zA-Z\s\-]+$', alias) and alias.lower() not in tried_titles_lower:
                                     # Skip if it's just the English title again
                                     if alias.lower() != title.lower():
@@ -773,6 +808,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             logging.info(f"Scraping with {source}: {search_title}")
             logging.debug(f"[scrape_main] Calling _do_scrape for '{search_title}' (source: {source}).")
 
+            # Add small delay between searches to prevent rate limiting
+            if source != 'original':  # Skip delay for first search
+                time.sleep(0.5)  # 500ms delay
+
             # --- START ADDED LOGGING ---
             logging.info(f"Calling _do_scrape with: search_title='{search_title}', original_media_title='{title}', season={season}, episode={episode}, target_air_date='{target_air_date}'")
             # --- END ADDED LOGGING ---
@@ -799,15 +838,26 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 # Pass the determined scene mapping (or None) to _do_scrape
                 scene_season_map=scene_season, # This is the XEM-mapped season (or None)
                 scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
-                check_pack_wantedness=check_pack_wantedness # Pass parameter
+                check_pack_wantedness=check_pack_wantedness, # Pass parameter
+                original_episode=original_episode  # Pass the original episode number for filtering
             )
             logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
             
-            if filtered_results:
-                all_filtered_results.extend(filtered_results)
+            # Always collect filtered out results, regardless of whether we found good results
             if filtered_out_results: # Ensure filtered_out_results is not None
                 all_filtered_out_results.extend(filtered_out_results)
-            logging.debug(f"[scrape_main] After '{search_title}' scrape: all_filtered_results: {len(all_filtered_results)}, all_filtered_out_results: {len(all_filtered_out_results)}")
+                logging.debug(f"Collected {len(filtered_out_results)} filtered out results from '{search_title}' search")
+            
+            if filtered_results:
+                all_filtered_results.extend(filtered_results)
+                if is_anime:
+                    # For anime, skip remaining titles to avoid rate limiting
+                    logging.info(f"Anime: Found {len(filtered_results)} good results with '{search_title}', skipping remaining titles to avoid rate limiting")
+                    break
+                # For non-anime, continue to try all titles/aliases
+
+        # Log summary of filtered out results collection
+        logging.info(f"[scrape_main] Total filtered out results collected: {len(all_filtered_out_results)}")
 
         # Deduplicate final results while preserving order
         logging.debug(f"[scrape_main] Before final deduplication: all_filtered_results: {len(all_filtered_results)}")
@@ -852,18 +902,24 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if minimum_scrape_score_setting != 0.0: # Check if the filter is enabled (not the default disabled value)
             initial_count = len(deduplicated_results)
             results_passing_score = []
+            score_filtered_out_results = []
             for result in deduplicated_results:
                 total_score = result.get('score_breakdown', {}).get('total_score')
                 if total_score is not None and total_score >= minimum_scrape_score_setting:
                     results_passing_score.append(result)
                 else:
+                    # Add to filtered out results with score filter reason
+                    result['filter_reason'] = f"Score too low: {total_score} < Minimum {minimum_scrape_score_setting}"
+                    score_filtered_out_results.append(result)
                     # Log rejection due to score
                     logging.info(f"Rejected due to score: Score {total_score} < Minimum {minimum_scrape_score_setting} for '{result.get('original_title')}'")
 
             deduplicated_results = results_passing_score
+            # Add score-filtered results to the main filtered out list
+            all_filtered_out_results.extend(score_filtered_out_results)
             final_count = len(deduplicated_results)
             if initial_count != final_count:
-                 logging.info(f"Applied minimum scrape score filter ({minimum_scrape_score_setting}): {initial_count} -> {final_count} results.")
+                 logging.info(f"Applied minimum scrape score filter ({minimum_scrape_score_setting}): {initial_count} -> {final_count} results. Added {len(score_filtered_out_results)} to filtered out results.")
         # --- End Minimum Scrape Score Filter ---
 
         # Log final results
@@ -876,6 +932,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         if get_setting('Debug', 'scale_final_scores', False):
             scale_total_scores(deduplicated_results)
 
+        # Final summary of all filtered out results
+        logging.info(f"[scrape_main] Final summary: {len(deduplicated_results)} passed results, {len(all_filtered_out_results)} filtered out results")
+        
         logging.info(f"[scrape_main] Returning: passed_results={len(deduplicated_results)}, filtered_out_results={len(all_filtered_out_results)}")
         return deduplicated_results, all_filtered_out_results
 

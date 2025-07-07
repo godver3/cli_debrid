@@ -16,6 +16,7 @@ def scrape_mediafusion_instance(instance: str, settings: Dict[str, Any], imdb_id
         for current_imdb_id in imdb_ids:
             url = construct_url(mediafusion_base_url, current_imdb_id, content_type, season, episode)
             response = fetch_data(url)
+            logging.debug(f"Scraping using: {url}")
             if not response:
                 logging.warning(f"No response received for IMDb ID: {current_imdb_id} from {instance}")
                 continue
@@ -202,16 +203,19 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                     source_link = re.sub(r'🧑.*$', '', source_link).strip() 
                     parsed_info['source_link'] = source_link
 
-            # Extract info hash from URL
-            url = stream.get('url', '')
-            # More robust regex to find hash potentially followed by filename
-            info_hash_match = re.search(r'/stream/([a-f0-9]{40})(?:/|$)', url) 
+            # Extract info hash - try direct field first, then fallback to URL parsing
+            info_hash = stream.get('infoHash', '')
             
-            if not info_hash_match:
+            # If not found in direct field, try to extract from URL (fallback for old format)
+            if not info_hash:
+                url = stream.get('url', '')
+                info_hash_match = re.search(r'/stream/([a-f0-9]{40})(?:/|$)', url)
+                if info_hash_match:
+                    info_hash = info_hash_match.group(1)
+            
+            if not info_hash:
                 stats['no_info_hash_count'] += 1
                 continue
-            
-            info_hash = info_hash_match.group(1)
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
             
             # Add filename as dn if available

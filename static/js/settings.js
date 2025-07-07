@@ -130,12 +130,15 @@ function validateContentSources(contentSources) {
 export function updateSettings() {
     settingsData = {}; // Reset settingsData
 
-    // First handle all regular inputs
+    // First handle all regular inputs (excluding Content Sources which are handled separately)
     const inputs = document.querySelectorAll('#settingsForm input, #settingsForm select, #settingsForm textarea');
     
     inputs.forEach(input => {
         const name = input.name;
         if (!name) return; // Skip inputs without names
+        
+        // Skip Content Sources inputs - they are handled separately
+        if (name.startsWith('Content Sources.')) return;
         
         // Skip radio buttons that are not checked
         if (input.type === 'radio' && !input.checked) return;
@@ -308,6 +311,18 @@ export function updateSettings() {
                     }
                 } else if (input.type === 'select-multiple') {
                     sourceData[fieldName] = Array.from(input.selectedOptions).map(option => option.value);
+                } else if (fieldName === 'exclude_genres') {
+                    // Handle exclude_genres as a list - split by comma and trim whitespace
+                    const value = input.value.trim();
+                    console.log(`Processing exclude_genres for ${sourceId}: input value = "${value}"`);
+                    if (value) {
+                        const genres = value.split(',').map(genre => genre.trim()).filter(genre => genre);
+                        sourceData[fieldName] = genres;
+                        console.log(`Converted to array: ${JSON.stringify(genres)}`);
+                    } else {
+                        sourceData[fieldName] = [];
+                        console.log(`Empty value, set to empty array`);
+                    }
                 } else {
                     sourceData[fieldName] = input.value;
                 }
@@ -337,6 +352,14 @@ export function updateSettings() {
     }
 
     console.log("Final Content Sources data:", JSON.stringify(settingsData['Content Sources'], null, 2));
+    
+    // Debug: Check exclude_genres specifically
+    Object.keys(settingsData['Content Sources']).forEach(sourceId => {
+        const source = settingsData['Content Sources'][sourceId];
+        if (source.exclude_genres !== undefined) {
+            console.log(`Source ${sourceId} exclude_genres:`, source.exclude_genres, `(type: ${typeof source.exclude_genres})`);
+        }
+    });
 
     // Remove any 'Unknown' content sources
     if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
@@ -1087,6 +1110,16 @@ export function updateSettings() {
     }
 
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
+    
+    // Debug: Check exclude_genres in final data
+    if (settingsData['Content Sources']) {
+        Object.keys(settingsData['Content Sources']).forEach(sourceId => {
+            const source = settingsData['Content Sources'][sourceId];
+            if (source.exclude_genres !== undefined) {
+                console.log(`FINAL - Source ${sourceId} exclude_genres:`, source.exclude_genres, `(type: ${typeof source.exclude_genres})`);
+            }
+        });
+    }
 
     // Set default values for enable_upgrading, disable_adult, and trakt_early_releases
     if (settingsData['Scraping']['enable_upgrading'] === undefined) {
@@ -1117,7 +1150,7 @@ export function updateSettings() {
     .then(data => {
         console.log("Server response:", data);
         if (data.status === 'success') {
-            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully' });
+            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully.<br>Program runner restarted if running.'});
         } else {
             showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Error saving settings: ' + data.message });
         }

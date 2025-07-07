@@ -12,7 +12,7 @@ import json
 import time
 import os
 import iso8601
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 settings = Settings()
 
@@ -83,32 +83,17 @@ def trakt_auth_status():
 @trakt_bp.route('/check_trakt_auth', methods=['GET'])
 def check_trakt_auth():
     try:
-        trakt_config = get_trakt_config()
-        if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
-            expires_at_raw = trakt_config['OAUTH_EXPIRES_AT']
-            
-            expires_at = None
-            if isinstance(expires_at_raw, str):
-                try:
-                    # Use the robust iso8601 parser, which handles timezone offsets correctly
-                    expires_at = iso8601.parse_date(expires_at_raw)
-                except iso8601.ParseError:
-                    try:
-                        # Fallback for stringified Unix timestamp
-                        expires_at = datetime.fromtimestamp(float(expires_at_raw), tz=timezone.utc)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Could not parse expires_at string: {expires_at_raw}")
-            elif isinstance(expires_at_raw, (int, float)):
-                # Handle numeric Unix timestamp
-                expires_at = datetime.fromtimestamp(float(expires_at_raw), tz=timezone.utc)
-            
-            # Compare timezone-aware datetime objects
-            if expires_at and datetime.now(timezone.utc) < expires_at:
-                return jsonify({'status': 'authorized'})
+        # Always create a fresh TraktAuth instance to get current data
+        trakt_auth = TraktAuth()
+        
+        if trakt_auth.is_authenticated():
+            return jsonify({'status': 'authorized'})
+        else:
+            return jsonify({'status': 'unauthorized'})
                 
     except Exception as e:
         logger.error(f"Error checking Trakt auth status: {e}")
-    return jsonify({'status': 'unauthorized'})
+        return jsonify({'status': 'unauthorized'})
 
 # Add these helper functions
 def get_trakt_config():
@@ -132,6 +117,7 @@ def update_trakt_config(key, value):
 def refresh_trakt_auth():
     """Manually refresh Trakt authentication token"""
     try:
+        # Create fresh instance to get current data
         trakt_auth = TraktAuth()
         
         if trakt_auth.refresh_access_token():

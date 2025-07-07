@@ -54,9 +54,15 @@ else:
 for dir_path in [os.environ['USER_CONFIG'], os.environ['USER_LOGS'], os.environ['USER_DB_CONTENT']]:
     os.makedirs(dir_path, exist_ok=True)
 
+# Set environment mode flag - defaults to 'full' for current behavior
+os.environ.setdefault('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+
+print(f"CLI_DEBRID_ENVIRONMENT_MODE: {os.environ['CLI_DEBRID_ENVIRONMENT_MODE']}")
+
 print(f"USER_CONFIG: {os.environ['USER_CONFIG']}")
 print(f"USER_LOGS: {os.environ['USER_LOGS']}")
 print(f"USER_DB_CONTENT: {os.environ['USER_DB_CONTENT']}")
+print(f"ENVIRONMENT_MODE: {os.environ['CLI_DEBRID_ENVIRONMENT_MODE']}")
 
 import logging
 import shutil
@@ -1482,6 +1488,20 @@ def main():
             save_config(config)
             logging.info("Successfully migrated content sources to include cutoff_date setting")
     # --- End cutoff_date migration ---
+
+    # --- Add migration for exclude_genres in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'exclude_genres' not in source_config:
+                source_config['exclude_genres'] = []
+                content_sources_updated = True
+                logging.info(f"Adding default exclude_genres=[] to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include exclude_genres setting")
+    # --- End exclude_genres migration ---
 
     # --- MIGRATION: Standardize 'Plex Watchlist' type to 'My Plex Watchlist' with fixed key 'My Plex Watchlist_1' ---
     plex_watchlist_migration_updated = False

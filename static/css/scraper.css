@@ -1450,10 +1450,36 @@ p.torresult-title {
     color: #ff7b7b !important; /* Light red text */
 }
 
+/* Style for filter reason in score column */
+.filtered-out-item td:nth-child(4) {
+    color: #ff6b6b !important; /* Brighter red for filter reason */
+    font-style: italic;
+    font-size: 0.9em;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+    position: relative;
+}
+
+/* Remove CSS tooltips - we'll use JavaScript instead */
+
 .torresult.filtered-out-item {
     background-color: #4a3838 !important; 
     border-color: #604040 !important;
 }
+
+/* Style for filter reason in mobile view */
+.torresult.filtered-out-item .torresult-item:first-of-type {
+    color: #ff6b6b !important; /* Brighter red for filter reason */
+    font-style: italic;
+    font-size: 0.9em;
+    position: relative;
+    cursor: help;
+}
+
+/* Remove mobile CSS tooltips - we'll use JavaScript instead */
 
 tr.filtered-out-item {
     background-color: #4a3838 !important; 

@@ -25,7 +25,6 @@ class Settings:
         self._staleness_threshold = None  # Initialize as None
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
-        self._trakt = None
         self.load()
 
     @property
@@ -47,24 +46,23 @@ class Settings:
 
     @cached_property
     def Trakt(self):
-        if self._trakt is None:
-            battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
-            battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost') # Get host from env
-            # These read from the MAIN config via utilities.settings
-            self._trakt = {
-                'client_id': get_setting('Trakt', 'client_id', ''),
-                'client_secret': get_setting('Trakt', 'client_secret', ''),
-                'access_token': get_setting('Trakt', 'access_token', ''),
-                'refresh_token': get_setting('Trakt', 'refresh_token', ''),
-                'expires_at': get_setting('Trakt', 'expires_at', None),
-                'redirect_uri': get_setting('Trakt', 'redirect_uri', f'http://{battery_host}:{battery_port}/trakt_callback')
-            }
-        return self._trakt
+        # Always read fresh data from main config, don't cache
+        battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', 5001))
+        battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost') # Get host from env
+        # These read from the MAIN config via utilities.settings - always fresh
+        return {
+            'client_id': get_setting('Trakt', 'client_id', ''),
+            'client_secret': get_setting('Trakt', 'client_secret', ''),
+            'access_token': get_setting('Trakt', 'access_token', ''),
+            'refresh_token': get_setting('Trakt', 'refresh_token', ''),
+            'expires_at': get_setting('Trakt', 'expires_at', None),
+            'redirect_uri': get_setting('Trakt', 'redirect_uri', f'http://{battery_host}:{battery_port}/trakt_callback')
+        }
 
     def invalidate_trakt_cache(self):
-        if 'Trakt' in self.__dict__:
-            del self.__dict__['Trakt']
-        self._trakt = None
+        # No longer needed since we always read fresh data
+        # This method is kept for backward compatibility
+        pass
 
     def save(self):
         # Note: This saves the state of *this* Settings object, including
@@ -163,7 +161,7 @@ class Settings:
                 provider['api_key'] = api_key
 
         # Update Trakt settings - These should probably update the main config via a utility function
-        # Currently, this updates the local cached dict (_trakt), which is then saved to settings.json
+        # Currently, this updates the local cached dict, which is then saved to settings.json
         # but not necessarily persisted back to the main config where get_setting reads from.
         if 'Trakt[client_id]' in new_settings or 'Trakt[client_secret]' in new_settings:
             self.invalidate_trakt_cache() # Clears the cache

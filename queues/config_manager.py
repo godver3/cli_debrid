@@ -214,19 +214,21 @@ def sync_plex_settings(config):
         primary_value = original_values[primary_section][plex_field if primary_section == 'Plex' else fm_field]
         secondary_value = original_values[secondary_section][plex_field if secondary_section == 'Plex' else fm_field]
         
-        # If primary section has a value, use it
-        if primary_value:
+        # Only sync if the primary section (visible to user) has a non-empty value
+        # This prevents restoring values from the hidden section when user deliberately removes them
+        if primary_value and primary_value.strip():
             if primary_section == 'Plex':
                 config['File Management'][fm_field] = primary_value
             else:
                 config['Plex'][plex_field] = primary_value
-        # If only secondary section has a value, use it
-        elif secondary_value:
-            if secondary_section == 'Plex':
-                config['File Management'][fm_field] = secondary_value
-            else:
-                config['Plex'][plex_field] = secondary_value
-        # If both are empty, no action needed
+        # Only copy from secondary if primary is completely empty (not just whitespace)
+        elif not primary_value or not primary_value.strip():
+            if secondary_value and secondary_value.strip():
+                if secondary_section == 'Plex':
+                    config['File Management'][fm_field] = secondary_value
+                else:
+                    config['Plex'][plex_field] = secondary_value
+        # If both are empty or whitespace-only, no action needed
 
     return config
 

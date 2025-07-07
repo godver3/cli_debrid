@@ -187,6 +187,14 @@
 </style>
 
 <h3>Required Settings</h3>
+
+{% if environment_mode != 'full' %}
+<div class="alert alert-warning" style="background-color: #fff3cd; color: #856404; margin-top: 10px; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px; margin-bottom: 20px;">
+    <strong>⚠️ Warning:</strong> You are currently in a restricted environment mode. Avoid adjusting the "Required Settings" content.
+</div>
+{% endif %}
+
+
 <div class="settings-expand-collapse-buttons">
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>

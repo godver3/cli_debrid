@@ -7,6 +7,11 @@
 
 <div class="debug-container">    
     <h2>Debug Functions</h2>
+    {% if environment_mode != 'full' %}
+    <div class="alert alert-warning" style="background-color: #fff3cd; color: #856404; margin-top: 10px; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px; margin-bottom: 20px;">
+        <strong>⚠️ Warning:</strong> You are currently in a restricted environment mode. Avoid adjusting the "Debug Functions" content.
+    </div>
+    {% endif %}
     <div class="debug_items">
         <div class="debug_item">
             <h3>Bulk Delete from Database</h3>
@@ -517,7 +522,9 @@
             fetch('/program_operation/api/program_status')
                 .then(response => response.json())
                 .then(data => {
-                    const isRunning = false;
+                    // DISABLED: Allow debug functions while program is running for testing
+                    const isRunning = false; // Hardcoded to false to allow testing
+                    // const isRunning = data.status === 'Running';
                     const buttons = document.querySelectorAll('button[type="submit"]');
                     buttons.forEach(button => {
                         button.disabled = isRunning;
