@@ -536,6 +536,26 @@ def check_scraper_connection(scraper_id, scraper_config):
                 base_response['connected'] = False
                 base_response['error'] = str(e)
                 
+        elif scraper_type == 'Prowlarr':
+            url = scraper_config.get('url', '').strip()
+            api_key = scraper_config.get('api_key', '').strip()
+            
+            if not url or not api_key:
+                base_response['error'] = 'URL or API key not configured'
+                return base_response
+                
+            # Test Prowlarr connection by getting system status
+            test_url = f"{url.rstrip('/')}/api/v1/system/status"
+            headers = {'X-Api-Key': api_key}
+            response = requests.get(test_url, headers=headers, timeout=5)
+            base_response['connected'] = response.status_code == 200
+            if not base_response['connected']:
+                base_response['error'] = f'Status code: {response.status_code}'
+            base_response['details'].update({
+                'url': url,
+                'tags': scraper_config.get('tags', '')
+            })
+                
         else:
             base_response['error'] = f'Unknown scraper type: {scraper_type}'
             

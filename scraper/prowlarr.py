@@ -5,6 +5,7 @@ from utilities.settings import get_setting
 from urllib.parse import urlencode, quote_plus
 import re
 import json # Import json for pretty printing
+from scraper.functions.common import trim_magnet
 
 def scrape_prowlarr_instance(
     instance: str,
@@ -145,13 +146,13 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
         guid = item.get('guid')
         
         if magnet_url and magnet_url.startswith('magnet:'):
-            primary_link = magnet_url
+            primary_link = trim_magnet(magnet_url)
         elif download_url:
             primary_link = download_url
             is_torrent_url = True
         # Check if the guid field contains a magnet link
         elif guid and guid.startswith('magnet:'):
-            primary_link = guid
+            primary_link = trim_magnet(guid)
             logging.debug(f"Using magnet link from guid field for '{title}' from {ins_name}")
         else:
             filtered_no_link += 1
