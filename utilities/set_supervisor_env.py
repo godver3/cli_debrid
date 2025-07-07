@@ -5,7 +5,7 @@ import time
 
 def load_config():
     # Check environment mode first
-    env_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', '')
+    env_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
     if env_mode != 'full':
         return False
     
