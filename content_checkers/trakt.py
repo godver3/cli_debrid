@@ -508,6 +508,22 @@ def _should_refresh_token(expires_at_ts: float, refresh_threshold_hours: int = N
     refresh_threshold = expires_at_ts - (refresh_threshold_hours * 3600)
     return current_time >= refresh_threshold
 
+def is_refresh_token_expired() -> bool:
+    """
+    Check if the refresh token has expired by examining the current config.
+    
+    Returns:
+        True if refresh token is expired or missing, False otherwise
+    """
+    try:
+        trakt_config = get_trakt_config()
+        # Only check for refresh token, not access token
+        # Access token can be expired while refresh token is still valid
+        return not trakt_config.get('OAUTH_REFRESH')
+    except Exception as e:
+        logging.error(f"Error checking refresh token status: {e}")
+        return True
+
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
     
@@ -524,6 +540,22 @@ def ensure_trakt_auth():
             logging.error(f"Error manually loading config: {e}")
     
     if trakt.core.OAUTH_TOKEN is None or trakt.core.OAUTH_EXPIRES_AT is None:
+        # Check if we have a refresh token available
+        trakt_config = get_trakt_config()
+        if trakt_config.get('OAUTH_REFRESH'):
+            logging.info("Access token missing but refresh token available. Attempting to refresh...")
+            # Try to refresh the token using the trakt library
+            try:
+                trakt.core._validate_token(trakt.core.CORE)
+                trakt.core.load_config()
+                logging.info("Token refreshed successfully")
+                # Check if we now have a valid token
+                if trakt.core.OAUTH_TOKEN and trakt.core.OAUTH_EXPIRES_AT:
+                    return trakt.core.OAUTH_TOKEN
+            except Exception as e:
+                logging.warning(f"Failed to refresh token: {e}")
+                # Continue to the error case below
+        
         logging.error("Trakt authentication not properly configured")
         return None
     
@@ -551,8 +583,31 @@ def ensure_trakt_auth():
             trakt.core.load_config()
             logging.debug("Token refreshed successfully and config reloaded.")
         except Exception as e:
-            logging.error(f"Failed to refresh Trakt token: {e}", exc_info=True)
-            return None
+            # Check if this is a refresh token expiration error
+            error_str = str(e).lower()
+            # Only clear refresh token for specific refresh token errors, not general invalid_grant
+            if "refresh_token" in error_str and ("invalid" in error_str or "expired" in error_str or "revoked" in error_str):
+                logging.error(f"Refresh token has expired or is invalid. Manual re-authentication required: {e}")
+                # Clear the expired tokens to force re-authentication
+                try:
+                    trakt_config = get_trakt_config()
+                    trakt_config.pop('OAUTH_TOKEN', None)
+                    trakt_config.pop('OAUTH_REFRESH', None)
+                    trakt_config.pop('OAUTH_EXPIRES_AT', None)
+                    save_trakt_config(trakt_config)
+                    logging.info("Cleared expired tokens from config file")
+                except Exception as clear_error:
+                    logging.error(f"Failed to clear expired tokens: {clear_error}")
+                return None
+            elif "invalid_grant" in error_str:
+                # This might be an access token issue, not necessarily refresh token
+                logging.warning(f"Invalid grant error - this might be an access token issue: {e}")
+                logging.info("Attempting to refresh access token using refresh token...")
+                # Don't clear the refresh token, just return None to indicate we need to retry
+                return None
+            else:
+                logging.error(f"Failed to refresh Trakt token: {e}", exc_info=True)
+                return None
     else:
         logging.debug("Token is valid")
     
@@ -1015,6 +1070,23 @@ def fetch_liked_trakt_lists_details() -> List[Dict[str, str]]:
         logging.error(f"Error fetching liked lists details: {str(e)}", exc_info=True)
 
     return liked_lists_details
+
+def get_trakt_config():
+    """Get the current Trakt configuration from .pytrakt.json"""
+    if os.path.exists(TRAKT_CONFIG_FILE):
+        try:
+            with open(TRAKT_CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            logging.warning(f"Could not decode .pytrakt.json file at {TRAKT_CONFIG_FILE}. It might be empty or malformed.")
+            return {}
+    return {}
+
+def save_trakt_config(config):
+    """Save the Trakt configuration to .pytrakt.json"""
+    os.makedirs(os.path.dirname(TRAKT_CONFIG_FILE), exist_ok=True)
+    with open(TRAKT_CONFIG_FILE, 'w') as f:
+        json.dump(config, f, indent=2)
 
 def get_wanted_from_trakt():
     """Get wanted items from all Trakt sources"""

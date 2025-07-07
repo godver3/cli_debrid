@@ -28,6 +28,7 @@ from datetime import timezone
 import pytz
 from datetime import datetime, timedelta
 import json
+from content_checkers.trakt import is_refresh_token_expired
 
 program_operation_bp = Blueprint('program_operation', __name__)
 
@@ -465,10 +466,17 @@ def check_service_connectivity():
             else:
                 logging.warning("Automatic Trakt re-authentication failed.")
                 services_reachable = False
+                
+                # Check if the failure was due to expired refresh token
+                error_message = "Trakt not authorized via Metadata Battery. Automatic re-authentication failed. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
+                
+                if is_refresh_token_expired():
+                    error_message = "Trakt refresh token has expired. Manual re-authentication is required. Please re-authorize Trakt in the settings UI."
+                
                 failed_services_details.append({
                     "service": "Trakt",
                     "type": "UNAUTHORIZED",
-                    "message": "Trakt not authorized via Metadata Battery. Automatic re-authentication failed. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
+                    "message": error_message
                 })
     except RequestException as e:
         if hasattr(e, 'response') and e.response is not None:
@@ -491,10 +499,15 @@ def attempt_trakt_auto_reauth():
         logging.info("Attempting automatic Trakt re-authentication...")
         
         # First, try to refresh the token using the existing ensure_trakt_auth function
-        from content_checkers.trakt import ensure_trakt_auth
+        from content_checkers.trakt import ensure_trakt_auth, is_refresh_token_expired
         access_token = ensure_trakt_auth()
         
         if not access_token:
+            # Check if the failure was due to expired refresh token
+            if is_refresh_token_expired():
+                logging.warning("Refresh token has expired. Manual re-authentication is required.")
+                return False
+            
             logging.warning("Could not obtain valid Trakt access token during auto-reauth")
             return False
         
