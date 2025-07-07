@@ -262,7 +262,7 @@ function setupTaskStream() {
                             displayMessage = `Queue Paused: ${serviceName} API access forbidden. Check API key, IP, or account status.`;
                         } else if (pauseInfo.error_type === 'CONNECTION_ERROR') {
                              // Keep the detailed reason_string for general connection errors as it includes retry counts.
-                            displayMessage = `Queue Paused: ${pauseInfo.reason_string}. This will likely resolve on its own.`;
+                            displayMessage = `Queue Paused: ${pauseInfo.reason_string}`;
                         }
                         // Add more conditions for other error_types (RATE_LIMIT, DB_HEALTH, SYSTEM_SCHEDULED) if needed for banner.
                         // For now, they will use the default pauseInfo.reason_string.

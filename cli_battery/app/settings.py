@@ -56,7 +56,7 @@ class Settings:
             'access_token': get_setting('Trakt', 'access_token', ''),
             'refresh_token': get_setting('Trakt', 'refresh_token', ''),
             'expires_at': get_setting('Trakt', 'expires_at', None),
-            'redirect_uri': get_setting('Trakt', 'redirect_uri', f'http://{battery_host}:{battery_port}/trakt_callback')
+            'redirect_uri': 'urn:ietf:wg:oauth:2.0:oob'
         }
 
     def invalidate_trakt_cache(self):
