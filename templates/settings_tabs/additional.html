@@ -703,56 +703,8 @@
             <p class="settings-description">Enable automatic subtitle downloading for media files using 'downsub'. Requires Symlink File Management.</p>
         </div>
 
-        <div class="settings-form-group">
-            <label for="additional-only_current_file" class="settings-title">Only Process Current File:</label>
-            <input type="checkbox" id="additional-only_current_file" name="Subtitle Settings.only_current_file"
-                   data-section="Subtitle Settings" data-key="only_current_file"
-                   {% if settings.get('Subtitle Settings', {}).get('only_current_file') %}checked{% endif %}>
-            <p class="settings-description">Only download subtitles for the current file being processed (instead of scanning all folders)</p>
-        </div>
-
-        <div class="settings-form-group">
-            <label class="settings-title">Apply To Folders:</label>
-            <div class="settings-checkbox-group">
-                <div class="settings-checkbox-item">
-                    <input type="checkbox" id="additional-apply_to_movies" name="Subtitle Settings.apply_to_movies"
-                           data-section="Subtitle Settings" data-key="apply_to_movies"
-                           {% if settings.get('Subtitle Settings', {}).get('apply_to_movies', True) %}checked{% endif %}>
-                    <label for="additional-apply_to_movies">Movies</label>
-                </div>
-                <div class="settings-checkbox-item">
-                    <input type="checkbox" id="additional-apply_to_tv_shows" name="Subtitle Settings.apply_to_tv_shows"
-                           data-section="Subtitle Settings" data-key="apply_to_tv_shows"
-                           {% if settings.get('Subtitle Settings', {}).get('apply_to_tv_shows', True) %}checked{% endif %}>
-                    <label for="additional-apply_to_tv_shows">TV Shows</label>
-                </div>
-                <div class="settings-checkbox-item">
-                    <input type="checkbox" id="additional-apply_to_anime_movies" name="Subtitle Settings.apply_to_anime_movies"
-                           data-section="Subtitle Settings" data-key="apply_to_anime_movies"
-                           {% if settings.get('Subtitle Settings', {}).get('apply_to_anime_movies', True) %}checked{% endif %}>
-                    <label for="additional-apply_to_anime_movies">Anime Movies</label>
-                </div>
-                <div class="settings-checkbox-item">
-                    <input type="checkbox" id="additional-apply_to_anime_tv_shows" name="Subtitle Settings.apply_to_anime_tv_shows"
-                           data-section="Subtitle Settings" data-key="apply_to_anime_tv_shows"
-                           {% if settings.get('Subtitle Settings', {}).get('apply_to_anime_tv_shows', True) %}checked{% endif %}>
-                    <label for="additional-apply_to_anime_tv_shows">Anime TV Shows</label>
-                </div>
-                <div class="settings-checkbox-item">
-                    <input type="checkbox" id="additional-apply_to_documentary_movies" name="Subtitle Settings.apply_to_documentary_movies"
-                           data-section="Subtitle Settings" data-key="apply_to_documentary_movies"
-                           {% if settings.get('Subtitle Settings', {}).get('apply_to_documentary_movies', True) %}checked{% endif %}>
-                    <label for="additional-apply_to_documentary_movies">Documentary Movies</label>
-                </div>
-                <div class="settings-checkbox-item">
-                    <input type="checkbox" id="additional-apply_to_documentary_tv_shows" name="Subtitle Settings.apply_to_documentary_tv_shows"
-                           data-section="Subtitle Settings" data-key="apply_to_documentary_tv_shows"
-                           {% if settings.get('Subtitle Settings', {}).get('apply_to_documentary_tv_shows', True) %}checked{% endif %}>
-                    <label for="additional-apply_to_documentary_tv_shows">Documentary TV Shows</label>
-                </div>
-            </div>
-            <p class="settings-description">Select which folder types to apply subtitle downloads to</p>
-        </div>
+        <!-- Hidden settings - no longer used with simplified downsub system -->
+        <!-- only_current_file, apply_to_* settings removed as downsub now processes single files only -->
 
         <div class="settings-form-group">
             <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>
@@ -781,28 +733,9 @@
             <p class="settings-description">Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.</p>
         </div>
 
-        <div class="settings-form-group">
-            <label for="additional-subtitle_providers" class="settings-title">Subtitle Providers:</label>
-            <select id="additional-subtitle_providers" name="Subtitle Settings.subtitle_providers" 
-                    class="settings-input" multiple
-                    data-section="Subtitle Settings" data-key="subtitle_providers">
-                {% set selected_providers = settings.get('Subtitle Settings', {}).get('subtitle_providers', []) %}
-                <option value="opensubtitles" {% if 'opensubtitles' in selected_providers %}selected{% endif %}>OpenSubtitles</option>
-                <option value="opensubtitlescom" {% if 'opensubtitlescom' in selected_providers %}selected{% endif %}>OpenSubtitles.com</option>
-                <option value="podnapisi" {% if 'podnapisi' in selected_providers %}selected{% endif %}>Podnapisi</option>
-                <option value="tvsubtitles" {% if 'tvsubtitles' in selected_providers %}selected{% endif %}>TVSubtitles</option>
-            </select>
-            <p class="settings-description">Select subtitle providers to use (hold Ctrl/Cmd to select multiple)</p>
-        </div>
+        <!-- subtitle_providers setting removed - providers are now hardcoded in downsub.sh -->
 
-        <div class="settings-form-group">
-            <label for="additional-user_agent" class="settings-title">User Agent:</label>
-            <input type="text" id="additional-user_agent" name="Subtitle Settings.user_agent"
-                   value="{{ settings.get('Subtitle Settings', {}).get('user_agent', 'SubDownloader/1.0 (your-email@example.com)') }}" 
-                   class="settings-input"
-                   data-section="Subtitle Settings" data-key="user_agent">
-            <p class="settings-description">User agent for subtitle API requests</p>
-        </div>
+        <!-- user_agent setting removed - user agent is now hardcoded in downsub.sh -->
     </div>
 </div>
 

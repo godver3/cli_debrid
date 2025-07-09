@@ -17,7 +17,7 @@ protobuf==5.28.1
 pykakasi==2.3.0
 requests==2.32.3
 SQLAlchemy==2.0.31
-subliminal>=2.1.0
+subliminal>=2.3.2
 tenacity==9.0.0
 urwid==2.6.15
 Werkzeug==3.0.4
