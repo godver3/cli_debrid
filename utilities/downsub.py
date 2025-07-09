@@ -1,188 +1,108 @@
+#!/usr/bin/env python3
 import os
 import sys
 import logging
-import json
-import re
-from datetime import datetime, timedelta
-from babelfish import Language
-from subliminal import download_best_subtitles, scan_video
-from subliminal.cache import region
-from .config.downsub_config import (
-    SUBTITLES_ENABLED, VIDEO_FOLDERS, SCAN_CACHE_FILE, DIR_CACHE_FILE,
-    LOG_LEVEL, LOG_FORMAT, LOG_FILE, VIDEO_EXTENSIONS,
-    SUBTITLE_LANGUAGES, SUBLIMINAL_USER_AGENT, SUBTITLE_PROVIDERS, ONLY_CURRENT_FILE
-)
+import subprocess
+from pathlib import Path
 
-# Configure global in-memory cache for subliminal
-region.configure("dogpile.cache.memory")
+# Handle both relative and absolute imports
+try:
+    from .config.downsub_config import config
+except ImportError:
+    # Add the current directory to the Python path for absolute imports
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from config.downsub_config import config
 
 # Logging configuration
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format=LOG_FORMAT,
+    level=getattr(logging, config.LOG_LEVEL),
+    format=config.LOG_FORMAT,
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        logging.FileHandler(config.LOG_FILE),
         logging.StreamHandler()
     ]
 )
 
-def load_cache(filename):
-    """Load cache from a JSON file."""
-    if os.path.exists(filename):
-        try:
-            with open(filename, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logging.error(f"Failed to load cache from {filename}: {e}")
-    return {}
-
-def save_cache(cache, filename):
-    """Save cache to a JSON file."""
-    try:
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(cache, f)
-    except Exception as e:
-        logging.error(f"Failed to save cache to {filename}: {e}")
-
-def scan_directory(dir_path, dir_cache, file_cache, ignore_dir_cache=False):
-    """
-    Recursively scan the directory while following symlinks for movie files.
-    Uses a simple directory modification time to decide if the folder changed.
-    """
-    files_found = []
-    # Use the directory's modification time as a simple signature.
-    current_dir_sig = os.path.getmtime(dir_path)
-    cached_dir_sig = dir_cache.get(dir_path)
-    if not ignore_dir_cache and cached_dir_sig and cached_dir_sig == current_dir_sig:
-        logging.info(f"📂 Skipping unchanged directory: {dir_path}")
-        return files_found
-    dir_cache[dir_path] = current_dir_sig
-
-    try:
-        with os.scandir(dir_path) as it:
-            for entry in it:
-                # Preserve the original symlink path
-                full_path = entry.path
-
-                if entry.is_symlink():
-                    real_path = os.path.realpath(entry.path)
-                    logging.info(f"🔗 Detected symlink: {entry.path} -> {real_path}")
-
-                # If it's a directory, follow it
-                if entry.is_dir(follow_symlinks=True):
-                    files_found.extend(scan_directory(entry.path, dir_cache, file_cache, ignore_dir_cache))
-                # If it's a movie file, add it
-                elif entry.is_file(follow_symlinks=True) and entry.name.lower().endswith(VIDEO_EXTENSIONS):
-                    try:
-                        # Use the symlink's metadata so the subtitle file is saved next to the symlink.
-                        stat_info = os.stat(full_path, follow_symlinks=False)
-                        file_cache[full_path] = {"mod_time": stat_info.st_mtime, "size": stat_info.st_size}
-                        files_found.append(full_path)
-                        logging.info(f"🎥 Found file: {full_path}")
-                    except FileNotFoundError:
-                        logging.warning(f"⚠️ Broken symlink, file not found: {entry.path}")
-    except Exception as e:
-        logging.error(f"🚨 Error scanning directory {dir_path}: {e}")
-
-    return files_found
-
-def download_subtitles(files):
-    """Download subtitles for a list of files."""
-    if not files:
-        logging.info("✅ No files to process.")
-        return
-
-    languages = {Language(lang) for lang in SUBTITLE_LANGUAGES}
-    os.environ['SUBLIMINAL_USER_AGENT'] = SUBLIMINAL_USER_AGENT
-
-    videos = []
-    for f in files:
-        try:
-            video = scan_video(f)
-            if isinstance(video.title, list):
-                logging.warning(f"Detected list title for {f}: {video.title}. Joining into a string.")
-                video.title = ' '.join(video.title)
-            videos.append((video, f))  # Keep the original file path (symlink)
-        except ValueError as e:
-            logging.error(f"⚠️ Could not parse file: {f} - {e}")
-
-    if not videos:
-        logging.warning("❌ No valid video files for subtitle download.")
-        return
-
-    try:
-        # Download subtitles for the video objects.
-        subtitles = download_best_subtitles(
-            [v[0] for v in videos], 
-            languages=languages, 
-            providers=SUBTITLE_PROVIDERS
-        )
-        for video, original_path in videos:
-            subs = subtitles.get(video, [])
-            for sub in subs:
-                # Save subtitle next to the symlink (using original file path)
-                sub_path = os.path.splitext(original_path)[0] + f'.{sub.language}.srt'
-                with open(sub_path, 'wb') as f:
-                    f.write(sub.content)
-                logging.info(f"📥 Downloaded subtitle: {sub_path}")
-    except Exception as e:
-        logging.error(f"🚨 Subtitle download failed: {e}")
-
 def main(specific_file=None):
     """
-    Main function that processes videos in the configured folders.
-    Uses cache to track processed files and only downloads subtitles for new or modified files.
+    Main function that processes a single video file using downsub.sh.
     
     Args:
-        specific_file (str, optional): Path to a specific file to process. If provided and ONLY_CURRENT_FILE is True,
-                                      only this file will be processed. Defaults to None.
+        specific_file (str, optional): Path to a specific file to process. Required.
     """
-    # Reload settings before processing
-    from .config.downsub_config import reload_settings
-    config = reload_settings()
-    
     # Skip everything if subtitles are not enabled
-    if not config['SUBTITLES_ENABLED']:
+    if not config.SUBTITLES_ENABLED:
         logging.info("Subtitle downloading is disabled in settings")
         return
 
-    # If we're only processing the current file and a specific file is provided
-    if config['ONLY_CURRENT_FILE'] and specific_file:
-        logging.info(f"Only processing specific file: {specific_file}")
-        if os.path.isfile(specific_file) and specific_file.lower().endswith(VIDEO_EXTENSIONS):
-            download_subtitles([specific_file])
-        else:
-            logging.warning(f"Specified file is not a valid video file: {specific_file}")
+    # Require a specific file
+    if not specific_file:
+        logging.error("No specific file provided")
         return
 
-    # Load caches
-    file_cache = load_cache(SCAN_CACHE_FILE)
-    dir_cache = load_cache(DIR_CACHE_FILE)
-
-    files_to_process = []
+    # Check if the file exists and is a valid video file (handle symlinks)
+    if not os.path.exists(specific_file):
+        logging.error(f"File does not exist: {specific_file}")
+        return
     
-    # Process each configured video folder
-    for folder_path in config['VIDEO_FOLDERS']:
-        # Check if video folder exists
-        if not os.path.isdir(folder_path):
-            logging.error(f"❌ Invalid video folder path: {folder_path}")
-            continue
+    # Check if it's a symlink and log the target
+    if os.path.islink(specific_file):
+        target = os.readlink(specific_file)
+        real_path = os.path.realpath(specific_file)
+        logging.info(f"🔗 Processing symlink: {specific_file} -> {target}")
+        logging.info(f"🔗 Real path: {real_path}")
+        
+        # Check if the symlink target exists
+        if not os.path.exists(real_path):
+            logging.error(f"Broken symlink - target does not exist: {real_path}")
+            return
+    
+    # Use os.path.exists instead of os.path.isfile to handle symlinks better
+    if not (os.path.isfile(specific_file) or (os.path.islink(specific_file) and os.path.exists(specific_file))):
+        logging.error(f"File is not a valid file: {specific_file}")
+        return
 
-        # Scan for video files in this folder
-        folder_files = scan_directory(folder_path, dir_cache, file_cache, ignore_dir_cache=False)
-        files_to_process.extend(folder_files)
+    if not specific_file.lower().endswith(config.VIDEO_EXTENSIONS):
+        logging.error(f"File is not a valid video file: {specific_file}")
+        return
 
-    # Skip files that are already recorded and unchanged
-    files_to_process = [
-        f for f in files_to_process if f not in file_cache or file_cache[f]["mod_time"] != os.path.getmtime(f)
-    ]
+    # Get the path to downsub.sh script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    downsub_sh_path = os.path.join(script_dir, 'downsub.sh')
+    
+    if not os.path.isfile(downsub_sh_path):
+        logging.error(f"downsub.sh script not found at: {downsub_sh_path}")
+        return
 
-    logging.info(f"🔎 Found {len(files_to_process)} files to process.")
-    download_subtitles(files_to_process)
-
-    # Save updated caches
-    save_cache(file_cache, SCAN_CACHE_FILE)
-    save_cache(dir_cache, DIR_CACHE_FILE)
+    # Build the command with file and languages
+    cmd = [downsub_sh_path, specific_file] + config.SUBTITLE_LANGUAGES
+    
+    logging.info(f"Calling downsub.sh with: {' '.join(cmd)}")
+    
+    try:
+        # Call the downsub.sh script
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        if result.stdout:
+            logging.info(f"downsub.sh output: {result.stdout}")
+        if result.stderr:
+            logging.warning(f"downsub.sh stderr: {result.stderr}")
+            
+        logging.info(f"✅ Successfully processed: {specific_file}")
+        
+    except subprocess.CalledProcessError as e:
+        logging.error(f"🚨 downsub.sh failed with exit code {e.returncode}")
+        if e.stdout:
+            logging.error(f"stdout: {e.stdout}")
+        if e.stderr:
+            logging.error(f"stderr: {e.stderr}")
+    except Exception as e:
+        logging.error(f"🚨 Error calling downsub.sh: {e}")
 
 if __name__ == "__main__":
-    main()
+    # Check if a specific file path is provided as a command-line argument
+    if len(sys.argv) > 1:
+        main(specific_file=sys.argv[1])
+    else:
+        logging.error("Usage: python downsub.py <video_file>")
+        sys.exit(1)
