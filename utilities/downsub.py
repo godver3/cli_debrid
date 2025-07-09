@@ -2,16 +2,17 @@
 import os
 import sys
 import logging
-import subprocess
 from pathlib import Path
 
 # Handle both relative and absolute imports
 try:
     from .config.downsub_config import config
+    from .subsource_downloader import SubSourceDownloader
 except ImportError:
     # Add the current directory to the Python path for absolute imports
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from config.downsub_config import config
+    from subsource_downloader import SubSourceDownloader
 
 # Logging configuration
 logging.basicConfig(
@@ -23,9 +24,26 @@ logging.basicConfig(
     ]
 )
 
+# Language mapping from config codes to SubSource language names
+LANGUAGE_MAP = {
+    'ara': 'Arabic',
+    'eng': 'English', 
+    'fre': 'French',
+    'ger': 'German',
+    'spa': 'Spanish',
+    'ita': 'Italian',
+    'por': 'Portuguese',
+    'dut': 'Dutch',
+    'rus': 'Russian',
+    'chi': 'Chinese BG code',
+    'jpn': 'Japanese',
+    'kor': 'Korean',
+    # Add more mappings as needed
+}
+
 def main(specific_file=None):
     """
-    Main function that processes a single video file using downsub.sh.
+    Main function that processes a single video file using SubSource API.
     
     Args:
         specific_file (str, optional): Path to a specific file to process. Required.
@@ -66,38 +84,42 @@ def main(specific_file=None):
         logging.error(f"File is not a valid video file: {specific_file}")
         return
 
-    # Get the path to downsub.sh script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    downsub_sh_path = os.path.join(script_dir, 'downsub.sh')
+    # Initialize SubSource downloader
+    downloader = SubSourceDownloader()
     
-    if not os.path.isfile(downsub_sh_path):
-        logging.error(f"downsub.sh script not found at: {downsub_sh_path}")
-        return
-
-    # Build the command with file and languages
-    cmd = [downsub_sh_path, specific_file] + config.SUBTITLE_LANGUAGES
+    # Download subtitles for each configured language
+    successful_downloads = 0
+    total_duration = 0
     
-    logging.info(f"Calling downsub.sh with: {' '.join(cmd)}")
-    
-    try:
-        # Call the downsub.sh script
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    for lang_code in config.SUBTITLE_LANGUAGES:
+        language_name = LANGUAGE_MAP.get(lang_code, lang_code)
         
-        if result.stdout:
-            logging.info(f"downsub.sh output: {result.stdout}")
-        if result.stderr:
-            logging.warning(f"downsub.sh stderr: {result.stderr}")
+        logging.info(f"Downloading {language_name} ({lang_code}) subtitles...")
+        
+        try:
+            success, subtitle_path, duration = downloader.download_for_video(
+                specific_file, 
+                language=language_name, 
+                language_code=lang_code
+            )
             
+            total_duration += duration
+            
+            if success:
+                successful_downloads += 1
+                logging.info(f"✅ {language_name} subtitle downloaded: {subtitle_path}")
+            else:
+                logging.warning(f"❌ Failed to download {language_name} subtitle")
+                
+        except Exception as e:
+            logging.error(f"🚨 Error downloading {language_name} subtitle: {e}")
+    
+    # Log summary
+    if successful_downloads > 0:
+        logging.info(f"✅ Successfully downloaded {successful_downloads}/{len(config.SUBTITLE_LANGUAGES)} subtitles in {total_duration:.2f} seconds")
         logging.info(f"✅ Successfully processed: {specific_file}")
-        
-    except subprocess.CalledProcessError as e:
-        logging.error(f"🚨 downsub.sh failed with exit code {e.returncode}")
-        if e.stdout:
-            logging.error(f"stdout: {e.stdout}")
-        if e.stderr:
-            logging.error(f"stderr: {e.stderr}")
-    except Exception as e:
-        logging.error(f"🚨 Error calling downsub.sh: {e}")
+    else:
+        logging.error(f"🚨 Failed to download any subtitles for: {specific_file}")
 
 if __name__ == "__main__":
     # Check if a specific file path is provided as a command-line argument
