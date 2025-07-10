@@ -999,7 +999,7 @@ def get_and_add_wanted_content(source_id):
                                     items_filtered_type = []
                                     for item in all_items_meta_processed_batch:
                                         if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                           (source_media_type == 'Shows' and item.get('media_type') == 'tv'):
+                                           (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
                                             items_filtered_type.append(item)
                                         else:
                                             batch_media_type_skipped += 1
@@ -1058,14 +1058,28 @@ def get_and_add_wanted_content(source_id):
                                     logging.debug(f"Batch {source_id}: Skipped {current_batch_cutoff_skipped} items due to cutoff date (pre-DB add)")
                                 
                                 if final_items_for_db_batch:
-                                    # Update cache for items that were initially considered (items_to_process_raw)
-                                    # This matches the original placement of cache updates.
-                                    for item_original in items_to_process_raw: 
-                                        update_cache_for_item(item_original, source_id, source_cache)
-
                                     from database import add_wanted_items
                                     added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config)
                                     batch_total_items_added += added_count or 0
+                                    
+                                    # Update cache for items that actually made it through all filtering
+                                    # Only cache items that were successfully processed and added
+                                    for item_original in items_to_process_raw:
+                                        # Find the corresponding processed item to check if it made it through
+                                        item_title = item_original.get('title', '')
+                                        item_year = item_original.get('year', '')
+                                        item_media_type = item_original.get('media_type', '')
+                                        
+                                        # Check if this item made it through all filtering by looking for it in final_items_for_db_batch
+                                        item_made_it_through = any(
+                                            processed_item.get('title') == item_title and 
+                                            processed_item.get('year') == item_year and
+                                            processed_item.get('media_type') == item_media_type
+                                            for processed_item in final_items_for_db_batch
+                                        )
+                                        
+                                        if item_made_it_through:
+                                            update_cache_for_item(item_original, source_id, source_cache)
 
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
@@ -1114,7 +1128,7 @@ def get_and_add_wanted_content(source_id):
                             items_filtered_type = []
                             for item in all_items_meta_processed_non_batch:
                                 if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                   (source_media_type == 'Shows' and item.get('media_type') == 'tv'):
+                                   (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
                                     items_filtered_type.append(item)
                                 else:
                                     media_type_skipped += 1
@@ -1144,11 +1158,6 @@ def get_and_add_wanted_content(source_id):
                             all_items_meta_processed_non_batch = items_filtered_genre
                             if genre_skipped > 0:
                                 logging.debug(f"{source_id}: Skipped {genre_skipped} items due to excluded genres")
-
-                        # Update cache for all items that passed the initial cache filter (items_to_process_raw)
-                        # This happens before date filtering of the metadata-processed items.
-                        for item_original in items_to_process_raw: # Your line 1074
-                            update_cache_for_item(item_original, source_id, source_cache) # Your line 1075
 
                         # Determine the final list of items to add to the database after date filtering
                         final_items_for_db_non_batch = []
@@ -1183,6 +1192,25 @@ def get_and_add_wanted_content(source_id):
                             from database import add_wanted_items # Already imported at your line 1077
                             added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config) 
                             total_items_added += added_count or 0
+                            
+                            # Update cache for items that actually made it through all filtering
+                            # Only cache items that were successfully processed and added
+                            for item_original in items_to_process_raw:
+                                # Find the corresponding processed item to check if it made it through
+                                item_title = item_original.get('title', '')
+                                item_year = item_original.get('year', '')
+                                item_media_type = item_original.get('media_type', '')
+                                
+                                # Check if this item made it through all filtering by looking for it in final_items_for_db_non_batch
+                                item_made_it_through = any(
+                                    processed_item.get('title') == item_title and 
+                                    processed_item.get('year') == item_year and
+                                    processed_item.get('media_type') == item_media_type
+                                    for processed_item in final_items_for_db_non_batch
+                                )
+                                
+                                if item_made_it_through:
+                                    update_cache_for_item(item_original, source_id, source_cache)
 
             # Save the updated cache
             save_source_cache(source_id, source_cache)
@@ -1268,13 +1296,20 @@ def rescrape_item():
 
         # Handle file deletion based on management type
         if file_management == 'Plex' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
+            # Check if we're in limited environment mode
+            from utilities.set_supervisor_env import is_limited_environment
+            limited_env = is_limited_environment()
+            
             if mounted_location and item.get('location_on_disk'):
-                try:
-                    if os.path.exists(item['location_on_disk']):
-                        os.remove(item['location_on_disk'])
-                        logging.info(f"Rescrape: Deleted file {item['location_on_disk']} for item {item_id} (Plex mode).")
-                except Exception as e:
-                    logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
+                if not limited_env:
+                    try:
+                        if os.path.exists(item['location_on_disk']):
+                            os.remove(item['location_on_disk'])
+                            logging.info(f"Rescrape: Deleted file {item['location_on_disk']} for item {item_id} (Plex mode).")
+                    except Exception as e:
+                        logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
+                else:
+                    logging.info(f"Rescrape: Skipped file deletion for {item['location_on_disk']} due to limited environment mode (Plex mode).")
 
             time.sleep(1) # Allow time for filesystem operations
 
@@ -1290,7 +1325,7 @@ def rescrape_item():
 
         elif file_management == 'Symlinked/Local' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
             symlink_path_for_plex = None
-            # Handle symlink removal
+            # Handle symlink removal - always remove symlinks (they're just pointers)
             if item.get('location_on_disk'):
                 symlink_path_for_plex = item['location_on_disk'] # Store for potential Plex removal path
                 try:
@@ -1300,14 +1335,17 @@ def rescrape_item():
                 except Exception as e:
                     logging.error(f"Error removing symlink at {item['location_on_disk']}: {str(e)}")
 
-            # Handle original file removal
+            # Handle original file removal - only delete original files if not in limited environment mode
             if item.get('original_path_for_symlink'):
-                try:
-                    if os.path.exists(item['original_path_for_symlink']):
-                        os.remove(item['original_path_for_symlink'])
-                        logging.info(f"Rescrape: Deleted original file {item['original_path_for_symlink']} for item {item_id} (Symlinked/Local mode).")
-                except Exception as e:
-                    logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
+                if not limited_env:
+                    try:
+                        if os.path.exists(item['original_path_for_symlink']):
+                            os.remove(item['original_path_for_symlink'])
+                            logging.info(f"Rescrape: Deleted original file {item['original_path_for_symlink']} for item {item_id} (Symlinked/Local mode).")
+                    except Exception as e:
+                        logging.error(f"Error deleting original file at {item['original_path_for_symlink']}: {str(e)}")
+                else:
+                    logging.info(f"Rescrape: Skipped original file deletion for {item['original_path_for_symlink']} due to limited environment mode (Symlinked/Local mode).")
 
             time.sleep(1) # Allow time for filesystem operations
 

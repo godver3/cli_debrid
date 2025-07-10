@@ -785,6 +785,17 @@ function enableTaskMonitor() {
     console.log('[TaskMonitor LOG] Task monitor and toggle buttons re-enabled after connectivity restored');
 }
 
+// Function to close the pause banner
+function closePauseBanner() {
+    const banner = document.getElementById('pauseStatusBanner');
+    if (banner) {
+        banner.classList.add('hidden');
+    }
+}
+
+// Make the function globally available
+window.closePauseBanner = closePauseBanner;
+
 // --- START: Modify DOMContentLoaded Listener ---
 document.addEventListener('DOMContentLoaded', () => {
     console.log("DOMContentLoaded event fired."); // Log when event fires

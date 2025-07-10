@@ -3,7 +3,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session, relationship
 from sqlalchemy.ext.declarative import declarative_base
 from flask import current_app, jsonify
 from datetime import datetime, timezone
-from sqlalchemy import or_, func, cast, String
+from sqlalchemy import or_, func, cast, String, inspect
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.exc import IntegrityError, OperationalError
 from .logger_config import logger
@@ -107,6 +107,9 @@ def init_db():
         else:
             logger.debug("All required tables already exist.")
 
+        # Run migrations for existing tables
+        run_migrations(engine)
+
         return engine
     except OperationalError as oe:
         if "no such table" in str(oe).lower():
@@ -126,6 +129,35 @@ def init_db():
     except Exception as e:
         logger.error(f"Failed to connect to cli_battery database at {connection_string}: {str(e)}")
         engine = None  # Reset engine on failure
+        raise
+
+def run_migrations(engine):
+    """Run database migrations for existing tables."""
+    try:
+        with engine.connect() as conn:
+            # Check if tmdb_to_imdb_mapping table exists and add timestamp columns if needed
+            inspector = inspect(engine)
+            if 'tmdb_to_imdb_mapping' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('tmdb_to_imdb_mapping')]
+                
+                if 'created_at' not in columns:
+                    logger.info("Adding created_at column to tmdb_to_imdb_mapping table...")
+                    conn.execute(text("ALTER TABLE tmdb_to_imdb_mapping ADD COLUMN created_at DATETIME"))
+                    # Set default timestamp for existing records
+                    conn.execute(text("UPDATE tmdb_to_imdb_mapping SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
+                    logger.info("Successfully added created_at column to tmdb_to_imdb_mapping table.")
+                
+                if 'updated_at' not in columns:
+                    logger.info("Adding updated_at column to tmdb_to_imdb_mapping table...")
+                    conn.execute(text("ALTER TABLE tmdb_to_imdb_mapping ADD COLUMN updated_at DATETIME"))
+                    # Set default timestamp for existing records
+                    conn.execute(text("UPDATE tmdb_to_imdb_mapping SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
+                    logger.info("Successfully added updated_at column to tmdb_to_imdb_mapping table.")
+            
+            conn.commit()
+            logger.info("Database migrations completed successfully.")
+    except Exception as e:
+        logger.error(f"Error running database migrations: {str(e)}")
         raise
 
 # Initialize the database engine
@@ -197,6 +229,8 @@ class TMDBToIMDBMapping(Base):
     id = Column(Integer, primary_key=True)
     tmdb_id = Column(String, unique=True, index=True)
     imdb_id = Column(String, unique=True, index=True)
+    created_at = Column(DateTime, default=get_timezone_aware_now)
+    updated_at = Column(DateTime, default=get_timezone_aware_now, onupdate=get_timezone_aware_now)
 
 class TVDBToIMDBMapping(Base):
     __tablename__ = 'tvdb_to_imdb_mapping'

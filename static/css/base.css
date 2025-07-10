@@ -1992,8 +1992,30 @@ body.modal-open {
     font-size: 0.9em;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     border-radius: 8px 8px 0 0; /* Round top corners */
+}
+
+.pause-banner-close {
+    background: none;
+    border: none;
+    font-size: 1.5em;
+    color: #333;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: background-color 0.2s ease;
+    margin-left: 10px;
+}
+
+.pause-banner-close:hover {
+    background-color: rgba(0, 0, 0, 0.1);
 }
 
 .pause-status-banner.hidden {

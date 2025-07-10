@@ -527,31 +527,34 @@ def is_refresh_token_expired() -> bool:
 def ensure_trakt_auth():
     logging.debug("Checking Trakt authentication")
     
-    trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
-    trakt.core.load_config()
+    # Read config directly from file like the battery does
+    trakt_config = get_trakt_config()
     
-    # Manually load the config file if OAUTH_EXPIRES_AT is None
-    if trakt.core.OAUTH_EXPIRES_AT is None:
-        try:
-            with open(trakt.core.CONFIG_PATH, 'r') as config_file:
-                config_data = json.load(config_file)
-                trakt.core.OAUTH_EXPIRES_AT = config_data.get('OAUTH_EXPIRES_AT')
-        except Exception as e:
-            logging.error(f"Error manually loading config: {e}")
+    # Extract tokens from config
+    access_token = trakt_config.get('OAUTH_TOKEN')
+    refresh_token = trakt_config.get('OAUTH_REFRESH')
+    expires_at = trakt_config.get('OAUTH_EXPIRES_AT')
     
-    if trakt.core.OAUTH_TOKEN is None or trakt.core.OAUTH_EXPIRES_AT is None:
+    if not access_token or not expires_at:
         # Check if we have a refresh token available
-        trakt_config = get_trakt_config()
-        if trakt_config.get('OAUTH_REFRESH'):
+        if refresh_token:
             logging.info("Access token missing but refresh token available. Attempting to refresh...")
-            # Try to refresh the token using the trakt library
+            # Try to refresh the token
             try:
+                # Use the trakt library for refresh but read result directly
+                trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
+                trakt.core.load_config()
                 trakt.core._validate_token(trakt.core.CORE)
                 trakt.core.load_config()
                 logging.info("Token refreshed successfully")
-                # Check if we now have a valid token
-                if trakt.core.OAUTH_TOKEN and trakt.core.OAUTH_EXPIRES_AT:
-                    return trakt.core.OAUTH_TOKEN
+                
+                # Re-read config after refresh
+                trakt_config = get_trakt_config()
+                access_token = trakt_config.get('OAUTH_TOKEN')
+                expires_at = trakt_config.get('OAUTH_EXPIRES_AT')
+                
+                if access_token and expires_at:
+                    return access_token
             except Exception as e:
                 logging.warning(f"Failed to refresh token: {e}")
                 # Continue to the error case below
@@ -559,13 +562,10 @@ def ensure_trakt_auth():
         logging.error("Trakt authentication not properly configured")
         return None
     
-    expires_at_ts = _to_timestamp(trakt.core.OAUTH_EXPIRES_AT)
+    expires_at_ts = _to_timestamp(expires_at)
     if not expires_at_ts:
         logging.error("Trakt 'OAUTH_EXPIRES_AT' is missing or invalid.")
         return None
-
-    # This is the key change: ensure the library's variable is a timestamp.
-    trakt.core.OAUTH_EXPIRES_AT = expires_at_ts
 
     # Check if token should be refreshed (expired or nearing expiration)
     if _should_refresh_token(expires_at_ts):
@@ -576,12 +576,17 @@ def ensure_trakt_auth():
             logging.info("Token nearing expiration (within 1 hour), refreshing")
         
         try:
-            # The trakt library should handle the refresh automatically if needed
+            # Use the trakt library for refresh but read result directly
+            trakt.core.CONFIG_PATH = TRAKT_CONFIG_FILE
+            trakt.core.load_config()
             trakt.core._validate_token(trakt.core.CORE)
-            # After validation/refresh, the token details in the file are updated.
-            # We must reload them into memory to prevent a refresh loop.
             trakt.core.load_config()
             logging.debug("Token refreshed successfully and config reloaded.")
+            
+            # Re-read config after refresh
+            trakt_config = get_trakt_config()
+            access_token = trakt_config.get('OAUTH_TOKEN')
+            return access_token
         except Exception as e:
             # Check if this is a refresh token expiration error
             error_str = str(e).lower()
@@ -590,7 +595,6 @@ def ensure_trakt_auth():
                 logging.error(f"Refresh token has expired or is invalid. Manual re-authentication required: {e}")
                 # Clear the expired tokens to force re-authentication
                 try:
-                    trakt_config = get_trakt_config()
                     trakt_config.pop('OAUTH_TOKEN', None)
                     trakt_config.pop('OAUTH_REFRESH', None)
                     trakt_config.pop('OAUTH_EXPIRES_AT', None)
@@ -611,7 +615,7 @@ def ensure_trakt_auth():
     else:
         logging.debug("Token is valid")
     
-    return trakt.core.OAUTH_TOKEN
+    return access_token
 
 def load_trakt_cache(cache_file):
     try:

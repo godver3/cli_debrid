@@ -1671,7 +1671,7 @@ class ProgramRunner:
                                     items_filtered_type = []
                                     for item in all_items:
                                         if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                           (source_media_type == 'Shows' and item.get('media_type') == 'tv'):
+                                           (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
                                             items_filtered_type.append(item)
                                         else:
                                             media_type_skipped += 1
@@ -1702,10 +1702,6 @@ class ProgramRunner:
                                     if batch_genre_skipped > 0:
                                         logging.debug(f"Batch {source}: Skipped {batch_genre_skipped} items due to excluded genres")
                                 
-                                # Update cache for the original items (pre-metadata processing)
-                                for item_raw in items_to_process_raw:
-                                    update_cache_for_item(item_raw, source, source_cache)
-
                                 # Filter by cutoff date after metadata processing
                                 if cutoff_date:
                                     items_filtered_date = []
@@ -1732,6 +1728,26 @@ class ProgramRunner:
                                 from database import add_collected_items, add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
                                 add_wanted_items(all_items, versions_to_inject or versions_dict)
+                                
+                                # Update cache for items that actually made it through all filtering
+                                # Only cache items that were successfully processed and added
+                                for item_raw in items_to_process_raw:
+                                    # Find the corresponding processed item to check if it made it through
+                                    item_title = item_raw.get('title', '')
+                                    item_year = item_raw.get('year', '')
+                                    item_media_type = item_raw.get('media_type', '')
+                                    
+                                    # Check if this item made it through all filtering by looking for it in all_items
+                                    item_made_it_through = any(
+                                        processed_item.get('title') == item_title and 
+                                        processed_item.get('year') == item_year and
+                                        processed_item.get('media_type') == item_media_type
+                                        for processed_item in all_items
+                                    )
+                                    
+                                    if item_made_it_through:
+                                        update_cache_for_item(item_raw, source, source_cache)
+                                
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
                                 genre_skipped += batch_genre_skipped
@@ -1773,7 +1789,7 @@ class ProgramRunner:
                                 items_filtered_type = []
                                 for item in all_items:
                                     if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                       (source_media_type == 'Shows' and item.get('media_type') == 'tv'):
+                                       (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
                                         items_filtered_type.append(item)
                                     else:
                                         media_type_skipped += 1
@@ -1804,10 +1820,6 @@ class ProgramRunner:
                                 if genre_skipped > 0:
                                     logging.debug(f"{source}: Skipped {genre_skipped} items due to excluded genres")
                             
-                            # Update cache for the original items (pre-metadata processing)
-                            for item_raw in items_to_process_raw:
-                                update_cache_for_item(item_raw, source, source_cache)
-
                             # Filter by cutoff date after metadata processing
                             if cutoff_date:
                                 items_filtered_date = []
@@ -1834,6 +1846,26 @@ class ProgramRunner:
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
                             add_wanted_items(all_items, versions_dict)
+                            
+                            # Update cache for items that actually made it through all filtering
+                            # Only cache items that were successfully processed and added
+                            for item_raw in items_to_process_raw:
+                                # Find the corresponding processed item to check if it made it through
+                                item_title = item_raw.get('title', '')
+                                item_year = item_raw.get('year', '')
+                                item_media_type = item_raw.get('media_type', '')
+                                
+                                # Check if this item made it through all filtering by looking for it in all_items
+                                item_made_it_through = any(
+                                    processed_item.get('title') == item_title and 
+                                    processed_item.get('year') == item_year and
+                                    processed_item.get('media_type') == item_media_type
+                                    for processed_item in all_items
+                                )
+                                
+                                if item_made_it_through:
+                                    update_cache_for_item(item_raw, source, source_cache)
+                            
                             total_items += len(all_items)
                             items_processed += len(items_to_process)
                 

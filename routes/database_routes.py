@@ -1077,14 +1077,21 @@ def delete_item():
         symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
 
         if item['state'] == 'Collected' or item['state'] == 'Upgrading':
+            # Check if we're in limited environment mode
+            from utilities.set_supervisor_env import is_limited_environment
+            limited_env = is_limited_environment()
+            
             if file_management == 'Plex':
                 if mounted_location and item.get('location_on_disk'):
-                    try:
-                        if os.path.exists(item['location_on_disk']):
-                            os.remove(item['location_on_disk'])
-                            logging.info(f"Delete item: Removed file from disk {item['location_on_disk']} (Plex mode).")
-                    except Exception as e:
-                        logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
+                    if not limited_env:
+                        try:
+                            if os.path.exists(item['location_on_disk']):
+                                os.remove(item['location_on_disk'])
+                                logging.info(f"Delete item: Removed file from disk {item['location_on_disk']} (Plex mode).")
+                        except Exception as e:
+                            logging.error(f"Error deleting file at {item['location_on_disk']}: {str(e)}")
+                    else:
+                        logging.info(f"Delete item: Skipped file deletion for {item['location_on_disk']} due to limited environment mode (Plex mode).")
 
                 # Allow time for file system operations to complete
                 sleep(1)
@@ -1109,6 +1116,7 @@ def delete_item():
                 path_for_plex_api_call = None
                 if symlink_path_to_remove_disk:
                     path_for_plex_api_call = symlink_path_to_remove_disk
+                    # Always remove symlinks (they're just pointers)
                     try:
                         if os.path.exists(symlink_path_to_remove_disk) and os.path.islink(symlink_path_to_remove_disk):
                             os.unlink(symlink_path_to_remove_disk)
@@ -1119,12 +1127,16 @@ def delete_item():
                 if original_file_path_to_remove_disk:
                     if not path_for_plex_api_call: # Fallback if symlink path wasn't set
                         path_for_plex_api_call = original_file_path_to_remove_disk
-                    try:
-                        if os.path.exists(original_file_path_to_remove_disk):
-                            os.remove(original_file_path_to_remove_disk)
-                            logging.info(f"Delete item: Removed original file {original_file_path_to_remove_disk} (Symlinked/Local mode).")
-                    except Exception as e:
-                        logging.error(f"Error deleting original file at {original_file_path_to_remove_disk}: {str(e)}")
+                    # Only delete original files if not in limited environment mode
+                    if not limited_env:
+                        try:
+                            if os.path.exists(original_file_path_to_remove_disk):
+                                os.remove(original_file_path_to_remove_disk)
+                                logging.info(f"Delete item: Removed original file {original_file_path_to_remove_disk} (Symlinked/Local mode).")
+                        except Exception as e:
+                            logging.error(f"Error deleting original file at {original_file_path_to_remove_disk}: {str(e)}")
+                    else:
+                        logging.info(f"Delete item: Skipped original file deletion for {original_file_path_to_remove_disk} due to limited environment mode (Symlinked/Local mode).")
 
                 # Allow time for file system operations to complete
                 sleep(1)
