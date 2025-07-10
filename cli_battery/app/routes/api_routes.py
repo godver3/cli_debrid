@@ -95,6 +95,30 @@ def tmdb_to_imdb(tmdb_id):
         logger.error(f"Error in tmdb_to_imdb conversion: {str(e)}", exc_info=True)
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
+@api_bp.route('/api/tmdb_to_imdb/<tmdb_id>/force_refresh', methods=['POST'])
+def force_refresh_tmdb_mapping(tmdb_id):
+    """Force refresh a TMDB to IMDB mapping, regardless of staleness."""
+    try:
+        from flask import request
+        media_type = request.json.get('media_type') if request.is_json else None
+        
+        logger.info(f"Force refreshing TMDB mapping for {tmdb_id} (media_type: {media_type})")
+        imdb_id, source = MetadataManager.force_refresh_tmdb_mapping(tmdb_id, media_type=media_type)
+        
+        if imdb_id:
+            logger.info(f"Successfully force refreshed TMDB ID {tmdb_id} to IMDB ID {imdb_id} (source: {source})")
+            return jsonify({
+                "imdb_id": imdb_id,
+                "source": source,
+                "message": "Mapping force refreshed successfully"
+            })
+        else:
+            logger.warning(f"No IMDB ID found for TMDB ID: {tmdb_id} after force refresh")
+            return jsonify({"error": f"No IMDB ID found for TMDB ID: {tmdb_id}"}), 404
+    except Exception as e:
+        logger.error(f"Error in force_refresh_tmdb_mapping for {tmdb_id}: {str(e)}", exc_info=True)
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
+
 @api_bp.route('/api/debug/delete_all_items', methods=['POST'])
 def delete_all_items():
     try:

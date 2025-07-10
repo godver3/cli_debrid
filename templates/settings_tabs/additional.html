@@ -700,12 +700,13 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Enable automatic subtitle downloading for media files using 'downsub'. Requires Symlink File Management.</p>
+            <p class="settings-description">Enable automatic subtitle downloading for media files using 'Subsource'. Requires Symlink File Management.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
         <!-- only_current_file, apply_to_* settings removed as downsub now processes single files only -->
 
+        <!-- OpenSubtitles settings removed
         <div class="settings-form-group">
             <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>
             <input type="text" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
@@ -723,6 +724,7 @@
                    data-section="Subtitle Settings" data-key="opensubtitles_password">
             <p class="settings-description">OpenSubtitles password for subtitle downloads</p>
         </div>
+        OpenSubtitles settings removed -->
 
         <div class="settings-form-group">
             <label for="additional-subtitle_languages" class="settings-title">Subtitle Languages:</label>

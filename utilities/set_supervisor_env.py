@@ -3,6 +3,11 @@ import os
 import subprocess
 import time
 
+def is_limited_environment():
+    """Check if we're running in limited environment mode"""
+    env_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+    return env_mode != 'full'
+
 def load_config():
     # Check environment mode first
     env_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')

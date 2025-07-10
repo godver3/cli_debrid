@@ -157,6 +157,47 @@ class MetadataManager:
         return is_stale
 
     @staticmethod
+    def is_tmdb_mapping_stale(last_updated):
+        """
+        Check if a TMDB to IMDB mapping is stale and should be refreshed.
+        Uses a longer threshold than regular metadata since ID mappings change less frequently.
+        """
+        from metadata.metadata import _get_local_timezone
+
+        if last_updated is None:
+            logger.debug("TMDB mapping has no last_updated timestamp, considering stale")
+            return True
+        
+        # Convert last_updated to UTC if it's not already
+        if last_updated.tzinfo is None or last_updated.tzinfo.utcoffset(last_updated) is None:
+            last_updated = last_updated.replace(tzinfo=_get_local_timezone())
+
+        now = datetime.now(_get_local_timezone())
+        
+        # Use a longer threshold for ID mappings (30 days base + variation)
+        # ID mappings change less frequently than metadata, so we can cache them longer
+        base_threshold = 30  # days
+        day_variation = random.choice([-7, -3, 0, 3, 7])
+        hour_variation = random.randint(-24, 24)
+        
+        adjusted_threshold = max(base_threshold + day_variation, 7)  # Minimum 7 days
+        
+        stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
+        age = now - last_updated
+        is_stale = age > stale_threshold
+
+        if is_stale:
+            logger.debug(
+                f"TMDB mapping staleness check: last_updated={last_updated.isoformat()}, "
+                f"age={age.days}d {age.seconds//3600}h, "
+                f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
+                f"(base={base_threshold}d, variation={day_variation}d {hour_variation}h) "
+                f"-> stale"
+            )
+                
+        return is_stale
+
+    @staticmethod
     def debug_find_item(imdb_id):
         with DbSession() as session:
             items = session.query(Item).filter(
@@ -1219,14 +1260,27 @@ class MetadataManager:
             if session: # Use provided session
                 cached_mapping = session_context.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
                 if cached_mapping:
-                    return cached_mapping.imdb_id, 'battery'
+                    # Check if the cached mapping is stale
+                    is_stale = MetadataManager.is_tmdb_mapping_stale(cached_mapping.updated_at)
+                    logger.debug(f"TMDB mapping for {tmdb_id}: cached={cached_mapping.imdb_id}, stale={is_stale}, last_updated={cached_mapping.updated_at}")
+                    
+                    if is_stale:
+                        logger.info(f"TMDB mapping for {tmdb_id} is stale, refreshing from Trakt")
+                        # Delete stale mapping and fetch fresh data
+                        session_context.delete(cached_mapping)
+                        session_context.flush()
+                    else:
+                        logger.debug(f"Using cached TMDB mapping for {tmdb_id}: {cached_mapping.imdb_id}")
+                        return cached_mapping.imdb_id, 'battery'
 
+                logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt")
                 trakt = TraktMetadata()
                 imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
 
                 if imdb_id:
                     new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
                     session_context.add(new_mapping)
+                    logger.info(f"Stored new TMDB mapping: {tmdb_id} -> {imdb_id}")
                     # ** NO COMMIT HERE **
                 else:
                     logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
@@ -1235,8 +1289,20 @@ class MetadataManager:
                  with session_context as local_session:
                     cached_mapping = local_session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
                     if cached_mapping:
-                        return cached_mapping.imdb_id, 'battery'
+                        # Check if the cached mapping is stale
+                        is_stale = MetadataManager.is_tmdb_mapping_stale(cached_mapping.updated_at)
+                        logger.debug(f"TMDB mapping for {tmdb_id}: cached={cached_mapping.imdb_id}, stale={is_stale}, last_updated={cached_mapping.updated_at}")
+                        
+                        if is_stale:
+                            logger.info(f"TMDB mapping for {tmdb_id} is stale, refreshing from Trakt")
+                            # Delete stale mapping and fetch fresh data
+                            local_session.delete(cached_mapping)
+                            local_session.flush()
+                        else:
+                            logger.debug(f"Using cached TMDB mapping for {tmdb_id}: {cached_mapping.imdb_id}")
+                            return cached_mapping.imdb_id, 'battery'
 
+                    logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt")
                     trakt = TraktMetadata()
                     imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
 
@@ -1244,6 +1310,7 @@ class MetadataManager:
                         new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
                         local_session.add(new_mapping)
                         local_session.commit() # Commit local transaction
+                        logger.info(f"Stored new TMDB mapping: {tmdb_id} -> {imdb_id}")
                     else:
                         logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
                     return imdb_id, source
@@ -2338,3 +2405,61 @@ class MetadataManager:
         else:
             logger.warning(f"No suitable match candidate identified after scoring for '{original_query_title}' ({query_year}).")
             return None
+
+    @staticmethod
+    def force_refresh_tmdb_mapping(tmdb_id: str, media_type: str = None, session: Optional[SqlAlchemySession] = None) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Force refresh a TMDB to IMDB mapping, regardless of staleness.
+        Useful for manually correcting incorrect mappings.
+        
+        Args:
+            tmdb_id: The TMDB ID to refresh
+            media_type: The media type ('movie' or 'show')
+            session: Optional database session
+            
+        Returns:
+            Tuple of (imdb_id, source) or (None, None) if failed
+        """
+        session_context = session if session else DbSession()
+        try:
+            if session: # Use provided session
+                # Delete existing mapping if it exists
+                existing_mapping = session_context.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                if existing_mapping:
+                    logger.info(f"Deleting existing TMDB mapping for {tmdb_id} to force refresh")
+                    session_context.delete(existing_mapping)
+                    session_context.flush()
+
+                trakt = TraktMetadata()
+                imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+
+                if imdb_id:
+                    new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
+                    session_context.add(new_mapping)
+                    # ** NO COMMIT HERE **
+                else:
+                    logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
+                return imdb_id, source
+            else: # Create local session
+                 with session_context as local_session:
+                    # Delete existing mapping if it exists
+                    existing_mapping = local_session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                    if existing_mapping:
+                        logger.info(f"Deleting existing TMDB mapping for {tmdb_id} to force refresh")
+                        local_session.delete(existing_mapping)
+                        local_session.flush()
+
+                    trakt = TraktMetadata()
+                    imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+
+                    if imdb_id:
+                        new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id)
+                        local_session.add(new_mapping)
+                        local_session.commit() # Commit local transaction
+                    else:
+                        logger.warning(f"No IMDB ID found for TMDB ID {tmdb_id} with type {media_type}")
+                    return imdb_id, source
+        except Exception as e:
+            logger.error(f"Error in force_refresh_tmdb_mapping for {tmdb_id}: {e}", exc_info=True)
+            if session: raise
+            return None, None
