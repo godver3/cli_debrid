@@ -1294,12 +1294,12 @@ def rescrape_item():
         # original_files_path = get_setting('File Management', 'original_files_path', '') # Not directly used in this logic block
         # symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '') # Not directly used
 
+        # Check if we're in limited environment mode
+        from utilities.set_supervisor_env import is_limited_environment
+        limited_env = is_limited_environment()
+        
         # Handle file deletion based on management type
         if file_management == 'Plex' and (item['state'] == 'Collected' or item['state'] == 'Upgrading'):
-            # Check if we're in limited environment mode
-            from utilities.set_supervisor_env import is_limited_environment
-            limited_env = is_limited_environment()
-            
             if mounted_location and item.get('location_on_disk'):
                 if not limited_env:
                     try:

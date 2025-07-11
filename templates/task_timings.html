@@ -284,38 +284,6 @@
         white-space: nowrap;
     }
 
-    .reset-notification-banner {
-        background-color: #ffc107; /* Warning yellow */
-        color: #333; /* Dark text for contrast */
-        padding: 1rem;
-        margin-bottom: 1.5rem;
-        border-radius: 10px;
-        border: 1px solid #e0a800;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .reset-notification-banner p {
-        margin: 0;
-        flex-grow: 1;
-        padding-right: 1rem; /* Space between text and button */
-    }
-
-    .reset-notification-banner .dismiss-btn {
-        background: none;
-        border: none;
-        color: #333;
-        font-size: 1.2rem;
-        cursor: pointer;
-        padding: 0.25rem 0.5rem;
-        line-height: 1;
-    }
-
-    .reset-notification-banner .dismiss-btn:hover {
-        color: #000;
-    }
-
     .task-tile .interval-details {
         margin-top: 0.5rem;
         margin-bottom: 1rem; /* Space before countdown */
@@ -380,14 +348,6 @@
 {% block content %}
 <div id="taskTimingsContainer">
 
-    <!-- Reset Notification Banner -->
-    <div id="resetNotification" class="reset-notification-banner" style="display: none;"> <!-- Initially hidden -->
-        <p>
-            <i class="fas fa-exclamation-triangle"></i> <strong>Notice:</strong> As part of the update to version 0.6.34, all task toggles have been reset to their default states. Please review and save your preferred toggle settings. Saved intervals apply on program restart unless live updates are successful.</p>
-        <button class="dismiss-btn" onclick="dismissResetNotification()">&times;</button>
-    </div>
-    <!-- End Reset Notification Banner -->
-
     <div class="info-banner">
         <p><i class="fas fa-info-circle"></i> Task timings and intervals are displayed based on the running program. Customize intervals using the input fields (in seconds) and save your preferences. Saved intervals apply on program restart unless live updates are successful.</p>
     </div>
@@ -440,8 +400,6 @@ import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 window.showPopup = showPopup;
 window.POPUP_TYPES = POPUP_TYPES;
 
-const RESET_NOTIFICATION_KEY = 'taskToggleResetDismissed_0.6.34'; // Version specific key
-
 // --- START NEW VARS ---
 let programStatusPollIntervalId = null;
 let isProgramConsideredRunning = false; // Tracks the page's belief of the program state
@@ -452,42 +410,8 @@ const REGULAR_UPDATE_INTERVAL = 60000; // 60 seconds for regular task updates
 // Track any in-flight toggle enable/disable requests so Save can wait for them.
 const pendingToggleRequests = [];
 
-// Function to dismiss the reset notification
-window.dismissResetNotification = function() {
-    console.log('[TaskTimings] dismissResetNotification called');
-    const banner = document.getElementById('resetNotification');
-    if (banner) {
-        banner.style.display = 'none';
-    }
-    try {
-        localStorage.setItem(RESET_NOTIFICATION_KEY, 'true');
-        console.log('[TaskTimings] Reset notification dismissal saved to localStorage.');
-    } catch (e) {
-        console.warn("[TaskTimings] Could not save notification dismissal state to localStorage:", e);
-    }
-}
-
 document.addEventListener('DOMContentLoaded', function() {
     console.log('[TaskTimings] DOMContentLoaded event fired.');
-    // Check if the reset notification should be shown
-    try {
-        if (localStorage.getItem(RESET_NOTIFICATION_KEY) !== 'true') {
-            const banner = document.getElementById('resetNotification');
-            if (banner) {
-                banner.style.display = 'flex'; // Show the banner
-                console.log('[TaskTimings] Reset notification banner displayed.');
-            }
-        } else {
-            console.log('[TaskTimings] Reset notification previously dismissed.');
-        }
-    } catch (e) {
-        console.warn("[TaskTimings] Could not check notification dismissal state from localStorage:", e);
-        const banner = document.getElementById('resetNotification');
-        if (banner) {
-            banner.style.display = 'flex';
-            console.warn('[TaskTimings] Displaying reset notification due to localStorage error.');
-        }
-    }
 
     // Tab switching
     const tabs = document.querySelectorAll('.tab');
