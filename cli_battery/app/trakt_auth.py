@@ -46,10 +46,21 @@ class TraktAuth:
         
         # If file loading failed, try settings as fallback
         if not self.access_token:
-            self.access_token = self.settings.Trakt['access_token']
-            self.refresh_token = self.settings.Trakt['refresh_token']
-            self.expires_at = self.settings.Trakt['expires_at']
-            self.last_refresh = self.settings.Trakt.get('last_refresh')
+            # Try to get Trakt settings from the battery's own settings.json file
+            trakt_settings = self.settings.get_trakt_settings_from_file()
+            if trakt_settings:
+                self.access_token = trakt_settings.get('access_token')
+                self.refresh_token = trakt_settings.get('refresh_token')
+                self.expires_at = trakt_settings.get('expires_at')
+                self.last_refresh = trakt_settings.get('last_refresh')
+                logger.debug("Loaded Trakt auth from battery settings.json")
+            else:
+                # Fall back to main config (for backward compatibility)
+                self.access_token = self.settings.Trakt['access_token']
+                self.refresh_token = self.settings.Trakt['refresh_token']
+                self.expires_at = self.settings.Trakt['expires_at']
+                self.last_refresh = self.settings.Trakt.get('last_refresh')
+                logger.debug("Loaded Trakt auth from main config")
 
     def load_from_pytrakt(self):
         if os.path.exists(self.pytrakt_file):
@@ -65,14 +76,19 @@ class TraktAuth:
             self.expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
             self.last_refresh = pytrakt_data.get('LAST_REFRESH')
             
-            # Update settings with the loaded data for consistency
+            # Update battery's settings.json with the loaded data for consistency
             # Only update if we actually have valid data
             if self.access_token and self.refresh_token:
-                self.settings.Trakt['access_token'] = self.access_token
-                self.settings.Trakt['refresh_token'] = self.refresh_token
-                self.settings.Trakt['expires_at'] = self.expires_at
-                self.settings.Trakt['last_refresh'] = self.last_refresh
-                self.settings.save_settings()
+                trakt_settings = {
+                    'client_id': self.client_id,
+                    'client_secret': self.client_secret,
+                    'access_token': self.access_token,
+                    'refresh_token': self.refresh_token,
+                    'expires_at': self.expires_at,
+                    'last_refresh': self.last_refresh,
+                    'redirect_uri': self.redirect_uri
+                }
+                self.settings.update_trakt_settings(trakt_settings)
                 logger.debug("Synced .pytrakt.json data to settings.json")
             
         else:
@@ -85,11 +101,6 @@ class TraktAuth:
 
     def save_token_data(self, token_data):
         now = datetime.now(timezone.utc)
-        self.settings.Trakt['access_token'] = token_data['access_token']
-        self.settings.Trakt['refresh_token'] = token_data['refresh_token']
-        self.settings.Trakt['expires_at'] = int((now + timedelta(seconds=token_data['expires_in'])).timestamp())
-        self.settings.Trakt['last_refresh'] = now.isoformat()
-        logger.debug(f"Saving token data - Last Refresh: {now.isoformat()}")
         
         # Update instance variables first
         self.access_token = token_data['access_token']
@@ -97,9 +108,22 @@ class TraktAuth:
         self.expires_at = int((now + timedelta(seconds=token_data['expires_in'])).timestamp())
         self.last_refresh = now.isoformat()
         
-        # Save to both locations
-        self.settings.save_settings()
-        self.save_trakt_credentials()  # Save to .pytrakt.json file
+        logger.debug(f"Saving token data - Last Refresh: {now.isoformat()}")
+        
+        # Save to .pytrakt.json file
+        self.save_trakt_credentials()
+        
+        # Save to battery's settings.json using the new method
+        trakt_settings = {
+            'client_id': self.client_id,
+            'client_secret': self.client_secret,
+            'access_token': self.access_token,
+            'refresh_token': self.refresh_token,
+            'expires_at': self.expires_at,
+            'last_refresh': self.last_refresh,
+            'redirect_uri': self.redirect_uri
+        }
+        self.settings.update_trakt_settings(trakt_settings)
 
     def is_authenticated(self):
         """Check if authenticated - always fresh from file"""
@@ -311,18 +335,27 @@ class TraktAuth:
                 
                 pytrakt_token = pytrakt_data.get('OAUTH_TOKEN')
                 pytrakt_refresh = pytrakt_data.get('OAUTH_REFRESH')
-                settings_token = self.settings.Trakt.get('access_token')
-                settings_refresh = self.settings.Trakt.get('refresh_token')
                 
-                # If .pytrakt.json has tokens but settings.json doesn't, sync them
+                # Get current settings from battery's settings.json
+                battery_trakt_settings = self.settings.get_trakt_settings_from_file()
+                settings_token = battery_trakt_settings.get('access_token')
+                settings_refresh = battery_trakt_settings.get('refresh_token')
+                
+                # If .pytrakt.json has tokens but battery settings.json doesn't, sync them
                 if pytrakt_token and pytrakt_refresh and (not settings_token or not settings_refresh):
-                    logger.info("Detected mismatch between .pytrakt.json and settings.json, syncing...")
-                    self.settings.Trakt['access_token'] = pytrakt_token
-                    self.settings.Trakt['refresh_token'] = pytrakt_refresh
-                    self.settings.Trakt['expires_at'] = pytrakt_data.get('OAUTH_EXPIRES_AT')
-                    self.settings.Trakt['last_refresh'] = pytrakt_data.get('LAST_REFRESH')
-                    self.settings.save_settings()
-                    logger.info("Successfully synced .pytrakt.json to settings.json")
+                    logger.info("Detected mismatch between .pytrakt.json and battery settings.json, syncing...")
+                    
+                    trakt_settings = {
+                        'client_id': self.client_id,
+                        'client_secret': self.client_secret,
+                        'access_token': pytrakt_token,
+                        'refresh_token': pytrakt_refresh,
+                        'expires_at': pytrakt_data.get('OAUTH_EXPIRES_AT'),
+                        'last_refresh': pytrakt_data.get('LAST_REFRESH'),
+                        'redirect_uri': self.redirect_uri
+                    }
+                    self.settings.update_trakt_settings(trakt_settings)
+                    logger.info("Successfully synced .pytrakt.json to battery settings.json")
                     
                     # Update instance variables
                     self.access_token = pytrakt_token

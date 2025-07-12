@@ -83,13 +83,13 @@ def trakt_auth_status():
             # TODO: - Purge and reload Trakt auth
 
             # Push the new auth data to the battery
-            push_result = push_trakt_auth_to_battery()
-            if push_result.status_code != 200:
-                logging.warning(f"Failed to push Trakt auth to battery: {push_result.json().get('message')}")
+            success, message = push_trakt_auth_to_battery_core()
+            if not success:
+                logging.warning(f"Failed to push Trakt auth to battery: {message}")
 
             return jsonify({
                 'status': 'authorized', 
-                'battery_push_status': 'success' if push_result.status_code == 200 else 'failed'
+                'battery_push_status': 'success' if success else 'failed'
             })
         elif response.status_code == 400:
             return jsonify({'status': 'pending'})

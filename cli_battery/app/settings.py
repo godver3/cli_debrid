@@ -59,6 +59,64 @@ class Settings:
             'redirect_uri': 'urn:ietf:wg:oauth:2.0:oob'
         }
 
+    def get_trakt_settings_from_file(self):
+        """Read Trakt settings from the battery's own settings.json file"""
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    if os.fstat(f.fileno()).st_size > 0:
+                        f.seek(0)
+                        config = json.load(f)
+                        return config.get('Trakt', {})
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Error reading Trakt settings from battery settings.json: {e}")
+        return {}
+
+    def update_trakt_settings(self, trakt_data):
+        """Update Trakt settings in the battery's settings.json file"""
+        # Load current settings
+        config = {}
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r') as f:
+                    if os.fstat(f.fileno()).st_size > 0:
+                        f.seek(0)
+                        config = json.load(f)
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Error loading settings for Trakt update: {e}")
+        
+        # Update Trakt section
+        if 'Trakt' not in config:
+            config['Trakt'] = {}
+        
+        config['Trakt'].update(trakt_data)
+        
+        # Save updated config
+        try:
+            config_dir = os.path.dirname(self.config_file)
+            os.makedirs(config_dir, exist_ok=True)
+            
+            # Backup current file
+            if os.path.exists(self.config_file):
+                try:
+                    shutil.copy2(self.config_file, self.backup_file)
+                except Exception as backup_err:
+                    logger.warning(f"Failed to create backup: {backup_err}")
+            
+            # Atomic write
+            temp_path = None
+            with tempfile.NamedTemporaryFile('w', dir=config_dir, delete=False) as temp_f:
+                json.dump(config, temp_f, indent=4)
+                temp_path = temp_f.name
+            os.replace(temp_path, self.config_file)
+            logger.debug(f"Trakt settings updated in {self.config_file}")
+            
+        except Exception as e:
+            logger.error(f"Error saving Trakt settings: {e}")
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+            raise
+
     def invalidate_trakt_cache(self):
         # No longer needed since we always read fresh data
         # This method is kept for backward compatibility
