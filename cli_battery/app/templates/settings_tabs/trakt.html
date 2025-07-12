@@ -12,12 +12,13 @@
             <input type="password" id="trakt_client_secret" name="Trakt[client_secret]" class="settings-input" value="{{ settings.Trakt.client_secret }}">
         </div>
         <div class="settings-form-group">
-            <button type="button" id="authorizeTraktButton" class="btn btn-primary">Authorize Trakt</button>
-            <p id="traktAuthStatus" class="settings-description"></p>
+            <p id="traktAuthStatus" class="settings-description">Checking Trakt authorization status...</p>
         </div>
-        <div id="traktAuthInstructions" style="display: none;">
-            <p>Please go to <a id="traktVerificationUrl" target="_blank" rel="noopener noreferrer">this URL</a> and enter the following code:</p>
-            <p><strong id="traktUserCode"></strong></p>
+        <div class="settings-form-group">
+            <p class="settings-description">
+                <strong>Note:</strong> Trakt authentication is handled by the main CLI Debrid application. 
+                The battery component receives authentication data from the main app automatically.
+            </p>
         </div>
     </div>
 </div>
@@ -25,11 +26,6 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const authStatus = document.getElementById('traktAuthStatus');
-    const authorizeButton = document.getElementById('authorizeTraktButton');
-    const authInstructions = document.getElementById('traktAuthInstructions');
-    const verificationUrl = document.getElementById('traktVerificationUrl');
-    const userCode = document.getElementById('traktUserCode');
-
     const clientIdInput = document.getElementById('trakt_client_id');
     const clientSecretInput = document.getElementById('trakt_client_secret');
 
@@ -40,69 +36,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.status === 'authorized') {
                     authStatus.textContent = 'Trakt is authorized.';
                     authStatus.style.color = 'green';
-                    authorizeButton.textContent = 'Reauthorize Trakt';
                 } else {
-                    authStatus.textContent = 'Trakt is not authorized.';
+                    authStatus.textContent = 'Trakt is not authorized. Please authorize Trakt in the main CLI Debrid application.';
                     authStatus.style.color = 'red';
-                    authorizeButton.textContent = 'Authorize Trakt';
-                }
-            });
-    }
-
-    checkTraktAuth();
-
-    authorizeButton.addEventListener('click', function() {
-        fetch('/trakt_auth', { 
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        })
-            .then(response => response.json())
-            .then(data => {
-                if (data.user_code && data.verification_url) {
-                    verificationUrl.href = data.verification_url;
-                    userCode.textContent = data.user_code;
-                    authInstructions.style.display = 'block';
-                    authStatus.textContent = 'Please complete the authorization process.';
-                    
-                    // Start polling for auth status
-                    pollAuthStatus();
-                } else {
-                    authStatus.textContent = 'Failed to start authorization process.';
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                authStatus.textContent = 'Error initiating Trakt authorization.';
+                authStatus.textContent = 'Error checking Trakt authorization status.';
+                authStatus.style.color = 'red';
             });
-    });
-
-    function pollAuthStatus() {
-        const pollInterval = setInterval(() => {
-            fetch('/trakt_auth_status', { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'authorized') {
-                        clearInterval(pollInterval);
-                        authStatus.textContent = 'Trakt successfully authorized!';
-                        authStatus.style.color = 'green';
-                        authInstructions.style.display = 'none';
-                        checkTraktAuth(); // Update button text
-                    } else if (data.status === 'error') {
-                        clearInterval(pollInterval);
-                        authStatus.textContent = 'Error during authorization: ' + data.message;
-                        authStatus.style.color = 'red';
-                    }
-                    // If status is 'pending', continue polling
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    clearInterval(pollInterval);
-                    authStatus.textContent = 'Error checking authorization status.';
-                });
-        }, 5000); // Poll every 5 seconds
     }
+
+    checkTraktAuth();
 
     function autoSaveField(field) {
         field.addEventListener('input', debounce(function() {
