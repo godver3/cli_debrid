@@ -3,6 +3,7 @@
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
+
 <button id="add-notification-btn" class="add-source-link">Add New Notification</button>
 
 {% if notification_settings %}
@@ -12,7 +13,10 @@
             <div class="settings-section-header">
                 <span class="settings-toggle-icon">+</span>
                 <h4>{{ config.title }}_{{ notification_id.split('_')[-1] }}</h4>
-                <button type="button" class="delete-notification-btn" data-notification-id="{{ notification_id }}">Delete Notification</button>
+                <div class="notification-buttons">
+                    <button type="button" class="test-notification-btn" data-notification-id="{{ notification_id }}">Test Notification</button>
+                    <button type="button" class="delete-notification-btn" data-notification-id="{{ notification_id }}">Delete Notification</button>
+                </div>
             </div>
             <div class="settings-section-content" style="display: none;">
                 {% for key, value in config.items() %}
@@ -21,7 +25,7 @@
                             <div class="settings-form-group">
                                 <label class="settings-title">Notify On:</label>
                                 <div class="notification-categories">
-                                    {% set allowed_categories = ['checking', 'sleeping', 'collected', 'upgrading'] %}
+                                    {% set allowed_categories = ['collected', 'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading', 'program_stop', 'program_crash', 'program_start', 'program_pause', 'program_resume', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop'] %}
                                     {% for category, enabled in value.items() %}
                                         {% if category.lower() in allowed_categories %}
                                             <div class="notification-category">
@@ -53,7 +57,9 @@
                                         {{ key|replace('_', ' ')|title }}
                                     </label>
                                 {% else %}
-                                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">
+                                        {{ key|replace('_', ' ')|title }}{% if key in ['smtp_username', 'smtp_password'] %} (Optional){% endif %}:
+                                    </label>
                                     <input type="{% if 'password' in key %}password{% else %}text{% endif %}" 
                                            id="notifications-{{ notification_id }}-{{ key }}" 
                                            name="Notifications.{{ notification_id }}.{{ key }}" 
@@ -76,6 +82,28 @@
 {% else %}
     <p>No Notifications configured.</p>
 {% endif %}
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <span class="settings-toggle-icon">+</span>
+        <h4>General Notification Options</h4>
+    </div>
+    <div class="settings-section-content" style="display: none;">
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox"
+                       name="Debug.truncate_episode_notifications"
+                       data-section="Debug"
+                       data-key="truncate_episode_notifications"
+                       {% if settings.Debug.truncate_episode_notifications %}checked{% endif %}>
+                Truncate Episode Notifications
+            </label>
+            {% if settings_schema['Debug'] and settings_schema['Debug']['truncate_episode_notifications'] and settings_schema['Debug']['truncate_episode_notifications'].description %}
+            <p class="settings-description">{{ settings_schema['Debug']['truncate_episode_notifications'].description }}</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
 
 <style>
 .notification-categories {
@@ -102,6 +130,44 @@
 .notification-category input[type="checkbox"] {
     margin: 0;
 }
+
+.notification-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.test-notification-btn {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.test-notification-btn:hover {
+    background-color: #45a049;
+}
+
+.delete-notification-btn {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.delete-notification-btn:hover {
+    background-color: #d32f2f;
+}
+
+@media (max-width: 600px) {
+    .test-notification-btn,
+    .delete-notification-btn {
+        padding: 3px 4px; /* Reduced padding for smaller screens */
+    }
+}
 </style>
 
 <script>
@@ -121,6 +187,12 @@ function initializeNotificationsFunctionality() {
         button.removeEventListener('click', deleteNotificationHandler);
         button.addEventListener('click', deleteNotificationHandler);
     });
+    
+    document.querySelectorAll('.test-notification-btn').forEach(button => {
+        // Remove existing listeners before adding new ones
+        button.removeEventListener('click', testNotificationHandler);
+        button.addEventListener('click', testNotificationHandler);
+    });
 }
 
 // Separate handler function for add button
@@ -134,6 +206,65 @@ function deleteNotificationHandler(e) {
     e.stopPropagation();
     const notificationId = this.getAttribute('data-notification-id');
     deleteNotification(notificationId);
+}
+
+// Handler function for test notification button
+function testNotificationHandler(e) {
+    e.stopPropagation();
+    const notificationId = this.getAttribute('data-notification-id');
+    testNotification(notificationId);
+}
+
+function testNotification(notificationId) {
+    // Disable the button and show loading state
+    const button = document.querySelector(`.test-notification-btn[data-notification-id="${notificationId}"]`);
+    const originalText = button.textContent;
+    button.textContent = 'Sending...';
+    button.disabled = true;
+    
+    fetch('/settings/notifications/test', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notification_id: notificationId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Reset button state
+        button.textContent = originalText;
+        button.disabled = false;
+        
+        if (data.success) {
+            import('/static/js/notifications.js').then(module => {
+                const { showPopup, POPUP_TYPES } = module;
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Test notification sent successfully',
+                    confirmText: 'OK'
+                });
+            });
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .catch(error => {
+        // Reset button state
+        button.textContent = originalText;
+        button.disabled = false;
+        
+        console.error('Error:', error);
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error sending test notification: ' + error.message,
+                confirmText: 'OK'
+            });
+        });
+    });
 }
 
 function showAddNotificationPopup() {
@@ -177,17 +308,28 @@ function addNotification(notificationType) {
         }
     })
     .then(() => {
-        showPopup({
-            type: POPUP_TYPES.SUCCESS,
-            title: 'Success',
-            message: 'Notification added successfully',
-            confirmText: 'OK'
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success',
+                message: 'Notification added successfully',
+                confirmText: 'OK'
+            });
         });
         initializeNotificationsFunctionality();
     })
     .catch(error => {
         console.error('Error:', error);
-        showNotification('Error adding notification: ' + error.message, 'error');
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error adding notification: ' + error.message,
+                confirmText: 'OK'
+            });
+        });
     });
 }
 
@@ -224,20 +366,27 @@ function performDeleteNotification(notificationId) {
         }
     })
     .then(() => {
-        showPopup({
-            type: POPUP_TYPES.SUCCESS,
-            title: 'Success',
-            message: 'Notification deleted successfully',
-            confirmText: 'OK'
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success',
+                message: 'Notification deleted successfully',
+                confirmText: 'OK'
+            });
         });
-        initializeNotificationsFunctionality();    })
+        initializeNotificationsFunctionality();
+    })
     .catch(error => {
         console.error('Error:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            title: 'Error',
-            message: 'Error deleting notification: ' + error.message,
-            confirmText: 'OK'
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error deleting notification: ' + error.message,
+                confirmText: 'OK'
+            });
         });
     });
 }

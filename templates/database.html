@@ -2,24 +2,56 @@
 {% block title %}Database{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/database.css') }}">
+<div class="stats-panel">
+    <button class="stats-toggle" title="Toggle Statistics">
+        <i class="fas fa-chart-bar"></i>
+    </button>
+    <div class="stats-content">
+        <div class="stats-box collection-stats" id="collection_stats">
+            <h3>Collection Stats</h3>
+            <div class="stat-items">
+                <div class="stat-item">
+                    <p data-label="Total Movies">{{ stats.total_movies }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Total Shows">{{ stats.total_shows }}</p>
+                </div>
+                <div class="stat-item">
+                    <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 <div class="container">
     <h2>Database Content</h2>
     <div id="bulk-actions" class="bulk-actions">
         <div class="select-all-container">
             <button id="select-all" class="select-all-btn">Select All</button>
             <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
+            <button id="bulk-rescrape" class="bulk-action-btn" disabled>Rescrape Selected</button>
             <select id="bulk-move-queue" class="bulk-action-select" disabled>
                 <option value="">Move Selected to Queue...</option>
                 <option value="Adding">Adding</option>
                 <option value="Blacklisted">Blacklisted</option>
                 <option value="Checking">Checking</option>
+                <option value="Final_Check">Final Scrape</option>
+                <option value="Pending Uncached">Pending Uncached</option>
                 <option value="Scraping">Scraping</option>
                 <option value="Sleeping">Sleeping</option>
                 <option value="Unreleased">Unreleased</option>
-                <option value="Wanted">Wanted</option>
-                <option value="Pending Uncached">Pending Uncached</option>
                 <option value="Upgrading">Upgrading</option>
+                <option value="Wanted">Wanted</option>
             </select>
+            <select id="bulk-change-version" class="bulk-action-select" disabled>
+                <option value="">Change Selected Version...</option>
+            </select>
+            <button id="bulk-early-release" class="bulk-action-btn" disabled>Early Release</button>
+            <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
+            <!-- NEW: Manual resync for selected items -->
+            <button id="bulk-resync" class="bulk-action-btn" disabled>Resync Selected</button>
+            <!-- NEW: Manual symlink verification for selected items -->
+            <button id="bulk-verify-symlinks" class="bulk-action-btn" disabled>Verify Symlinks</button>
         </div>
     </div>
     <div id="column-selector-wrapper">
@@ -54,36 +86,55 @@
     </div>
     <div id="filter-sort">
         <h3>Filter and Sort:</h3>
+        <div class="result-count">
+            Showing {{ result_count }} results
+            <span class="unique-count">(Unique: {{ unique_result_count }})</span>
+        </div>
         <form id="filter-form" class="mb-3">
-            <div>
-                <label for="filter-column">Filter Column:</label>
-                <select id="filter-column" name="filter_column">
-                    <option value="">None</option>
-                    {% for column in selected_columns %}
-                    <option value="{{ column }}" {% if column == filter_column or (not filter_column and column == 'title') %}selected{% endif %}>{{ column }}</option>
-                    {% endfor %}
-                </select>
-                <label for="filter-value">Filter Value:</label>
-                <input type="text" id="filter-value" name="filter_value" value="{{ filter_value }}">
-                <label for="sort-column">Sort Column:</label>
-                <select id="sort-column" name="sort_column">
-                    <option value="">None</option>
-                    {% for column in selected_columns %}
-                    <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
-                    {% endfor %}
-                </select>
-                <label for="sort-order">Sort Order:</label>
-                <select id="sort-order" name="sort_order">
-                    <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
-                    <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
-                </select>
+
+            
+            <div class="filter-section">
+                <button type="button" id="add-filter" class="btn btn-secondary">Add Filter</button>
             </div>
-            <div class="filter-buttons">
-                <button type="submit">Apply</button>
-                <button id="clear-filter-sort">Clear Filter & Sort</button>
+            <div id="filters-container">
+                <!-- Filter rows will be added here dynamically -->
+            </div>
+
+            <div class="sort-section">
+                <div class="sort-container">
+                    <label for="sort-column">Sort Column:</label>
+                    <select id="sort-column" name="sort_column">
+                        <option value="">None</option>
+                        {# Populate with all_columns from backend which now includes 'size' #}
+                        {% for column in all_columns %} 
+                        <option value="{{ column }}" {% if column == sort_column %}selected{% endif %}>{{ column }}</option>
+                        {% endfor %}
+                    </select>
+                    <label for="sort-order">Sort Order:</label>
+                    <select id="sort-order" name="sort_order">
+                        <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Ascending</option>
+                        <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Descending</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Add Filter Logic Selection -->
+            <div class="filter-logic-section">
+                <label>Filter Logic:</label>
+                <input type="radio" id="filter-logic-and" name="filter_logic" value="AND" {% if filter_logic == 'AND' %}checked{% endif %}>
+                <label for="filter-logic-and">AND (All filters match)</label>
+                <input type="radio" id="filter-logic-or" name="filter_logic" value="OR" {% if filter_logic == 'OR' %}checked{% endif %}>
+                <label for="filter-logic-or">OR (Any filter matches)</label>
+            </div>
+            <!-- End Filter Logic Selection -->
+
+            <div class="button-section">
+                <div class="filter-buttons">
+                    <button type="submit">Apply</button>
+                    <button type="button" id="clear-filter-sort">Clear Filter & Sort</button>
+                </div>
             </div>
         </form>
-
     </div>
     <div class="content-type-filter">
         <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
@@ -99,6 +150,11 @@
             <p>No pagination data available</p>
         {% endif %}
     </div>
+    {# --- START Numerical Pagination --- #}
+    <div class="numerical-pagination" id="numerical-pagination">
+        {# Pagination controls will be rendered here by JavaScript #}
+    </div>
+    {# --- END Numerical Pagination --- #}
 </div>
 <div class="table-container">
     {% if items %}
@@ -106,10 +162,12 @@
             <thead>
                 <tr>
                     <th>Select</th>
+                    <th>Play</th>
                     <th>Delete</th>
                     <th>Rescrape</th>
                     {% for column in selected_columns %}
-                        <th>{{ column }}</th>
+                        {# Adjust display name for 'size' column #}
+                        <th>{% if column == 'season_number' %}S#{% elif column == 'episode_number' %}E#{% elif column == 'size' %}Size (GB){% else %}{{ column }}{% endif %}</th>
                     {% endfor %}
                 </tr>
             </thead>
@@ -120,13 +178,23 @@
                             <input type="checkbox" class="item-select" data-item-id="{{ item['id'] }}">
                         </td>
                         <td>
+                            <a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">
+                                ▶️
+                            </a>
+                        </td>
+                        <td>
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
                         </td>
                         <td>
                             <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
                         </td>
                         {% for column in selected_columns %}
-                            <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                            {# Use 'size_gb' key for data if column is 'size', format appropriately #}
+                            {% if column == 'size' %}
+                                <td class="truncate" data-full-content="{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}">{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}</td>
+                            {% else %}
+                                <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                            {% endif %}
                         {% endfor %}
                     </tr>
                 {% endfor %}
@@ -138,11 +206,569 @@
 </div>
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+
+<script>
+// Early redirect script to load page with localStorage settings
+(function() {
+    const STORAGE_KEYS = {
+        FILTERS: 'db_filters',
+        SORT_COLUMN: 'db_sort_column',
+        SORT_ORDER: 'db_sort_order',
+        SELECTED_COLUMNS: 'db_selected_columns',
+        CONTENT_TYPE: 'db_content_type',
+        FILTER_LOGIC: 'db_filter_logic',
+        LETTER: 'db_current_letter' // Persist current letter
+    };
+    const DEFAULTS = {
+        SORT_COLUMN: 'id',
+        SORT_ORDER: 'asc',
+        CONTENT_TYPE: 'movie',
+        FILTER_LOGIC: 'AND',
+        LETTER: 'A' // Default letter, adjust if empty is preferred
+    };
+
+    function getQueryParam(param) {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get(param);
+    }
+
+    const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
+    const savedSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
+    const savedSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
+    const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+    const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+    const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
+    const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
+
+    const queryParams = new URLSearchParams();
+    let needsRedirect = false;
+
+    // Selected Columns
+    let columnsToUse = null;
+    if (savedColumnsJSON) {
+        try {
+            const parsed = JSON.parse(savedColumnsJSON);
+            if (Array.isArray(parsed) && parsed.length > 0) columnsToUse = parsed;
+        } catch (e) { /* ignore */ }
+    }
+    if (columnsToUse) {
+        const columnsToUseJSON = JSON.stringify(columnsToUse);
+        if (getQueryParam('selected_columns') !== columnsToUseJSON) needsRedirect = true;
+        queryParams.set('selected_columns', columnsToUseJSON);
+    } else if (getQueryParam('selected_columns')) {
+        // If LS is empty but param exists, it implies manual URL or shared link.
+        // To strictly enforce LS (i.e. clear columns if not in LS), set needsRedirect = true
+        // and DON'T set the queryParam. For now, we'll let existing params pass if LS is empty.
+    }
+
+    // Filters
+    if (savedFiltersJSON) {
+        try {
+            JSON.parse(savedFiltersJSON); // Validate JSON
+            if (getQueryParam('filters') !== savedFiltersJSON) needsRedirect = true;
+            queryParams.set('filters', savedFiltersJSON);
+        } catch(e) { /* ignore */ }
+    } else if (getQueryParam('filters')) {
+        // similar to columns: let existing param pass if LS is empty for filters.
+    }
+
+    // Sort Column
+    const sortColumn = savedSortColumn || DEFAULTS.SORT_COLUMN;
+    if (getQueryParam('sort_column') !== sortColumn) needsRedirect = true;
+    queryParams.set('sort_column', sortColumn);
+
+    // Sort Order
+    const sortOrder = savedSortOrder || DEFAULTS.SORT_ORDER;
+    if (getQueryParam('sort_order') !== sortOrder) needsRedirect = true;
+    queryParams.set('sort_order', sortOrder);
+
+    // Content Type
+    const contentType = (savedContentType === 'movie' || savedContentType === 'episode') ? savedContentType : DEFAULTS.CONTENT_TYPE;
+    if (getQueryParam('content_type') !== contentType) needsRedirect = true;
+    queryParams.set('content_type', contentType);
+
+    // Filter Logic
+    const filterLogic = (savedFilterLogic === 'AND' || savedFilterLogic === 'OR') ? savedFilterLogic : DEFAULTS.FILTER_LOGIC;
+    if (getQueryParam('filter_logic') !== filterLogic) needsRedirect = true;
+    queryParams.set('filter_logic', filterLogic);
+
+    // Letter
+    const letter = savedLetter || DEFAULTS.LETTER;
+    if (getQueryParam('letter') !== letter) needsRedirect = true;
+    queryParams.set('letter', letter);
+
+    const redirectFlag = 'database_redirect_marker';
+    const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
+
+    if (getQueryParam('ajax') === '1' || flagIsSet) {
+        needsRedirect = false;
+    }
+
+    if (needsRedirect) {
+        sessionStorage.setItem(redirectFlag, 'true');
+        const baseUrl = "{{ url_for('database.index') }}";
+        const newUrl = queryParams.toString() ? `${baseUrl}?${queryParams.toString()}` : baseUrl;
+        window.location.replace(newUrl);
+    } else {
+        if (flagIsSet) {
+            sessionStorage.removeItem(redirectFlag);
+        }
+    }
+})();
+</script>
+
+<script>
+    window.templateData = {
+        selectedColumns: {{ selected_columns|tojson|safe }},
+        all_columns: {{ all_columns|tojson|safe }}, // This will include 'size'
+        columnValues: {{ column_values|tojson|safe }},
+        operators: {{ operators|tojson|safe }},
+        currentFilters: {{ filters|tojson|safe }},
+        sortColumn: "{{ sort_column }}",
+        sortOrder: "{{ sort_order }}",
+        filterLogic: {{ filter_logic|default('AND')|tojson|safe }},
+        contentType: "{{ content_type }}",
+        contentSourceDisplayMap: {{ content_source_display_map|tojson|safe }}
+    };
+</script>
+
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 import { initializeDatabaseTooltips } from '/static/js/tooltips.js';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Get data from window object
+    const templateData = window.templateData;
+    const contentSourceDisplayMap = templateData.contentSourceDisplayMap || {};
+
+    // Initialize state variables at the top
+    let currentContentType = templateData.contentType;
+    if (currentContentType !== 'movie' && currentContentType !== 'episode') {
+        currentContentType = 'movie';
+    }
+    let currentLetter = '{{ current_letter }}';
+    let lastChecked = null;
+    let allSelected = false;
+
+    // Add localStorage keys
+    const STORAGE_KEYS = {
+        FILTERS: 'db_filters',
+        SORT_COLUMN: 'db_sort_column',
+        SORT_ORDER: 'db_sort_order',
+        SELECTED_COLUMNS: 'db_selected_columns',
+        CONTENT_TYPE: 'db_content_type',
+        FILTER_LOGIC: 'db_filter_logic',
+        LETTER: 'db_current_letter' // Persist current letter
+    };
+
+    // Function to validate and sanitize localStorage data
+    function cleanupLocalStorage() {
+        const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+        if (savedContentType !== 'movie' && savedContentType !== 'episode') {
+            console.log('Removing invalid content type from localStorage:', savedContentType);
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
+        }
+
+        try {
+            // Validate filters
+            const savedFilters = localStorage.getItem(STORAGE_KEYS.FILTERS);
+            if (savedFilters) {
+                JSON.parse(savedFilters); // Will throw if invalid JSON
+            }
+        } catch (e) {
+            console.log('Removing invalid filters from localStorage');
+            localStorage.removeItem(STORAGE_KEYS.FILTERS);
+        }
+
+        try {
+            // Validate columns
+            const savedColumns = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+            if (savedColumns) {
+                JSON.parse(savedColumns); // Will throw if invalid JSON
+            }
+        } catch (e) {
+            console.log('Removing invalid selected columns from localStorage');
+            localStorage.removeItem(STORAGE_KEYS.SELECTED_COLUMNS);
+        }
+    }
+
+    // Clean up localStorage on page load
+    cleanupLocalStorage();
+
+    function createFilterRow(filter = null) {
+        const row = document.createElement('div');
+        row.className = 'filter-row';
+
+        // Column select - use templateData.all_columns but filter out 'size' for filtering
+        const filterableColumns = templateData.all_columns.filter(col => col !== 'size').sort();
+        const columnSelect = document.createElement('select');
+        columnSelect.className = 'filter-column';
+        columnSelect.innerHTML = `
+            <option value="">Select Column</option>
+            ${filterableColumns.map(column => `
+                <option value="${column}" ${filter && filter.column === column ? 'selected' : ''}>
+                    ${column}
+                </option>
+            `).join('')}
+        `;
+
+        // Operator select
+        const operatorSelect = document.createElement('select');
+        operatorSelect.className = 'filter-operator';
+        operatorSelect.innerHTML = templateData.operators.map(op => `
+            <option value="${op.value}" ${filter && filter.operator === op.value ? 'selected' : ''}>
+                ${op.label}
+            </option>
+        `).join('');
+
+        // Value input/select
+        const valueContainer = document.createElement('div');
+        valueContainer.className = 'filter-value-container';
+        updateValueInput(valueContainer, filter?.column, filter?.value, contentSourceDisplayMap);
+
+        // Remove button
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'remove-filter';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = () => row.remove();
+
+        // Add elements to row
+        row.appendChild(columnSelect);
+        row.appendChild(operatorSelect);
+        row.appendChild(valueContainer);
+        row.appendChild(removeBtn);
+
+        // Add event listeners
+        columnSelect.addEventListener('change', () => {
+            updateValueInput(valueContainer, columnSelect.value, '', contentSourceDisplayMap);
+        });
+
+        return row;
+    }
+
+    function updateValueInput(container, column, value = '', displayMap = {}) {
+        container.innerHTML = '';
+
+        if (column === 'content_source' && templateData.columnValues[column]) {
+            const select = document.createElement('select');
+            select.className = 'filter-value';
+            let optionsHTML = '<option value="">Select Source</option>';
+
+            const availableSourceIds = templateData.columnValues[column] || [];
+
+            if (availableSourceIds.includes("None") || availableSourceIds.includes("")) {
+                 optionsHTML += `<option value="None" ${value === "None" ? 'selected' : ''}>None</option>`;
+            }
+
+            availableSourceIds.forEach(sourceId => {
+                 if (sourceId === "None" || sourceId === "") return;
+
+                const displayName = displayMap[sourceId] || sourceId;
+                optionsHTML += `
+                    <option value="${sourceId}" ${value === sourceId ? 'selected' : ''}>
+                        ${displayName}
+                    </option>
+                `;
+            });
+
+            select.innerHTML = optionsHTML;
+            container.appendChild(select);
+        }
+        else if (templateData.columnValues[column]) {
+            const select = document.createElement('select');
+            select.className = 'filter-value';
+            select.innerHTML = `
+                <option value="">Select Value</option>
+                ${templateData.columnValues[column].map(val => {
+                    let displayVal = val;
+                    if (column === 'state' && val === 'Final_Check') {
+                        displayVal = 'Final Scrape';
+                    }
+                    return `<option value="${val}" ${value === val ? 'selected' : ''}>${displayVal}</option>`;
+                }).join('')}
+            `;
+            container.appendChild(select);
+        }
+        else {
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'filter-value';
+            input.value = value || '';
+            container.appendChild(input);
+        }
+    }
+
+    // Initialize filters from template data if they exist
+    if (templateData.currentFilters && templateData.currentFilters.length > 0) {
+        const filtersContainer = document.getElementById('filters-container');
+        templateData.currentFilters.forEach(filter => {
+            filtersContainer.appendChild(createFilterRow(filter));
+        });
+    }
+
+    // Function to save settings to localStorage
+    function saveSettings() {
+        const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+            column: row.querySelector('.filter-column').value,
+            operator: row.querySelector('.filter-operator').value,
+            value: row.querySelector('.filter-value').value
+        })).filter(f => f.column);
+
+        const sortColumn = document.getElementById('sort-column').value;
+        const sortOrder = document.getElementById('sort-order').value;
+        const filterLogic = document.querySelector('input[name="filter_logic"]:checked').value;
+        
+        // Validate content type before saving
+        const validContentType = (currentContentType === 'movie' || currentContentType === 'episode') 
+            ? currentContentType 
+            : 'movie';
+
+        localStorage.setItem(STORAGE_KEYS.FILTERS, JSON.stringify(filters));
+        localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
+        localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
+        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
+        localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, filterLogic);
+        localStorage.setItem(STORAGE_KEYS.LETTER, currentLetter); // Save current letter
+    }
+
+    // Function to restore settings from localStorage
+    function restoreSettings() {
+        const savedFiltersJSON = localStorage.getItem(STORAGE_KEYS.FILTERS);
+        const sortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN);
+        const sortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER);
+        const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
+        // initializeColumnSelection now ensures SELECTED_COLUMNS in localStorage is set and valid.
+        const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+        const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND';
+
+        let columnValuesForUpdate;
+        try {
+            // This should always be a valid array of strings due to initializeColumnSelection's logic
+            columnValuesForUpdate = JSON.parse(savedColumnsJSON);
+            if (!Array.isArray(columnValuesForUpdate) || columnValuesForUpdate.length === 0) {
+                // This is a fallback for an unexpected state, initializeColumnSelection should prevent this.
+                console.error("CRITICAL: Columns from localStorage were empty/invalid in restoreSettings even after initializeColumnSelection. Using hardcoded defaults.");
+                columnValuesForUpdate = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+            }
+        } catch (e) {
+            console.error("CRITICAL: Error parsing columns from localStorage in restoreSettings (should have been valid). Using hardcoded defaults.", e);
+            columnValuesForUpdate = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+        }
+
+        const validContentType = (savedContentType === 'movie' || savedContentType === 'episode') 
+            ? savedContentType 
+            : 'movie';
+
+        if (savedFiltersJSON) {
+            try {
+                const filters = JSON.parse(savedFiltersJSON);
+                const filtersContainer = document.getElementById('filters-container');
+                filtersContainer.innerHTML = ''; // Clear existing
+                filters.forEach(filter => {
+                    if (filter && typeof filter === 'object' && filter.hasOwnProperty('column') && filter.hasOwnProperty('operator') && filter.hasOwnProperty('value')) {
+                        // Ensure the column for the filter is actually among the currently selected displayable columns
+                        // or allow it if it's a valid column from all_columns (more flexible)
+                        if (columnValuesForUpdate.includes(filter.column) || templateData.all_columns.includes(filter.column)) {
+                       filtersContainer.appendChild(createFilterRow(filter));
+                        } else {
+                            console.warn(`Skipping saved filter for column "${filter.column}" as it's not currently selected or available.`);
+                        }
+                    } else {
+                         console.warn('Skipping invalid filter structure from localStorage:', filter);
+                    }
+                });
+            } catch (e) {
+                 console.error("Error parsing saved filters from localStorage:", e);
+                 localStorage.removeItem(STORAGE_KEYS.FILTERS); // Clean up invalid entry
+            }
+        }
+
+        if (sortColumn) document.getElementById('sort-column').value = sortColumn;
+        if (sortOrder) document.getElementById('sort-order').value = sortOrder;
+
+        const logicRadio = document.querySelector(`input[name="filter_logic"][value="${savedFilterLogic}"]`);
+        if (logicRadio) logicRadio.checked = true;
+        else document.getElementById('filter-logic-and').checked = true;
+        
+        currentContentType = validContentType;
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            link.classList.toggle('active', link.getAttribute('data-content-type') === validContentType);
+        });
+        if (validContentType !== savedContentType) {
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
+        }
+
+        // The updateContent call below is removed to prevent the second AJAX load.
+        // The UI controls are now set. The displayed data is from the initial server render.
+        // If these differ, the user can click "Apply" or "Update View" to synchronize.
+    }
+
+    // Add filter button handler
+        document.getElementById('add-filter').addEventListener('click', () => {
+            document.getElementById('filters-container').appendChild(createFilterRow());
+        });
+
+    // Filter form submit (no page reset)
+        const filterForm = document.getElementById('filter-form');
+        if (filterForm) {
+            filterForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                saveSettings();
+
+            // --- Corrected filter extraction ---
+                const filterRows = document.querySelectorAll('.filter-row');
+            const filters = Array.from(filterRows).map(row => {
+                return { // Explicit return
+                    column: row.querySelector('.filter-column').value,
+                    operator: row.querySelector('.filter-operator').value,
+                    value: row.querySelector('.filter-value')?.value || ''
+                };
+            }).filter(f => f.column);
+            // --- End correction ---
+
+            // --- Get other parameters ---
+                const sortColumn = document.getElementById('sort-column').value;
+                const sortOrder = document.getElementById('sort-order').value;
+                const filterLogic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
+            const selectedColumnValues = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+
+            // --- Construct params ---
+                const params = {
+                    filters: JSON.stringify(filters),
+                    sort_column: sortColumn,
+                    sort_order: sortOrder,
+                    content_type: currentContentType || 'movie',
+                    selected_columns: JSON.stringify(selectedColumnValues),
+                    filter_logic: filterLogic,
+                    letter: currentLetter || ''
+                };
+
+            // --- Call updateContent ---
+                updateContent('{{ url_for('database.index') }}', params);
+
+        }); // Close addEventListener
+    } // Close if (filterForm)
+
+    // Clear filter button (no page reset)
+        document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
+            e.preventDefault();
+        clearFilterAndSort();
+    });
+
+    // Revert clearFilterAndSort
+    function clearFilterAndSort() {
+            localStorage.removeItem(STORAGE_KEYS.FILTERS);
+            localStorage.removeItem(STORAGE_KEYS.SORT_COLUMN);
+            localStorage.removeItem(STORAGE_KEYS.SORT_ORDER);
+            localStorage.removeItem(STORAGE_KEYS.FILTER_LOGIC);
+
+            document.getElementById('filters-container').innerHTML = '';
+        
+        const sortColumn = document.getElementById('sort-column');
+        const sortOrder = document.getElementById('sort-order');
+        if (sortColumn) {
+            sortColumn.value = '';
+        }
+        if (sortOrder) {
+            sortOrder.value = 'asc';
+        }
+
+            currentContentType = 'movie';
+            currentLetter = 'A';
+            
+        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
+
+        const contentTypeLinks = document.querySelectorAll('.content-type-link');
+        contentTypeLinks.forEach(function(link) {
+            if (link.getAttribute('data-content-type') === 'movie') {
+                link.classList.add('active');
+                    } else {
+                link.classList.remove('active');
+            }
+        });
+
+        const paginationLinks = document.querySelectorAll('.pagination-link');
+        paginationLinks.forEach(function(link) {
+            if (link.getAttribute('data-letter') === 'A') {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        updateContent('{{ url_for('database.index') }}', {
+            content_type: 'movie',
+            letter: 'A',
+            filter_logic: 'AND'
+        });
+    }
+
+    // Add event listener for clear filter & sort button
+    document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
+                e.preventDefault();
+        clearFilterAndSort();
+    });
+
+    // Add CSS styles for the new filter UI
+    const style = document.createElement('style');
+    style.textContent = `
+        #filters-container {
+            margin-bottom: 1rem;
+        }
+        .filter-row {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+            align-items: center;
+        }
+        .filter-column, .filter-operator, .filter-value {
+            padding: 0.25rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        .remove-filter {
+            background: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .remove-filter:hover {
+            background: #cc0000;
+        }
+        #add-filter {
+            margin-bottom: 1rem;
+        }
+        .sort-container {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        .filter-logic-section {
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .filter-logic-section label {
+            margin-right: 0.5rem;
+        }
+        .filter-logic-section input[type="radio"] {
+            margin-right: 0.25rem;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // Call restoreSettings when the page loads
+    restoreSettings();
+
     // Add tap handlers for mobile devices
     function isMobileDevice() {
         const hasTouchScreen = (
@@ -161,10 +787,10 @@ document.addEventListener('DOMContentLoaded', function() {
         textarea.select();
         try {
             document.execCommand('copy');
-            showPopup({
-                type: POPUP_TYPES.SUCCESS,
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
                 message: 'Content copied to clipboard!',
-                title: 'Success',
+                    title: 'Success',
                 autoClose: 2000
             });
         } catch (err) {
@@ -189,7 +815,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const cell = e.target.closest('.truncate');
             if (cell && !e.target.closest('button')) {
                 const content = cell.getAttribute('data-full-content');
-                    showPopup({
+            showPopup({
                         type: POPUP_TYPES.INFO,
                         title: 'Cell Content',
                         message: `<div style="word-break: break-word;">${content}</div>`,
@@ -198,9 +824,6 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    let currentContentType = '{{ content_type }}';
-    let currentLetter = '{{ current_letter }}';
-
     const availableColumns = document.getElementById('available-columns');
     const selectedColumns = document.getElementById('selected-columns');
 
@@ -208,9 +831,9 @@ document.addEventListener('DOMContentLoaded', function() {
     if (availableColumns && selectedColumns) {
         const addColumnBtn = document.getElementById('add-column');
         const removeColumnBtn = document.getElementById('remove-column');
-        const updateColumnsBtn = document.getElementById('update-columns');
         const toggleColumnSelectorBtn = document.getElementById('toggle-column-selector');
         const columnSelector = document.getElementById('column-selector');
+        const updateColumnsBtn = document.getElementById('update-columns');
 
         const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
 
@@ -235,38 +858,103 @@ document.addEventListener('DOMContentLoaded', function() {
                     return a.text.localeCompare(b.text);
                 }
             });
+            
+            // Clear and re-add options in sorted order
+            while (selectElement.firstChild) {
+                selectElement.removeChild(selectElement.firstChild);
+            }
             options.forEach(option => selectElement.appendChild(option));
         }
 
         function moveOptions(fromSelect, toSelect) {
             Array.from(fromSelect.selectedOptions).forEach(option => {
-                toSelect.appendChild(option);
+                const newOption = option.cloneNode(true);
+                toSelect.appendChild(newOption);
+                fromSelect.removeChild(option);
             });
             sortOptionsWithAbsoluteOrder(fromSelect);
             sortOptionsWithAbsoluteOrder(toSelect);
         }
 
+        function initializeColumnSelection() {
+            const defaultColumns = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
+            const savedColumnsJSON = localStorage.getItem(STORAGE_KEYS.SELECTED_COLUMNS);
+            let columnsToUse;
+            let sourceOfColumns = "unknown";
+
+            if (savedColumnsJSON) {
+                try {
+                    const parsedColumns = JSON.parse(savedColumnsJSON);
+                    if (Array.isArray(parsedColumns) && parsedColumns.length > 0) {
+                        // Validate that these columns actually exist in all_columns
+                        const validSavedColumns = parsedColumns.filter(col => templateData.all_columns.includes(col));
+                        if (validSavedColumns.length === parsedColumns.length) {
+                            columnsToUse = validSavedColumns;
+                            sourceOfColumns = "localStorage (valid)";
+                        } else {
+                            console.warn("Some saved columns from localStorage were invalid, falling back to JS defaults.");
+                            columnsToUse = defaultColumns;
+                            sourceOfColumns = "js_defaults_after_invalid_localstorage_entries";
+                            localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
+                        }
+                } else {
+                        console.warn("Invalid or empty columns array from localStorage, using JS defaults.");
+                        columnsToUse = defaultColumns;
+                        sourceOfColumns = "js_defaults_after_empty_or_invalid_array_localstorage";
+                        localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
+                    }
+                } catch (e) {
+                    console.warn("Error parsing columns from localStorage, using JS defaults.", e);
+                    columnsToUse = defaultColumns;
+                    sourceOfColumns = "js_defaults_after_parse_error_localstorage";
+                    localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
+                }
+            } else {
+                columnsToUse = defaultColumns;
+                sourceOfColumns = "js_defaults_due_to_empty_localstorage";
+                localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
+            }
+            console.log(`Initializing columns from: ${sourceOfColumns}`, columnsToUse);
+
+            // Clear both select elements
+            availableColumns.innerHTML = '';
+            selectedColumns.innerHTML = '';
+
+            // Add all columns to available first
+            templateData.all_columns.forEach(column => {
+                const option = document.createElement('option');
+                option.value = column;
+                option.textContent = column;
+                availableColumns.appendChild(option);
+            });
+
+            // Move selected columns (columnsToUse) to the 'selectedColumns' select element
+            columnsToUse.forEach(column => {
+                const option = availableColumns.querySelector(`option[value="${column}"]`);
+                if (option) {
+                    selectedColumns.appendChild(option.cloneNode(true)); // Add to selected
+                    // Do not remove from available if you want to keep them there for re-selection
+                } else {
+                    console.warn(`Default column "${column}" not found in all_columns from templateData.`);
+                }
+            });
+            
+            // Now, remove the selected columns from the available list
+            Array.from(selectedColumns.options).forEach(selectedOption => {
+                const availableOption = availableColumns.querySelector(`option[value="${selectedOption.value}"]`);
+                if (availableOption) {
+                    availableColumns.removeChild(availableOption);
+                }
+            });
+
+
+            sortOptionsWithAbsoluteOrder(availableColumns);
+            sortOptionsWithAbsoluteOrder(selectedColumns);
+        }
+
+        // Add event listeners for column selection
         addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
         removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
-        
-        updateColumnsBtn.addEventListener('click', function() {
-            const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
-            
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = window.location.href;
-        
-            selectedColumnValues.forEach(value => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = 'columns';
-                input.value = value;
-                form.appendChild(input);
-            });
-        
-            document.body.appendChild(form);
-            form.submit();
-        });
         
         toggleColumnSelectorBtn.addEventListener('click', function() {
             columnSelector.classList.toggle('hidden');
@@ -275,70 +963,57 @@ document.addEventListener('DOMContentLoaded', function() {
                 ? 'Select Columns to Display' 
                 : 'Hide Column Selector';
         });
-        
-        function initializeColumnSelection() {
-            if (selectedColumns.options.length === 0) {
-                defaultColumns.forEach(column => {
-                    const option = availableColumns.querySelector(`option[value="${column}"]`);
-                    if (option) {
-                        selectedColumns.appendChild(option.cloneNode(true));
-                        option.remove();
-                    }
+
+        // Update columns functionality
+        updateColumnsBtn.addEventListener('click', function() {
+            const selectedColumnValues = Array.from(selectedColumns.options).map(option => option.value);
+
+            if (selectedColumnValues.length === 0) {
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        title: 'Error',
+                    message: 'Please select at least one column to display.',
                 });
+                return;
             }
-            
-            sortOptionsWithAbsoluteOrder(availableColumns);
-            sortOptionsWithAbsoluteOrder(selectedColumns);
-        }
+
+            // Save selected columns to localStorage
+            localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(selectedColumnValues));
+            saveSettings(); // Saves other relevant settings like filters, sort, content type, logic
+
+            // Hide the column selector
+            columnSelector.classList.add('hidden');
+                 toggleColumnSelectorBtn.classList.remove('active');
+                 toggleColumnSelectorBtn.textContent = 'Select Columns to Display';
+
+            // --- START CHANGE ---
+            // Gather all current settings to refresh the view correctly
+            const currentFilters = JSON.parse(localStorage.getItem(STORAGE_KEYS.FILTERS) || '[]');
+            const currentSortColumn = localStorage.getItem(STORAGE_KEYS.SORT_COLUMN) || '';
+            const currentSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER) || 'asc';
+            const currentFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND';
+            // Ensure currentContentType is up-to-date from localStorage
+            const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE) || 'movie';
+            // Use the globally tracked currentContentType, validated against saved value
+            currentContentType = (savedContentType === 'movie' || savedContentType === 'episode') ? savedContentType : 'movie';
+
+            const params = {
+                selected_columns: JSON.stringify(selectedColumnValues), // Use the newly selected columns
+                filters: JSON.stringify(currentFilters),              // Include current filters
+                sort_column: currentSortColumn,                       // Include current sort column
+                sort_order: currentSortOrder,                         // Include current sort order
+                filter_logic: currentFilterLogic,                     // Include current filter logic
+                content_type: currentContentType,                     // Include current content type
+                letter: currentLetter || '',                          // Include current letter pagination state
+            };
+
+            // Call updateContent to refresh the table view with new columns and existing settings
+            updateContent('{{ url_for('database.index') }}', params);
+            // --- END CHANGE ---
+        });
 
         // Initialize column selection
         initializeColumnSelection();
-    }
-
-    // Filter form logic
-    const filterForm = document.getElementById('filter-form');
-    if (filterForm) {
-        filterForm.addEventListener('submit', function(e) {
-            e.preventDefault();
-            const formData = new FormData(this);
-            const params = Object.fromEntries(formData.entries());
-            updateContent('{{ url_for('database.index') }}', params);
-
-
-        });
-    }
-
-    const clearFilterSortBtn = document.getElementById('clear-filter-sort');
-    
-    if (clearFilterSortBtn) {
-        clearFilterSortBtn.addEventListener('click', function(e) {
-            e.preventDefault();
-            clearFilterAndSort();
-        });
-    }
-
-    function clearFilterAndSort() {
-        // Reset filter inputs
-        const filterColumn = document.getElementById('filter-column');
-        const filterValue = document.getElementById('filter-value');
-        if (filterColumn) filterColumn.value = '';
-        if (filterValue) filterValue.value = '';
-
-        // Reset sort inputs (assuming you have sort controls in your HTML)
-        const sortColumn = document.getElementById('sort-column');
-        const sortOrder = document.getElementById('sort-order');
-        if (sortColumn) sortColumn.value = 'id'; // Default sort column
-        if (sortOrder) sortOrder.value = 'asc'; // Default sort order
-
-        // Reset content type to 'movie' and letter to 'A'
-        currentContentType = 'movie';
-        currentLetter = 'A';
-
-        // Update the content with default values
-        updateContent("{{ url_for('database.index') }}", {
-            content_type: currentContentType,
-            letter: currentLetter
-        });
     }
 
     function setUpdatingContent(isUpdating) {
@@ -352,23 +1027,47 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderTable(items, selectedColumns) {
         let tableHTML = '<table><thead><tr>';
         tableHTML += '<th>Select</th>';
+        tableHTML += '<th>Play</th>';
         tableHTML += '<th>Delete</th>';
         tableHTML += '<th>Rescrape</th>';
         selectedColumns.forEach(column => {
-            tableHTML += `<th>${column}</th>`;
+            let displayName = column;
+            if (column === 'season_number') displayName = 'S#';
+            else if (column === 'episode_number') displayName = 'E#';
+            else if (column === 'size') displayName = 'Size (GB)'; // New
+            tableHTML += `<th>${displayName}</th>`;
         });
         tableHTML += '</tr></thead><tbody>';
 
         items.forEach(item => {
             tableHTML += '<tr>';
             tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
+            tableHTML += `<td><a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">▶️</a></td>`;
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
             tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
             selectedColumns.forEach(column => {
-                const cellContent = item[column] === null || item[column] === undefined || item[column] === '' 
-                    ? 'None' 
-                    : String(item[column]).replace(/"/g, '&quot;');
-                tableHTML += `<td class="truncate" data-full-content="${cellContent}">${cellContent}</td>`;
+                let cellContentKey = column;
+                let displayContent;
+
+                if (column === 'size') {
+                    cellContentKey = 'size_gb'; // Data is in item['size_gb']
+                    const rawSize = item[cellContentKey];
+                    if (rawSize === null || rawSize === undefined || typeof rawSize !== 'number') {
+                        displayContent = 'N/A';
+                    } else {
+                        displayContent = rawSize.toFixed(2); // Format to 2 decimal places
+                    }
+                } else {
+                    const rawCellContent = item[cellContentKey];
+                     displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
+                        ? 'None'
+                        : String(rawCellContent).replace(/"/g, '&quot;');
+                    
+                    if (column === 'state' && displayContent === 'Final_Check') {
+                        displayContent = 'Final Scrape';
+                    }
+                }
+                tableHTML += `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
             });
             tableHTML += '</tr>';
         });
@@ -378,27 +1077,63 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateContent(url, params = {}) {
-        // Preserve current states if not explicitly changed
-        params.content_type = params.content_type || currentContentType;
-        params.letter = params.letter || currentLetter;
+        // Validate content type
+        if (params.content_type !== 'movie' && params.content_type !== 'episode') {
+            params.content_type = 'movie';
+        }
+        
+        // Ensure content type is always set
+        params.content_type = params.content_type || currentContentType || 'movie';
+        
+        // Validate again after potentially using currentContentType
+        if (params.content_type !== 'movie' && params.content_type !== 'episode') {
+            params.content_type = 'movie';
+        }
+        
+        // Update currentContentType with what we're using
+        currentContentType = params.content_type;
+
+        // Ensure letter is always set
+        params.letter = params.letter || currentLetter || 'A';
+
+        // Add selected columns if not present
+        if (!params.selected_columns) {
+            const selectedColumnValues = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+            params.selected_columns = JSON.stringify(selectedColumnValues);
+        }
 
         // Add default sort parameters if not present
         if (!params.sort_column) params.sort_column = '{{ sort_column }}';
         if (!params.sort_order) params.sort_order = '{{ sort_order }}';
 
+        // Add filter logic if not present
+        if (!params.filter_logic) {
+            params.filter_logic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
+        }
+
         // Add ajax parameter
         params.ajax = '1';
 
         const queryString = new URLSearchParams(params).toString();
-        url += '?' + queryString;
+        const fetchUrl = `{{ url_for('database.index') }}?${queryString}`; // Use base URL
 
-        // Set updating content flag to true
         setUpdatingContent(true);
 
-        fetch(url)
-            .then(response => response.json())
+        fetch(fetchUrl)
+            .then(response => {
+                if (!response.ok) {
+                    // Try to parse error from JSON response first for more specific messages
+                    return response.json().then(errData => {
+                        throw new Error(errData.error || `HTTP error! status: ${response.status}`);
+                    }).catch(() => {
+                        // Fallback if response is not JSON or has no 'error' field
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
             .then(data => {
-                if (data.error) {
+                if (data.error) { // Should be caught by the !response.ok above, but good as a fallback
                     throw new Error(data.error);
                 }
                 
@@ -421,9 +1156,77 @@ document.addEventListener('DOMContentLoaded', function() {
                     contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
                 }
 
-                // Update current states
+                // Update other states
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
+                templateData.selectedColumns = data.selected_columns;
+                templateData.columnValues = data.column_values;
+                templateData.contentSourceDisplayMap = data.content_source_display_map || {};
+
+                // Update sort column dropdown with new selected columns
+                const sortColumnSelect = document.getElementById('sort-column');
+                if (sortColumnSelect) {
+                    const currentSortValueInDropdown = sortColumnSelect.value;
+                    sortColumnSelect.innerHTML = `<option value="">None</option>`; // Clear existing
+                    
+                    // data.all_columns from JSON response (includes 'size')
+                    data.all_columns.forEach(column => {
+                        const option = document.createElement('option');
+                        option.value = column;
+                        option.textContent = column;
+                        // data.sort_column is the actual sorted column from backend
+                        if (column === data.sort_column) {
+                            option.selected = true;
+                        }
+                        sortColumnSelect.appendChild(option);
+                    });
+
+                    // Ensure the dropdown reflects the actual sorted column, or a sensible default
+                    if (data.sort_column) {
+                        sortColumnSelect.value = data.sort_column;
+                    } else if (data.all_columns.includes(currentSortValueInDropdown)) {
+                        sortColumnSelect.value = currentSortValueInDropdown; // Preserve if valid
+                    } else {
+                        sortColumnSelect.value = ""; // Default to "None"
+                    }
+                }
+
+                // Update existing filter dropdowns with new columns (excluding 'size' for filter column selection)
+                const filterableColumns = data.all_columns.filter(col => col !== 'size').sort();
+                document.querySelectorAll('.filter-row').forEach(row => {
+                    const columnSelect = row.querySelector('.filter-column');
+                    const valueContainer = row.querySelector('.filter-value-container');
+                    const currentValueInput = valueContainer.querySelector('.filter-value');
+                    const currentFilterValue = currentValueInput ? currentValueInput.value : '';
+
+                    // Store the column that was selected in this filter row *before* we update its options
+                    const previouslySelectedColumnInThisFilter = columnSelect.value;
+
+                    // Update column dropdown options for this filter row
+                    columnSelect.innerHTML = `
+                        <option value="">Select Column</option>
+                        ${filterableColumns.map(column => `
+                            <option value="${column}" ${previouslySelectedColumnInThisFilter === column ? 'selected' : ''}>
+                                ${column}
+                            </option>
+                        `).join('')}
+                    `;
+
+                    // Now, columnSelect.value reflects the actual selected column *after* the options were updated.
+                    // If previouslySelectedColumnInThisFilter is no longer in data.selected_columns,
+                    // columnSelect.value will be different (e.g., "" or the first available option).
+
+                    let valueToUseForFilterInput = currentFilterValue;
+                    if (columnSelect.value !== previouslySelectedColumnInThisFilter) {
+                        // The column for this filter row has effectively changed because the old one
+                        // is no longer available or selected. Reset the filter value.
+                        valueToUseForFilterInput = '';
+                    }
+                    
+                    // Re-trigger value input update based on the *actual current* selected column in the dropdown
+                    // and the potentially reset filter value.
+                    updateValueInput(valueContainer, columnSelect.value, valueToUseForFilterInput, templateData.contentSourceDisplayMap);
+                });
 
                 // Update UI to reflect current state
                 updateUIForCurrentState(data);
@@ -435,14 +1238,50 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Reinitialize tooltips for the updated content
                 initializeDatabaseTooltips();
+
+                // Update result count
+                const resultCountElement = document.querySelector('.result-count');
+                if (resultCountElement && typeof data.result_count !== "undefined") {
+                    resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span>`;
+                }
             })
             .catch(error => {
                 console.error('Error updating content:', error);
-                showPopup({
+                let popupMessage = 'Failed to update database content: ' + error.message;
+                let showRetryButton = false;
+                let retryAction = null;
+
+                // Check if the error is a database lock error
+                // The backend error message is "Database error: database is locked"
+                if (error.message && (error.message.toLowerCase().includes('database is locked'))) {
+                    popupMessage = 'The database is currently busy. Would you like to try again?';
+                    showRetryButton = true;
+                    // Capture current url and params for retry.
+                    // Ensure 'url' and 'params' are the ones used for the current fetch.
+                    // The 'fetchUrl' is already constructed, but updateContent itself takes 'url' and 'params'
+                    // which are more fundamental to reconstruct the call.
+                    retryAction = () => updateContent('{{ url_for('database.index') }}', params);
+                }
+
+                const popupOptions = {
                     type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: 'Failed to update database content: ' + error.message,
-                });
+                    title: 'Database Busy',
+                    message: popupMessage,
+                };
+
+                if (showRetryButton && retryAction) {
+                    popupOptions.type = POPUP_TYPES.CONFIRM; // Change type to CONFIRM to get buttons
+                    popupOptions.confirmText = 'Retry';
+                    popupOptions.onConfirm = retryAction;
+                    popupOptions.cancelText = 'Close';
+                    popupOptions.onCancel = () => { /* Just close the popup */ };
+                } else {
+                    // For non-retryable errors, perhaps just an OK button or auto-close
+                    popupOptions.confirmText = 'OK'; // Or remove if not needed for simple error
+                    popupOptions.onConfirm = () => { /* Just close */ };
+                }
+
+                showPopup(popupOptions);
             })
             .finally(() => {
                 setUpdatingContent(false);
@@ -470,27 +1309,149 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateUIForCurrentState(data) {
-        // ... (implement UI update logic)
+        // Update content type buttons
+        document.querySelectorAll('.content-type-link').forEach(link => {
+            if (link.getAttribute('data-content-type') === data.content_type) {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        // Update letter pagination
+        document.querySelectorAll('.pagination-link').forEach(link => {
+            if (link.getAttribute('data-letter') === data.current_letter) {
+                link.classList.add('active');
+            } else {
+                link.classList.remove('active');
+            }
+        });
+
+        // Update the sort selects
+        const sortColumn = document.getElementById('sort-column');
+        const sortOrder = document.getElementById('sort-order');
+        if (sortColumn && data.sort_column) {
+            sortColumn.value = data.sort_column;
+        }
+        if (sortOrder && data.sort_order) {
+            sortOrder.value = data.sort_order;
+        }
+
+        // Update filter logic radio buttons
+        const filterLogic = data.filter_logic || 'AND';
+        const logicRadio = document.querySelector(`input[name="filter_logic"][value="${filterLogic}"]`);
+        if (logicRadio) {
+            logicRadio.checked = true;
+        } else {
+            console.warn(`Unexpected filter_logic value received: ${data.filter_logic}. Defaulting to AND.`);
+            document.getElementById('filter-logic-and').checked = true;
+        }
     }
 
     function attachEventListeners() {
         document.querySelectorAll('.content-type-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                var contentType = this.getAttribute('data-content-type');
-                clearFilter();
-                updateContent('{{ url_for('database.index') }}', { content_type: contentType });
+                if (!this.classList.contains('active')) {
+                    const newContentType = this.getAttribute('data-content-type');
+                    if (newContentType === 'movie' || newContentType === 'episode') {
+                        currentContentType = newContentType;
+                        currentLetter = ''; // Reset letter
+                    saveSettings();
+                        const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                            column: row.querySelector('.filter-column').value,
+                            operator: row.querySelector('.filter-operator').value,
+                            value: row.querySelector('.filter-value').value
+                        })).filter(f => f.column);
+                        const currentSortColumn = document.getElementById('sort-column').value;
+                        const currentSortOrder = document.getElementById('sort-order').value;
+                        const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+                        const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+                    const params = {
+                        content_type: currentContentType,
+                            letter: currentLetter,
+                            selected_columns: JSON.stringify(currentSelectedColumns),
+                            filter_logic: currentFilterLogic
+                        };
+                        if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+                        if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+                    updateContent('{{ url_for('database.index') }}', params);
+                    } else {
+                        console.error('Invalid content type:', newContentType);
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Error',
+                            message: 'Invalid content type specified',
+                        });
+                    }
+                }
             });
         });
 
         document.querySelectorAll('.pagination-link').forEach(link => {
             link.addEventListener('click', function(e) {
                 e.preventDefault();
-                var letter = this.getAttribute('data-letter');
-                clearFilter();
-                updateContent('{{ url_for('database.index') }}', { letter: letter });
+                if (!this.classList.contains('active')) {
+                    currentLetter = this.getAttribute('data-letter');
+                    saveSettings();
+                    const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                        column: row.querySelector('.filter-column').value,
+                        operator: row.querySelector('.filter-operator').value,
+                        value: row.querySelector('.filter-value').value
+                    })).filter(f => f.column);
+                    const currentSortColumn = document.getElementById('sort-column').value;
+                    const currentSortOrder = document.getElementById('sort-order').value;
+                    const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+                    const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+                    const params = {
+                        content_type: currentContentType || 'movie',
+                        letter: currentLetter,
+                        selected_columns: JSON.stringify(currentSelectedColumns),
+                        filter_logic: currentFilterLogic
+                    };
+                    if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+                    if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+                    updateContent('{{ url_for('database.index') }}', params);
+                }
             });
         });
+
+        document.querySelectorAll('input[name="filter_logic"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const filterForm = document.getElementById('filter-form');
+                if (filterForm) {
+                saveSettings();
+                     filterForm.requestSubmit();
+                }
+            });
+        });
+
+        // Sort Column/Order Change
+        const sortColumnSelect = document.getElementById('sort-column');
+        const sortOrderSelect = document.getElementById('sort-order');
+        const handleSortChange = () => {
+            saveSettings();
+            const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                column: row.querySelector('.filter-column').value,
+                operator: row.querySelector('.filter-operator').value,
+                value: row.querySelector('.filter-value').value
+            })).filter(f => f.column);
+            const currentSortColumn = document.getElementById('sort-column').value;
+            const currentSortOrder = document.getElementById('sort-order').value;
+            const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+            const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+            const params = {
+                content_type: currentContentType || 'movie',
+                letter: currentLetter || '',
+                selected_columns: JSON.stringify(currentSelectedColumns),
+                filter_logic: currentFilterLogic
+            };
+            if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+            if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+            updateContent('{{ url_for('database.index') }}', params);
+        };
+        if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
+        if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
     }
 
     function attachDeleteListeners() {
@@ -517,10 +1478,20 @@ document.addEventListener('DOMContentLoaded', function() {
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Deletion',
-            message: 'Are you sure you want to delete this item?',
+            message: `
+                <div>Are you sure you want to delete this item?</div>
+                <div style="margin-top: 10px;">
+                    <label>
+                        <input type="checkbox" id="blacklist-item-checkbox"> Blacklist item to avoid re-addition?
+                    </label>
+                </div>
+            `,
             confirmText: 'Delete',
             cancelText: 'Cancel',
-            onConfirm: () => deleteItem(itemId),
+            onConfirm: () => {
+                const blacklistItem = document.getElementById('blacklist-item-checkbox').checked;
+                deleteItem(itemId, blacklistItem);
+            },
             onCancel: () => {} // Do nothing on cancel
         });
     }
@@ -529,53 +1500,109 @@ document.addEventListener('DOMContentLoaded', function() {
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Rescrape',
-            message: 'Are you sure you want to move this item back to the Wanted queue for rescraping?',
-            confirmText: 'Rescrape',
+            message: 'Are you sure you want to delete this item and move it to the Wanted queue for rescraping? This will delete the file from disk and remove it from Plex.',
+            confirmText: 'Delete & Rescrape',
             cancelText: 'Cancel',
             onConfirm: () => rescrapeItem(itemId),
             onCancel: () => {} // Do nothing on cancel
         });
     }
 
-    function deleteItem(itemId) {
+    function deleteItem(itemId, blacklistItem) {
         Loading.show();
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ item_id: itemId })
+            body: JSON.stringify({ 
+                item_id: itemId,
+                blacklist: blacklistItem 
+            })
         })
-        .then(response => {
+        .then(async response => {
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                let errorMsg = `Default error: Network response was not ok. Status: ${response.status}`;
+                let databaseLocked = false;
+                try {
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.includes("application/json")) {
+                        const errData = await response.json();
+                        if (errData && errData.error) {
+                            errorMsg = errData.error;
+                            if (errData.database_locked === true) {
+                                databaseLocked = true;
+                            }
+                        } else if (errData) {
+                            errorMsg = `Unexpected JSON error format. Status: ${response.status}`;
+                        }
+                    } else {
+                        const textError = await response.text();
+                        if (textError && textError.length < 500 && !textError.toLowerCase().includes("<html")) {
+                             errorMsg = textError;
+                        }
+                    }
+                } catch (parseError) {
+                    // errorMsg remains the default one
+                }
+                const errorToThrow = new Error(errorMsg);
+                if (databaseLocked || response.status === 503) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
             return response.json();
         })
         .then(data => {
             if (data.success) {
-                // Remove the row from the table
                 const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
-                row.remove();
-                // Show success popup
+                if (row) { // Check if row exists
+                    row.remove();
+                }
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
                     message: 'Item deleted successfully',
-                    autoClose: 3000 // Close after 3 seconds
+                    autoClose: 3000
                 });
             } else {
-                throw new Error(data.error || 'Unknown error');
+                const errorToThrow = new Error(data.error || 'Unknown error deleting item.');
+                if (data.database_locked === true) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            // Show error popup
-            showPopup({
+            console.error('Error deleting item:', error);
+            let popupMessage = 'An error occurred while deleting the item: ' + error.message;
+            let showRetryButton = false;
+            let retryAction = null;
+
+            if (error.database_locked) {
+                popupMessage = 'The database is currently busy. Would you like to try deleting again?';
+                showRetryButton = true;
+                retryAction = () => deleteItem(itemId, blacklistItem);
+            } else if (error.message && error.message.includes(`Status: 503`)) {
+                popupMessage = 'The server is temporarily unavailable (503). This might be due to a database lock. Would you like to try again?';
+                showRetryButton = true;
+                retryAction = () => deleteItem(itemId, blacklistItem);
+            }
+
+            const popupOptions = {
                 type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: 'An error occurred while deleting the item: ' + error.message,
-            });
+                title: 'Database Busy',
+                message: popupMessage,
+            };
+             if (showRetryButton && retryAction) {
+                popupOptions.type = POPUP_TYPES.CONFIRM;
+                popupOptions.confirmText = 'Retry';
+                popupOptions.onConfirm = retryAction;
+                popupOptions.cancelText = 'Close';
+            } else {
+                popupOptions.confirmText = 'OK';
+            }
+            showPopup(popupOptions);
         })
         .finally(() => {
             Loading.hide();
@@ -583,6 +1610,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function rescrapeItem(itemId) {
+        Loading.show();
         fetch('{{ url_for('debug.rescrape_item') }}', {
             method: 'POST',
             headers: {
@@ -590,52 +1618,199 @@ document.addEventListener('DOMContentLoaded', function() {
             },
             body: JSON.stringify({ item_id: itemId })
         })
-        .then(response => {
+        .then(async response => {
+            console.log('Response received. Status:', response.status, 'Ok:', response.ok);
             if (!response.ok) {
-                throw new Error('Network response was not ok');
+                let errorMsg = `Default error: Network response was not ok. Status: ${response.status}`;
+                let databaseLocked = false;
+                console.log('Response not OK. Initial errorMsg:', errorMsg);
+                try {
+                    const contentType = response.headers.get("content-type");
+                    console.log('Response Content-Type:', contentType);
+                    if (contentType && contentType.includes("application/json")) {
+                        console.log('Attempting to parse response as JSON...');
+                        const errData = await response.json();
+                        console.log('Parsed errData from JSON:', errData);
+                        if (errData && errData.error) {
+                            errorMsg = errData.error;
+                            if (errData.database_locked === true) {
+                                databaseLocked = true;
+                            }
+                            console.log('Updated errorMsg from errData.error:', errorMsg, 'DB Locked:', databaseLocked);
+                        } else if (errData) {
+                            errorMsg = `Unexpected JSON error format. Status: ${response.status}`;
+                            console.log('Updated errorMsg due to unexpected JSON format:', errorMsg);
+                        } else {
+                             console.log('errData was null or undefined after parsing JSON.');
+                        }
+                    } else {
+                        console.log('Content-Type is not application/json. Attempting to read as text.');
+                        const textError = await response.text();
+                        console.log('Response text (if not JSON):', textError.substring(0, 200)); // Log first 200 chars
+                        if (textError && textError.length < 500 && !textError.toLowerCase().includes("<html")) {
+                             errorMsg = textError;
+                             console.log('Updated errorMsg from textError:', errorMsg);
+                        } else if (textError) {
+                            console.warn("Error response was text, but seems like an HTML page or too long. Sticking with default status error.");
+                        }
+                    }
+                } catch (parseError) {
+                    console.error('Error parsing error response (JSON or text):', parseError);
+                    // errorMsg remains the default one from above if parsing fails
+                }
+                console.log('Throwing error with message:', errorMsg);
+                const errorToThrow = new Error(errorMsg);
+                if (databaseLocked || response.status === 503) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
+            console.log('Response OK. Attempting to parse as JSON...');
             return response.json();
         })
         .then(data => {
+            // This block is now only processed if response.ok was true and JSON parsing succeeded
             if (data.success) {
-                // Remove the row from the table
                 const row = document.querySelector(`button[data-item-id="${itemId}"]`).closest('tr');
-                row.remove();
-                // Show success popup
+                if (row) { // Check if row exists before trying to remove
+                    row.remove();
+                }
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
-                    message: 'Item moved to Wanted queue for rescraping',
-                    autoClose: 3000 // Close after 3 seconds
+                    message: 'Item deleted and moved to Wanted queue for rescraping',
+                    autoClose: 3000
                 });
             } else {
-                throw new Error(data.error || 'Unknown error');
+                // If data.success is false, but response was ok (e.g. 200 OK but logical error)
+                const errorToThrow = new Error(data.error || 'An unknown error occurred processing the request.');
+                if (data.database_locked === true) {
+                    errorToThrow.database_locked = true;
+                }
+                throw errorToThrow;
             }
         })
         .catch(error => {
-            console.error('Error:', error);
-            // Show error popup
-            showPopup({
-                type: POPUP_TYPES.ERROR,
-                title: 'Error',
-                message: 'An error occurred while moving the item to the Wanted queue: ' + error.message,
-            });
-        });
-    }
+            console.error('Final error caught for popup:', error);
+            console.error('Error message for popup:', error.message);
+            
+            let popupTitle = 'Error';
+            let popupMessageText = 'An error occurred while processing the item: ' + error.message;
+            let popupType = POPUP_TYPES.ERROR;
+            let confirmButtonText = 'OK';
+            let cancelButtonText = undefined;
+            let confirmAction = undefined;
+            let cancelAction = undefined;
 
-    function clearFilter() {
-        const filterColumn = document.getElementById('filter-column');
-        const filterValue = document.getElementById('filter-value');
-        if (filterColumn) filterColumn.value = '';
-        if (filterValue) filterValue.value = '';
+            if (error.database_locked) {
+                popupTitle = 'Database Busy';
+                popupMessageText = 'The database is currently busy. Would you like to try again?';
+                popupType = POPUP_TYPES.CONFIRM;
+                confirmButtonText = 'Retry';
+                cancelButtonText = 'Close';
+                confirmAction = () => rescrapeItem(itemId);
+            } else if ( (error.message && error.message.includes(`Status: 503`)) ||
+                        (error.message && error.message.toLowerCase().includes('database is locked')) ) {
+                popupTitle = 'Database Busy';
+                popupMessageText = 'The database appears to be busy. Would you like to try again?';
+                popupType = POPUP_TYPES.CONFIRM;
+                confirmButtonText = 'Retry';
+                cancelButtonText = 'Close';
+                confirmAction = () => rescrapeItem(itemId);
+            }
+
+            showPopup({
+                type: popupType,
+                title: popupTitle,
+                message: popupMessageText,
+                confirmText: confirmButtonText,
+                cancelText: cancelButtonText,
+                onConfirm: confirmAction,
+                onCancel: cancelAction 
+            });
+        })
+        .finally(() => {
+            Loading.hide();
+        });
     }
 
     // Add bulk action handlers
     const selectAllBtn = document.getElementById('select-all');
     const bulkDeleteBtn = document.getElementById('bulk-delete');
     const bulkMoveQueue = document.getElementById('bulk-move-queue');
-    let lastChecked = null;
-    let allSelected = false;
+    const bulkChangeVersion = document.getElementById('bulk-change-version');
+    const bulkEarlyReleaseBtn = document.getElementById('bulk-early-release');
+    const bulkRescrapeBtn = document.getElementById('bulk-rescrape');
+    const bulkForcePriorityBtn = document.getElementById('bulk-force-priority');
+    // NEW constant for resync button
+    const bulkResyncBtn = document.getElementById('bulk-resync');
+    // NEW constant for verify symlinks button
+    const bulkVerifySymlinksBtn = document.getElementById('bulk-verify-symlinks');
+
+    // Fetch available versions and populate the version dropdown
+    fetch('/settings/get_scraping_versions')
+        .then(response => response.json())
+        .then(data => {
+            if (data.versions) {
+                data.versions.forEach(version => {
+            const option = document.createElement('option');
+                    option.value = version;
+                    option.textContent = version;
+                    bulkChangeVersion.appendChild(option);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching versions:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                message: 'Failed to load available versions',
+                        title: 'Error',
+        });
+    });
+
+    // Handle bulk version change
+    bulkChangeVersion.addEventListener('change', function() {
+        const selectedVersion = this.value;
+        if (!selectedVersion) return;
+
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: `Are you sure you want to change the version of ${selectedItems.length} item(s) to ${selectedVersion}?`,
+            title: 'Confirm Version Change',
+            onConfirm: async () => {
+                Loading.show();
+                try {
+                    const result = await processBatchedItems(selectedItems, 'change_version', selectedVersion);
+                    showPopup({
+                        type: result.warning ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        message: result.message,
+                        title: result.warning ? 'Partial Success' : 'Success',
+                    });
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } catch (error) {
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: error.message,
+                        title: 'Error',
+                    });
+                } finally {
+                    Loading.hide();
+                }
+            },
+        });
+        
+        // Reset the select element
+        this.value = '';
+    });
 
     // Select all functionality
     selectAllBtn.addEventListener('click', function() {
@@ -692,7 +1867,181 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedCount = document.querySelectorAll('.item-select:checked').length;
         bulkDeleteBtn.disabled = selectedCount === 0;
         bulkMoveQueue.disabled = selectedCount === 0;
+        bulkChangeVersion.disabled = selectedCount === 0;
+        bulkEarlyReleaseBtn.disabled = selectedCount === 0;
+        bulkRescrapeBtn.disabled = selectedCount === 0;
+        bulkForcePriorityBtn.disabled = selectedCount === 0;
+        // NEW: enable/disable resync button
+        bulkResyncBtn.disabled = selectedCount === 0;
+        // NEW: enable/disable verify symlinks button
+        bulkVerifySymlinksBtn.disabled = selectedCount === 0;
     }
+
+    async function processBatchedItems(items, action, targetQueue = null) {
+        const BATCH_SIZE = 450; 
+        let totalProcessed = 0;
+        let errors = [];
+        let batches = Math.ceil(items.length / BATCH_SIZE);
+        let databaseLockedInAnyBatch = false;
+
+        Loading.show(`Processing items in ${batches} batches...`);
+
+        for (let i = 0; i < items.length; i += BATCH_SIZE) {
+            const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+            Loading.updateMessage(`Processing batch ${batchNumber}/${batches}...`);
+
+            const batch = items.slice(i, i + BATCH_SIZE);
+            const formData = new FormData();
+            formData.append('action', action);
+            
+            if (action === 'delete') {
+                formData.append('blacklist', targetQueue === 'true');
+            } else if (targetQueue) {
+                formData.append('target_queue', targetQueue);
+            }
+            
+            batch.forEach(id => {
+                formData.append('selected_items', id);
+            });
+
+            try {
+                const response = await fetch('/database/bulk_queue_action', {
+                    method: 'POST',
+                    body: formData,
+                });
+                
+                if (!response.ok) {
+                    let errorMsg = `HTTP error! status: ${response.status}`;
+                    let isDbLock = response.status === 503; 
+                    let responseDataForError = null;
+
+                    try {
+                        const errData = await response.json();
+                        responseDataForError = errData;
+                        errorMsg = errData.error || errorMsg;
+                        if (errData.database_locked === true) {
+                            isDbLock = true;
+                        }
+                    } catch (e) { /* JSON parsing failed */ }
+
+                    if (isDbLock) {
+                        databaseLockedInAnyBatch = true;
+                        const err = new Error(errorMsg);
+                        err.database_locked = true;
+                        err.batchNumber = batchNumber;
+                        err.details = responseDataForError; // Optionally add more details
+                        throw err;
+                    }
+                    throw new Error(errorMsg); 
+                }
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    totalProcessed += batch.length;
+                     if (data.warning) { 
+                        errors.push(`Batch ${batchNumber}: ${data.message}`);
+                    }
+                } else {
+                    if (data.database_locked === true) {
+                        databaseLockedInAnyBatch = true;
+                        const err = new Error(data.error || 'Database locked');
+                        err.database_locked = true;
+                        err.batchNumber = batchNumber;
+                        err.details = data; // Optionally add more details
+                        throw err;
+                    }
+                    errors.push(`Batch ${batchNumber}: ${data.error || 'Unknown error'}`);
+                }
+            } catch (error) { // This is the inner catch for each batch
+                console.error(`Error in batch ${batchNumber}:`, error);
+                // We always re-throw to stop processing on any batch error and let executeBulkAction handle it.
+                // The 'error' object here will be what executeBulkAction receives.
+                throw error; 
+            }
+
+            if (batchNumber < batches) {
+                 await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+
+        Loading.hide(); 
+
+        return {
+            success: errors.length === 0 && !databaseLockedInAnyBatch, 
+            warning: errors.length > 0 && totalProcessed > 0, 
+            message: errors.length > 0 
+                ? `Processed ${totalProcessed}/${items.length} items. Batch errors: ${errors.join('; ')}`
+                : `Successfully processed ${totalProcessed} items`,
+            database_locked: databaseLockedInAnyBatch 
+        };
+    }
+
+    // --- Helper to create the main logic for bulk actions to enable retry ---
+    async function executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix) {
+        Loading.show();
+        try {
+            const result = await processBatchedItems(selectedItems, actionType, targetQueueOrBlacklist);
+            
+            // This part is reached if processBatchedItems completes without throwing a db_lock error
+            showPopup({
+                type: result.warning || result.database_locked ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                message: result.message,
+                title: result.warning || result.database_locked ? 'Process Ended' : 'Success',
+            });
+            // Reload only on full success without db lock issues from any batch
+            if (result.success && !result.database_locked) {
+                 setTimeout(() => { window.location.reload(); }, 2000);
+            }
+
+        } catch (error) {
+            console.error('Error during bulk ' + actionType + ':', error);
+            if (error.database_locked) {
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Database Busy',
+                    message: `The database is currently busy (encountered in batch ${error.batchNumber || 'N/A'}). Would you like to retry the entire bulk ${actionType} operation?`,
+                    confirmText: 'Retry All',
+                    cancelText: 'Close',
+                    onConfirm: () => executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix), // Retry the whole thing
+                });
+            } else {
+                let popupTitle = 'Error';
+                let popupMessageText = `Failed to ${actionType} items: ${error.message || 'Unknown error'}`;
+                let popupType = POPUP_TYPES.ERROR;
+                let confirmButtonText = 'OK';
+                let cancelButtonText = undefined;
+                let confirmAction = undefined;
+
+                if (error.message && 
+                    (
+                        (error.message.toLowerCase().indexOf('database') > -1 && error.message.toLowerCase().indexOf('locked') > -1) || 
+                        error.message.includes('Status: 503')
+                    )
+                   ) {
+                    popupTitle = 'Database Busy';
+                    popupMessageText = `The database appears to be busy. Would you like to retry the entire bulk ${actionType} operation?`;
+                    popupType = POPUP_TYPES.CONFIRM;
+                    confirmButtonText = 'Retry All';
+                    cancelButtonText = 'Close';
+                    confirmAction = () => executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix);
+                }
+
+                showPopup({
+                    type: popupType,
+                    title: popupTitle,
+                    message: popupMessageText,
+                    confirmText: confirmButtonText,
+                    cancelText: cancelButtonText,
+                    onConfirm: confirmAction,
+                    // onCancel can be omitted if it's just closing
+                });
+            }
+        } finally {
+            Loading.hide();
+        }
+    }
+
 
     // Handle bulk delete
     bulkDeleteBtn.addEventListener('click', function() {
@@ -703,45 +2052,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
         showPopup({
             type: POPUP_TYPES.CONFIRM,
-            message: `Are you sure you want to delete ${selectedItems.length} item(s)?`,
             title: 'Confirm Deletion',
-            onConfirm: () => {
-                Loading.show();
-                const formData = new FormData();
-                formData.append('action', 'delete');
-                // Add each selected item individually
-                selectedItems.forEach(id => {
-                    formData.append('selected_items', id);
-                });
-
-                fetch('/database/bulk_queue_action', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    Loading.hide();
-                    if (data.success) {
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            message: data.message,
-                            title: 'Success'
-                        });
-                        // Refresh the page to show updated content
-                        window.location.reload();
-                    } else {
-                        throw new Error(data.error || 'Failed to delete items');
-                    }
-                })
-                .catch(error => {
-                    Loading.hide();
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error'
-                    });
-                });
-            }
+            message: `
+                <div>Are you sure you want to delete ${selectedItems.length} item(s)?</div>
+                <div style="margin-top: 10px;">
+                    <label>
+                        <input type="checkbox" id="bulk-blacklist-checkbox"> Blacklist item to avoid re-addition?
+                    </label>
+                </div>
+            `,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => { // Removed async here, executeBulkAction is async
+                const blacklistItems = document.getElementById('bulk-blacklist-checkbox').checked;
+                executeBulkAction(selectedItems, 'delete', blacklistItems.toString(), 'Deletion', 'deleted');
+            },
         });
     });
 
@@ -753,64 +2078,179 @@ document.addEventListener('DOMContentLoaded', function() {
         const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
             .map(checkbox => checkbox.dataset.itemId);
         
-        if (selectedItems.length === 0) return;
+        if (selectedItems.length === 0) { this.value = ''; return; }
+
 
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             message: `Are you sure you want to move ${selectedItems.length} item(s) to ${selectedQueue} queue?`,
             title: 'Confirm Move',
-            onConfirm: () => {
-                Loading.show();
-                const formData = new FormData();
-                formData.append('action', 'move');
-                formData.append('target_queue', selectedQueue);
-                // Add each selected item individually
-                selectedItems.forEach(id => {
-                    formData.append('selected_items', id);
-                });
+            onConfirm: () => { // Removed async
+                executeBulkAction(selectedItems, 'move', selectedQueue, 'Move', `moved to ${selectedQueue}`);
+            },
+        });
+        this.value = ''; // Reset select after confirmation
+    });
 
-                fetch('/database/bulk_queue_action', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    Loading.hide();
-                    if (data.success) {
-                        showPopup({
-                            type: POPUP_TYPES.SUCCESS,
-                            message: data.message,
-                            title: 'Success'
-                        });
-                        // Refresh the page to show updated content
-                        setTimeout(() => {
-                            window.location.reload();
-                        }, 1000);
-                    } else {
-                        throw new Error(data.error || 'Failed to move items');
-                    }
-                })
-                .catch(error => {
-                    Loading.hide();
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: error.message,
-                        title: 'Error'
-                    });
-                });
+    // Handle bulk version change
+    bulkChangeVersion.addEventListener('change', function() {
+        const selectedVersion = this.value;
+        if (!selectedVersion) return;
+
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) {this.value = ''; return;}
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            message: `Are you sure you want to change the version of ${selectedItems.length} item(s) to ${selectedVersion}?`,
+            title: 'Confirm Version Change',
+            onConfirm: () => { // Removed async
+                executeBulkAction(selectedItems, 'change_version', selectedVersion, 'Version Change', `version changed for`);
+            },
+        });
+        this.value = ''; // Reset select
+    });
+
+
+    // Handle bulk early release
+    bulkEarlyReleaseBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Early Release',
+            message: `
+                <div>Are you sure you want to mark ${selectedItems.length} item(s) as early release?</div>
+            `,
+            confirmText: 'Mark',
+            cancelText: 'Cancel',
+            onConfirm: () => { // Removed async
+                executeBulkAction(selectedItems, 'early_release', null, 'Early Release', 'marked as early release for');
+            },
+        });
+    });
+
+    // Handle bulk rescrape
+    bulkRescrapeBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Rescrape',
+            message: 'Are you sure you want to delete these items and move them to the Wanted queue for rescraping? This will delete the files from disk and remove them from Plex.',
+            confirmText: 'Delete & Rescrape',
+            cancelText: 'Cancel',
+            onConfirm: () => { // Removed async
+                 executeBulkAction(selectedItems, 'rescrape', null, 'Rescrape', 'rescrape initiated for');
+            },
+        });
+    });
+
+    // Handle bulk force priority
+    bulkForcePriorityBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(checkbox => checkbox.dataset.itemId);
+        
+        if (selectedItems.length === 0) return;
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Force Priority',
+            message: `Are you sure you want to mark ${selectedItems.length} item(s) for forced priority? This will make them jump to the front of their respective queues.`,
+            confirmText: 'Mark for Priority',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'force_priority', null, 'Force Priority', 'marked for forced priority');
+            },
+        });
+    });
+
+    // NEW: Bulk resync handler
+    bulkResyncBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(cb => cb.dataset.itemId);
+        if (selectedItems.length === 0) return;
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Resync',
+            message: `Resync symlinks and DB paths for ${selectedItems.length} item(s)?`,
+            confirmText: 'Resync',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'resync', null, 'Resync', 'resynchronized');
             }
         });
-        
-        // Reset the select element
-        this.value = '';
+    });
+
+    // NEW: Bulk verify symlinks handler
+    bulkVerifySymlinksBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(cb => cb.dataset.itemId);
+        if (selectedItems.length === 0) return;
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Symlink Verification',
+            message: `Add ${selectedItems.length} item(s) to the symlink verification queue? This will verify that the symlinked files are properly scanned into Plex.`,
+            confirmText: 'Verify',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'verify_symlinks', null, 'Symlink Verification', 'added to verification queue');
+            }
+        });
     });
 
     // Initial attachment of event listeners
     attachEventListeners();
     attachDeleteListeners();
     attachRescrapeListeners();
+
+    // Reinitialize tooltips after initial load/updates
+    initializeDatabaseTooltips();
+    updateBulkActionButtons();
+
 });
 
-Loading.init();
+</script>
+
+<script>
+    // Initialize loading overlay globally
+    Loading.init();
+
+    // Stats panel functionality (separate from the module script)
+    document.addEventListener('DOMContentLoaded', function() {
+        const statsPanel = document.querySelector('.stats-panel');
+        const statsToggle = document.querySelector('.stats-toggle');
+
+        // Check if panel was open in previous session
+        const isPanelOpen = localStorage.getItem('statsPanelOpen') === 'true';
+        if (isPanelOpen) {
+            statsPanel.classList.add('active');
+        }
+
+        if (statsToggle && statsPanel) { // Ensure elements exist before adding listener
+            statsToggle.addEventListener('click', function() {
+                statsPanel.classList.toggle('active');
+                // Save state to localStorage
+                localStorage.setItem('statsPanelOpen', statsPanel.classList.contains('active'));
+            });
+        }
+
+        // Close panel when clicking outside
+        document.addEventListener('click', function(e) {
+            // Check if panel exists and is active before trying to close
+            if (statsPanel && statsPanel.classList.contains('active') && !statsPanel.contains(e.target) && statsToggle && !statsToggle.contains(e.target)) {
+                statsPanel.classList.remove('active');
+                localStorage.setItem('statsPanelOpen', 'false');
+            }
+        });
+    });
 </script>
 {% endblock %}

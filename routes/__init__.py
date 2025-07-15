@@ -1,3 +1,4 @@
+from .trakt_friends_routes import trakt_friends_bp
 from flask import Blueprint, jsonify, redirect, url_for, render_template, g, request, abort, flash
 from functools import wraps
 import json
@@ -16,18 +17,26 @@ from .user_management_routes import user_management_bp
 from .database_routes import database_bp
 from .statistics_routes import statistics_bp, root_bp
 from .webhook_routes import webhook_bp
+from .trakt_friends_routes import trakt_friends_bp
 from .debug_routes import debug_bp
 from .trakt_routes import trakt_bp
 from .log_viewer_routes import logs_bp
 from .settings_routes import settings_bp
 from .program_operation_routes import program_operation_bp
 from .video_routes import video_routes
-from api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
-from extensions import app
+from routes.api_tracker import is_rate_limited, get_blocked_domains, APIRateLimiter, api  # Add this import at the top of the file
+from routes.extensions import app
 from .content_requestor_routes import content_requestor_bp
 from .base_routes import base_bp  # Add this import
 from .library_management_routes import library_management
 from .cors_testing_routes import cors_testing_bp
+from .magnet_routes import magnet_bp
+from .performance_routes import performance_bp
+from .torrent_status_routes import torrent_status_bp
+from .settings_validation_routes import settings_validation_bp
+from .content_requestor_routes import content_requestor_bp
+from .connections_routes import connections_bp
+from .user_token_routes import user_token_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -126,6 +135,7 @@ def register_blueprints(app):
         (user_management_bp, '/user_management'),
         (database_bp, '/database'),
         (statistics_bp, '/statistics'),
+        (trakt_friends_bp, '/trakt_friends'),
         (webhook_bp, '/webhook'),
         (debug_bp, '/debug'),
         (trakt_bp, '/trakt'),
@@ -141,6 +151,12 @@ def register_blueprints(app):
         (root_bp, '/'),
         (library_management, '/library_management'),
         (cors_testing_bp, '/cors_testing'),
+        (magnet_bp, '/magnet'),
+        (performance_bp, '/performance'),
+        (torrent_status_bp, '/torrent_status'),
+        (settings_validation_bp, '/settings_validation'),
+        (connections_bp, '/connections'),
+        (user_token_bp, '/user_token')
     ]
     
     for blueprint, url_prefix in blueprints:

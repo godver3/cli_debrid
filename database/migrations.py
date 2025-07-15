@@ -18,6 +18,24 @@ def add_statistics_indexes():
             WHERE collected_at IS NOT NULL
         """)
         
+        # Narrow partial index for the statistics page – newest MOVIES
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_recent_movies
+            ON media_items(collected_at DESC)
+            WHERE type = 'movie'
+              AND upgraded = 0
+              AND state IN ('Collected', 'Upgrading')
+        """)
+        
+        # Narrow partial index for the statistics page – newest EPISODES (representing shows)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_recent_episodes
+            ON media_items(collected_at DESC)
+            WHERE type = 'episode'
+              AND upgraded = 0
+              AND state IN ('Collected', 'Upgrading')
+        """)
+        
         # Index for recently upgraded items
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_media_items_upgraded

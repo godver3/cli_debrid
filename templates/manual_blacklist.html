@@ -3,17 +3,27 @@
 {% block title %}Manual Blacklist{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/manual_blacklist.css') }}">
 <div class="container">
-    <h2>Manual Blacklist</h2>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Manual Blacklist</h2>
+    </div>
 
     <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" class="mb-4" id="blacklistForm">
-        <div class="form-group">
-            <label for="imdb_id">IMDb ID:</label>
+        <div class="input-group">
+            <div class="input-group-prepend">
+                <label class="input-group-text" for="imdb_id">IMDb ID:</label>
+            </div>
             <input type="text" id="imdb_id" name="imdb_id" required class="form-control">
+            <input type="hidden" name="action" value="add">
+            <button type="submit" class="btn btn-primary">
+                <i class="fas fa-plus"></i> Add to Blacklist
+            </button>
+            <button type="button" id="saveAllChanges" class="btn btn-primary">
+                <i class="fas fa-save"></i> Save All Changes
+            </button>
         </div>
-        <input type="hidden" name="action" value="add">
-        <button type="submit" class="btn btn-primary">Add to Blacklist</button>
     </form>
 
     <h3>Current Blacklist</h3>
@@ -24,7 +34,8 @@
                 <th>Title</th>
                 <th>Year</th>
                 <th>Media Type</th>
-                <th>Action</th>
+                <th>Seasons</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -35,19 +46,209 @@
                 <td>{{ item.year }}</td>
                 <td>{{ item.media_type }}</td>
                 <td>
-                    <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" style="display: inline;">
+                    {% if item.media_type == 'episode' %}
+                        <form class="seasons-form" data-imdb-id="{{ imdb_id }}">
+                            <div class="form-check mb-2 d-flex align-items-center">
+                                <input type="checkbox" class="form-check-input" id="all_seasons_{{ imdb_id }}" name="all_seasons" {% if not item.seasons %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="all_seasons_{{ imdb_id }}">All Seasons</label>
+                                <a href="#" class="toggle-seasons text-secondary ms-2" title="Toggle Seasons">
+                                    <i class="fas fa-chevron-down"></i>
+                                </a>
+                            </div>
+                            <div class="seasons-container">
+                                <div class="seasons-list" style="display: none;">
+                                    {% if item.available_seasons %}
+                                        {% for season in item.available_seasons %}
+                                            <div class="form-check">
+                                                <input type="checkbox" class="form-check-input season-checkbox" id="season_{{ imdb_id }}_{{ season }}" 
+                                                       name="seasons" value="{{ season }}" 
+                                                       {% if item.seasons and season in item.seasons %}checked{% endif %}>
+                                                <label class="form-check-label" for="season_{{ imdb_id }}_{{ season }}">
+                                                    Season {{ season }}
+                                                    {% if item.season_episodes and season in item.season_episodes %}
+                                                        <small class="text-muted">({{ item.season_episodes[season] }} episodes)</small>
+                                                    {% endif %}
+                                                </label>
+                                            </div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <div class="text-muted">No season information available</div>
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </form>
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </td>
+                <td>
+                    <form action="{{ url_for('debug.manual_blacklist') }}" method="POST" class="d-inline">
                         <input type="hidden" name="action" value="remove">
                         <input type="hidden" name="imdb_id" value="{{ imdb_id }}">
-                        <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+                        <button type="submit" class="btn btn-link text-danger p-0">
+                            <i class="fas fa-trash"></i>
+                        </button>
                     </form>
                 </td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="5">No items in the blacklist</td>
+                <td colspan="6">No items in the blacklist</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+
+<style>
+.seasons-list {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+.form-check {
+    margin-bottom: 5px;
+}
+.season-check {
+    margin-left: 20px;
+}
+.seasons-container {
+    margin-top: 10px;
+}
+.toggle-seasons {
+    text-decoration: none;
+}
+.toggle-seasons:hover {
+    text-decoration: none;
+}
+.toggle-seasons.active i {
+    transform: rotate(180deg);
+    transition: transform 0.2s ease-in-out;
+}
+.btn-link:hover {
+    text-decoration: none;
+}
+.ms-2 {
+    margin-left: 0.5rem;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle season checkboxes and "All Seasons" interaction
+    document.querySelectorAll('.seasons-form').forEach(form => {
+        const allSeasonsCheckbox = form.querySelector('[name="all_seasons"]');
+        const seasonsList = form.querySelector('.seasons-list');
+        const seasonCheckboxes = form.querySelectorAll('.season-checkbox');
+        const toggleButton = form.querySelector('.toggle-seasons');
+        
+        // Function to check if all seasons are selected
+        const areAllSeasonsSelected = () => {
+            return Array.from(seasonCheckboxes).every(cb => cb.checked);
+        };
+        
+        // Function to update "All Seasons" checkbox based on individual selections
+        const updateAllSeasonsCheckbox = () => {
+            allSeasonsCheckbox.checked = areAllSeasonsSelected();
+        };
+
+        // Handle "All Seasons" checkbox changes
+        allSeasonsCheckbox.addEventListener('change', function() {
+            seasonCheckboxes.forEach(cb => cb.checked = this.checked);
+        });
+
+        // Handle toggle button
+        toggleButton.addEventListener('click', function(e) {
+            e.preventDefault();
+            const seasonsList = this.closest('.seasons-form').querySelector('.seasons-list');
+            const isHidden = seasonsList.style.display === 'none';
+            seasonsList.style.display = isHidden ? 'block' : 'none';
+            this.classList.toggle('active');
+        });
+
+        // Handle individual season checkbox changes
+        seasonCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                updateAllSeasonsCheckbox();
+            });
+        });
+
+        // Handle shift-click selection
+        let lastChecked = null;
+        seasonCheckboxes.forEach(checkbox => {
+            checkbox.addEventListener('click', function(e) {
+                if (!lastChecked) {
+                    lastChecked = this;
+                    return;
+                }
+
+                if (e.shiftKey) {
+                    const checkboxes = Array.from(seasonCheckboxes);
+                    const start = checkboxes.indexOf(this);
+                    const end = checkboxes.indexOf(lastChecked);
+                    
+                    const shouldCheck = this.checked;
+                    
+                    checkboxes
+                        .slice(Math.min(start, end), Math.max(start, end) + 1)
+                        .forEach(cb => {
+                            cb.checked = shouldCheck;
+                        });
+                    
+                    updateAllSeasonsCheckbox();
+                }
+
+                lastChecked = this;
+            });
+        });
+    });
+
+    // Handle save all changes
+    document.getElementById('saveAllChanges').addEventListener('click', async function() {
+        const forms = document.querySelectorAll('.seasons-form');
+        let success = true;
+        
+        for (const form of forms) {
+            const imdbId = form.dataset.imdbId;
+            const allSeasons = form.querySelector('[name="all_seasons"]').checked;
+            const selectedSeasons = Array.from(form.querySelectorAll('.season-checkbox:checked')).map(cb => cb.value);
+            
+            const formData = new FormData();
+            formData.append('action', 'update_seasons');
+            formData.append('imdb_id', imdbId);
+            if (allSeasons) {
+                formData.append('all_seasons', 'on');
+            } else {
+                selectedSeasons.forEach(season => {
+                    formData.append('seasons', season);
+                });
+            }
+            
+            try {
+                const response = await fetch(window.location.href, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!response.ok) {
+                    success = false;
+                    console.error(`Failed to update seasons for ${imdbId}`);
+                }
+            } catch (error) {
+                success = false;
+                console.error('Error:', error);
+            }
+        }
+        
+        if (success) {
+            window.location.reload();
+        } else {
+            alert('Failed to update some or all seasons. Please try again.');
+        }
+    });
+});
+</script>
 {% endblock %}

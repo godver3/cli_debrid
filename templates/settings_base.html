@@ -11,7 +11,7 @@
         outline: none;
         color: white;
         padding: 5px 10px;
-        margin: 0 5px;
+        margin: 0 3px;
         text-align: center;
         text-decoration: none;
         display: inline-block;
@@ -114,7 +114,8 @@
     .add-version-link,
     .duplicate-source-btn,
     .duplicate-scraper-btn,
-    .duplicate-version-btn {
+    .duplicate-version-btn,
+    .import-versions-link {
         composes: btn btn-primary;
         display: inline-flex;
         align-items: center;
@@ -138,8 +139,24 @@
     .add-version-link:hover,
     .duplicate-source-btn:hover,
     .duplicate-scraper-btn:hover,
-    .duplicate-version-btn:hover {
+    .duplicate-version-btn:hover,
+    .import-versions-link:hover {
         background-color: #45a049;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+
+    .import-versions-link, #add-default-version-btn, #add-separate-versions-btn {
+        background-color: #a04598;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    .import-versions-link:hover, #add-default-version-btn:hover, #add-separate-versions-btn:hover {
+        background-color: #803578;
         border: none !important;
         outline: none;
         box-shadow: none;
@@ -174,7 +191,7 @@
         color: white;
         text-decoration: none;
         border-radius: 4px;
-        transition: all 0.3s ease;
+        transition: background-color 0.3s;
         height: 28px;
     }
 
@@ -364,7 +381,7 @@
     }
 
     /* Responsive styles for settings tabs */
-    @media screen and (max-width: 768px) {
+    @media screen and (max-width: 1245px) {
         .settings-tabs {
             flex-direction: column;
             align-items: stretch;
@@ -393,7 +410,7 @@
         }
     }
 
-    @media screen and (min-width: 769px) {
+    @media screen and (min-width: 1246px) {
         .settings-tab-select {
             display: none;
         }
@@ -404,22 +421,32 @@
     <select class="settings-tab-select">
         <option value="required">Required Settings</option>
         <option value="scrapers">Scrapers</option>
-        <option value="scraping">Scraping Settings</option>
+        <option value="scraping">Version Settings</option>
         <option value="content-sources">Content Sources</option>
         <option value="additional">Additional Settings</option>
+        {% if environment_mode == 'full' %}
         <option value="debug">Advanced Settings</option>
+        {% endif %}
         <option value="notifications">Notifications</option>
+        {% if environment_mode == 'full' %}
         <option value="reverse-parser">Reverse Parser</option>
+        <option value="true-debug">Debug</option>
+        {% endif %}
     </select>
     <div class="settings-tabs settings-tabs-desktop">
         <button type="button" class="btn btn-secondary settings-tab-button active" data-tab="required">Required Settings</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="scrapers">Scrapers</button>
-        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="scraping">Scraping Settings</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="scraping">Version Settings</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="content-sources">Content Sources</button>
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="additional">Additional Settings</button>
+        {% if environment_mode == 'full' %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="debug">Advanced Settings</button>
+        {% endif %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="notifications">Notifications</button>
+        {% if environment_mode == 'full' %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="reverse-parser">Reverse Parser</button>
+        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="true-debug">Debug</button>
+        {% endif %}
     </div>
     
     <div id="settingsForm">
@@ -435,15 +462,22 @@
         <div id="additional" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/additional.html' %}
         </div>
+        {% if environment_mode == 'full' %}
         <div id="debug" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/debug.html' %}
         </div>
+        {% endif %}
         <div id="notifications" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/notifications.html' %}
         </div>
+        {% if environment_mode == 'full' %}
         <div id="reverse-parser" class="settings-tab-content" style="display: none;">
             {% include 'settings_tabs/reverse_parser.html' %}
         </div>
+        <div id="true-debug" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/true_debug.html' %}
+        </div>
+        {% endif %}
     </div>
 
     <div id="scrapers" class="settings-tab-content" style="display: none;">
@@ -481,6 +515,10 @@
                     } else if (tabName === 'scraping') {
                         console.log('Dispatching scrapingContentLoaded event');
                         const event = new CustomEvent('scrapingContentLoaded');
+                        document.dispatchEvent(event);
+                    } else if (tabName === 'true-debug') {
+                        console.log('Dispatching trueDebugContentLoaded event');
+                        const event = new CustomEvent('trueDebugContentLoaded');
                         document.dispatchEvent(event);
                     }
                     initializeExpandCollapse();

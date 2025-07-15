@@ -11,6 +11,8 @@ from app.trakt_metadata import TraktMetadata  # Add this import at the top of th
 import json
 import time
 import os
+import iso8601
+from datetime import datetime, timezone, timedelta
 
 settings = Settings()
 
@@ -20,71 +22,20 @@ trakt_bp = Blueprint('trakt', __name__)
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 TRAKT_CONFIG_PATH = os.path.join(CONFIG_DIR, '.pytrakt.json')
 
-@trakt_bp.route('/trakt_auth', methods=['GET', 'POST'])
-def trakt_auth():
-    try:
-        trakt = TraktAuth()
-        device_code_response = trakt.get_device_code()
-        
-        # Store the device code response in the Trakt config file
-        update_trakt_config('device_code_response', device_code_response)
-        
-        return jsonify({
-            'user_code': device_code_response['user_code'],
-            'verification_url': device_code_response['verification_url'],
-            'device_code': device_code_response['device_code']
-        })
-    except Exception as e:
-        logger.error(f"Error in trakt_auth: {str(e)}")
-        return jsonify({'error': f'Unable to start authorization process: {str(e)}'}), 500
-
-@trakt_bp.route('/trakt_auth_status', methods=['POST'])
-def trakt_auth_status():
-    try:
-        trakt_config = get_trakt_config()
-        device_code_response = trakt_config.get('device_code_response')
-        
-        if not device_code_response:
-            return jsonify({'error': 'No pending Trakt authorization'}), 400
-        
-        trakt = TraktAuth()
-        device_code = device_code_response['device_code']
-        
-        response = trakt.get_device_token(device_code)
-        
-        if response.status_code == 200:
-            token_data = response.json()
-            
-            # Store the new tokens
-            update_trakt_config('CLIENT_ID', trakt.client_id)
-            update_trakt_config('CLIENT_SECRET', trakt.client_secret)
-            update_trakt_config('OAUTH_TOKEN', token_data['access_token'])
-            update_trakt_config('OAUTH_REFRESH', token_data['refresh_token'])
-            update_trakt_config('OAUTH_EXPIRES_AT', int(time.time()) + token_data['expires_in'])
-            
-            # Remove the device code response as it's no longer needed
-            trakt_config = get_trakt_config()
-            trakt_config.pop('device_code_response', None)
-            save_trakt_config(trakt_config)
-            
-            # Reload Trakt auth
-            trakt.load_auth()
-
-            return jsonify({'status': 'authorized'})
-        elif response.status_code == 400:
-            return jsonify({'status': 'pending'})
-        else:
-            return jsonify({'status': 'error', 'message': response.text}), response.status_code
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
 @trakt_bp.route('/check_trakt_auth', methods=['GET'])
 def check_trakt_auth():
-    trakt_config = get_trakt_config()
-    if 'OAUTH_TOKEN' in trakt_config and 'OAUTH_EXPIRES_AT' in trakt_config:
-        if trakt_config['OAUTH_EXPIRES_AT'] > time.time():
+    try:
+        # Always create a fresh TraktAuth instance to get current data
+        trakt_auth = TraktAuth()
+        
+        if trakt_auth.is_authenticated():
             return jsonify({'status': 'authorized'})
-    return jsonify({'status': 'unauthorized'})
+        else:
+            return jsonify({'status': 'unauthorized'})
+                
+    except Exception as e:
+        logger.error(f"Error checking Trakt auth status: {e}")
+        return jsonify({'status': 'unauthorized'})
 
 # Add these helper functions
 def get_trakt_config():
@@ -103,6 +54,19 @@ def update_trakt_config(key, value):
     config[key] = value
     save_trakt_config(config)
 
+@trakt_bp.route('/refresh_trakt_auth', methods=['POST'])
+def refresh_trakt_auth():
+    """Manually refresh Trakt authentication token"""
+    try:
+        # Create fresh instance to get current data
+        trakt_auth = TraktAuth()
+        
+        if trakt_auth.refresh_access_token():
+            return jsonify({'status': 'success', 'message': 'Trakt auth refreshed successfully'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Failed to refresh Trakt auth'}), 500
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @trakt_bp.route('/receive_trakt_auth', methods=['POST'])
 def receive_trakt_auth():
@@ -117,17 +81,25 @@ def receive_trakt_auth():
         trakt_auth.refresh_token = auth_data.get('OAUTH_REFRESH')
         trakt_auth.expires_at = auth_data.get('OAUTH_EXPIRES_AT')
         
-        # Save the new data
+        # Save the new data to .pytrakt.json
         trakt_auth.save_trakt_credentials()
         
-        # Update settings
-        trakt_auth.settings.Trakt['client_id'] = trakt_auth.client_id
-        trakt_auth.settings.Trakt['client_secret'] = trakt_auth.client_secret
-        trakt_auth.settings.Trakt['access_token'] = trakt_auth.access_token
-        trakt_auth.settings.Trakt['refresh_token'] = trakt_auth.refresh_token
-        trakt_auth.settings.Trakt['expires_at'] = trakt_auth.expires_at
-        trakt_auth.settings.save_settings()
+        # Update battery's settings.json with the new Trakt data
+        settings = Settings()
+        trakt_settings = {
+            'client_id': trakt_auth.client_id,
+            'client_secret': trakt_auth.client_secret,
+            'access_token': trakt_auth.access_token,
+            'refresh_token': trakt_auth.refresh_token,
+            'expires_at': trakt_auth.expires_at,
+            'last_refresh': datetime.now(timezone.utc).isoformat(),
+            'redirect_uri': 'urn:ietf:wg:oauth:2.0:oob'
+        }
+        settings.update_trakt_settings(trakt_settings)
+        
+        logger.info("Trakt auth received and saved successfully to both .pytrakt.json and settings.json")
         
         return jsonify({'status': 'success', 'message': 'Trakt auth received and saved successfully'})
     except Exception as e:
+        logger.error(f"Error receiving Trakt auth: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500

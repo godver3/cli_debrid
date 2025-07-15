@@ -1,0 +1,879 @@
+{% extends "base.html" %}
+
+{% block title %}Torrent Tracking{% endblock %}
+
+{% block head %}
+<style>
+/* Mobile warning styling */
+.mobile-warning {
+    display: none;
+    background-color: #ff4444;
+    color: white;
+    text-align: center;
+    margin-top: 50px;
+    padding: 20px;
+    font-weight: bold;
+}
+
+/* Container layout */
+.torrent-tracking-container {
+    width: 95%;
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Table responsive wrapper */
+.table-responsive {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Card styling to match site theme */
+.tracking-card {
+    background-color: #2c2c2c;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    margin-bottom: 20px;
+    padding: 20px;
+    overflow-x: auto;
+}
+
+/* Table styling */
+.tracking-table {
+    width: 100%;
+    min-width: 800px; /* Minimum width to prevent squishing */
+    border-collapse: collapse;
+    color: #f4f4f4;
+}
+
+/* Column widths */
+.tracking-table th:nth-child(1) { width: 12%; } /* Added - reduced from 15% */
+.tracking-table th:nth-child(2) { width: 40%; } /* Title - increased from 30% */
+.tracking-table th:nth-child(3) { width: 12%; } /* Trigger - reduced from 15% */
+.tracking-table th:nth-child(4) { width: 18%; } /* Rationale - reduced from 20% */
+.tracking-table th:nth-child(5) { width: 10%; } /* Status - reduced from 12% */
+.tracking-table th:nth-child(6) { width: 8%; }  /* Actions - unchanged */
+
+/* Modal responsive styling */
+.modal-container {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #2c2c2c;
+    width: 95%;
+    max-width: 800px;
+    height: auto;
+    max-height: calc(100vh - 100px); /* Account for top and bottom margins */
+    margin: 75px auto 25px;
+    border-radius: 8px;
+    z-index: 1001;
+    overflow-y: auto;
+}
+
+/* Details list responsive */
+.details-list {
+    display: grid;
+    grid-template-columns: minmax(120px, 150px) 1fr;
+    gap: 10px;
+}
+
+/* JSON formatter responsive */
+.json-formatter {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+/* Responsive breakpoints */
+@media screen and (max-width: 1200px) {
+    .torrent-tracking-container {
+        width: 98%;
+        padding: 10px;
+    }
+    
+    .tracking-card {
+        padding: 15px;
+    }
+}
+
+@media screen and (max-width: 992px) {
+    .details-list {
+        grid-template-columns: minmax(100px, 120px) 1fr;
+    }
+}
+
+@media screen and (max-width: 768px) {
+    .mobile-warning {
+        display: block;
+    }
+    .torrent-tracking-container {
+        display: none;
+    }
+}
+
+/* Ensure long text doesn't break layout */
+.tracking-table td {
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Allow title column to wrap and not be constrained by max-width */
+.tracking-table td:nth-child(2) {
+    white-space: normal;
+    word-break: break-word;
+    max-width: none;  /* Remove max-width constraint for title column */
+}
+
+/* Status column width and alignment */
+.tracking-table th:nth-child(5),
+.tracking-table td:nth-child(5) {
+    min-width: 160px;
+    text-align: center;
+}
+
+/* Trigger column alignment */
+.tracking-table th:nth-child(3),
+.tracking-table td:nth-child(3) {
+    text-align: left;
+}
+
+.tracking-table tr:hover {
+    background-color: #333;
+}
+
+/* Status badges */
+.status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-transform: uppercase;
+    min-width: 100px;
+    text-align: center;
+    height: 24px;
+    line-height: 16px;
+}
+
+.status-badge.present {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.status-badge.downloading {
+    background-color: #ffc107;
+    color: black;
+}
+
+.status-badge.removed {
+    background-color: #6c757d;
+    color: white;
+}
+
+.status-badge.error {
+    background-color: #dc3545;
+    color: white;
+}
+
+.status-badge.loading {
+    background: none;
+    position: relative;
+    font-size: 0;
+    height: 24px;
+    padding: 0;
+    min-width: 24px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.status-badge.loading:after {
+    content: '';
+    width: 16px;
+    height: 16px;
+    border: 2px solid #6c757d;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Trigger badges */
+.trigger-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.trigger-badge.manual_add, .trigger-badge.MANUAL_ADD {
+    background-color: #17a2b8;
+    color: white;
+}
+
+.trigger-badge.debrid_client, .trigger-badge.DEBRID_CLIENT {
+    background-color: #6f42c1;
+    color: white;
+}
+
+.trigger-badge.queue_add, .trigger-badge.QUEUE_ADD {
+    background-color: #28a745;
+    color: white;
+}
+
+.trigger-badge.queue_upgrade, .trigger-badge.QUEUE_UPGRADE {
+    background-color: #fd7e14;
+    color: white;
+}
+
+.trigger-badge.cache_check, .trigger-badge.CACHE_CHECK {
+    background-color: #4aa2ff;
+    color: white;
+}
+
+.trigger-badge.adding_error, .trigger-badge.ADDING_ERROR {
+    background-color: #dc3545;  /* Using red to indicate error */
+    color: white;
+}
+
+.trigger-badge.missing_trigger, .trigger-badge.MISSING_TRIGGER {
+    background-color: #6c757d;
+    color: white;
+}
+
+/* Modal styling */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    z-index: 1000;
+}
+
+.modal-header {
+    position: sticky;
+    top: 0;
+    background-color: #1a1a1a;
+    padding: 15px 20px;
+    border-bottom: 1px solid #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 1002;
+}
+
+.modal-title {
+    color: #f4f4f4;
+    font-size: 1.2em;
+    font-weight: 600;
+    margin: 0;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.5em;
+    cursor: pointer;
+    padding: 0;
+}
+
+.modal-close:hover {
+    color: #f4f4f4;
+}
+
+.modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    max-height: calc(100vh - 200px); /* Account for header height + margins */
+}
+
+/* Details section styling */
+.details-section {
+    margin-bottom: 30px;
+}
+
+.section-title {
+    color: #f4f4f4;
+    font-size: 1.1em;
+    font-weight: 600;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #444;
+}
+
+.details-list dt {
+    color: #888;
+    font-weight: 600;
+}
+
+.details-list dd {
+    color: #f4f4f4;
+    margin: 0;
+}
+
+/* Code and JSON formatting */
+.json-formatter {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 15px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: monospace;
+    font-size: 0.9em;
+    color: #f4f4f4;
+    white-space: pre-wrap;
+}
+
+code {
+    background-color: #1a1a1a;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.9em;
+    color: #e83e8c;
+}
+
+/* Button styling */
+.details-button {
+    background-color: #17a2b8;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.details-button:hover {
+    background-color: #138496;
+}
+
+/* Loading spinner */
+.status-indicator {
+    display: inline-block;
+    color: #888;
+    font-size: 0.9em;
+}
+
+.status-indicator.loading {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Alert styling */
+.alert-info {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 20px;
+    color: #f4f4f4;
+}
+
+.alert-info h4 {
+    color: #17a2b8;
+    margin-bottom: 15px;
+}
+
+.alert-info hr {
+    border-color: #444;
+    margin: 15px 0;
+}
+
+.alert-info ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+/* New CSS for warning badge */
+.status-badge.warning {
+    background-color: #ffc107;
+    color: #000;
+}
+
+/* Responsive modal adjustments */
+@media screen and (max-height: 800px) {
+    .modal-container {
+        margin: 50px auto 20px;
+        max-height: calc(100vh - 70px);
+    }
+    
+    .modal-body {
+        max-height: calc(100vh - 140px);
+    }
+}
+
+@media screen and (max-height: 600px) {
+    .modal-container {
+        margin: 60px auto 15px;
+        max-height: calc(100vh - 45px);
+    }
+    
+    .modal-body {
+        max-height: calc(100vh - 100px);
+        padding: 15px;
+    }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mobile-warning">
+    The Torrent Tracking interface cannot be used on mobile devices. Please access it from a desktop computer.
+</div>
+
+<div class="torrent-tracking-container">
+        <h2>Torrent Addition History</h2>
+
+        <div class="tracking-card">
+            {% if entries %}
+            <div class="table-responsive">
+                <table class="tracking-table">
+                    <thead>
+                        <tr>
+                            <th>Added</th>
+                            <th>Title</th>
+                            <th>Trigger</th>
+                            <th>Rationale</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for entry in entries %}
+                        <tr class="torrent-entry" id="torrent-{{ entry.torrent_hash }}" data-hash="{{ entry.torrent_hash }}">
+                            <td>{{ entry.timestamp }}</td>
+                            <td>
+                                {% if entry.item_data %}
+                                    {% set item = entry.item_data|from_json %}
+                                    {% if item.filled_by_title %}
+                                        {{ item.filled_by_title }}
+                                    {% else %}
+                                        {{ item.title }}
+                                        {% if item.year %}({{ item.year }}){% endif %}
+                                        {% if item.season_number is not none %}
+                                            S{{ item.season_number|string|zfill(2) }}
+                                            {% if item.episode_number is not none %}
+                                                E{{ item.episode_number|string|zfill(2) }}
+                                            {% endif %}
+                                        {% endif %}
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="trigger-badge {{ entry.trigger_source }}">{{ entry.trigger_source }}</span>
+                            </td>
+                            <td>{{ entry.rationale }}</td>
+                            <td class="status-cell" data-hash="{{ entry.torrent_hash }}">
+                                <span class="status-badge loading"></span>
+                            </td>
+                            <td>
+                                <button class="details-button" onclick="showModal('detailsModal{{ entry.id }}')">
+                                    <i class="fas fa-info-circle"></i> Details
+                                </button>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert-info">
+                <h4>No Torrent History Yet</h4>
+                <p>There are currently no torrent additions being tracked. As torrents are added to your account, they will appear here with detailed information about why and how they were added.</p>
+                <hr>
+                <p>The tracking system will automatically record information about:</p>
+                <ul>
+                    <li>When torrents are added</li>
+                    <li>What triggered the addition</li>
+                    <li>The rationale behind each addition</li>
+                    <li>Complete item data at the time of addition</li>
+                    <li>Current status and any removal information</li>
+                </ul>
+            </div>
+            {% endif %}
+    </div>
+</div>
+
+{% if entries %}
+{% for entry in entries %}
+<!-- Modal Overlay -->
+<div class="modal-overlay" id="overlay{{ entry.id }}"></div>
+
+<!-- Details Modal -->
+<div class="modal-container" id="detailsModal{{ entry.id }}">
+    <div class="modal-header">
+        <h3 class="modal-title">
+            {% if entry.item_data %}
+                {% set item = entry.item_data|from_json %}
+                {% if item.filled_by_title %}
+                    {{ item.filled_by_title }}
+                {% else %}
+                    {{ item.title }}
+                {% endif %}
+            {% else %}
+                Torrent Details
+            {% endif %}
+        </h3>
+        <button class="modal-close" onclick="hideModal('detailsModal{{ entry.id }}')">&times;</button>
+    </div>
+    <div class="modal-body">
+        <div class="details-section">
+            <h4 class="section-title">Basic Information</h4>
+            <dl class="details-list">
+                <dt>Torrent Hash</dt>
+                <dd><code>{{ entry.torrent_hash }}</code></dd>
+                
+                <dt>Added</dt>
+                <dd>{{ entry.timestamp }}</dd>
+                
+                <dt>Current Status</dt>
+                <dd class="status-cell" data-hash="{{ entry.torrent_hash }}">
+                    <span class="status-badge">Loading...</span>
+                </dd>
+
+                {% if not entry.is_still_present %}
+                <dt>Removal Reason</dt>
+                <dd>{{ entry.removal_reason }}</dd>
+                
+                <dt>Removed At</dt>
+                <dd>{{ entry.removal_timestamp }}</dd>
+                {% endif %}
+            </dl>
+
+            <h4 class="section-title">Trigger Information</h4>
+            <dl class="details-list">
+                <dt>Source</dt>
+                <dd>
+                    <span class="trigger-badge {{ entry.trigger_source }}">{{ entry.trigger_source }}</span>
+                </dd>
+                
+                {% if entry.trigger_details %}
+                <dt>Details</dt>
+                <dd>
+                    <pre class="json-formatter">{{ entry.trigger_details|from_json|tojson(indent=2) }}</pre>
+                </dd>
+                {% endif %}
+                
+                <dt>Rationale</dt>
+                <dd>{{ entry.rationale }}</dd>
+            </dl>
+
+            {% if entry.item_data %}
+            <h4 class="section-title">Media Information</h4>
+            <dl class="details-list">
+                {% set item = entry.item_data|from_json %}
+                <dt>Title</dt>
+                <dd>{{ item.title }}</dd>
+
+                {% if item.year %}
+                <dt>Year</dt>
+                <dd>{{ item.year }}</dd>
+                {% endif %}
+
+                {% if item.media_type %}
+                <dt>Media Type</dt>
+                <dd>{{ item.media_type|upper }}</dd>
+                {% endif %}
+
+                {% if item.season is not none %}
+                <dt>Season</dt>
+                <dd>{{ item.season }}</dd>
+                {% endif %}
+
+                {% if item.episode is not none %}
+                <dt>Episode</dt>
+                <dd>{{ item.episode }}</dd>
+                {% endif %}
+
+                {% if item.version %}
+                <dt>Version</dt>
+                <dd>{{ item.version }}</dd>
+                {% endif %}
+
+                {% if item.filled_by_file %}
+                <dt>Selected File</dt>
+                <dd><code>{{ item.filled_by_file }}</code></dd>
+                {% endif %}
+
+                {% if item.filled_by_title %}
+                <dt>Torrent Title</dt>
+                <dd><code>{{ item.filled_by_title }}</code></dd>
+                {% endif %}
+
+                {% if item.genres %}
+                <dt>Genres</dt>
+                <dd>
+                    {% if item.genres is string %}
+                        {{ item.genres }}
+                    {% else %}
+                        {{ item.genres|join(', ') }}
+                    {% endif %}
+                </dd>
+                {% endif %}
+
+                {% if item.tmdb_id %}
+                <dt>TMDB ID</dt>
+                <dd>{{ item.tmdb_id }}</dd>
+                {% endif %}
+            </dl>
+            {% endif %}
+
+            {% if entry.trigger_details %}
+            <h4 class="section-title">Selected Files</h4>
+            {% set trigger = entry.trigger_details|from_json %}
+            {% if trigger.selected_files %}
+            <div class="selected-files">
+                <table class="tracking-table">
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Size</th>
+                            <th>Selected</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for file in trigger.selected_files %}
+                        <tr>
+                            <td><code>{{ file.path }}</code></td>
+                            <td>{{ (file.bytes / 1024 / 1024)|round(2) }} MB</td>
+                            <td>{{ '✓' if file.selected else '✗' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            {% endif %}
+
+            {% if entry.additional_metadata %}
+            <h4 class="section-title">Debrid Information</h4>
+            {% set metadata = entry.additional_metadata|from_json %}
+            {% if metadata.debrid_info %}
+            <dl class="details-list">
+                <dt>Provider</dt>
+                <dd>{{ metadata.debrid_info.provider|upper }}</dd>
+
+                <dt>Torrent ID</dt>
+                <dd><code>{{ metadata.debrid_info.torrent_id }}</code></dd>
+
+                <dt>Status</dt>
+                <dd>
+                    <span class="status-badge {{ metadata.debrid_info.status }}">
+                        {{ metadata.debrid_info.status|upper }}
+                    </span>
+                </dd>
+
+                {% if metadata.debrid_info.filename %}
+                <dt>Filename</dt>
+                <dd><code>{{ metadata.debrid_info.filename }}</code></dd>
+                {% endif %}
+
+                {% if metadata.debrid_info.original_filename and metadata.debrid_info.original_filename != metadata.debrid_info.filename %}
+                <dt>Original Filename</dt>
+                <dd><code>{{ metadata.debrid_info.original_filename }}</code></dd>
+                {% endif %}
+            </dl>
+            {% endif %}
+
+            <h4 class="section-title">Raw Metadata</h4>
+            <pre class="json-formatter">{{ entry.additional_metadata|from_json|tojson(indent=2) }}</pre>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<script>
+function showModal(modalId) {
+    const modal = document.getElementById(modalId);
+    const overlay = document.getElementById('overlay' + modalId.replace('detailsModal', ''));
+    modal.style.display = 'block';
+    overlay.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+}
+
+function hideModal(modalId) {
+    const modal = document.getElementById(modalId);
+    const overlay = document.getElementById('overlay' + modalId.replace('detailsModal', ''));
+    modal.style.display = 'none';
+    overlay.style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    if (event.target.classList.contains('modal-overlay')) {
+        const modalId = event.target.id.replace('overlay', 'detailsModal');
+        hideModal(modalId);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Keep track of active polling intervals
+    const activePolls = new Map();
+    const POLL_INTERVAL = 10000;  // Poll every 10 seconds after initial load
+    const INITIAL_STAGGER_DELAY = 1000;  // Delay between each initial status check
+    
+    // Terminal states that don't need further polling
+    const TERMINAL_STATES = ['downloaded', 'magnet_error', 'error', 'virus', 'dead'];
+    
+    // Format JSON in pre elements
+    document.querySelectorAll('pre.json-formatter').forEach(function(el) {
+        try {
+            const content = el.textContent;
+            const obj = JSON.parse(content);
+            el.textContent = JSON.stringify(obj, null, 2);
+        } catch (e) {
+            console.error('Error formatting JSON:', e);
+        }
+    });
+
+    // Function to stop polling for a hash
+    function stopPolling(hash) {
+        if (activePolls.has(hash)) {
+            clearInterval(activePolls.get(hash));
+            activePolls.delete(hash);
+            console.log(`Stopped polling for hash: ${hash}`);
+        }
+    }
+
+    // Set up intersection observer for lazy loading
+    const observer = new IntersectionObserver((entries, observer) => {
+        entries.forEach((entry, index) => {
+            const row = entry.target;
+            const hash = row.dataset.hash;
+            
+            if (entry.isIntersecting) {
+                // Start polling when element becomes visible
+                if (!activePolls.has(hash)) {
+                    // Stagger the initial check based on the index
+                    setTimeout(() => {
+                        checkTorrentStatus(hash);
+                        // Set up regular polling after initial staggered load
+                        const intervalId = setInterval(() => checkTorrentStatus(hash), POLL_INTERVAL);
+                        activePolls.set(hash, intervalId);
+                    }, index * INITIAL_STAGGER_DELAY);
+                }
+            } else {
+                // Stop polling when element is no longer visible
+                stopPolling(hash);
+            }
+        });
+    }, {
+        root: null,
+        rootMargin: '50px',
+        threshold: 0.1
+    });
+
+    // Observe all torrent entries
+    document.querySelectorAll('.torrent-entry').forEach(row => {
+        observer.observe(row);
+    });
+
+    function checkTorrentStatus(hash) {
+        const statusCells = document.querySelectorAll(`.status-cell[data-hash="${hash}"]`);
+        
+        if (statusCells.length === 0) {
+            console.warn(`No status cells found for hash: ${hash}`);
+            return;
+        }
+
+        fetch(`/debug/verify_torrent/${hash}`)
+            .then(response => {
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        return new Promise((resolve) => {
+                            setTimeout(() => {
+                                resolve(checkTorrentStatus(hash));
+                            }, 2000);
+                        });
+                    }
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log(`Raw response for ${hash}:`, data);
+                
+                // Handle undefined or null data
+                if (!data) {
+                    throw new Error('No data received from server');
+                }
+
+                // Update all matching status cells
+                statusCells.forEach(cell => {
+                    // Create the badge HTML
+                    let badge;
+                    if (data.error) {
+                        badge = `<span class="status-badge error" title="Error: ${data.error}">Error</span>`;
+                    } else if (data.is_present === true) {
+                        const status = data.status ? data.status.charAt(0).toUpperCase() + data.status.slice(1) : 'Present';
+                        const badgeClass = status.toLowerCase() === 'downloading' ? 'downloading' : 'present';
+                        badge = `<span class="status-badge ${badgeClass}" title="${status}">${status}</span>`;
+                    } else if (data.is_present === false) {
+                        const reason = data.removal_reason ? data.removal_reason : '';
+                        badge = `<span class="status-badge removed" title="Removed: ${reason}">Removed</span>`;
+                    } else {
+                        badge = '<span class="status-badge error">Unknown</span>';
+                    }
+                    
+                    // Force a DOM reflow by accessing offsetHeight
+                    cell.innerHTML = '';
+                    void cell.offsetHeight;
+                    cell.innerHTML = badge;
+                    console.log(`Updated status cell for ${hash}:`, cell.innerHTML);
+                });
+
+                // Stop polling for terminal states
+                if (data.is_present === false || (data.status && TERMINAL_STATES.includes(data.status.toLowerCase()))) {
+                    console.log(`Reached terminal state for hash ${hash}: ${data.status}`);
+                    stopPolling(hash);
+                }
+            })
+            .catch(error => {
+                console.error('Error checking torrent status:', error);
+                const errorBadge = `<span class="status-badge error" title="${error.message}">Error</span>`;
+                statusCells.forEach(cell => {
+                    cell.innerHTML = errorBadge;
+                });
+            });
+    }
+
+    // Add CSS for warning badge
+    const style = document.createElement('style');
+    style.textContent = `
+        .status-badge.warning {
+            background-color: #ffc107;
+            color: #000;
+        }
+    `;
+    document.head.appendChild(style);
+});
+</script>
+{% endblock %} 

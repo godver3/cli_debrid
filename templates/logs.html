@@ -5,19 +5,22 @@
 {% block content %}
 <style>
     /* Logs page styles */
+
     .log-container {
-        width: 95vw; /* 95% of the viewport width */
-        max-width: 1200px; /* Maximum width */
-        height: calc(100vh - 200px); /* Adjust based on your header height */
-        margin: 20px auto;
+        width: 100%;
+        height: calc(100vh - 95px);
+        /* width: 95vw; */
+        /* max-width: 1200px; */
+        /* height: calc(100vh - 200px); */
+        /* margin: 20px auto; */
         overflow: hidden;
         display: flex;
         flex-direction: column;
         background-color: #222;
-        border: 1px solid #555;
-        border-radius: 5px;
-        position: relative; /* Add this */
-        margin-top: 25px
+        /* border: 1px solid #555; */
+        /* border-radius: 5px; */
+        position: relative;
+        /* margin-top: 25px; */
     }
 
     /* Mobile-specific adjustments */
@@ -25,8 +28,16 @@
         .log-container {
             width: 100vw;
             margin: 0;
-            height: calc(100vh - 120px);
+            /* Default adjusted height for mobile browser UI */
+            height: calc(100vh - 160px); 
             border-radius: 0;
+        }
+
+        /* Override height if running as standalone PWA or fullscreen */
+        @media (display-mode: standalone), (display-mode: fullscreen) {
+            .log-container {
+                 height: calc(100vh - 70px); /* Use original offset when browser UI is minimal/absent */
+            }
         }
 
         .log-controls {
@@ -63,7 +74,25 @@
         #goto-container {
             width: 100%;
         }
+
+        /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
+        body.has-bottom-overlay .log-container {
+            height: calc(100vh - 160px - 60px); /* existing offset + overlay */
+        }
     }
+
+    /* Standalone/Fullscreen PWA override */
+    @media screen and (max-width: 768px) and (display-mode: standalone),
+           screen and (max-width: 768px) and (display-mode: fullscreen) {
+        .log-container {
+            /* existing override remains */
+        }
+        /* --- START EDIT: Adjust height for overlay in standalone/fullscreen --- */
+        body.has-bottom-overlay .log-container {
+            height: calc(100vh - 70px - 70px); /* existing offset + overlay */
+        }
+    }
+    /* --- END EDIT --- */
 
     .log-controls {
         padding: 5px 10px;
@@ -183,7 +212,7 @@
     #pause-indicator {
         position: absolute;
         top: 5px;
-        right: 8%;
+        right: 10%;
         background-color: #444;
         color: #f4f4f4;
         padding: 5px 10px;
@@ -204,7 +233,7 @@
     /* Style for the new hidden div */
     #hidden-div {
         position: fixed;
-        bottom: 30px;
+        bottom: 5px;
         left: 20px;
         background-color: #333;
         color: #f4f4f4;
@@ -413,7 +442,7 @@
     .bottom-button {
         position: absolute;
         top: 5px;
-        right: 10px;
+        right: 90px;
         padding: 5px 10px;
         background-color: #444;
         color: #f4f4f4;
@@ -750,12 +779,10 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     const button = this;
     const progressBar = button.querySelector('.share-progress');
     const shareUrl = document.getElementById('share-url');
-    const copyBtn = document.getElementById('copy-url-btn');
     button.disabled = true;
     button.textContent = 'Preparing...';
     progressBar.style.width = '0%';
     shareUrl.style.display = 'none';
-    copyBtn.style.display = 'none';
 
     // Function to format file size
     function formatSize(bytes) {
@@ -769,89 +796,116 @@ document.getElementById('share-logs-btn').addEventListener('click', function() {
     })
     .then(response => response.json())
     .then(data => {
-        if (data.success) {
-            // Update share URL link and show copy button
-            shareUrl.href = data.url;
-            shareUrl.textContent = `${data.service} link`;
-            shareUrl.style.display = 'inline-block';
-            copyBtn.style.display = 'inline-block';
-            
-            // Copy URL to clipboard
-            navigator.clipboard.writeText(data.url).then(() => {
-                const sizeInfo = data.originalSize && data.compressedSize ? 
-                    `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
-                const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
-                
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success',
-                    message: `Logs shared successfully! URL copied to clipboard.${serviceInfo}${sizeInfo}`,
-                    autoClose: 5000
-                });
-            }).catch(() => {
-                const sizeInfo = data.originalSize && data.compressedSize ? 
-                    `\nOriginal: ${formatSize(data.originalSize)}, Compressed: ${formatSize(data.compressedSize)}` : '';
-                const serviceInfo = data.service ? `\nUploaded to: ${data.service}` : '';
-                
-                showPopup({
-                    type: POPUP_TYPES.SUCCESS,
-                    title: 'Success',
-                    message: `Logs shared successfully!\nURL: ${data.url}${serviceInfo}${sizeInfo}`,
-                    autoClose: 5000
-                });
-            });
+        if (data.success && data.task_id) {
+            // Start polling for updates
+            const statusCheckInterval = setInterval(() => {
+                checkUploadStatus(data.task_id, statusCheckInterval);
+            }, 1000);
         } else {
-            throw new Error(data.error || 'Failed to share logs');
+            throw new Error(data.error || 'Failed to start log sharing process');
         }
     })
     .catch(error => {
-        console.error('Error sharing logs:', error);
+        console.error('Error initiating log sharing:', error);
         shareUrl.style.display = 'none';
-        copyBtn.style.display = 'none';
         showPopup({
             type: POPUP_TYPES.ERROR,
             title: 'Error',
-            message: error.message || 'An error occurred while sharing logs',
+            message: error.message || 'An error occurred while initiating log sharing',
             autoClose: 5000
         });
-    })
-    .finally(() => {
-        button.disabled = false;
         button.textContent = 'Share Logs';
+        button.disabled = false;
         progressBar.style.width = '0%';
     });
 
-    // Simulate progress until we get a response
-    let progress = 0;
-    const progressInterval = setInterval(() => {
-        if (progress < 90) {
-            progress += Math.random() * 10;
-            progressBar.style.width = Math.min(progress, 90) + '%';
-        }
-    }, 500);
+    function checkUploadStatus(taskId, intervalId) {
+        fetch(`/logs/api/logs/share/status/${taskId}`)
+        .then(response => response.json())
+        .then(statusData => {
+            progressBar.style.width = statusData.progress + '%';
+            
+            // Update button text based on dynamic message from backend if available
+            if (statusData.message && statusData.status !== 'completed') { // Don't use backend message for button if completed
+                button.textContent = statusData.message.substring(0, 25); // Keep it short
+            } else if (statusData.status === 'collecting') {
+                button.textContent = 'Collecting...';
+            } else if (statusData.status === 'compressing') {
+                button.textContent = 'Compressing...';
+            } else if (statusData.status === 'uploading_to_pastebin') {
+                button.textContent = 'Uploading...';
+            } else if (statusData.status !== 'completed' && statusData.status !== 'failed') {
+                 button.textContent = 'Processing...'; // Generic fallback
+            }
+            
+            if (statusData.status === 'completed') {
+                clearInterval(intervalId);
+                
+                shareUrl.href = statusData.url; 
+                shareUrl.textContent = 'View Shared Log (paste.c-net.org)';
+                shareUrl.title = statusData.url; // Show full URL on hover
+                shareUrl.target = '_blank'; 
+                shareUrl.style.display = 'inline-block';
 
-    // Clear the interval when the request completes
-    setTimeout(() => {
-        clearInterval(progressInterval);
-        progressBar.style.width = '100%';
-    }, 10000);
+                document.getElementById('copy-url-btn').style.display = 'inline-block';
+
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success!',
+                    message: `Logs uploaded successfully to paste.c-net.org! URL: ${statusData.url}`,
+                    autoClose: 10000 
+                });
+
+                button.textContent = 'Share Logs'; // Reset button text
+                button.disabled = false;
+
+            } else if (statusData.status === 'failed') {
+                clearInterval(intervalId);
+                shareUrl.style.display = 'none';
+                document.getElementById('copy-url-btn').style.display = 'none';
+                
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error Sharing Logs',
+                    message: statusData.error || 'An unknown error occurred during log sharing.',
+                    autoClose: 7000
+                });
+                button.textContent = 'Share Logs'; // Reset button text
+                button.disabled = false;
+            }
+        })
+        .catch(error => {
+            console.error('Error checking upload status:', error);
+            clearInterval(intervalId);
+            shareUrl.style.display = 'none';
+            document.getElementById('copy-url-btn').style.display = 'none';
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Connection Error',
+                message: 'Lost connection while checking share status.',
+                autoClose: 5000
+            });
+            button.textContent = 'Share Logs';
+            button.disabled = false;
+        });
+    }
 });
 
-// Add copy button functionality
+// Add copy button functionality (for paste.c-net.org URL)
 document.getElementById('copy-url-btn').addEventListener('click', function() {
     const shareUrl = document.getElementById('share-url');
     navigator.clipboard.writeText(shareUrl.href).then(() => {
         showPopup({
             type: POPUP_TYPES.SUCCESS,
             title: 'Success',
-            message: 'URL copied to clipboard!',
+            message: 'Raw URL copied to clipboard!',
             autoClose: 2000
         });
     }).catch(() => {
         showPopup({
             type: POPUP_TYPES.ERROR,
             title: 'Error',
-            message: 'Failed to copy URL to clipboard',
+            message: 'Failed to copy raw URL to clipboard',
             autoClose: 2000
         });
     });

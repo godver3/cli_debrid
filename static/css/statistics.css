@@ -160,9 +160,10 @@ input:checked + .toggle-slider:before {
 .stats-box.airing-soon li,
 .stats-box.upcoming-releases li {
     display: flex;
-    flex-direction: column;
+    justify-content: space-between;
     padding: 8px 0;
     border-bottom: 1px solid #3a3a3a;
+    position: relative;
 }
 
 .stats-box.recently-aired li:last-child,
@@ -170,6 +171,32 @@ input:checked + .toggle-slider:before {
 .stats-box.upcoming-releases li:last-child {
     border-bottom: none;
 }
+
+.stats-box.recently-aired .show-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.stats-box.airing-soon li,
+.stats-box.upcoming-releases li
+    {
+        flex-direction: column;
+        align-items: left;
+    }
+
+.compact-view .stats-box.recently-aired .show-info {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+}
+
+.compact-view .stats-box.recently-aired .air-time
+    {
+        min-width: 120px;
+        text-align: right;
+        margin-right: 34px;  /* This accounts for the button width (24px) + its left margin (10px) */
+    }
 
 .stats-box.recently-aired .show-title,
 .stats-box.airing-soon .show-title,
@@ -185,6 +212,29 @@ input:checked + .toggle-slider:before {
     margin-left: 20px;
     font-style: italic;
     font-size: 0.9em;
+}
+
+.rescrape-btn {
+    background: none;
+    border: none;
+    color: #FFA500;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-left: 10px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    width: 24px;
+    position: absolute;
+    right: 0;
+}
+
+.rescrape-btn:hover {
+    background-color: rgba(255, 165, 0, 0.2);
+}
+
+.rescrape-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* Card styles */
@@ -278,6 +328,10 @@ input:checked + .toggle-slider:before {
     min-width: 0;
 }
 
+.recently-upgraded-section {
+    margin-bottom: 20px;
+}
+
 /* File details */
 .file-details {
     flex: 1;
@@ -301,6 +355,26 @@ input:checked + .toggle-slider:before {
     color: #888;
     font-family: monospace;
     font-size: 0.85em;
+}
+
+/* Add styling for From/To labels */
+.file-details .filename::before {
+    color: #fff;
+    font-family: inherit;
+}
+
+.file-details .filename[data-label]::before {
+    content: attr(data-label);
+    color: white;
+    margin-right: 4px;
+    font-family: inherit;
+}
+
+.file-details .filename {
+    color: #808080;  /* Keep the filename text gray */
+    display: block;
+    margin-top: 4px;
+    font-family: monospace;
 }
 
 /* Compact view modifications */
@@ -339,7 +413,8 @@ input:checked + .toggle-slider:before {
 .compact-view .stats-box.recently-aired .air-time,
 .compact-view .stats-box.airing-soon .air-time,
 .compact-view .stats-box.upcoming-releases .release-date {
-    margin-left: 10px;
+    margin-left: auto;
+    text-align: right;
 }
 
 .compact-view .file-details {
@@ -357,6 +432,34 @@ input:checked + .toggle-slider:before {
 .compact-view .file-details .filename {
     font-size: 0.85em;
     word-break: break-word;
+}
+
+@media (max-width: 1280px) {
+    .stats-container {
+        width: 90%;
+    }
+}
+
+/* Bottom sections grid layout for compact view (desktop only) */
+@media screen and (min-width: 769px) {
+    .statistics-wrapper.compact-view .recently-added {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        width: 100%;
+    }
+
+    .statistics-wrapper.compact-view .recently-added-section-top,
+    .statistics-wrapper.compact-view .recently-added-section-bottom,
+    .statistics-wrapper.compact-view .recently-upgraded-section {
+        margin: 0;
+        height: auto;
+    }
+}
+
+/* Scrollable containers for both mobile and desktop */
+.statistics-wrapper.compact-view .cards-container {
+    overflow-y: visible;
 }
 
 .tmdb-info {
@@ -462,4 +565,144 @@ input:checked + .toggle-slider:before {
     input:checked + .toggle-slider:before {
         transform: translateX(20px);
     }
+
+    .stats-box.airing-soon .air-time,
+    .stats-box.upcoming-releases .release-date {
+        margin-left: 0px !important;
+        min-width: 0px !important;
+        text-align: left !important;
+    }
+
+    /* Stats Box Styles */
+    .stats-box.recently-aired .air-time {
+        text-align: right !important;
+        margin-right: 21px !important;
+        margin-top: auto !important;
+        margin-bottom: auto !important;
+    }
+
+    .stats-box.recently-aired .show-title {
+        max-width: 180px !important;
+    }
+
+    .stats-box.airing-soon .show-title,
+    .stats-box.upcoming-releases .titles 
+    {
+        max-width: 270px !important;
+    }
+
+    .modal-content {
+        margin: 30% auto;
+        width: 90%;
+    }
+}
+
+/* Also add styles for the poster hover view */
+.poster-hover .filename[data-label]::before {
+    content: attr(data-label);
+    color: white;
+    margin-right: 4px;
+    font-family: inherit;
+}
+
+.poster-hover .filename {
+    color: #808080;
+    font-family: monospace;
+    font-size: 0.8em;
+    word-break: break-all;
+    display: block;
+    margin-top: 4px;
+}
+
+/* Clickable items styling */
+.stats-box.recently-aired li .show-info.clickable,
+.stats-box.airing-soon li.clickable,
+.stats-box.upcoming-releases li.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s;
+    border-radius: 4px;
+}
+
+.stats-box.recently-aired li .show-info.clickable:hover,
+.stats-box.airing-soon li.clickable:hover,
+.stats-box.upcoming-releases li.clickable:hover {
+    background-color: var(--bg-color-hover, rgba(255, 255, 255, 0.1));
+}
+
+/* Make sure the entire li is clickable in airing soon and upcoming releases */
+.stats-box.airing-soon li.clickable,
+.stats-box.upcoming-releases li.clickable {
+    padding: 8px;
+    margin: -8px 0;
+}
+
+/* Ensure the rescrape button remains clickable and doesn't trigger the modal */
+.rescrape-btn {
+    position: relative;
+    z-index: 5;
+}
+
+/* Modal styles for external links */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+#external-links-modal-content {
+    background-color: var(--bg-color, #1e1e1e);
+    margin: 15% auto;
+    padding: 20px;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 8px;
+    width: 300px !important;
+    max-width: 80%;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.close-modal {
+    color: var(--text-color-secondary, #aaa);
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close-modal:hover {
+    color: var(--text-color, #fff);
+}
+
+.external-links {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.external-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 15px;
+    background-color: var(--bg-color-secondary, #2a2a2a);
+    border-radius: 4px;
+    text-decoration: none;
+    color: var(--text-color, #fff);
+    transition: background-color 0.2s;
+}
+
+.external-link:hover {
+    background-color: var(--accent-color, #3498db);
+    color: white;
+}
+
+.provider-icon {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
 }

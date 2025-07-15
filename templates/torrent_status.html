@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block title %}Torrent Status{% endblock %}
+
+{% block head %}
+<style>
+    .status-container {
+        padding: 20px;
+        max-width: 1200px;
+        margin: 0 auto;
+    }
+    
+    .status-card {
+        background: #2a2a2a;
+        border: 1px solid #3a3a3a;
+        border-radius: 4px;
+        padding: 20px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    .section-title {
+        margin: 0 0 15px 0;
+        font-size: 1.5em;
+        font-weight: 500;
+        color: #fff;
+    }
+    
+    .active-title {
+        color: #64B5F6;
+    }
+    
+    .completed-title {
+        color: #81C784;
+    }
+    
+    .download-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    
+    .download-item {
+        background: #333;
+        border: 1px solid #404040;
+        border-radius: 4px;
+        padding: 15px;
+        margin: 10px 0;
+    }
+    
+    .download-name {
+        font-size: 1.1em;
+        margin: 0 0 8px 0;
+        font-weight: 500;
+        color: #fff;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        line-height: 1.4;
+    }
+    
+    .download-progress {
+        color: #aaa;
+        font-size: 0.9em;
+        margin-top: 5px;
+    }
+    
+    .empty-message {
+        color: #888;
+        font-style: italic;
+        padding: 15px;
+        text-align: center;
+        background: #333;
+        border-radius: 4px;
+    }
+
+    #active-downloads-count {
+        color: #aaa;
+        font-size: 0.9em;
+        margin-bottom: 15px;
+        display: none;
+    }
+
+    .expand-button {
+        background: #404040;
+        border: 1px solid #505050;
+        color: #fff;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-top: 10px;
+        font-size: 0.9em;
+        transition: background-color 0.2s;
+        display: none;  /* Hidden by default */
+    }
+
+    .expand-button:hover {
+        background: #505050;
+    }
+
+    .hidden-item {
+        display: none;
+    }
+
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 15px;
+    }
+
+    .completed-count {
+        display: none;
+        color: #aaa;
+        font-size: 0.9em;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="status-container">
+    <h2>Torrent Status</h2>
+    <div id="status-container">
+        <div class="status-card">
+            <!-- Active Downloads Section -->
+            <div id="active-downloads-section">
+                <h4 class="section-title active-title">Active Downloads</h4>
+                <div id="active-downloads-count"></div>
+                <div id="active-downloads-content" class="download-list">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+            </div>
+            
+            <!-- Completed Downloads Section -->
+            <div id="completed-downloads-section">
+                <div class="section-header">
+                    <h4 class="section-title completed-title">Recently Completed</h4>
+                    <span class="completed-count" id="completed-count"></span>
+                </div>
+                <div id="completed-downloads-content" class="download-list">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                <button id="expand-completed" class="expand-button">Show More</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const INITIAL_SHOW_COUNT = 10;
+let isExpanded = false;
+let allCompletedDownloads = [];
+
+function updateTorrentStatus() {
+    fetch('/torrent_status/api/torrent-status')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Update active downloads count
+                const activeDownloadsCount = document.getElementById('active-downloads-count');
+                if (data.sections['Active Downloads']) {
+                    const count = data.sections['Active Downloads'][0];
+                    activeDownloadsCount.textContent = count ? count.trim() : 'No active downloads';
+                } else {
+                    activeDownloadsCount.textContent = 'No active downloads';
+                }
+                
+                // Update active downloads
+                const activeContent = document.getElementById('active-downloads-content');
+                activeContent.innerHTML = '';
+                
+                if (data.sections['Active Downloads'] && data.sections['Active Downloads'].length > 0) {
+                    const downloads = data.sections['Active Downloads'];
+                    console.log('Active downloads data:', downloads);
+                    
+                    // Skip any entries that appear before "Active Downloads:" in the raw status
+                    const activeDownloadsIndex = data.raw_status.indexOf('Active Downloads:');
+                    const priorText = data.raw_status.substring(0, activeDownloadsIndex);
+                    const priorFilenames = priorText.split('\n')
+                        .filter(line => line.trim().startsWith('- '))
+                        .map(line => line.replace('- ', '').trim());
+                    
+                    // Process downloads in pairs (name and progress)
+                    for (let i = 0; i < downloads.length - 1; i += 2) {
+                        const filename = downloads[i];
+                        const progressInfo = downloads[i + 1];
+                        
+                        // Only create card if this isn't a duplicate of a prior filename
+                        if (filename && filename.trim() && !priorFilenames.includes(filename.replace('- ', '').trim())) {
+                            const item = document.createElement('div');
+                            item.className = 'download-item';
+                            item.innerHTML = `
+                                <div class="download-name">${filename.replace('- ', '')}</div>
+                                <div class="download-progress">${progressInfo.trim()}</div>
+                            `;
+                            activeContent.appendChild(item);
+                        }
+                    }
+                } else {
+                    activeContent.innerHTML = '<div class="empty-message">No active downloads</div>';
+                }
+                
+                // Update completed downloads
+                const completedContent = document.getElementById('completed-downloads-content');
+                const expandButton = document.getElementById('expand-completed');
+                const completedCount = document.getElementById('completed-count');
+                completedContent.innerHTML = '';
+                
+                if (data.sections['Recently Completed']) {
+                    // Store all completed downloads
+                    allCompletedDownloads = data.sections['Recently Completed'].map(line => ({
+                        name: line.replace('- ', '')
+                    }));
+                    
+                    // Update the count display
+                    completedCount.textContent = `${allCompletedDownloads.length} items`;
+                    
+                    // Show expand button if there are more than INITIAL_SHOW_COUNT items
+                    expandButton.style.display = allCompletedDownloads.length > INITIAL_SHOW_COUNT ? 'block' : 'none';
+                    
+                    // Display items based on expanded state
+                    const displayCount = isExpanded ? allCompletedDownloads.length : INITIAL_SHOW_COUNT;
+                    
+                    allCompletedDownloads.forEach((download, index) => {
+                        const item = document.createElement('div');
+                        item.className = `download-item ${index >= displayCount ? 'hidden-item' : ''}`;
+                        item.innerHTML = `
+                            <div class="download-name">${download.name}</div>
+                        `;
+                        completedContent.appendChild(item);
+                    });
+                } else {
+                    completedContent.innerHTML = '<div class="empty-message">No completed downloads</div>';
+                    expandButton.style.display = 'none';
+                    completedCount.textContent = '';
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching torrent status:', error);
+        });
+}
+
+// Handle expand button click
+document.getElementById('expand-completed').addEventListener('click', function() {
+    isExpanded = !isExpanded;
+    this.textContent = isExpanded ? 'Show Less' : 'Show More';
+    
+    // Toggle visibility of items beyond the initial count
+    const items = document.querySelectorAll('#completed-downloads-content .download-item');
+    items.forEach((item, index) => {
+        if (index >= INITIAL_SHOW_COUNT) {
+            item.classList.toggle('hidden-item');
+        }
+    });
+});
+
+// Update status every 5 seconds
+updateTorrentStatus();
+setInterval(updateTorrentStatus, 5000);
+</script>
+{% endblock %}

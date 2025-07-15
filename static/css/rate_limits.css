@@ -2,11 +2,34 @@
     position: fixed;
     top: 50px;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(-100%);
     z-index: 999;
     display: flex;
     flex-direction: column;
     align-items: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    transform-origin: top;
+    visibility: hidden;
+}
+
+.rate-limits-section.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Keep the toggle button always clickable when section is shown */
+.rate-limits-section.show .rate-limits-toggle {
+    pointer-events: auto;
+}
+
+/* Container only gets pointer events when explicitly shown */
+.rate-limits-container.show {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
 }
 
 .rate-limits-toggle {
@@ -57,14 +80,10 @@
     overflow-y: auto;
     margin-top: 5px;
     padding: 0;
-    display: none;
     opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.rate-limits-container.show {
-    display: block;
-    opacity: 1;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
 }
 
 .rate-limits-header {
@@ -140,8 +159,87 @@
 }
 
 /* Mobile responsiveness */
-@media (max-width: 768px) {
+@media (max-width: 1245px) {
     .rate-limits-section {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        position: fixed !important;
+        z-index: -9999 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        clip: rect(0 0 0 0) !important;
+        transform: none !important;
+    }
+
+    .rate-limits-section.show {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+    }
+
+    .rate-limits-container {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        position: fixed !important;
+        z-index: -9999 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: hidden !important;
+        clip: rect(0 0 0 0) !important;
+    }
+
+    .rate-limits-container.show {
+        display: none !important;
+        pointer-events: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+    }
+
+    .rate-limits-section-toggle {
+        display: none !important;
+    }
+
+    .rate-limits-toggle {
+        display: none !important;
+    }
+}
+
+.rate-limits-section-toggle {
+    position: fixed;
+    top: 50px;
+    right: calc(10px + env(safe-area-inset-right, 0px)); /* Position it to the left of the task monitor toggle */
+    background-color: #1a1a1a;
+    color: #888;
+    border: none;
+    padding: 8px;
+    border-radius: 0 0 4px 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 1000;
+    width: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.rate-limits-section-toggle:hover {
+    color: #f4f4f4;
+    background-color: #2c2c2c;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .rate-limits-section-toggle {
+        display: none;
+    }
+
+    .rate-limits-toggle {
         display: none;
     }
 } 

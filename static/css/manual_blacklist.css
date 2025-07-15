@@ -1,37 +1,101 @@
 select#media_type,
-input#imdb_id {
+input#imdb_id, button.btn.btn-primary, button.btn.btn-danger {
     padding: 10px;
     background-color: #3a3a3a;
     border: 1px solid #555;
-    color: #f4f4f4;
+    color: #fff;
     border-radius: 4px;
     font-size: 14px;
     transition: border-color 0.3s, box-shadow 0.3s;
-    margin-bottom: 10px;
+    height: 38px;
+}
+
+.input-group {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    width: 500px;
+}
+
+.input-group-text {
+    color: #fff;
+    padding: 0 15px;
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    height: 38px;
+    width: 100px;
+}
+
+.input-group .form-control {
+    flex: 2;
+}
+
+.input-group .btn {
+    flex: 1;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+}
+
+.toggle-seasons {
+    text-decoration: none;
+    color: #6c757d;
+    padding: 0 5px;
+    transition: transform 0.2s;
+}
+
+.toggle-seasons:hover {
+    text-decoration: none;
+    color: #fff;
+}
+
+.toggle-seasons.active i {
+    transform: rotate(180deg);
+}
+
+.form-check {
+    margin-bottom: 5px;
+}
+
+.form-check.mb-2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px !important;
+}
+
+.form-check-label {
+    margin-right: 5px;
+}
+
+.season-check {
+    margin-left: 20px;
+}
+
+.seasons-list {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 10px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    margin: 10px 0;
+}
+
+.btn.btn-link.text-danger.p-0 {
+    background-color: rgba(255, 255, 255, 0.664);
 }
 
 button.btn.btn-danger.btn-sm {
-    background-color: #d9534f;
-    margin-bottom: 0px;
+    background-color: #dc3545;
 }
 
 button.btn.btn-danger.btn-sm:hover {
-    background-color: #c9302c;
-    margin-bottom: 0px;
-}
-
-button.btn.btn-primary, button.btn.btn-danger {
-    background-color: #4CAF50;
-    color: white;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.3s;
-    margin-bottom: 10px;
+    background-color: #c82333;
 }
 
 button.btn.btn-primary, button.btn.btn-danger:hover {
     background-color: #45a049;
 }
-

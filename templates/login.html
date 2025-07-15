@@ -1,7 +1,52 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 {% block content %}
+{% if posters %}
+<div class="background-posters">
+    {% for poster in posters %}
+    <img src="{{ poster.url }}" class="floating-poster" onerror="this.style.display='none';" style="{{ poster.style }}">
+    {% endfor %}
+</div>
+{% endif %}
 <style>
+    .background-posters {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        z-index: -1;
+    }
+
+    .floating-poster {
+        position: absolute;
+        /* opacity, height, and animation properties are set inline for randomness */
+        animation-iteration-count: infinite;
+        animation-timing-function: linear;
+        width: auto;
+        border-radius: 8px;
+        box-shadow: 0 0 20px rgba(0, 0, 0, 0.6);
+    }
+
+    @keyframes float-lr {
+        0% {
+            transform: translateX(-100%);
+        }
+        100% {
+            transform: translateX(100vw);
+        }
+    }
+
+    @keyframes float-rl {
+        0% {
+            transform: translateX(100vw);
+        }
+        100% {
+            transform: translateX(-100%);
+        }
+    }
+
     .login-reminder {
         font-size: 0.9em;
         color: #666;
@@ -19,9 +64,13 @@
         max-width: 300px;
         margin: 50px auto;
         padding: 20px;
-        background-color: #2a2a2a;
+        background-color: rgba(42, 42, 42, 0.85);
         border-radius: 5px;
         box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        position: relative;
+        z-index: 1;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
     }
 
     .auth-form h2 {
@@ -29,8 +78,6 @@
         color: #f4f4f4;
         margin-bottom: 20px;
     }
-
-
 
     /* Update the input styles to include password fields and override autofill styles */
     .auth-form input[type="text"],
@@ -87,18 +134,26 @@
 
     .flash-message {
         max-width: 300px;
-        margin: 50px auto;
+        margin: 10px auto;
         padding: 10px;
         margin-bottom: 15px;
         border-radius: 3px;
         text-align: center;
         opacity: 0;
         transition: opacity 0.5s ease-in-out;
+        border: 1px solid transparent;
     }
 
     .flash-message.error {
-        background-color: #ff6b6b;
-        color: white;
+        background-color: #f8d7da;
+        color: #721c24;
+        border-color: #f5c6cb;
+    }
+
+    .flash-message.success {
+        background-color: #d4edda;
+        color: #155724;
+        border-color: #c3e6cb;
     }
 
     .flash-message.show {
@@ -117,33 +172,42 @@
         <input type="submit" value="Login">
     </form>
     {% if show_login_reminder %}
-    <p class="login-reminder">Initial login: username <strong>admin</strong>, password <strong>admin</strong></p>
+    <p class="login-reminder">{{ login_reminder_message }}</p>
     {% endif %}
 </div>
-<div class="flash-messages">
 {% with messages = get_flashed_messages(with_categories=true) %}
-{% if messages %}
-    <div class="flash-messages">
-    {% for category, message in messages %}
-        <div class="flash-message {{ category }}" id="flash-message">{{ message }}</div>
-    {% endfor %}
-    </div>
-{% endif %}
+    {% if messages %}
+        <div class="flash-messages-container">
+        {% for category, message in messages %}
+            <div class="flash-message {{ category }}">{{ message }}</div>
+        {% endfor %}
+        </div>
+    {% endif %}
 {% endwith %}
-</div>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        var flashMessage = document.getElementById('flash-message');
-        if (flashMessage) {
-            // Fade in
-            setTimeout(function() {
-                flashMessage.classList.add('show');
-            }, 100);
+        var flashMessages = document.querySelectorAll('.flash-message');
+        if (flashMessages.length > 0) {
+            flashMessages.forEach(function(flashMessage) {
+                setTimeout(function() {
+                    flashMessage.classList.add('show');
+                }, 100);
 
-            // Fade out
-            setTimeout(function() {
-                flashMessage.classList.remove('show');
-            }, 5000);
+                setTimeout(function() {
+                    flashMessage.classList.remove('show');
+                }, 5000);
+            });
+        }
+
+        var rememberMeCheckbox = document.getElementById('remember_me');
+        if (rememberMeCheckbox) {
+            if (localStorage.getItem('rememberMe') === 'true') {
+                rememberMeCheckbox.checked = true;
+            }
+
+            rememberMeCheckbox.addEventListener('change', function() {
+                localStorage.setItem('rememberMe', this.checked);
+            });
         }
     });
 </script>

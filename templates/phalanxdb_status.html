@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+
+{% block title %}PhalanxDB Status{% endblock %}
+
+{% block content %}
+<style>
+/* List Group Styling */
+.list-group-item {
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    font-family: monospace;
+    margin-top: 10px;
+    padding-left: 15px;
+    list-style-type: none;
+    font-size: 1.2em;
+}
+
+.mb-0 {
+    font-size: 1.2em;
+    margin-left: 10px;
+}
+
+.col-md-6 {
+    margin-top: 10px;
+}
+
+/* Card Styling */
+.card {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 1em;
+    margin-bottom: 20px;
+}
+
+.card-header {
+    background-color: #2c2c2c;
+    border-bottom: 1px solid #444;
+    color: #f4f4f4;
+}
+
+.card-body {
+    background-color: #1a1a1a;
+}
+
+.row {
+    padding-left: 10px;
+}
+
+/* Alert Styling */
+.alert {
+    margin: 10px;
+}
+
+.alert-success {
+    background-color: #198754;
+    color: #f4f4f4;
+    border: none;
+}
+
+.alert-danger {
+    background-color: #dc3545;
+    color: #f4f4f4;
+    border: none;
+}
+
+.alert-warning {
+    background-color: #ffc107;
+    color: #000;
+    border: none;
+}
+
+.alert-info {
+    background-color: #0dcaf0;
+    color: #000;
+    border: none;
+}
+
+/* Network Health specific styling */
+.network-health .list-group-item {
+    margin-top: 0;
+    margin-bottom: 0;
+    border-radius: 0;
+}
+
+.network-health .list-group-item:first-child {
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+.network-health .list-group-item:last-child {
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.list-group.network-health {
+    margin-right: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+#hashInput {
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    border: 1px solid #444;
+    width: 85%;
+    min-height: 36px;
+    margin: 10px;
+}
+</style>
+
+<div class="container mt-4">
+    <h1>PhalanxDB Status</h1>
+
+    <!-- Connection Status -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Connection Status</h5>
+        </div>
+        <div class="card-body">
+            {% if not enabled %}
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i> PhalanxDB service is disabled in your settings
+                </div>
+            {% elif connection_status %}
+                <div class="alert alert-success">
+                    <i class="fas fa-check-circle"></i> Connected to PhalanxDB service
+                </div>
+            {% else %}
+                <div class="alert alert-danger">
+                    <i class="fas fa-times-circle"></i> Not connected to PhalanxDB service
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if enabled %}
+    <!-- Node Status -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="mb-0">Node Status</h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h4>Node Information</h4>
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            Node ID: {{ mesh_status.nodeId }}
+                        </li>
+                        <li class="list-group-item">
+                            Database Entries: {{ mesh_status.databaseEntries }}
+                        </li>
+                        <li class="list-group-item">
+                            Last Sync: {{ mesh_status.lastSyncAt }}
+                        </li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h4>Memory Usage</h4>
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            RSS: {{ mesh_status.memory.rss }}
+                        </li>
+                        <li class="list-group-item">
+                            Heap Total: {{ mesh_status.memory.heapTotal }}
+                        </li>
+                        <li class="list-group-item">
+                            Heap Used: {{ mesh_status.memory.heapUsed }}
+                        </li>
+                        <li class="list-group-item">
+                            External: {{ mesh_status.memory.external }}
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Network Status -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="mb-0">Network Stats</h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-12">
+                    <ul class="list-group network-health">
+                        <li class="list-group-item">
+                            Active Connections: {{ mesh_status.connectionsActive }}
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hash Tester -->
+    <div class="card">
+        <div class="card-header">
+            <h3 class="mb-0">Hash Tester</h3>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-12">
+                    <form id="hashTesterForm" class="mb-4">
+                        <div class="input-group">
+                            <input type="text" id="hashInput" class="form-control" placeholder="Enter hash to test" style="background-color: #2c2c2c; color: #f4f4f4; border: 1px solid #444;">
+                            <button type="submit" class="btn btn-primary">Test Hash</button>
+                        </div>
+                    </form>
+                    <div id="hashResult" style="display: none;">
+                        <ul class="list-group network-health">
+                            <li class="list-group-item" id="hashStatus"></li>
+                            <li class="list-group-item" id="hashTimestamp"></li>
+                            <li class="list-group-item" id="hashExpiry"></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+document.getElementById('hashTesterForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const hashInput = document.getElementById('hashInput');
+    const resultDiv = document.getElementById('hashResult');
+    const statusEl = document.getElementById('hashStatus');
+    const timestampEl = document.getElementById('hashTimestamp');
+    const expiryEl = document.getElementById('hashExpiry');
+    
+    // Clear previous results
+    resultDiv.style.display = 'none';
+    
+    try {
+        const response = await fetch('/database/phalanxdb/test_hash', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+                'hash': hashInput.value
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        
+        resultDiv.style.display = 'block';
+        
+        if (data.status === 'not_found') {
+            statusEl.innerHTML = `<span class="text-warning">Status: Not Found in Database</span>`;
+            timestampEl.style.display = 'none';
+            expiryEl.style.display = 'none';
+        } else {
+            const result = data.data;
+            statusEl.innerHTML = `Status: <span class="${result.is_cached ? 'text-success' : 'text-danger'}">${result.is_cached ? 'Cached' : 'Not Cached'}</span>`;
+            timestampEl.innerHTML = `Last Modified: ${result.timestamp || 'N/A'}`;
+            expiryEl.innerHTML = `Expires: ${result.expiry || 'N/A'}`;
+            timestampEl.style.display = 'block';
+            expiryEl.style.display = 'block';
+        }
+    } catch (error) {
+        resultDiv.style.display = 'block';
+        statusEl.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
+        timestampEl.style.display = 'none';
+        expiryEl.style.display = 'none';
+    }
+});
+</script>
+{% endblock %} 

@@ -7,13 +7,77 @@
     @import url('{{ url_for('static', filename='css/statistics.css') }}');
     .stat-item p[data-label="Active Downloads"].warning,
     .stat-item p[data-label="Daily Usage"].warning {
-        color: #ffa500;
+        color: #ffa500; /* Orange/Yellow for warning */
     }
     .stat-item p[data-label="Active Downloads"].critical,
     .stat-item p[data-label="Daily Usage"].critical {
-        color: #ff4444;
+        color: #ff4444; /* Red for critical */
+    }
+    .stats-box.recently-aired .show-title.uncollected {
+        color: #ff4444; /* Red for uncollected */
+    }
+    .stats-box.recently-aired .show-title.checking_upgrade {
+        color: #00aeff; /* Orange/Yellow for checking upgrade */
+    }
+    .modal-content {
+        background-color: #1e1e1e !important;
+    }
+    .toggle-container .toggle-item .refresh-btn { /* Style for the specific size refresh */
+        background: none;
+        border: none;
+        color: #aaa; /* Match icon color */
+        cursor: pointer;
+        font-size: 1em; /* Match icon size */
+        padding: 0 3px;
+        margin-left: 3px;
+        vertical-align: middle;
+    }
+    .toggle-container .toggle-item .refresh-btn:hover {
+        color: #fff;
+    }
+    .toggle-container .toggle-item .refresh-btn i.fa-spin { /* Style for spinning icon */
+        /* Optional: add animation if not default */
+    }
+    #library-size-display {
+        margin-right: 2px; /* Add a little space before the button */
+    }
+    /* General page refresh button style (if keeping it) */
+     .page-refresh-btn {
+        background: none;
+        border: none;
+        color: #ccc;
+        cursor: pointer;
+        font-size: 1.1em;
+        padding: 0 5px;
+        margin-left: 5px;
+        vertical-align: middle;
+    }
+    .page-refresh-btn:hover {
+        color: #fff;
     }
 </style>
+
+<!-- Add modal for external links -->
+<div id="external-links-modal" class="modal">
+    <div class="modal-content" id="external-links-modal-content">
+        <span class="close-modal">&times;</span>
+        <h3 id="modal-title">View on External Sites</h3>
+        <div class="external-links">
+            <a id="trakt-link" href="#" target="_blank" class="external-link">
+                <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="provider-icon">
+                <span>Trakt</span>
+            </a>
+            <a id="tmdb-link" href="#" target="_blank" class="external-link">
+                <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="provider-icon">
+                <span>TMDB</span>
+            </a>
+            <a id="imdb-link" href="#" target="_blank" class="external-link">
+                <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDB" class="provider-icon">
+                <span>IMDB</span>
+            </a>
+        </div>
+    </div>
+</div>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -27,6 +91,13 @@
 
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
+        <div class="toggle-item">
+            <span class="toggle-label"><i class="fas fa-hdd"></i> Library:</span>
+            <span id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
+            <button id="refresh-library-size-btn" class="refresh-btn" title="Refresh Library Size">
+                 <i class="fas fa-sync-alt"></i>
+            </button>
+        </div>
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
         </div>
@@ -47,14 +118,71 @@
     </div>
 
     <script>
-        // Initialize toggles based on session state
+        // Initialize displays when page loads
         document.addEventListener('DOMContentLoaded', function() {
+            // Check if on mobile
+            if (window.innerWidth <= 768) {
+                // Add compact-view class to statistics-wrapper
+                document.querySelector('.statistics-wrapper').classList.add('compact-view');
+            }
+
+            // Initialize toggles based on session state
             const timeFormatToggle = document.getElementById('time-format-toggle');
             const compactToggle = document.getElementById('compact-toggle');
             
             // Set initial states
             timeFormatToggle.checked = {{ 'true' if use_24hour_format else 'false' }};
             compactToggle.checked = {{ 'true' if compact_view else 'false' }};
+
+            // Update displays
+            updateActiveDownloadsDisplay();
+            updateUsageStatsDisplay();
+
+            // Add click handler for rescrape buttons
+            document.querySelectorAll('.rescrape-btn').forEach(button => {
+                button.addEventListener('click', handleRescrapeClick);
+            });
+
+            // Initialize the external links modal
+            if (typeof initializeExternalLinksModal === 'function') {
+                initializeExternalLinksModal();
+            } else if (typeof reattachExternalLinksListeners === 'function') {
+                reattachExternalLinksListeners();
+            }
+
+            // --- Library Size Refresh Button ---
+            const refreshSizeButton = document.getElementById('refresh-library-size-btn');
+            const sizeDisplaySpan = document.getElementById('library-size-display');
+            if (refreshSizeButton && sizeDisplaySpan) {
+                refreshSizeButton.addEventListener('click', function() {
+                    const icon = refreshSizeButton.querySelector('i');
+                    // Indicate loading
+                    sizeDisplaySpan.textContent = 'Loading...';
+                    refreshSizeButton.disabled = true;
+                    if (icon) icon.classList.add('fa-spin');
+
+                    fetch('/statistics/api/library_size') // Ensure this path matches your blueprint prefix + route
+                        .then(response => {
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            sizeDisplaySpan.textContent = data.total_library_size || 'Error';
+                        })
+                        .catch(error => {
+                            console.error('Error fetching library size:', error);
+                            sizeDisplaySpan.textContent = 'Error';
+                        })
+                        .finally(() => {
+                            // Reset button
+                            refreshSizeButton.disabled = false;
+                            if (icon) icon.classList.remove('fa-spin');
+                        });
+                });
+            }
+
         });
 
         document.getElementById('time-format-toggle').addEventListener('change', function() {
@@ -81,6 +209,9 @@
             })
             .then(data => {
                 if (data.status === 'OK') {
+                    // Log the data structure for debugging
+                    console.log('Time preference data:', data);
+                    
                     // Update the UI with the new data without page reload
                     updateUIWithTimePreference(data);
                 } else {
@@ -100,22 +231,64 @@
 
         // Function to update UI with new time preference data
         function updateUIWithTimePreference(data) {
+            console.log('updateUIWithTimePreference called with data:', data);
             // Update recently aired items
             const recentlyAiredList = document.querySelector('#recently_aired ul');
             if (recentlyAiredList && data.recently_aired) {
-                recentlyAiredList.innerHTML = data.recently_aired.map(item => `
+                console.log('Updating recently aired items');
+                recentlyAiredList.innerHTML = data.recently_aired.map(item => {
+                    // Determine the class based on display_status
+                    let statusClass = '';
+                    if (item.display_status === 'uncollected') {
+                        statusClass = ' uncollected';
+                    } else if (item.display_status === 'checking_upgrade') {
+                        statusClass = ' checking_upgrade';
+                    }
+                    // Determine if the rescrape button should be shown
+                    let showRescrape = item.display_status === 'collected' || item.display_status === 'checking_upgrade';
+
+                    return `
                     <li>
-                        <span class="show-title">${item.title}</span>
-                        <span class="air-time">${item.formatted_datetime}</span>
+                        <div class="show-info clickable" 
+                             data-title="${item.title}"
+                             data-imdb-id="${item.imdb_id}"
+                             data-tmdb-id="${item.tmdb_id}"
+                             data-season="${item.season_number}"
+                             data-episode="${item.episode_number}">
+                            <span class="show-title${statusClass}">${item.title}</span>
+                            <span class="air-time">${item.formatted_datetime}</span>
+                        </div>
+                        ${showRescrape ? `
+                            <button class="rescrape-btn" 
+                                data-imdb-id="${item.imdb_id}"
+                                data-tmdb-id="${item.tmdb_id}"
+                                data-season="${item.season_number}"
+                                data-episode="${item.episode_number}"
+                                title="Move back to Wanted state">
+                                <i class="fas fa-redo"></i>
+                            </button>
+                        ` : ''}
                     </li>
-                `).join('');
+                `;
+                }).join('');
+
+                // Re-attach event listeners to new buttons
+                recentlyAiredList.querySelectorAll('.rescrape-btn').forEach(button => {
+                    button.addEventListener('click', handleRescrapeClick);
+                });
             }
 
             // Update airing soon items
             const airingSoonList = document.querySelector('#airing_soon ul');
             if (airingSoonList && data.airing_soon) {
+                console.log('Updating airing soon items');
                 airingSoonList.innerHTML = data.airing_soon.map(item => `
-                    <li>
+                    <li class="clickable"
+                        data-title="${item.title}"
+                        data-imdb-id="${item.imdb_id}"
+                        data-tmdb-id="${item.tmdb_id}"
+                        data-season="${item.season_number}"
+                        data-episode="${item.episode_number}">
                         <span class="show-title">${item.title}</span>
                         <span class="air-time">${item.formatted_datetime}</span>
                     </li>
@@ -125,8 +298,13 @@
             // Update upcoming releases
             const upcomingReleasesList = document.querySelector('#upcoming_releases ul');
             if (upcomingReleasesList && data.upcoming_releases) {
+                console.log('Updating upcoming releases');
                 upcomingReleasesList.innerHTML = data.upcoming_releases.map(release => `
-                    <li>
+                    <li class="clickable"
+                        data-title="${release.titles[0] || ''}"
+                        data-release-date="${release.release_date || ''}"
+                        data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids[0] : ''}"
+                        data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids[0] : ''}">
                         <span class="titles">${release.titles.join(', ')}</span>
                         <span class="release-date">${release.formatted_date}</span>
                     </li>
@@ -136,12 +314,17 @@
             // Update recently added movies
             const recentMoviesContainer = document.querySelector('#recently_added_movies .cards-container');
             if (recentMoviesContainer && data.recently_added && data.recently_added.movies) {
-                recentMoviesContainer.innerHTML = data.recently_added.movies.map(movie => `
+                console.log('Updating recently added movies');
+                console.log('Recently added movies data:', JSON.stringify(data.recently_added.movies, null, 2));
+                recentMoviesContainer.innerHTML = data.recently_added.movies.map(movie => {
+                    console.log('Processing movie:', movie);
+                    const collectedAt = movie.formatted_collected_at || movie.formatted_date || 'Unknown';
+                    return `
                     <div class="card">
                         ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
                             <div class="file-details">
                                 <span class="title">${movie.title} (${movie.year})</span>
-                                <span class="metadata">Quality: ${movie.version}</span>
+                                <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
                                 <span class="filename">${movie.filled_by_file}</span>
                             </div>
                         ` : `
@@ -149,24 +332,30 @@
                                 <img src="${movie.poster_url}" alt="${movie.title} poster" class="poster" loading="lazy">
                                 <div class="poster-hover">
                                     <span class="title">${movie.title} (${movie.year})</span>
-                                    <span class="metadata">Quality: ${movie.version}</span>
+                                    <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
                                     <span class="filename">${movie.filled_by_file}</span>
                                 </div>
                             </div>
                         `}
                     </div>
-                `).join('');
+                `;
+                }).join('');
             }
 
             // Update recently added shows
             const recentShowsContainer = document.querySelector('#recently_added_shows .cards-container');
             if (recentShowsContainer && data.recently_added && data.recently_added.shows) {
-                recentShowsContainer.innerHTML = data.recently_added.shows.map(show => `
+                console.log('Updating recently added shows');
+                console.log('Recently added shows data:', JSON.stringify(data.recently_added.shows, null, 2));
+                recentShowsContainer.innerHTML = data.recently_added.shows.map(show => {
+                    console.log('Processing show:', show);
+                    const collectedAt = show.formatted_collected_at || show.formatted_date || 'Unknown';
+                    return `
                     <div class="card">
                         ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
                             <div class="file-details">
                                 <span class="title">${show.title}</span>
-                                <span class="metadata">S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}</span>
+                                <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
                                 <span class="filename">${show.filled_by_file}</span>
                             </div>
                         ` : `
@@ -174,39 +363,232 @@
                                 <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
                                 <div class="poster-hover">
                                     <span class="title">${show.title}</span>
-                                    <span class="metadata">S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')} (${show.year}) - Quality: ${show.version}</span>
+                                    <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
                                     <span class="filename">${show.filled_by_file}</span>
                                 </div>
                             </div>
                         `}
                     </div>
-                `).join('');
+                `;
+                }).join('');
             }
 
             // Update recently upgraded items if they exist
             const recentlyUpgradedContainer = document.querySelector('#recently_upgraded .cards-container');
             if (recentlyUpgradedContainer && data.recently_upgraded) {
-                recentlyUpgradedContainer.innerHTML = data.recently_upgraded.map(item => `
-                    <div class="card">
-                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                console.log('Updating recently upgraded items');
+                console.log('Recently upgraded items data:', JSON.stringify(data.recently_upgraded, null, 2));
+                
+                // Debug each item's date fields
+                data.recently_upgraded.forEach((item, index) => {
+                    console.log(`Item ${index} dates:`, {
+                        title: item.title,
+                        formatted_date: item.formatted_date,
+                        original_collected_at: item.original_collected_at,
+                        collected_at: item.collected_at,
+                        last_updated: item.last_updated
+                    });
+                });
+                
+                const upgradeHtml = data.recently_upgraded.map(item => {
+                    console.log('Processing upgraded item:', item);
+                    const yearInfo = item.year ? ` (${item.year})` : '';
+                    const episodeInfo = (item.type === 'episode' && item.season_number !== null && item.episode_number !== null) ? 
+                        `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}` : '';
+                    const versionInfo = item.version ? ` - Version: ${item.version}` : '';
+                    
+                    // Ensure dates are properly formatted
+                    const toDate = item.formatted_date || 'Unknown';
+                    const fromDate = item.original_collected_at || 'Unknown';
+                    
+                    if (document.querySelector('.statistics-wrapper').classList.contains('compact-view')) {
+                        return `<div class="card">
                             <div class="file-details">
-                                <span class="title">${item.title}${item.year ? ` (${item.year})` : ''}</span>
-                                <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: ${item.version}</span>
-                                <span class="filename">${item.filled_by_file}</span>
+                                <span class="title">${item.title}${yearInfo}</span>
+                                <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
+                                <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
+                                <span class="filename" data-label="To:">${item.filled_by_file || 'Unknown'}</span>
                             </div>
-                        ` : `
+                        </div>`;
+                    } else {
+                        return `<div class="card">
                             <div class="poster-container">
-                                <img src="${item.poster_url}" alt="${item.title} poster" class="poster" loading="lazy">
+                                <img src="${item.poster_url || ''}" alt="${item.title} poster" class="poster" loading="lazy">
                                 <div class="poster-hover">
-                                    <span class="title">${item.title}${item.year ? ` (${item.year})` : ''}</span>
-                                    <span class="metadata">${item.type === 'episode' ? `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')} - ` : ''}Quality: ${item.version}</span>
-                                    <span class="filename">${item.filled_by_file}</span>
+                                    <span class="title">${item.title}${yearInfo}</span>
+                                    <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
+                                    <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
+                                    <span class="filename" data-label="To:">${item.filled_by_file || 'Unknown'}</span>
                                 </div>
                             </div>
-                        `}
-                    </div>
-                `).join('');
+                        </div>`;
+                    }
+                }).join('');
+                
+                recentlyUpgradedContainer.innerHTML = upgradeHtml;
             }
+            
+            // Reattach click event listeners for external links modal after updating content
+            reattachExternalLinksListeners();
+        }
+
+        // Function to reattach external links listeners
+        function reattachExternalLinksListeners() {
+            console.log('Reattaching external links event listeners');
+            
+            // Get modal elements
+            const modal = document.getElementById('external-links-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const traktLink = document.getElementById('trakt-link');
+            const tmdbLink = document.getElementById('tmdb-link');
+            const imdbLink = document.getElementById('imdb-link');
+            
+            // Add click event listeners to clickable items
+            document.querySelectorAll('.clickable').forEach(item => {
+                // Remove existing event listeners to prevent duplicates
+                const newItem = item.cloneNode(true);
+                item.parentNode.replaceChild(newItem, item);
+                
+                newItem.addEventListener('click', function(e) {
+                    // Prevent event from bubbling to parent elements
+                    e.stopPropagation();
+                    
+                    // Get data attributes
+                    const title = this.dataset.title;
+                    const imdbId = this.dataset.imdbId;
+                    const tmdbId = this.dataset.tmdbId;
+                    const season = this.dataset.season;
+                    const episode = this.dataset.episode;
+                    
+                    // Log the values for debugging
+                    console.log('Clicked item data:', {
+                        title,
+                        imdbId,
+                        tmdbId,
+                        season,
+                        episode,
+                        'has-imdb': !!imdbId,
+                        'has-tmdb': !!tmdbId
+                    });
+                    
+                    // Set modal title
+                    modalTitle.textContent = `View "${title}" on External Sites`;
+                    
+                    // Extract base show title (remove season/episode info)
+                    const baseTitle = title.split(' S')[0];
+                    
+                    // Set links based on available IDs
+                    
+                    // IMDB links
+                    if (imdbId) {
+                        // For TV shows with season and episode
+                        if (season && episode) {
+                            imdbLink.href = `https://www.imdb.com/title/${imdbId}/episodes?season=${season}`;
+                        } else {
+                            // For movies or shows without season/episode info
+                            imdbLink.href = `https://www.imdb.com/title/${imdbId}/`;
+                        }
+                        imdbLink.style.display = 'flex';
+                    } else {
+                        // Fallback to search
+                        imdbLink.href = `https://www.imdb.com/find?q=${encodeURIComponent(baseTitle)}`;
+                        imdbLink.style.display = 'flex';
+                    }
+                    
+                    // TMDB links
+                    if (tmdbId) {
+                        // For TV shows with season and episode
+                        if (season && episode) {
+                            tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}/season/${season}/episode/${episode}`;
+                        } else {
+                            // Check if it's a movie or TV show based on title format
+                            if (title.includes(' S') && title.includes('E')) {
+                                tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}`;
+                            } else {
+                                tmdbLink.href = `https://www.themoviedb.org/movie/${tmdbId}`;
+                            }
+                        }
+                        tmdbLink.style.display = 'flex';
+                    } else {
+                        // Fallback to search
+                        tmdbLink.href = `https://www.themoviedb.org/search?query=${encodeURIComponent(baseTitle)}`;
+                        tmdbLink.style.display = 'flex';
+                    }
+                    
+                    // Trakt links
+                    if (imdbId || tmdbId) {
+                        // For TV shows with season and episode
+                        if (season && episode) {
+                            if (imdbId) {
+                                // Direct link to episode using IMDB ID
+                                traktLink.href = `https://trakt.tv/shows/${imdbId}/seasons/${season}/episodes/${episode}`;
+                            } else if (tmdbId) {
+                                // Direct link to episode using TMDB ID
+                                traktLink.href = `https://trakt.tv/shows/${tmdbId}/seasons/${season}/episodes/${episode}`;
+                            }
+                        } else if (title.includes(' S') && title.includes('E')) {
+                            // For TV shows without specific episode - go to show page
+                            if (imdbId) {
+                                traktLink.href = `https://trakt.tv/shows/${imdbId}`;
+                            } else if (tmdbId) {
+                                traktLink.href = `https://trakt.tv/shows/${tmdbId}`;
+                            }
+                        } else {
+                            // For movies
+                            if (imdbId) {
+                                traktLink.href = `https://trakt.tv/movies/${imdbId}`;
+                            } else if (tmdbId) {
+                                traktLink.href = `https://trakt.tv/movies/${tmdbId}`;
+                            }
+                        }
+                    } else {
+                        // Fallback to search by title when no IDs available
+                        traktLink.href = `https://trakt.tv/search?query=${encodeURIComponent(baseTitle)}`;
+                    }
+                    traktLink.style.display = 'flex';
+                    
+                    // Show modal
+                    modal.style.display = 'block';
+                });
+            });
+        }
+
+        // Separate the click handler function for reusability
+        function handleRescrapeClick() {
+            const btn = this;
+            const data = {
+                imdb_id: btn.dataset.imdbId,
+                tmdb_id: btn.dataset.tmdbId,
+                season_number: parseInt(btn.dataset.season),
+                episode_number: parseInt(btn.dataset.episode)
+            };
+            
+            // Disable button while processing
+            btn.disabled = true;
+            
+            fetch('/statistics/move_to_wanted', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Update UI to show item is no longer collected
+                    const showTitle = btn.closest('li').querySelector('.show-title');
+                    showTitle.classList.add('uncollected');
+                    btn.remove(); // Remove the button
+                } else {
+                    throw new Error(data.error || 'Failed to move item to Wanted state');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error moving item to Wanted state: ' + error.message);
+                btn.disabled = false;
+            });
         }
 
         document.getElementById('compact-toggle').addEventListener('change', function() {
@@ -292,8 +674,35 @@
                 <ul>
                     {% for item in recently_aired %}
                     <li>
-                        <span class="show-title">{{ item.title }}</span>
-                        <span class="air-time">{{ item.formatted_datetime }}</span>
+                        <div class="show-info clickable" 
+                             data-title="{{ item.title }}"
+                             data-imdb-id="{{ item.imdb_id }}"
+                             data-tmdb-id="{{ item.tmdb_id }}"
+                             data-season="{{ item.season_number }}"
+                             data-episode="{{ item.episode_number }}">
+                            {# Determine class based on display_status #}
+                            {% set status_class = '' %}
+                            {% if item.display_status == 'uncollected' %}
+                                {% set status_class = ' uncollected' %}
+                            {% elif item.display_status == 'checking_upgrade' %}
+                                {% set status_class = ' checking_upgrade' %}
+                            {% endif %}
+                            {# Determine if rescrape button should be shown #}
+                            {% set show_rescrape = item.display_status == 'collected' or item.display_status == 'checking_upgrade' %}
+                            
+                            <span class="show-title{{ status_class }}">{{ item.title }}</span>
+                            <span class="air-time">{{ item.formatted_datetime }}</span>
+                        </div>
+                        {% if show_rescrape %}
+                        <button class="rescrape-btn" 
+                                data-imdb-id="{{ item.imdb_id }}"
+                                data-tmdb-id="{{ item.tmdb_id }}"
+                                data-season="{{ item.season_number }}"
+                                data-episode="{{ item.episode_number }}"
+                                title="Move back to Wanted state">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                        {% endif %}
                     </li>
                     {% endfor %}
                 </ul>
@@ -303,7 +712,12 @@
                 <h3>Airing Soon</h3>
                 <ul>
                     {% for item in airing_soon %}
-                    <li>
+                    <li class="clickable"
+                        data-title="{{ item.title }}"
+                        data-imdb-id="{{ item.imdb_id }}"
+                        data-tmdb-id="{{ item.tmdb_id }}"
+                        data-season="{{ item.season_number }}"
+                        data-episode="{{ item.episode_number }}">
                         <span class="show-title">{{ item.title }}</span>
                         <span class="air-time">{{ item.formatted_datetime }}</span>
                     </li>
@@ -315,7 +729,11 @@
                 <h3>Upcoming Releases</h3>
                 <ul>
                     {% for release in upcoming_releases %}
-                    <li>
+                    <li class="clickable"
+                        data-title="{{ release.titles[0] if release.titles else '' }}"
+                        data-release-date="{{ release.release_date }}"
+                        data-tmdb-id="{{ release.tmdb_ids[0] if release.tmdb_ids and release.tmdb_ids|length > 0 else '' }}"
+                        data-imdb-id="{{ release.imdb_ids[0] if release.imdb_ids and release.imdb_ids|length > 0 else '' }}">
                         <span class="titles">{{ release.titles | join(', ') }}</span>
                         <span class="release-date">{{ release.formatted_date }}</span>
                     </li>
@@ -336,80 +754,80 @@
                 <div class="cards-container">
                     {% for movie in recently_added.movies %}
                     <div class="card">
-                        {% if not compact_view %}
+                        {% if compact_view %}
+                        <div class="file-details">
+                            <span class="title">{{ movie.title }} ({{ movie.year }})</span>
+                            <span class="metadata">Version: {{ movie.version }} - {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
+                            <span class="filename">{{ movie.filled_by_file }}</span>
+                        </div>
+                        {% else %}
                         <div class="poster-container">
                             <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                                <span class="metadata">Quality: {{ movie.version }}</span>
+                                <span class="metadata">Version: {{ movie.version }} - {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ movie.filled_by_file }}</span>
                             </div>
-                        </div>
-                        {% else %}
-                        <div class="file-details">
-                            <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                            <span class="metadata">Quality: {{ movie.version }}</span>
-                            <span class="filename">{{ movie.filled_by_file }}</span>
                         </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </div>
-
+            
             <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
                 <h3>Recently Added Shows</h3>
                 <div class="cards-container">
                     {% for show in recently_added.shows %}
                     <div class="card">
-                        {% if not compact_view %}
+                        {% if compact_view %}
+                        <div class="file-details">
+                            <span class="title">{{ show.title }}</span>
+                            <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
+                            <span class="filename">{{ show.filled_by_file }}</span>
+                        </div>
+                        {% else %}
                         <div class="poster-container">
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ show.title }}</span>
-                                <span class="metadata">S{{ '%02d'|format(show.season_number|int) }}E{{ '%02d'|format(show.episode_number|int) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
+                                <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>
-                        </div>
-                        {% else %}
-                        <div class="file-details">
-                            <span class="title">{{ show.title }}</span>
-                            <span class="metadata">S{{ '%02d'|format(show.season_number|int) }}E{{ '%02d'|format(show.episode_number|int) }} ({{ show.year }}) - Quality: {{ show.version }}</span>
-                            <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </div>
-
-            {% if recently_upgraded %}
+            
             <div class="stats-box recently-upgraded-section" id="recently_upgraded">
                 <h3>Recently Upgraded</h3>
                 <div class="cards-container">
                     {% for item in recently_upgraded %}
                     <div class="card">
-                        {% if not compact_view %}
+                        {% if compact_view %}
+                        <div class="file-details">
+                            <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
+                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }}{% endif %}{% if item.version %} - Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
+                            <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
+                            <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
+                        </div>
+                        {% else %}
                         <div class="poster-container">
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number|int) }}E{{ '%02d'|format(item.episode_number|int) }} - {% endif %}Quality: {{ item.version }}</span>
-                                <span class="filename">{{ item.filled_by_file }}</span>
+                                <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }}{% endif %}{% if item.version %} - Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
+                                <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
+                                <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                             </div>
-                        </div>
-                        {% else %}
-                        <div class="file-details">
-                            <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                            <span class="metadata">{% if item.type == 'episode' %}S{{ '%02d'|format(item.season_number|int) }}E{{ '%02d'|format(item.episode_number|int) }} - {% endif %}Quality: {{ item.version }}</span>
-                            <span class="filename">{{ item.filled_by_file }}</span>
                         </div>
                         {% endif %}
                     </div>
                     {% endfor %}
                 </div>
             </div>
-            {% endif %}
         </div>
     </div>
 </div>
@@ -455,27 +873,6 @@
         }
     }
 
-    // Initialize displays when page loads
-    document.addEventListener('DOMContentLoaded', function() {
-        // Check if on mobile
-        if (window.innerWidth <= 768) {
-            // Add compact-view class to statistics-wrapper
-            document.querySelector('.statistics-wrapper').classList.add('compact-view');
-        }
-
-        // Initialize toggles based on session state
-        const timeFormatToggle = document.getElementById('time-format-toggle');
-        const compactToggle = document.getElementById('compact-toggle');
-        
-        // Set initial states
-        timeFormatToggle.checked = {{ 'true' if use_24hour_format else 'false' }};
-        compactToggle.checked = {{ 'true' if compact_view else 'false' }};
-
-        // Update displays
-        updateActiveDownloadsDisplay();
-        updateUsageStatsDisplay();
-    });
-
     document.getElementById('time-format-toggle').addEventListener('change', function() {
         const isChecked = this.checked;
         
@@ -500,6 +897,9 @@
         })
         .then(data => {
             if (data.status === 'OK') {
+                // Log the data structure for debugging
+                console.log('Time preference data:', data);
+                
                 // Update the UI with the new data without page reload
                 updateUIWithTimePreference(data);
             } else {
@@ -562,5 +962,249 @@
             this.disabled = false;
         });
     });
+</script>
+
+<!-- Add JavaScript for external links modal -->
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize external links modal
+        initializeExternalLinksModal();
+    });
+
+    // Function to initialize the external links modal
+    function initializeExternalLinksModal() {
+        console.log('Initializing external links modal');
+        
+        // Get modal elements
+        const modal = document.getElementById('external-links-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const traktLink = document.getElementById('trakt-link');
+        const tmdbLink = document.getElementById('tmdb-link');
+        const imdbLink = document.getElementById('imdb-link');
+        const closeModal = document.querySelector('.close-modal');
+        
+        // Attach click event listeners to clickable items
+        reattachExternalLinksListeners();
+        
+        // Close modal when clicking the close button
+        closeModal.addEventListener('click', function() {
+            modal.style.display = 'none';
+        });
+        
+        // Close modal when clicking outside the modal content
+        window.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
+    }
+</script>
+
+<style>
+    /* Modal styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+    }
+    
+    .modal-content {
+        background-color: #1e1e1e !important;
+    }
+    
+    .close-modal {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+    
+    .close-modal:hover {
+        color: #fff;
+    }
+    
+    .external-links {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+        margin-top: 20px;
+    }
+    
+    .external-link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 15px;
+        background-color: #2a2a2a;
+        border-radius: 4px;
+        text-decoration: none;
+        color: #fff;
+        transition: background-color 0.2s;
+    }
+    
+    .external-link:hover {
+        background-color: #3498db;
+        color: white;
+    }
+    
+    .provider-icon {
+        width: 24px;
+        height: 24px;
+        object-fit: contain;
+    }
+    
+    .clickable {
+        cursor: pointer;
+    }
+    
+    .clickable:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+    
+    /* Make sure the rescrape button doesn't trigger the modal */
+    .rescrape-btn {
+        z-index: 5;
+        position: relative;
+    }
+    
+    @media (max-width: 768px) {
+        .modal-content {
+            margin: 30% auto;
+            width: 90%;
+        }
+    }
+</style>
+
+<script>
+    // Auto-refresh functionality
+    (function() {
+        console.log('Auto-refresh script initialized');
+        
+        // Configuration
+        const refreshInterval = 300000; // 5 minutes
+        let refreshTimer = null;
+        
+        // Function to refresh stats without full page reload
+        function refreshStats() {
+            console.log('Attempting to refresh stats...');
+            
+            fetch('/statistics/api/index')
+                .then(response => {
+                    console.log('Response received:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    // Log the entire data object for debugging
+                    console.log('Raw data received:', data);
+                    
+                    // Now we can check the structure and update accordingly
+                    if (data) {
+                        // Use the existing function to update UI if available
+                        console.log('Updating UI with new data');
+                        
+                        // Extract the pieces we need whether or not they're nested
+                        const activeDownloadsData = data.active_downloads_data || 
+                                                  (data.stats && data.stats.active_downloads_data) || 
+                                                  {};
+                        
+                        const usageStatsData = data.usage_stats_data || 
+                                             (data.stats && data.stats.usage_stats_data) || 
+                                             {};
+                        
+                        // Update active downloads
+                        const activeDownloadsElement = document.getElementById('active_downloads');
+                        const downloadLimitElement = document.getElementById('download_limit');
+                        if (activeDownloadsElement && downloadLimitElement && activeDownloadsData) {
+                            activeDownloadsElement.textContent = activeDownloadsData.count || "0";
+                            downloadLimitElement.textContent = activeDownloadsData.limit || "25";
+                            
+                            // Also update class if status is provided
+                            if (activeDownloadsData.status) {
+                                const statusElement = activeDownloadsElement.parentElement;
+                                statusElement.classList.remove('warning', 'critical');
+                                if (activeDownloadsData.status === 'critical') {
+                                    statusElement.classList.add('critical');
+                                } else if (activeDownloadsData.status === 'warning') {
+                                    statusElement.classList.add('warning');
+                                }
+                            }
+                        }
+                        
+                        // Update usage stats
+                        const dailyUsageElement = document.getElementById('daily_usage');
+                        const dailyLimitElement = document.getElementById('daily_limit');
+                        if (dailyUsageElement && dailyLimitElement && usageStatsData) {
+                            dailyUsageElement.textContent = usageStatsData.used || "0";
+                            dailyLimitElement.textContent = usageStatsData.limit || "0";
+                            
+                            // Update styling based on percentage
+                            const usageElement = dailyUsageElement.parentElement;
+                            usageElement.classList.remove('warning', 'critical');
+                            if (usageStatsData.percentage >= 90) {
+                                usageElement.classList.add('critical');
+                            } else if (usageStatsData.percentage >= 75) {
+                                usageElement.classList.add('warning');
+                            }
+                        }
+                        
+                        // Try to update other elements if the data is suitable format
+                        // Only call updateUIWithTimePreference if it exists and data seems right
+                        if (typeof updateUIWithTimePreference === 'function' && 
+                            (data.status === 'OK' || data.recently_aired || data.airing_soon)) {
+                            try {
+                                updateUIWithTimePreference(data);
+                                console.log('Full UI update successful');
+                            } catch (err) {
+                                console.error('Error in updateUIWithTimePreference:', err);
+                            }
+                        } else {
+                            // If we can't use the existing update function, at least make sure
+                            // click event listeners are reattached
+                            if (typeof reattachExternalLinksListeners === 'function') {
+                                try {
+                                    reattachExternalLinksListeners();
+                                    console.log('Reattached external links listeners');
+                                } catch (err) {
+                                    console.error('Error reattaching external links listeners:', err);
+                                }
+                            }
+                        }
+                        
+                        console.log('Stats refreshed successfully');
+                    } else {
+                        console.warn('No data received from API');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error refreshing stats:', error);
+                })
+                .finally(() => {
+                    console.log('Scheduling next refresh in', refreshInterval, 'ms');
+                    scheduleNextRefresh();
+                });
+        }
+        
+        // Schedule the next refresh
+        function scheduleNextRefresh() {
+            clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(refreshStats, refreshInterval);
+            console.log('Next refresh scheduled at:', new Date(Date.now() + refreshInterval).toLocaleTimeString());
+        }
+        
+        // Start the refresh cycle - with a slight delay to ensure page is fully loaded
+        setTimeout(() => {
+            console.log('Starting initial refresh cycle');
+            scheduleNextRefresh();
+        }, 5000);
+        
+        // Log that the script is ready
+        console.log('Auto-refresh setup complete');
+    })(); // Self-executing function
 </script>
 {% endblock %}

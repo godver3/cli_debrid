@@ -1,9 +1,10 @@
 import logging
-from api_tracker import api
+from routes.api_tracker import api
 import re
 from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
-from settings import load_config, get_setting
+from utilities.settings import load_config, get_setting
+from database.database_reading import get_imdb_aliases
 
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"
 TORRENTIO_BASE_URL = "https://torrentio.strem.fun"
@@ -14,21 +15,41 @@ def scrape_torrentio_instance(instance: str, settings: Dict[str, Any], imdb_id: 
         opts = DEFAULT_OPTS
     
     try:
-        url = construct_url(imdb_id, content_type, season, episode, opts)
-        logging.debug(f"Constructed Torrentio URL: {url}")
-        response = fetch_data(url)
-        if not response or 'streams' not in response:
-            logging.warning(f"No streams found for IMDb ID: {imdb_id} in instance {instance}")
-            return []
-        #logging.debug(f"Torrentio returned {len(response['streams'])} total results before parsing")
-        parsed_results = parse_results(response['streams'], instance)
-        #logging.debug(f"Successfully parsed {len(parsed_results)} results from Torrentio")
-        return parsed_results
+        # Get all IMDB aliases for this ID
+        imdb_ids = get_imdb_aliases(imdb_id)
+        all_results = []
+        
+        # Scrape for each IMDB ID (original + aliases)
+        for current_imdb_id in imdb_ids:
+            url = construct_url(current_imdb_id, content_type, season, episode, opts)
+            #logging.debug(f"Constructed Torrentio URL for ID {current_imdb_id}: {url}")
+            response = fetch_data(url)
+            if not response or 'streams' not in response:
+                logging.warning(f"No streams found for IMDb ID: {current_imdb_id} in instance {instance}")
+                continue
+                
+            parsed_results = parse_results(response['streams'], instance)
+            all_results.extend(parsed_results)
+            
+        # Remove duplicates based on info_hash
+        seen_hashes = set()
+        unique_results = []
+        for result in all_results:
+            if result['info_hash'] not in seen_hashes:
+                seen_hashes.add(result['info_hash'])
+                unique_results.append(result)
+                
+        logging.debug(f"Found {len(unique_results)} unique results after checking {len(imdb_ids)} IMDB IDs")
+        return unique_results
     except Exception as e:
         logging.error(f"Error in scrape_torrentio_instance for {instance}: {str(e)}", exc_info=True)
         return []
 
 def construct_url(imdb_id: str, content_type: str, season: int = None, episode: int = None, opts: str = DEFAULT_OPTS) -> str:
+    #logging.info(f"Constructing Torrentio URL for {imdb_id} with content_type: {content_type}, season: {season}, episode: {episode}")
+    if season is not None and episode is None:
+        #logging.info(f"Multi-episode mode detected. Setting episode to 1 for {imdb_id}")
+        episode = 1
     if content_type == "movie":
         return f"{TORRENTIO_BASE_URL}/{opts}/stream/movie/{imdb_id}.json"
     elif content_type == "episode" and season is not None and episode is not None:
@@ -46,7 +67,8 @@ def fetch_data(url: str) -> Dict:
         }
         response = api.get(url, headers=headers)
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            return data
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching data: {str(e)}")
     return {}
@@ -59,19 +81,25 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
     parse_error_count = 0
     
     for stream in streams:
+        parsed_info = {}
         try:
-            title = stream.get('title', '')
-            if not title:
+            raw_title = stream.get('title', '')
+            if not raw_title:
                 no_title_count += 1
                 continue
                 
-            logging.debug(f"Processing stream with raw title: {title}")
-            title_parts = title.split('\n')
+            behaviorHints = stream.get('behaviorHints', {})
+            parsed_info['filename'] = behaviorHints.get('filename')
+            parsed_info['bingeGroup'] = behaviorHints.get('bingeGroup')
+
+            title_parts = raw_title.split('\n')
             
             # First line is always the main title
             name = title_parts[0].strip()
             size = 0.0
             seeders = 0
+            languages = []
+            source_site = None
             size_found = False
             
             # Look through all lines after the title for metadata
@@ -88,8 +116,39 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 if seeder_info > 0:
                     seeders = seeder_info
 
+                # Extract source site (e.g., Rutor, ThePirateBay)
+                source_match = re.search(r'⚙️\s*(\S+)', metadata_line)
+                if source_match:
+                    source_site = source_match.group(1)
+                    parsed_info['source_site'] = source_site
+
+                # Extract language flags
+                lang_match = re.findall(r'[🇬🇧🇷🇺🇺🇦🇫🇷🇩🇪🇪🇸🇲🇽]', metadata_line)
+                if lang_match:
+                    languages.extend(lang_match)
+                    parsed_info['languages'] = list(set(languages)) # Store unique languages
+
             if not size_found:
-                logging.error(f"No size information found in any part of title: {title}")
+                # Attempt to parse size from filename if not found in title lines
+                if parsed_info.get('filename'):
+                     # Basic regex for size in filename (e.g., [2.5GB]) - might need refinement
+                     size_match_fname = re.search(r'\[([\d.]+)\s*([GTKM]B)\]', parsed_info['filename'], re.IGNORECASE)
+                     if size_match_fname:
+                         size_str, unit = size_match_fname.groups()
+                         try:
+                             size_val = float(size_str)
+                             unit = unit.upper()
+                             if unit == 'GB': size = size_val
+                             elif unit == 'MB': size = size_val / 1024
+                             elif unit == 'TB': size = size_val * 1024
+                             elif unit == 'KB': size = size_val / (1024 * 1024)
+                             if size > 0: size_found = True
+                         except ValueError:
+                              pass # Ignore conversion errors
+
+                if not size_found:
+                    logging.warning(f"No size information found in title or filename: {raw_title}")
+
 
             info_hash = stream.get("infoHash", "")
             if not info_hash:
@@ -97,35 +156,49 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
                 continue
                 
             magnet_link = f'magnet:?xt=urn:btih:{info_hash}'
-            if stream.get('fileIdx') is not None:
-                magnet_link += f'&dn={quote_plus(name)}&so={stream["fileIdx"]}'
-            
+            fileIdx = stream.get('fileIdx')
+            if fileIdx is not None:
+                 # Use filename from behaviorHints if available for dn, otherwise use parsed name
+                 dn_name = parsed_info.get('filename', name) 
+                 # Ensure dn_name is not empty before adding
+                 if dn_name:
+                     magnet_link += f'&dn={quote_plus(dn_name)}&so={fileIdx}'
+                 else:
+                      # Fallback if filename is also empty
+                      magnet_link += f'&so={fileIdx}'
+
+
             result = {
                 'title': name,
-                'size': size,
-                'source': f'{instance}',
+                'size': round(size, 2),
+                'source': f'{instance}{f" - {source_site}" if source_site else ""}', # Append source site if found
                 'magnet': magnet_link,
-                'seeders': seeders
+                'seeders': seeders,
+                'info_hash': info_hash,
+                'parsed_info': parsed_info # Store extra parsed details
             }
+            # Add languages directly if found
+            if languages:
+                 result['languages'] = list(set(languages))
+
             results.append(result)
-            logging.debug(f"Successfully parsed result: {result}")
             
         except Exception as e:
             parse_error_count += 1
-            logging.error(f"Error parsing stream: {str(e)}")
+            logging.error(f"Error parsing stream: {str(e)}", exc_info=True)
             if 'title' in stream:
                 logging.error(f"Failed stream title: {stream['title']}")
             continue
     
-    #skipped_count = no_title_count + no_info_hash_count + parse_error_count
-    #if skipped_count > 0:
-    #    logging.debug(f"Torrentio parsing summary:")
-    #    logging.debug(f"- Total streams: {len(streams)}")
-    #    logging.debug(f"- Successfully parsed: {len(results)}")
-    #    logging.debug(f"- Skipped {skipped_count} results:")
-    #    logging.debug(f"  - No title: {no_title_count}")
-    #    logging.debug(f"  - No info hash: {no_info_hash_count}")
-    #    logging.debug(f"  - Parse errors: {parse_error_count}")
+    # Log summary (optional, uncomment if needed)
+    # skipped_count = no_title_count + no_info_hash_count + parse_error_count
+    # if skipped_count > 0 or parse_error_count > 0 or no_title_count > 0 or no_info_hash_count > 0:
+    #     logging.debug(f"Torrentio parsing summary for {instance}:")
+    #     logging.debug(f"- Total streams processed: {len(streams)}")
+    #     logging.debug(f"- Successfully parsed: {len(results)}")
+    #     logging.debug(f"- Skipped (no title): {no_title_count}")
+    #     logging.debug(f"- Skipped (no info hash): {no_info_hash_count}")
+    #     logging.debug(f"- Parse errors: {parse_error_count}")
     
     return results
 
@@ -142,13 +215,11 @@ def parse_size(size_info: str) -> float:
             # Clean the size string
             size_str = size_str.strip()
             if not size_str or size_str == '.':
-                logging.debug(f"Invalid size string '{size_str}' in '{size_info}'")
                 return 0.0
                 
             try:
                 size = float(size_str)
             except ValueError:
-                logging.debug(f"Could not convert '{size_str}' to float in '{size_info}'")
                 return 0.0
                 
             unit = unit.lower()
@@ -161,7 +232,6 @@ def parse_size(size_info: str) -> float:
             elif unit.startswith(('k', 'к')):  # KB, KiB
                 return size / (1024 * 1024)
             else:
-                logging.debug(f"Unknown size unit '{unit}' in '{size_info}'")
                 return size
     except Exception as e:
         logging.error(f"Error parsing size from '{size_info}': {str(e)}")

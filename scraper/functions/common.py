@@ -2,7 +2,8 @@
 import re
 import logging
 from typing import Dict, Any, Union, List, Optional
-from guessit import guessit
+from PTT import parse_title
+from scraper.functions.ptt_parser import parse_with_ptt
 
 def trim_magnet(magnet: str):
     """Remove unnecessary parts from magnet link."""
@@ -22,47 +23,65 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     Detect season and episode information from parsed torrent info.
     Returns a dictionary containing season pack info, multi-episode flag, and lists of seasons/episodes.
     """
+    if isinstance(parsed_info, str):
+        # Parse string using PTT
+        parsed_info = parse_with_ptt(parsed_info)
+
+
+    # Ensure parsed_info is a dictionary for consistent access
+    if not isinstance(parsed_info, dict):
+        logging.error(f"[DSEI] parsed_info is not a dict after potential parsing: {parsed_info}. Returning default.")
+        return {
+            'season_pack': 'Error',
+            'multi_episode': False,
+            'seasons': [],
+            'episodes': []
+        }
+
+
     result = {
         'season_pack': 'Unknown',
         'multi_episode': False,
         'seasons': [],
         'episodes': []
     }
-
-    if isinstance(parsed_info, str):
-        try:
-            parsed_info = guessit(parsed_info)
-        except Exception as e:
-            logging.error(f"Error parsing title with guessit: {str(e)}")
-            return result
-
+    
     # Check for complete series indicators
     title = parsed_info.get('title', '').lower()
-    if any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']):
+    original_title = parsed_info.get('original_title', '').lower()
+    # Add PTT's own 'complete' flag to the check
+    is_ptt_complete = parsed_info.get('complete', False)
+
+
+    if is_ptt_complete or \
+       any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']) or \
+       any(indicator in original_title for indicator in ['complete', 'collection', 'all.seasons']):
         result['season_pack'] = 'Complete'
         return result
 
-    # Get season info - PTT uses 'seasons', guessit uses 'season'
-    season_info = parsed_info.get('seasons') or parsed_info.get('season')
-    episode_info = parsed_info.get('episodes') or parsed_info.get('episode')
+    # Get season and episode info from parsed info
+    season_info = parsed_info.get('seasons', [])
+    episode_info = parsed_info.get('episodes', [])
     
     # Handle season information
-    if season_info is not None:
-        if isinstance(season_info, list):
+    if season_info:
+        if isinstance(season_info, list) and len(season_info) > 1:
             # If we have multiple seasons, it's a season pack
             result['season_pack'] = ','.join(str(s) for s in sorted(set(season_info)))
             result['seasons'] = sorted(set(season_info))
         else:
             # Single season - check if it's a pack or single episode
-            if episode_info is None:
-                # No episode number means it's a season pack
-                result['season_pack'] = str(season_info)
+            season_value = season_info[0] if isinstance(season_info, list) else season_info
+            # If there are multiple episodes, it's a season pack.
+            # If there are no episodes, it's also a season pack.
+            if (isinstance(episode_info, list) and len(episode_info) > 1) or not episode_info:
+                result['season_pack'] = str(season_value)
             else:
                 result['season_pack'] = 'N/A'  # Single episode
-            result['seasons'] = [season_info]
+            result['seasons'] = [season_value]
     else:
         # No season info
-        if episode_info is not None:
+        if episode_info:
             # Has episode but no season - assume season 1
             result['season_pack'] = 'N/A'
             result['seasons'] = [1]
@@ -74,14 +93,14 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
                 result['season_pack'] = 'Unknown'
     
     # Handle episode information
-    if episode_info is not None:
-        if isinstance(episode_info, list):
+    if episode_info:
+        if isinstance(episode_info, list) and len(episode_info) > 1:
             result['multi_episode'] = True
             result['episodes'] = sorted(set(episode_info))
         else:
-            result['episodes'] = [episode_info]
-            if not result['seasons']:
-                result['seasons'] = [1]
-    
-    #logging.debug(f"Season/episode detection for title '{title}': {result}")
+            episode_value = episode_info[0] if isinstance(episode_info, list) else episode_info
+            result['episodes'] = [episode_value]
+            if not result['seasons']: # Ensure seasons list is not empty if episodes are present
+                result['seasons'] = [1] # Default to season 1 if episodes found but no season
+
     return result

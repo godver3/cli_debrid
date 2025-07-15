@@ -3,21 +3,64 @@ import re
 from typing import List, Dict, Any, Union
 from database.database_reading import get_movie_runtime, get_episode_runtime, get_episode_count
 from fuzzywuzzy import fuzz
-from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
 from PTT import parse_title
 from babelfish import Language
 from scraper.functions import *
 from scraper.functions.common import detect_season_episode_info
 from functools import lru_cache
+import time
 
 # Pre-compile regex patterns
 _SEASON_RANGE_PATTERN = re.compile(r's(\d+)-s(\d+)')
+# The site prefix patterns are used multiple times during normalization
+# Compile them once at module import time to avoid recompilation in tight loops
+_SITE_PREFIX_PATTERN = re.compile(r'^(www\s+\S+\s+\S+|www\.\S+\.\S+|[a-zA-Z0-9]+\s*\.\s*[a-zA-Z]+)\s*-\s*', re.IGNORECASE)
+# Re-use the same pattern for the second cleanup pass
+_LEFTOVER_SITE_PREFIX_PATTERN = _SITE_PREFIX_PATTERN
 
 @lru_cache(maxsize=1024)
 def _parse_with_ptt(title: str) -> Dict[str, Any]:
     """Cached PTT parsing"""
-    result = parse_title(title)
-    #logging.debug(f"PTT parsed '{title}' into: {result}")
+    # Get the raw result from PTT
+    raw_result = parse_title(title)
+    
+    # Create a copy to avoid modifying the original
+    result = raw_result.copy()
+    
+    # Make sure the site is not included in the title
+    if 'site' in result and result.get('title', ''):
+        # Ensure we're using just the movie/show title without the site prefix
+        result['original_site'] = result['site']
+    
+    '''
+    # Special handling for shows where the title is a year (e.g. "1923")
+    if result.get('year'):
+        # Handle both space and dot-separated formats
+        first_part = title.split('.')[0].split()[0].strip()
+        
+        # If the first part is a 4-digit number and it matches the detected year
+        if first_part.isdigit() and len(first_part) == 4 and int(first_part) == result['year']:
+            # Check if we have a season/episode pattern
+            has_episode = bool(result.get('episodes')) or bool(result.get('seasons'))
+            current_title = result.get('title', '')
+            
+            # If it's an episode and the current title contains episode-specific information
+            if has_episode and current_title:
+                # For titles that include episode title (e.g. "S02E01 The Killing Season")
+                if 'S' in current_title and any(c.isdigit() for c in current_title):
+                    # Set the show title to the year and clear the year field
+                    result['title'] = first_part
+                    result['year'] = None  # Clear the year since it's actually the title
+                    # Store the episode title if needed
+                    if ' ' in current_title:
+                        _, episode_title = current_title.split(' ', 1)
+                        result['episode_title'] = episode_title
+            elif not current_title or current_title.startswith('S'):
+                # If title is missing or just contains season info
+                result['title'] = first_part
+                result['year'] = None  # Clear the year since it's actually the title
+    '''
+    
     return result
 
 def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
@@ -26,15 +69,7 @@ def detect_hdr(parsed_info: Dict[str, Any]) -> bool:
     if hdr_info:
         return True
 
-    # Fallback to checking title for HDR terms
-    title = parsed_info.get('title', '').upper()
-    hdr_terms = ['HDR', 'DV', 'DOVI', 'DOLBY VISION', 'HDR10+', 'HDR10', 'HLG']
-    for term in hdr_terms:
-        if term in title:
-            # Special case for 'DV' to exclude 'DVDRIP'
-            if term == 'DV' and 'DVDRIP' in title:
-                continue
-            return True
+    # No fallback method - removed to prevent false positives with titles like "Devil's Advocate"
     return False
 
 def match_any_title(release_title: str, official_titles: List[str], threshold: float = 0.35) -> float:
@@ -69,73 +104,123 @@ def detect_resolution(parsed_info: Dict[str, Any]) -> str:
     resolution = parsed_info.get('resolution', 'Unknown')
     return resolution
 
+def _process_single_title(args):
+    """Helper for threaded execution inside batch_parse_torrent_info.
+
+    This function contains the per-item parsing logic that was previously
+    embedded in the for-loop of batch_parse_torrent_info. It is extracted so
+    that we can easily run it in a ThreadPoolExecutor while maintaining the
+    original behaviour.
+    """
+    title, size = args
+    try:
+        # Check for unreasonable season ranges early so we can skip expensive work
+        season_range_match = _SEASON_RANGE_PATTERN.search(title.lower())
+        if season_range_match:
+            start_season, end_season = map(int, season_range_match.groups())
+            if end_season - start_season > 50:
+                return {'title': title, 'original_title': title, 'invalid_season_range': True}
+
+        # Parse with PTT (cached)
+        parsed_info_from_ptt = _parse_with_ptt(title)
+
+        # Extract the clean title - if there's a site field, make sure it's not in the title
+        clean_title = parsed_info_from_ptt.get('title', title)
+        site = parsed_info_from_ptt.get('site')
+
+        # If PTT didn't detect a site but the title looks like it contains site info, try to extract it
+        if not site and isinstance(clean_title, str):
+            site_match = _SITE_PREFIX_PATTERN.search(clean_title)
+            if site_match:
+                site = site_match.group(1).strip()
+                clean_title = _SITE_PREFIX_PATTERN.sub('', clean_title)
+
+        # If site exists in PTT result but the title still starts with it, clean it
+        if site and isinstance(clean_title, str) and clean_title.lower().startswith(site.lower()):
+            clean_title = re.sub(f"^{re.escape(site)}\\s*-?\\s*", "", clean_title, flags=re.IGNORECASE)
+
+        # Further cleaning pass in case site-like prefixes are still present
+        if isinstance(clean_title, str) and _LEFTOVER_SITE_PREFIX_PATTERN.search(clean_title):
+            clean_title = _LEFTOVER_SITE_PREFIX_PATTERN.sub('', clean_title)
+
+        # Convert PTT result to our standard format
+        processed_info = {
+            'title': clean_title,
+            'original_title': title,
+            'year': parsed_info_from_ptt.get('year'),
+            'resolution': parsed_info_from_ptt.get('resolution', 'Unknown'),
+            'source': parsed_info_from_ptt.get('source'),
+            'audio': parsed_info_from_ptt.get('audio'),
+            'codec': parsed_info_from_ptt.get('codec'),
+            'group': parsed_info_from_ptt.get('group'),
+            'season': parsed_info_from_ptt.get('season'),
+            'seasons': parsed_info_from_ptt.get('seasons', []),
+            'episode': parsed_info_from_ptt.get('episode'),
+            'episodes': parsed_info_from_ptt.get('episodes', []),
+            'type': parsed_info_from_ptt.get('type'),
+            'country': parsed_info_from_ptt.get('country'),
+            'date': parsed_info_from_ptt.get('date'),
+            'documentary': parsed_info_from_ptt.get('documentary', False),
+            'site': site,
+            'trash': parsed_info_from_ptt.get('trash', False)
+        }
+
+        # Handle size if provided
+        if size is not None:
+            processed_info['size'] = parse_size(size)
+
+        # Add additional information
+        processed_info['resolution_rank'] = get_resolution_rank(processed_info['resolution'])
+        processed_info['is_hdr'] = detect_hdr(parsed_info_from_ptt)
+
+        # Extract season/episode info
+        season_episode_info = detect_season_episode_info(processed_info.copy())
+        processed_info['season_episode_info'] = season_episode_info
+
+        return processed_info
+
+    except Exception as e:
+        logging.error(f"PTT parsing error for '{title}': {str(e)}", exc_info=True)
+        return {'title': title, 'original_title': title, 'parsing_error': True}
+
 def batch_parse_torrent_info(titles: List[str], sizes: List[Union[str, int, float]] = None) -> List[Dict[str, Any]]:
     """
-    Parse multiple torrent titles in batch for better performance using PTT.
+    Parse multiple torrent titles efficiently.
+
+    Optimisations:
+    1. Regex patterns are pre-compiled at module load time.
+    2. For large batches ( > 12 items ) the per-item work is executed in a
+       ThreadPoolExecutor which can significantly reduce wall-clock time on
+       multi-core systems without changing external behaviour.  A conservative
+       threshold is chosen to avoid the overhead of thread creation for small
+       inputs.
     """
     if sizes is None:
         sizes = [None] * len(titles)
-    
-    results = []
-    for title, size in zip(titles, sizes):
-        try:
-            # Check for unreasonable season ranges
-            season_range_match = _SEASON_RANGE_PATTERN.search(title.lower())
-            if season_range_match:
-                start_season, end_season = map(int, season_range_match.groups())
-                if end_season - start_season > 50:
-                    results.append({'title': title, 'original_title': title, 'invalid_season_range': True})
-                    continue
-            
-            # Parse with PTT (cached)
-            try:
-                parsed_info = _parse_with_ptt(title)
 
-                #logging.info(f"Parsed info: {parsed_info}")
-                
-                # Convert PTT result to our standard format
-                processed_info = {
-                    'title': parsed_info.get('title', title),
-                    'original_title': title,  # Store original title
-                    'year': parsed_info.get('year'),
-                    'resolution': parsed_info.get('resolution', 'Unknown'),
-                    'source': parsed_info.get('source'),
-                    'audio': parsed_info.get('audio'),
-                    'codec': parsed_info.get('codec'),
-                    'group': parsed_info.get('group'),
-                    'season': parsed_info.get('season'),
-                    'seasons': parsed_info.get('seasons'),  # Add seasons field
-                    'episode': parsed_info.get('episode'),
-                    'episodes': parsed_info.get('episodes'),
-                    'type': parsed_info.get('type'),
-                    'country': parsed_info.get('country'),
-                    'date': parsed_info.get('date'),
-                }
-                
-                # Handle size if provided
-                if size is not None:
-                    processed_info['size'] = parse_size(size)
-                
-                # Add additional information
-                processed_info['resolution_rank'] = get_resolution_rank(processed_info['resolution'])
-                processed_info['is_hdr'] = detect_hdr(parsed_info)
-                
-                # Extract season/episode info
-                season_episode_info = detect_season_episode_info(processed_info)
-                processed_info['season_episode_info'] = season_episode_info
-                
-                results.append(processed_info)
-                
-            except Exception as e:
-                logging.error(f"PTT parsing error for '{title}': {str(e)}")
-                results.append({'title': title, 'original_title': title, 'parsing_error': True})
-                continue
-            
+    # Quick sanity to keep lists aligned
+    if len(sizes) != len(titles):
+        # Fallback to original behaviour by aligning sizes length
+        sizes = list(sizes) + [None] * (len(titles) - len(sizes))
+
+    # Decide whether to process in parallel or sequentially based on workload
+    PARALLEL_THRESHOLD = 12  # Tunable – empirically the break-even point
+    if len(titles) >= PARALLEL_THRESHOLD:
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            import multiprocessing
+
+            max_workers = min(32, (multiprocessing.cpu_count() or 1) * 2)
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                results = list(executor.map(_process_single_title, zip(titles, sizes)))
+            return results
         except Exception as e:
-            logging.error(f"Error in parse_torrent_info for '{title}': {str(e)}", exc_info=True)
-            results.append({'title': title, 'original_title': title, 'parsing_error': True})
-    
-    return results
+            # If anything goes wrong, fall back to sequential processing and log once
+            logging.error(f"Parallel batch_parse_torrent_info failed – falling back to sequential: {e}", exc_info=True)
+            # continue to sequential section
+
+    # Sequential fallback / small batch path
+    return [_process_single_title(args) for args in zip(titles, sizes)]
 
 def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[str, Any]:
     """
@@ -145,60 +230,81 @@ def parse_torrent_info(title: str, size: Union[str, int, float] = None) -> Dict[
     return results[0]
 
 def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from metadata.metadata import get_tmdb_id_and_media_type, get_metadata
     processed_items = []
+    total_db_time = 0
+    total_metadata_time = 0
 
-    for item in media_items:
+    for item_idx, item in enumerate(media_items):
+        item_start_time = time.time()
         try:
             if item['media_type'] == 'movie':
+                db_start_time = time.time()
                 db_runtime = get_movie_runtime(item['tmdb_id'])
+                db_duration = time.time() - db_start_time
+                total_db_time += db_duration
+                #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_movie_runtime took {db_duration:.4f}s")
+
                 if db_runtime:
                     item['episode_count'] = 1
                     item['runtime'] = db_runtime
                 else:
-                    #logging.info(f"Fetching metadata for movie: {item['title']}")
+                    metadata_start_time = time.time()
                     metadata = get_metadata(tmdb_id=item['tmdb_id'], item_media_type='movie')
-                    item['runtime'] = metadata.get('runtime', 100)  # Default to 100 if not found
+                    metadata_duration = time.time() - metadata_start_time
+                    total_metadata_time += metadata_duration
+                    #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_metadata (movie) took {metadata_duration:.4f}s")
+                    item['runtime'] = metadata.get('runtime', 100)
                     item['episode_count'] = 1
-                    #logging.info(f"Runtime for movie: {item['runtime']}")
         
             elif item['media_type'] == 'episode':
+                db_runtime_start_time = time.time()
                 db_runtime = get_episode_runtime(item['tmdb_id'])
+                db_runtime_duration = time.time() - db_runtime_start_time
+                total_db_time += db_runtime_duration
+                #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_episode_runtime took {db_runtime_duration:.4f}s")
+
                 if db_runtime:
                     item['runtime'] = db_runtime
+                    db_episode_count_start_time = time.time()
                     item['episode_count'] = get_episode_count(item['tmdb_id'])
+                    db_episode_count_duration = time.time() - db_episode_count_start_time
+                    total_db_time += db_episode_count_duration
+                    #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_episode_count took {db_episode_count_duration:.4f}s")
                 else:
-                    #logging.info(f"Fetching metadata for TV show: {item['title']}")
-                    if 'imdb_id' in item:
-                        tmdb_id, media_type = get_tmdb_id_and_media_type(item['imdb_id'])
-                    elif 'tmdb_id' in item:
-                        tmdb_id, media_type = item['tmdb_id'], 'tv'
-                    else:
-                        logging.warning(f"No IMDb ID or TMDB ID found for TV show: {item['title']}")
-                        tmdb_id, media_type = None, None
-
-                    if tmdb_id and media_type == 'tv':
-                        metadata = get_metadata(tmdb_id=tmdb_id, item_media_type='tv')
-                        item['runtime'] = metadata.get('runtime', 30)  # Default to 30 if not found
+                    tmdb_id_for_meta = item.get('tmdb_id')
+                    media_type_for_meta = 'tv'
+                    
+                    # This part for fetching tmdb_id if only imdb_id is present seems less likely to be a bottleneck
+                    # but we can log it if necessary. For now, focusing on get_metadata.
+                    if 'imdb_id' in item and 'tmdb_id' not in item: # Check if tmdb_id is actually missing
+                        # Potentially add timing for get_tmdb_id_and_media_type if it becomes relevant
+                        tmdb_id_for_meta, media_type_for_meta = get_tmdb_id_and_media_type(item['imdb_id'])
+                    
+                    if tmdb_id_for_meta and media_type_for_meta == 'tv':
+                        metadata_start_time = time.time()
+                        metadata = get_metadata(tmdb_id=tmdb_id_for_meta, item_media_type='tv')
+                        metadata_duration = time.time() - metadata_start_time
+                        total_metadata_time += metadata_duration
+                        #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_metadata (tv) took {metadata_duration:.4f}s")
+                        item['runtime'] = metadata.get('runtime', 30)
                         seasons = metadata.get('seasons', {})
                         item['episode_count'] = sum(season.get('episode_count', 0) for season in seasons.values())
                     else:
-                        logging.warning(f"Could not fetch details for TV show: {item['title']}")
+                        logging.warning(f"Could not fetch details for TV show: {item.get('title', 'N/A')}")
                         item['episode_count'] = 1
-                        item['runtime'] = 30  # Default value
-                    
-                    #logging.info(f"Runtime for TV show: {item['runtime']}")
-                    #logging.info(f"Episode count for TV show: {item['episode_count']}")
+                        item['runtime'] = 30
             
-            #logging.debug(f"Processed {item['title']}: {item['episode_count']} episodes, {item['runtime']} minutes per episode/movie")
             processed_items.append(item)
+            #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') processing took {time.time() - item_start_time:.4f}s")
 
         except Exception as e:
-            logging.error(f"Error processing item {item['title']}: {str(e)}")
-            # Add item with default values in case of error
+            logging.error(f"Error processing item {item.get('title', 'N/A')} in get_media_info_for_bitrate: {str(e)}", exc_info=True)
             item['episode_count'] = 1
-            item['runtime'] = 30 if item['media_type'] == 'episode' else 100
+            item['runtime'] = 30 if item.get('media_type') == 'episode' else 100
             processed_items.append(item)
 
+    #logging.debug(f"get_media_info_for_bitrate: Total DB time: {total_db_time:.4f}s, Total Metadata time: {total_metadata_time:.4f}s for {len(media_items)} items.")
     return processed_items
 
 def parse_size(size):

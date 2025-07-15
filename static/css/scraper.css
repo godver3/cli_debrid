@@ -1,22 +1,91 @@
-form#search-form {
-    text-align: center;
-    padding: 8px;
-    background-color: #444;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-family: inherit;
+:root {
+    --primary-color: #4CAF50;
+    --primary-hover: #45a049;
+    --background-dark: #121212;
+    --background-light: #1e1e1e;
+    --surface-color: #2d2d2d;
+    --text-primary: rgba(255, 255, 255, 0.87);
+    --text-secondary: rgba(255, 255, 255, 0.6);
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --border-radius-sm: 8px;
+    --border-radius-md: 12px;
+    --border-radius-lg: 16px;
+    --transition-speed: 0.3s;
 }
 
-form#search-form input, select, button {
-    padding: 8px;
-    background-color: #444;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-family: inherit;
+html, body {
+    min-height: 100vh;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    background-color: var(--background-dark);
+    color: var(--text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+body {
+    padding-top: 60px;
+}
+
+/* Add class to prevent scrolling when modal is open */
+body.modal-open {
+    overflow: hidden;
+    padding-right: 15px; /* Prevent layout shift when scrollbar disappears */
+}
+
+#scraper-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 30px;
+}
+
+form#search-form {
+    text-align: center;
+    padding: var(--spacing-md);
+    background-color: var(--surface-color);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-md);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    margin: var(--spacing-lg) auto;
+    max-width: 600px;
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    opacity: 77%;
+    min-width: 70vw;
+    margin-top: 10px;
+}
+
+form#search-form input, 
+form#search-form select, 
+form#search-form button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--background-light);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-sm);
+    transition: none;
+    -webkit-appearance: none;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
+}
+
+form#search-form input:focus,
+form#search-form select:focus,
+form#search-form input:active,
+form#search-form select:active {
+    outline: none;
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+    background-color: var(--background-light);
 }
 
 /* Override autofill styles */
@@ -24,68 +93,554 @@ form#search-form input:-webkit-autofill,
 form#search-form input:-webkit-autofill:hover,
 form#search-form input:-webkit-autofill:focus,
 form#search-form input:-webkit-autofill:active {
-    -webkit-text-fill-color: #fff !important;
-    -webkit-box-shadow: 0 0 0 30px #444 inset !important;
-    transition: background-color 5000s ease-in-out 0s;
+    -webkit-text-fill-color: var(--text-primary) !important;
+    -webkit-box-shadow: 0 0 0 30px var(--background-light) inset !important;
+    box-shadow: none;
+    transition: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Additional focus prevention */
+form#search-form *:focus {
+    outline: none !important;
+}
+
+form#search-form input::selection {
+    background-color: var(--primary-color);
+    color: var(--text-primary);
 }
 
 /* For Firefox */
 form#search-form input:autofill {
-    color: #fff;
-    background-color: #444;
+    background-color: var(--background-light) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* For Edge */
 form#search-form input:-ms-input-placeholder {
-    color: #fff !important;
+    color: var(--text-primary) !important;
 }
 
-.movie-list {
+.movie-list, .show-list, .anime-list {
+    position: relative;
+    padding: var(--spacing-md) 0;
+    margin: 0 calc(-1 * var(--spacing-md));
+    overflow: visible;
+}
+
+.scroll-container {
+    position: relative;
     display: flex;
     overflow-x: auto;
-    gap: 20px;
-    padding-bottom: 20px;
+    gap: 0;
+    padding: 40px var(--spacing-md);
+    padding-right: 40px;
+    margin: -40px 0;
     scroll-behavior: smooth;
     scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+    -ms-overflow-style: none;  /* IE and Edge */
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    min-width: 0;
 }
 
-.movie-list::-webkit-scrollbar {
-    display: none; /* WebKit */
+.scroll-container::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
 }
 
-.media-card {
+/* Common poster styles */
+.media-card,
+.sresult {
     flex: 0 0 auto;
     width: 176px;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    padding: 16px;
+    margin: -8px 8px;
+    z-index: 1;
 }
 
-.show-list {
-    display: flex;
-    overflow-x: auto;
-    gap: 20px;
-    padding-bottom: 20px;
-    scroll-behavior: smooth;
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+/* Apply consistent hover behavior */
+.media-card:hover,
+.sresult:hover {
+    transform: none;
 }
 
-.show-list::-webkit-scrollbar {
-    display: none; /* WebKit */
-}
-
-.media-poster {
+/* Ensure consistent poster container styling */
+.media-card .poster-container,
+.sresult .poster-container {
     position: relative;
     width: 176px;
     height: 264px;
-    border-radius: 8px;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0);
+    border-radius: var(--border-radius-lg);
+    background-color: #000;
+    box-shadow: 
+        0 4px 6px rgba(0, 0, 0, 0.2),
+        0 0 25px rgba(255, 255, 255, 0.15);
     overflow: hidden;
+}
+
+/* Consistent hover transform for both types */
+.media-card .poster-container:hover,
+.sresult .poster-container:hover {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 255, 255, 0.5);
+}
+
+/* Ensure request-icon is consistent */
+.media-card .poster-container .request-icon,
+.sresult .poster-container .request-icon {
+    position: absolute;
+    bottom: -6px;
+    right: -1px;
+    z-index: 10;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1), 
+                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 40px 40px;
+    border-color: transparent transparent var(--primary-color) transparent;
+    background-color: transparent !important;
+    border-radius: 0 !important;
+    transform-origin: bottom right;
+    transform: none !important;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+}
+
+/* Mirrored tester-icon */
+.media-card .poster-container .tester-icon,
+.sresult .poster-container .tester-icon {
+    position: absolute;
+    bottom: -6px;
+    left: -1px;
+    z-index: 10;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1), 
+                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 40px 0 0 40px;
+    border-color: transparent transparent transparent var(--primary-color);
+    background-color: transparent !important;
+    transform-origin: bottom left;
+    transform: none !important;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-start;
+    cursor: pointer;
+}
+
+/* Consistent poster overlay styling */
+.media-card .poster-overlay,
+.sresult .poster-overlay {
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    right: 0;
+    padding: var(--spacing-md);
+    color: var(--text-primary);
+    z-index: 3;
+    text-align: center;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+}
+
+/* Remove the old sresult specific image styling */
+.sresult img {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--border-radius-lg);
+    object-fit: cover;
+    position: relative;
+    z-index: 1;
+}
+
+.media-poster,
+.sresult button {
+    position: relative;
+    width: 176px;
+    cursor: pointer;
+    z-index: 1;
+    display: block;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: none;
+    overflow: visible; /* Keep overflow visible to allow glow */
+}
+
+.media-poster-img,
+.mediatype-tv,
+.mediatype-mv {
+    transition: box-shadow var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Apply the same transitions to search result elements */
+.sresult img,
+.sresult .mediatype-tv,
+.sresult .mediatype-mv {
+    transition: box-shadow var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .media-poster-img {
     width: 100%;
     height: 100%;
+    border-radius: var(--border-radius-lg);
     object-fit: cover;
-    transition: transform 0.3s ease;
+    position: relative;
+    z-index: 1;
+    display: block;
+    mask-image: linear-gradient(
+        to bottom,
+        black 95%,
+        transparent 100%
+    );
+    -webkit-mask-image: linear-gradient(
+        to bottom,
+        black 95%,
+        transparent 100%
+    );
+}
+
+.poster-container {
+    position: relative;
+    width: 176px;
+    height: 264px;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateY(0);
+    border-radius: var(--border-radius-lg);
+    background-color: #000; /* Dark background to prevent white edges */
+    box-shadow: 
+        0 4px 6px rgba(0, 0, 0, 0.2),
+        0 0 25px rgba(255, 255, 255, 0.15);
+    overflow: hidden; /* Ensure the triangle is cut off at the poster boundaries */
+}
+
+.poster-container::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 30%;
+    background: linear-gradient(to top, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 0.80) 60%, rgba(0, 0, 0, 0.6) 85%, transparent 100%);
+    z-index: 2;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    pointer-events: none; /* Allow clicks to pass through */
+}
+
+/* Add a darkening gradient overlay for the bottom 5% */
+.poster-container::before {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 5%;
+    background: linear-gradient(to bottom, transparent 0%, rgba(0, 0, 0, 0.8) 100%);
+    z-index: 2;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    pointer-events: none;
+}
+
+/* Apply the same box-shadow to search result images */
+.sresult img {
+    width: 176px;
+    height: 264px;
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+    object-fit: cover;
+    position: relative;
+    z-index: 1;
+    box-shadow: 
+        0 4px 6px rgba(0, 0, 0, 0.2),
+        0 0 25px rgba(255, 255, 255, 0.15);
+}
+
+.mediatype-tv, .mediatype-mv {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 2;
+    backdrop-filter: blur(4px);
+    pointer-events: none;  /* Ensure hover works through the badge */
+}
+
+.mediatype-tv, .mediatype-mv {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 2;
+    backdrop-filter: blur(4px);
+    pointer-events: none;  /* Ensure hover works through the badge */
+}
+
+.sresult .mediatype-tv,
+.sresult .mediatype-mv {
+    top: 8px;
+    left: 8px;
+}
+
+.media-title,
+.searchresult-info {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: var(--spacing-md);
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+    color: var(--text-primary);
+    opacity: 0;
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    text-align: center;
+    backdrop-filter: blur(4px);
+    z-index: 2;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+}
+
+.searchresult-info {
+    display: block;
+}
+
+.media-title {
+    display: block;
+}
+
+/* Title/Year overlay for posters - now positioned over the ::after gradient */
+.poster-overlay {
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    right: 0;
+    padding: var(--spacing-md);
+    background: none; /* Remove background as it's now handled by ::after */
+    color: var(--text-primary);
+    z-index: 3; /* Above the gradient */
+    text-align: center;
+    border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+}
+
+.poster-overlay h3 {
+    margin: 0 0 4px 0;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #ffffff; /* Pure white */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); /* Add shadow for better readability */
+}
+
+.poster-overlay p {
+    margin: 0;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7); /* Lighter grey */
+    opacity: 1; /* Override previous opacity */
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); /* Add shadow for better readability */
+}
+
+/* Keep hover effects for regular media items */
+.media-poster:hover .poster-container {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 255, 255, 0.5);
+}
+
+/* Override the template-defined animation for request-icon */
+.media-poster:hover .request-icon {
+    transform: none !important;
+}
+
+/* Remove hover effect for overlay as it now moves with the container */
+.media-poster:hover .poster-overlay {
+    /* No separate transform needed */
+}
+
+/* Enhanced media poster image box-shadow on hover (keep this enhancement) */
+.media-poster:hover .media-poster-img {
+    /* No separate box-shadow needed as it's on the container */
+    transform: none !important; /* Force no transform on the img itself */
+}
+
+.poster-container .request-icon {
+    position: absolute;
+    bottom: -6px;
+    right: -1px;
+    z-index: 10;
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1), 
+                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    /* Corner triangle styling */
+    width: 0;
+    height: 0;
+    border-style: solid;
+    border-width: 0 0 40px 40px; /* Larger triangle */
+    border-color: transparent transparent var(--primary-color) transparent;
+    background-color: transparent !important; /* Override any background */
+    transform-origin: bottom right;
+    transform: none !important;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+}
+
+/* Style for the plus icon that sits inside the triangle */
+.poster-container .request-icon::after {
+    content: "+";
+    position: absolute;
+    bottom: -30px; /* Adjusted for larger triangle */
+    right: 5px; /* Adjusted for larger triangle */
+    color: white;
+    font-size: 18px; /* Slightly larger for better visibility */
+    font-weight: bold;
+    line-height: 1;
+}
+/* Style specifically for search results to adjust the plus size */
+.sresult .poster-container .request-icon::after {
+    font-size: 12px; /* Smaller font size to better match trending page */
+    bottom: -28px; /* Further adjust vertical position */
+    right: 8px;
+    scale: 1.2;
+}
+
+/* Only scale when directly hovering the icon */
+.request-icon:hover {
+    transform: scale(1) !important;
+    border-color: transparent transparent #2980b9 transparent;
+    background-color: transparent !important;
+}
+
+/* Hover styles for tester-icon */
+.tester-icon:hover {
+    transform: none !important;
+    border-color: transparent transparent transparent #2980b9;
+    background-color: transparent !important;
+}
+
+/* Fix for combined hover - override template styles */
+.media-poster:hover .request-icon:hover {
+    transform: scale(1) !important;
+    border-color: transparent transparent #2980b9 transparent;
+    background-color: transparent !important;
+}
+
+/* Fix for combined hover - tester-icon */
+.media-poster:hover .tester-icon:hover {
+    transform: none !important;
+    border-color: transparent transparent transparent #2980b9;
+    background-color: transparent !important;
+}
+
+/* Apply same hover animations for search results */
+.sresult:hover {
+    z-index: 2; /* Keep raised z-index on hover */
+}
+
+/* Ensure nested elements in search results don't have their own transforms */
+.sresult:hover .poster-container,
+.sresult:hover .media-poster,
+.sresult:hover .media-poster-img {
+    transform: none !important; /* Prevent double animations */
+}
+
+/* Apply same hover animations for search results */
+.sresult:hover .mediatype-tv,
+.sresult:hover .mediatype-mv {
+    transform: none !important;
+}
+
+/* Keep effects for regular media titles */
+.media-poster:hover .media-title {
+    opacity: 1;
+    transform: none !important; /* Don't move the title independently */
+}
+
+/* Apply enhanced box-shadow for search results */
+.sresult:hover img {
+    box-shadow: 
+        0 8px 16px rgba(0, 0, 0, 0.3),
+        0 0 50px rgba(255, 255, 255, 0.5);
+    transform: none; /* No transform on the img itself */
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Move glow effect to the media-poster for search results */
+.sresult .media-poster {
+    overflow: visible;
+}
+
+.sresult:hover .media-poster::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--border-radius-lg);
+    box-shadow: none;
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* Remove the effect from the sresult itself */
+.sresult:hover::after {
+    content: none;
+}
+
+/* Apply same effects for search result info */
+.sresult:hover .searchresult-info {
+    opacity: 1;
+    transform: none; /* No transform as it's on the card itself */
+    transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Apply hover effects for search results without TMDB API key */
+.no-tmdb-api .media-poster:hover .media-title,
+.no-tmdb-api .sresult:hover .searchresult-info,
+.placeholder-poster:hover + .media-title,
+.placeholder-poster:hover + .searchresult-info {
+    transform: none; /* Remove transform as it's now on the parent */
+}
+
+/* Ensure the badge stays visible for placeholder posters */
+.no-tmdb-api .mediatype-tv,
+.no-tmdb-api .mediatype-mv,
+.placeholder-poster + .mediatype-tv,
+.placeholder-poster + .mediatype-mv {
+    opacity: 1;
+}
+
+.no-tmdb-api .media-title,
+.no-tmdb-api .searchresult-info,
+.placeholder-poster + .media-title,
+.placeholder-poster + .searchresult-info {
+    opacity: 1;
+    transform: translateY(0);
+    display: block;
+}
+
+.no-tmdb-api .media-poster:hover .media-title,
+.no-tmdb-api .sresult:hover .searchresult-info,
+.placeholder-poster:hover + .media-title,
+.placeholder-poster:hover + .searchresult-info {
+    transform: none; /* Remove transform as it's now on the parent */
 }
 
 /* Add styles for placeholder images */
@@ -95,152 +650,12 @@ form#search-form input:-ms-input-placeholder {
     object-fit: cover !important;
 }
 
-.placeholder-episode {
-    width: 300px !important;
-    height: 169px !important;
-    object-fit: cover !important;
-}
-
-.media-title {
-    position: absolute;
-    bottom: 0px;
-    width: 100%;
-    height: 25%;
-    background-color: rgb(0 0 0 / 63%);
-    color: white;
-    justify-content: center;
-    align-items: center;
-    opacity: 0;
-    font-family: Arial, sans-serif;
-    font-size: 16px;
-    font-weight: 600;
-    line-height: 19px;
-    text-align: center;
-    box-sizing: border-box;
-    z-index: 1;
-    padding-top: 10px;
-}
-
-.no-tmdb-api .media-title {
-    opacity: 1;
-}
-
-.media-poster:hover .media-poster-img {
-    transform: scale(1.1);
-}
-
-.media-poster:hover .media-title {
-    opacity: 1;
-}
-
-.media-poster:hover {
-    cursor: pointer;
-}
-
-
-.sresult {
-    transition: transform 0.3s ease;
-    width: 200px;
-}
-
-.sresult:hover {
-    transform: scale(1.05);
-}
-
-.sresult button {
-    background-color: #100a0a17;
-    border-radius: 20px;
-    border: solid;
-    border-color: #2220;
-    padding: 0px;
-}
-
 h2.searchresult-item {
-    font-size: 0.999rem;
-    line-height: 1.3rem;
-    color: rgb(191 191 190);
-    padding-top: 10px;
-    padding-bottom: 10px;
-}
-
-.sresult img {
-    width: 176px;
-    height: 264px;
-    margin-right: 5px;
-    border-radius: 16px;
-    object-fit: cover;
-}
-
-.searchresult-info {
-    flex: 1;
-}
-
-#searchResult > div {
-    padding-top: 30px;
-    width: 1600px; /* (300px * 5) + (20px * 4) for gaps */
-    margin: 0 auto; /* Centers the container if it's narrower than its parent */
-}
-
-.close-btn {
-    position: absolute;
-    top: 0px;
-    right: 26px;
-    font-size: 37px;
-    cursor: pointer;
-}
-
-select#seasonDropdown {
-    position: absolute;
-    padding: 8px;
-    background-color: #444;
-    border: 1px solid #666;
-    color: #fff;
-    border-radius: 3px;
-    box-sizing: border-box;
-    font-family: inherit;
-    z-index: 1;
-}
-
-button#seasonPackButton {
-    position: absolute;
-    margin-left: 111px;
-    z-index: 1;
-    transition: background-color 0.3s;
-    background-color: #4CAF50;
-    border: none;
-    color: white;
-    padding: 9px 15px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 14px;
-    margin-right: 10px;
-    cursor: pointer;
-    border-radius: 3px;
-}
-
-#seasonPackButton:hover{
-    opacity: 0.9;
-}
-
-#seasonDropdown, #seasonPackButton {
-    margin-bottom: 20px;
-}
-
-.show-rating {
-    position: absolute;
-    right: 0;
-    margin: 5px;
-    width: 50px;
-    height: 50px;
-    color: rgb(255 255 255 / 80%);
-    font-size: 21px;
-    font-weight: bold;
-    line-height: 49px;
-    text-align: center;
-    border-radius: 82px;
-    background: linear-gradient(to right, rgba(24, 170, 135, 1) 0%, rgba(1, 144, 182, 1) 100%);
-    z-index: 1;
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--text-primary);
 }
 
 .season-info-container {
@@ -258,33 +673,100 @@ button#seasonPackButton {
     object-fit: cover;
     margin-right: 20px;
     flex-shrink: 0;
+    margin-left: 10px;
 }
 
 .season-details {
     flex: 1;
+    max-width: 950px;
+    background-color: rgba(0, 0, 0, 0.3);
+    padding: 1rem;
+    border-radius: 4px;
+    max-height: 200px;
+    position: relative;
+}
+
+.season-details > p {
+    font-style: italic;
+    font-size: 0.9rem;
+}
+
+.season-details .season-overview p {
+    font-style: normal;
 }
 
 .season-overview {
-    height: 3em; /* Approximately 2 lines of text */
+    height: 7em; /* Approximately 2 lines of text */
     overflow: hidden;
     position: relative;
+}
+
+.season-controls {
+    display: inline-flex;
+    gap: var(--spacing-sm);
+    align-items: center;
+    padding: var(--spacing-sm);
+    border-radius: var(--border-radius-md);
+    margin-top: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    margin-left: 10px;
+    z-index: 2;
+    position: relative;
+}
+
+.season-controls select,
+.season-controls button {
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--background-light);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    border-radius: var(--border-radius-sm);
+    transition: all var(--transition-speed) ease;
+    min-width: 120px;
+}
+
+.season-controls button {
+    background-color: var(--primary-color);
+    cursor: pointer;
+}
+
+.season-controls button:hover {
+    background-color: var(--primary-hover);
+}
+
+.season-controls select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
 }
 
 .season-overview p {
     margin: 0;
     position: absolute;
     width: 100%;
+    max-width: 900px;
+    max-height: 7em;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .season-bg-image {
     position: absolute;
-    top: 64px;
+    top: -200px;
     left: 0;
     width: 100%;
-    height: 85%;
+    height: 1200px;
     background-size: cover;
-    background-position: center top;
-    z-index: 0;
+    background-position: left calc((24vw - 170px) - 340px) top;
+    z-index: -1;
+}
+
+body {
+    background: linear-gradient(to bottom, #333 0px, #333 450px, #000 650px) !important;
+    background-attachment: initial !important;
 }
 
 .season-bg-image::after {
@@ -294,56 +776,64 @@ button#seasonPackButton {
     left: 0;
     width: 100%;
     height: 100%;
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.6) 60%, rgba(0, 0, 0, 1) 100%);
+    background: linear-gradient(to bottom, 
+        rgba(0, 0, 0, 1) 0%,
+        rgba(0, 0, 0, 0.7) 20%,
+        rgba(0, 0, 0, 0) 40%,
+        rgba(0, 0, 0, 0.6) 50%,
+        rgba(0, 0, 0, 1) 100%
+    );
 }
 
 #episodeResults > div {
     position: relative;
-    width: 1600px;
+    width: auto;
+    max-width: 1600px;
     margin: 0 auto;
-    top: 140px;
+    /*top: 140px;*/
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+    justify-items: center !important;
+    /*margin-top: 190px;*/
+    margin-bottom: 170px;
 }
-
 
 .episode {
-    width: 300px;
-    transition: transform 0.3s ease;
-}
-
-.episode:hover {
-    transform: scale(1.05);
-    cursor: pointer;
-}
-
-/* Custom scrollbar styles */
-#episodeResults > div::-webkit-scrollbar {
-    height: 8px;
-}
-
-#episodeResults > div::-webkit-scrollbar-track {
-    background: #f1f1f1;
-}
-
-#episodeResults > div::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 4px;
-}
-
-#episodeResults > div::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    width: 100%;
+    max-width: 300px;
+    transition: transform var(--transition-speed) ease;
+    background-color: var(--surface-color);
+    border-radius: var(--border-radius-md);
+    overflow: hidden;
 }
 
 .episode button {
-    background-color: #100a0a17;
-    border-radius: 20px;
-    border: solid;
-    border-color: #2220;
-    padding: 0px;
+    border-radius: var(--border-radius-md);
+    background-color: rgba(22, 21, 21, 0.5);
+    padding: 8px;
+    border: none;
+    width: 100%;
+    cursor: pointer;
+    transition: transform var(--transition-speed) ease;
+}
+
+.episode button:hover {
+    transform: scale(1.02);
+}
+
+.episode button:disabled {
+    cursor: default;
+}
+
+.episode button:disabled:hover {
+    transform: none;
 }
 
 .episode img {
-    width: 300px;
-    height: 169px;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16/9;
     object-fit: cover;
     border-radius: 8px;
 }
@@ -386,6 +876,11 @@ h2.episode-title {
     color: rgb(191 191 190);
     margin-block-end: -10px;
     padding-top: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    max-width: 280px;
 }
 
 .overlay {
@@ -395,83 +890,249 @@ h2.episode-title {
     left: 0;
     width: 100%;
     height: 100%;
-    background-color: rgba(17, 16, 16, 0.5);
-    backdrop-filter: blur(5px);
-    -webkit-backdrop-filter: blur(5px); /* For Safari */
+    backdrop-filter: blur(8px);
+    background-color: rgba(0, 0, 0, 0.7);
     z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    margin-top: 30px;
 }
 
 .overlay-content {
     position: relative;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    background-color: rgba(41, 36, 36, 0.95);
-    padding: 20px;
-    border-radius: 10px;
-    max-width: 85%; /* Increased from 90% to 95% */
-    max-height: 80%; /* Increased from 80% to 90% */
+    background-color: var(--surface-color);
+    padding: 0 20px 20px 20px;
+    border-radius: var(--border-radius-lg);
+    width: 85%;
+    max-width: 1200px;
+    max-height: 85vh;
     overflow-y: auto;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    margin-top: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.overlay-content h3 {
+    position: sticky;
+    top: 0;
+    background-color: var(--surface-color);
+    margin-top: 0;
+    padding-top: 10px;
+    padding-bottom: 15px;
+    margin-bottom: 15px;
+    z-index: 3;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.close-btn {
+    position: sticky;
+    top: 15px;
+    right: 15px;
+    width: 30px;
+    height: 32px;
+    font-size: 24px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-secondary);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all var(--transition-speed) ease;
+    z-index: 5;
+    margin-left: auto;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.close-btn:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: scale(1.1);
 }
 
 .overlay-content table {
     width: 100%;
     border-collapse: collapse;
     margin-top: 15px;
-    table-layout: fixed; /* Added to ensure fixed column widths */
+    table-layout: fixed; /* Ensures fixed column widths */
 }
 
-.overlay-content th,
+.overlay-content thead {
+    position: sticky;
+    top: 55px; /* Position below the modal title */
+    background-color: var(--surface-color);
+    z-index: 2;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.overlay-content th {
+    padding: 12px;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background-color: var(--surface-color);
+}
+
 .overlay-content td {
     padding: 12px;
     text-align: left;
-    overflow: hidden; /* Added to handle overflow */
-    text-overflow: ellipsis; /* Added to show ellipsis for overflowing text */
     border-bottom: none;
+    width: auto; /* Allow columns to size naturally */
+    vertical-align: middle; /* Explicitly align all cells vertically */
 }
 
-/* Add styles for the title column */
-.overlay-content td:first-child {
-    white-space: normal; /* Allow wrapping for the title column */
-    max-height: 4.5em; /* Approximately 3 lines of text */
+/* Title column - allow wrapping */
+.overlay-content td .torrent-title-wrapper {
+    max-height: 4.5em; /* Match line-height * line-clamp */
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
+    line-height: 1.5em; /* Set a consistent line height */
+    word-wrap: break-word;
+    white-space: normal;
 }
 
-.overlay-content tr {
-    border: 1px solid #444;
+.overlay-content td:first-child {
+    width: 90%; /* Give title column more space */
+    white-space: normal;
 }
 
-/* Update button styles */
-.overlay-content td button {
-    background-color: #4CAF50;
-    border: none;
-    color: white;
+/* Cache status column */
+.overlay-content td:nth-child(2) {
+    width: 25%;
     text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 12px; /* Reduced font size */
-    margin: 2px 1px; /* Reduced margin */
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.3s;
-    text-wrap: pretty;
 }
 
-.overlay-content td button:hover {
-    background-color: #45a049;
+/* Action column */
+.overlay-content td:last-child {
+    width: 25%;
+    text-align: center;
+}
+
+/* Cache status badges */
+.cache-status {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.8em;
+    font-weight: bold;
+    margin-left: 5px;
+    text-align: center;
+    min-width: 80px;
+}
+
+.cached {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.not-cached {
+    background-color: #F44336;
+    color: white;
+}
+
+.not-checked {
+    background-color: #9E9E9E;
+    color: white;
+    animation: pulse 1.5s infinite;
+}
+
+.check-unavailable {
+    background-color: #607D8B;
+    color: white;
+}
+
+.unknown {
+    background-color: #FF9800;
+    color: white;
+}
+
+/* Status update animation */
+.status-updated {
+    animation: highlight 1s ease-in-out;
+}
+
+@keyframes highlight {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7);
+    }
+    50% {
+        transform: scale(1.1);
+        box-shadow: 0 0 10px 5px rgba(255, 255, 255, 0.7);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    }
+}
+
+/* Cache check completion indicator */
+.cache-check-complete {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 10px 15px;
+    border-radius: 5px;
+    font-size: 14px;
+    z-index: 1000;
+    animation: fadeInOut 3s ease-in-out forwards;
+    display: flex;
+    align-items: center;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.cache-check-complete:before {
+    content: '✓';
+    color: #4CAF50;
+    font-size: 16px;
+    margin-right: 8px;
+}
+
+@keyframes fadeInOut {
+    0% { opacity: 0; transform: translateY(20px); }
+    10% { opacity: 1; transform: translateY(0); }
+    80% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-20px); }
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 0.6;
+    }
+    50% {
+        opacity: 1;
+    }
+    100% {
+        opacity: 0.6;
+    }
 }
 
 .torresult {
     width: 300px;
     margin-bottom: 5px;
-    border-radius: 12px;
-    background-color: #161515a8;
+    border-radius: var(--border-radius-md);
+    background-color: var(--surface-color);
+    padding: var(--spacing-md);
+    transition: transform var(--transition-speed) ease;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.torresult:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
 
 .torresult button {
     background-color: #f9080800;
@@ -498,25 +1159,7 @@ p.torresult-title {
 
 /* Custom scrollbar styles */
 #overlayContentRes > div::-webkit-scrollbar {
-    height: 8px;
-}
-
-#overlayContentRes > div::-webkit-scrollbar-track {
-    background: #f1f1f1;
-}
-
-#overlayContentRes > div::-webkit-scrollbar-thumb {
-    background: #888;
-    border-radius: 4px;
-}
-
-#overlayContentRes > div::-webkit-scrollbar-thumb:hover {
-    background: #555;
-}
-
-.torresult-info {
-    flex: 1;
-    overflow-wrap: anywhere;
+    display: none; /* Chrome, Safari and Opera */
 }
 
 #overlayContentRes > div {
@@ -524,132 +1167,344 @@ p.torresult-title {
     max-width: 1024px; /* (300px * 5) + (20px * 4) for gaps */
     min-width: 312px;
     margin: 0 auto; /* Centers the container if it's narrower than its parent */
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;  /* IE and Edge */
 }
 
-.mediatype-tv {
-    position: absolute;
-    margin: 5px;
-    width: 26px;
-    height: 16px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 11px;
-    font-weight: bold;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 11px;
-    background-color: rgb(0 0 0 / 72%);
-    z-index: 1;
+#trending-rating, #trending-watchers {
+    display: none;
 }
 
-.mediatype-mv {
-    position: absolute;
-    margin: 5px;
-    width: 49px;
-    height: 16px;
-    color: rgba(255, 255, 255, 0.8);
-    font-size: 11px;
-    font-weight: bold;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 11px;
-    background-color: rgb(0 0 0 / 72%);
-    z-index: 1;
+#trendingContainer {
+    max-width: 85vw;
 }
 
+/* Search results container styles */
+.search-results-container {
+    background-color: #1e1e1e;
+    border-radius: var(--border-radius-md);
+    padding: var(--spacing-md);
+    margin: var(--spacing-lg) auto;
+    width: 95%;
+    max-width: 1200px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.search-results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: var(--spacing-sm);
+}
+
+.search-results-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.search-results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+    row-gap: 40px;
+    column-gap: var(--spacing-md);
+    justify-items: center;
+    margin: 30px;
+}
+
+/* Adjust sresult for grid layout */
+.sresult {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    justify-content: center;
+}
+
+/* Media queries for better responsive design */
 @media (max-width: 768px) {
-    #searchResult > div {
-        width: 100%;
-        padding-top: 15px;
+    .movie-list, .show-list {
+        gap: var(--spacing-sm);
+        padding: var(--spacing-sm);
     }
-
+    
+    .media-card,
     .sresult {
-        width: 150px;
+        width: 140px;
     }
-
+    
+    .media-poster,
+    .sresult button {
+        width: 140px;
+    }
+    
+    .media-poster-img,
     .sresult img {
-        width: 150px;
+        width: 140px;
+        height: 210px;
     }
-
-    h2.searchresult-item {
+    
+    .media-title,
+    .searchresult-info {
+        padding: var(--spacing-sm);
+    }
+    
+    .media-title h2,
+    .searchresult-info h2 {
+        font-size: 0.9rem;
+    }
+    
+    .media-title p,
+    .searchresult-info p {
         font-size: 0.8rem;
-        line-height: 1.1rem;
-        padding-top: 5px;
-        padding-bottom: 5px;
+    }
+    
+    .show-rating {
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+        line-height: 32px;
     }
 
-    #episodeResults > div {
+    /* Responsive search results container */
+    .search-results-container {
         width: 100%;
-        top: 50px;
+        padding: var(--spacing-sm);
     }
 
-    .episode {
-        width: 200px;
+    .search-results-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: var(--spacing-sm);
     }
+}
 
-    .episode img {
-        width: 100%;
-    }
+.show-rating {
+    position: absolute;
+    right: var(--spacing-md);
+    top: var(--spacing-md);
+    width: 40px;
+    height: 40px;
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 40px;
+    text-align: center;
+    border-radius: 50%;
+    background: linear-gradient(135deg, rgba(64, 64, 64, 0.95), rgba(32, 32, 32, 0.85));
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    z-index: 2;
+}
 
-    h2.episode-title {
-        font-size: 0.8rem;
-        line-height: 1.1rem;
-    }
+.media-title h2,
+.searchresult-info h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
 
-    h3 {
-        margin-top: 30px;
-    }
+.media-title p,
+.searchresult-info p {
+    margin: 4px 0 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
 
-    p.episode-sub {
-        font-size: 0.7rem;
-        line-height: 2rem;
-    }
+.placeholder-poster {
+    background-color: var(--surface-color);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
 
-    .season-info-container {
-        flex-direction: column;
-        align-items: center;
-    }
+/* Ensure title is always visible for placeholder posters */
+.placeholder-poster + .media-title,
+.placeholder-poster + .searchresult-info {
+    opacity: 1;
+    transform: translateY(0);
+    display: block;
+}
 
-    .season-poster {
-        height: auto;
-        width: 150px;
-        margin-right: 0;
-        margin-bottom: 10px;
-    }
+.overlay-content td button {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: bold;
+    text-transform: uppercase;
+    width: 90%; /* Take up most of the cell width */
+    max-width: 200px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background-color: var(--primary-color);
+    border: none;
+    color: white;
+    margin: 5px 0;
+    cursor: pointer;
+    transition: background-color var(--transition-speed) ease;
+}
 
-    .season-details {
-        text-align: center;
-    }
+.overlay-content td button:hover {
+    background-color: var(--primary-hover);
+}
 
-    .season-bg-image {
-        display: none;
-    }
+/* Remove glow effect for normal media cards (revert changes) */
+.media-card:hover {
+    z-index: auto;
+}
 
-    select#seasonDropdown,
-    button#seasonPackButton {
-        position: static;
-        margin: 10px 0;
-        width: 100%;
-    }
+.media-card:hover::after {
+    content: none;
+}
 
-    .trending-container {
-        padding-top: 10px;
-    }
+.trending-nav-button {
+    background-color: transparent;
+    border: none;
+    color: rgba(255, 255, 255, 0.6); /* Light grey when active but not hovered */
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 
-    .trending-movies,
-    .trending-shows {
-        padding: 10px;
-    }
+.trending-nav-button:hover {
+    color: rgba(255, 255, 255, 1); /* Brighter white when hovered */
+    background-color: rgba(255, 255, 255, 0.1);
+}
 
-    .media-card {
-        width: 120px;
-    }
+.trending-nav-button:disabled {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
 
-    .media-poster {
-        width: 120px;
-        height: 180px;
-    }
+/* Additional styling for the trending navigation section */
+.trending-navigation {
+    display: flex;
+    gap: 8px;
+}
 
-    #overlayContentRes > div {
-        min-width: 200px;
-    }
+/* Normalize hover animation distances between search results and media posters */
+.media-card {
+    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.media-card:hover {
+    transform: none; /* Keep this to ensure consistency with posters */
+}
+
+.media-poster:hover .poster-overlay {
+    transform: translateY(0); /* Keep overlay aligned with container during animation */
+}
+
+/* Style for the plus icon that sits inside the tester-icon triangle */
+.tester-icon::after {
+    content: "⚙";
+    position: absolute;
+    bottom: 8px;
+    left: -35px;
+    color: white;
+    font-size: 18px;
+    font-weight: bold;
+    line-height: 1;
+    scale: 0.7;
+}
+
+.overlay-content {
+    padding-top: 0px !important;
+}
+
+/* Shared style for action buttons in table */
+.overlay-content td button.action-button {
+    width: calc(100% - 10px); /* Adjust width */
+    max-width: 100px; /* Limit max width */
+    margin: 2px 5px; /* Adjust margin */
+    padding: 4px 8px; /* Adjust padding */
+    font-size: 0.8em;
+}
+
+.overlay-content td button.add-button:hover {
+    background-color: var(--primary-hover); /* Darker green */
+}
+
+/* --- NEW: Style for Assign button --- */
+.overlay-content td button.assign-button {
+    background-color: #FFC107; /* Amber color */
+    color: #333; /* Darker text for better contrast on amber */
+}
+
+.overlay-content td button.assign-button:hover {
+    background-color: #FFA000; /* Darker amber */
+}
+/* --- END NEW --- */
+
+.filtered-out-item td,
+.torresult.filtered-out-item .torresult-info p {
+    color: #ff7b7b !important; /* Light red text */
+}
+
+/* Style for filter reason in score column */
+.filtered-out-item td:nth-child(4) {
+    color: #ff6b6b !important; /* Brighter red for filter reason */
+    font-style: italic;
+    font-size: 0.9em;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+    position: relative;
+}
+
+/* Remove CSS tooltips - we'll use JavaScript instead */
+
+.torresult.filtered-out-item {
+    background-color: #4a3838 !important; 
+    border-color: #604040 !important;
+}
+
+/* Style for filter reason in mobile view */
+.torresult.filtered-out-item .torresult-item:first-of-type {
+    color: #ff6b6b !important; /* Brighter red for filter reason */
+    font-style: italic;
+    font-size: 0.9em;
+    position: relative;
+    cursor: help;
+}
+
+/* Remove mobile CSS tooltips - we'll use JavaScript instead */
+
+tr.filtered-out-item {
+    background-color: #4a3838 !important; 
+}
+
+tr.filtered-out-item:hover {
+    background-color: #503030 !important; 
+}
+
+/* Ensure normal items don't get overridden if they also match a generic 'tr' hover */
+.overlay-content tbody tr:not(.filtered-out-item):hover {
+    background-color: rgba(255, 255, 255, 0.05); /* Or your default hover color */
+}
+
+#version-select {
+    display: none;
+}
+
+.db-status-partial {
+    background-color: #2196F3;
+    color: white;
+}
+
+/* Apply same hover animations for search results */
+.sresult:hover .mediatype-tv,
+.sresult:hover .mediatype-mv {
+    transform: none !important;
 }

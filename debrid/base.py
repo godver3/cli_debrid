@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Union, Tuple
+from typing import List, Dict, Optional, Union, Tuple, Any
 from .common import RateLimiter, timed_lru_cache
 from .status import TorrentStatus
 import hashlib
@@ -9,6 +9,9 @@ import logging
 from cryptography.fernet import Fernet
 from .common.c7d9e45f import _v, _p1, _p2, _p3
 import functools
+
+# Import from the new location: debrid.status
+from debrid.status import TorrentInfoStatus, TorrentFetchStatus
 
 class EncryptedCapabilityDescriptor:
     """A descriptor that protects capability values from being overridden"""
@@ -111,13 +114,17 @@ class DebridProvider(ABC):
         pass
     
     @abstractmethod
-    def is_cached(self, magnet_or_url: Union[str, List[str]], temp_file_path: Optional[str] = None) -> Union[bool, Dict[str, Optional[bool]]]:
+    def is_cached(self, magnet_or_url: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, Optional[bool]]]:
         """
         Check if a magnet link or torrent file is cached on the service.
         
         Args:
             magnet_or_url: Magnet link, hash, or URL to check
             temp_file_path: Optional path to torrent file
+            result_title: Optional result title for cached content
+            result_index: Optional result index for cached content
+            remove_uncached: Whether to remove uncached content
+            skip_phalanx_db: Whether to skip phalanx database check
             
         Returns:
             - For single input: bool or None (error)
@@ -137,11 +144,18 @@ class DebridProvider(ABC):
 
     @abstractmethod
     def get_torrent_info(self, torrent_id: str) -> Optional[Dict]:
-        """Get information about a specific torrent"""
+        """Get basic information about a torrent."""
         pass
-        
+
     @abstractmethod
-    def remove_torrent(self, torrent_id: str) -> None:
+    def get_torrent_info_with_status(self, torrent_id: str) -> TorrentInfoStatus:
+        """
+        Get detailed information about a torrent, including fetch status.
+        """
+        pass
+
+    @abstractmethod
+    def remove_torrent(self, torrent_id: str, removal_reason: Optional[str] = None) -> bool:
         """Remove a torrent from the service"""
         pass
         
@@ -157,6 +171,52 @@ class DebridProvider(ABC):
         """Clean up any resources or stale torrents"""
         self._status.clear()
 
+    @abstractmethod
     def get_cached_torrent_id(self, hash_value: str) -> Optional[str]:
         """Get stored torrent ID for a cached hash"""
-        return self._cached_torrent_ids.get(hash_value)
+        pass
+
+    @abstractmethod
+    def list_active_torrents(self) -> List[Dict]:
+        """
+        List all active torrents.
+        
+        Returns:
+            List of dictionaries containing torrent information with at least:
+            - filename: str
+            - progress: float
+            - status: str
+        """
+        pass
+
+    def get_torrent_status(self) -> Tuple[List[Dict], Tuple[int, int]]:
+        """
+        Get a comprehensive view of active torrents and download limits.
+        
+        Returns:
+            Tuple containing:
+            - List of dictionaries with torrent details
+            - Tuple of (active_count, max_downloads)
+        """
+        active_torrents = self.list_active_torrents()
+        active_count, max_downloads = self.get_active_downloads()
+        return active_torrents, (active_count, max_downloads)
+
+    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
+        """Synchronous version of is_cached"""
+        import asyncio
+        try:
+            # Create a new event loop for this thread if one doesn't exist
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the async method in the event loop
+            return loop.run_until_complete(
+                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, skip_phalanx_db=skip_phalanx_db)
+            )
+        except Exception as e:
+            logging.error(f"Error in is_cached_sync: {str(e)}")
+            return None

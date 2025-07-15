@@ -2,13 +2,28 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
     <title>cli_debrid - {% block title %}{% endblock %}</title>
     
+    <!-- Force browsers to refresh favicon -->
+    <meta http-equiv="cache-control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="pragma" content="no-cache" />
+    <meta http-equiv="expires" content="0" />
+    
     <!-- Favicons -->
+    {% if logo_path.startswith('plex') %}
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='plex-icon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='plex-icon-16x16.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='plex-favicon-192x192.png') }}">
+    {% elif logo_path.startswith('default') %}
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icon-32x32.png') }}">
     <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='icon-16x16.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+    {% elif logo_path.startswith('color') %}
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='color-icon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='color-icon-16x16.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='color-favicon-192x192.png') }}">
+    {% endif %}
     <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
     <link rel="mask-icon" href="{{ url_for('static', filename='safari-pinned-tab.svg') }}" color="#007bff">
     
@@ -20,37 +35,1340 @@
     <!-- Stylesheets -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
+    <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}"> -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/library_management.css') }}">
+    
+    <style>
+        .advice-section {
+            margin: 15px 0;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            border-left: 4px solid #4CAF50;
+            overflow: hidden;
+        }
+        
+        .advice-header {
+            padding: 15px;
+            font-weight: bold;
+            color: #4CAF50;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+        
+        .advice-header:hover {
+            background-color: #333;
+        }
+        
+        .advice-content {
+            color: #f1f1f1;
+            line-height: 1.4;
+            padding: 0 15px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+        }
+        
+        .advice-section.expanded .advice-content {
+            padding: 0 15px 15px 15px;
+            max-height: 500px; /* Adjust based on your content */
+        }
+        
+        .advice-header .toggle-icon {
+            transition: transform 0.3s ease;
+        }
+        
+        .advice-section.expanded .toggle-icon {
+            transform: rotate(180deg);
+        }
+        
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: #2a2a2a;
+            margin: auto;
+            margin-top: calc(15% - 100px);
+            padding: 20px;
+            border: 1px solid #444;
+            border-radius: 8px;
+            width: 70%;
+            position: relative;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: #fff;
+        }
+
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #fff;
+        }
+
+        #notifications-container {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        /* Notification button styles */
+        #notifications_button {
+            position: relative;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0px !important;
+            transition: opacity 0.3s ease;
+            min-width: auto !important;
+            gap: 0px !important;
+            margin-left: 5px;
+        }
+
+        #notifications_button:hover {
+            opacity: 0.8;
+        }
+
+        #notifications_button.has-notifications::after {
+            content: '';
+            position: absolute;
+            top: 3px;
+            right: -5px;
+            width: 8px;
+            height: 8px;
+            background-color: #ff4444;
+            border-radius: 50%;
+        }
+
+        #releaseNotesButton {
+            min-width: auto !important;
+            gap: 0px !important;
+            padding: 0px !important;
+            margin-left: 0px !important;
+        }
+        
+        /* Notification Styles */
+        .notification {
+            background-color: #333;
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        .notification:hover {
+            background-color: #404040;
+        }
+
+        .notification.unread {
+            border-left: 3px solid #007bff;
+        }
+
+        .notification.read {
+            opacity: 0.7;
+        }
+
+        body[data-notifications-disabled="true"] .notification.read {
+            opacity: 1; /* Override opacity when notifications are disabled */
+        }
+
+        body[data-notifications-disabled="true"] .notification.unread {
+            border-left: none; /* Remove the unread indicator border when disabled */
+        }
+
+        .notification-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+        }
+
+        .notification-type {
+            text-transform: capitalize;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.8em;
+        }
+
+        .notification-type.info { background-color: #17a2b8; }
+        .notification-type.warning { background-color: #ffc107; color: #000; }
+        .notification-type.error { background-color: #dc3545; }
+        .notification-type.success { background-color: #28a745; }
+
+        .notification-time {
+            color: #888;
+        }
+
+        .notification-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .notification-message {
+            color: #ddd;
+            font-size: 0.95em;
+            line-height: 1.4;
+        }
+
+        .notification-link {
+            display: inline-block;
+            margin-top: 8px;
+            color: #007bff;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .notification-link:hover {
+            text-decoration: underline;
+        }
+
+        .no-notifications {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+
+        .support-link {
+            display: block;
+            text-decoration: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .support-link:hover {
+            opacity: 0.8;
+        }
+
+        .support-link i.fa-patreon {
+            margin-right: 8px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.6;
+            }
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .support-text {
+            color: #aaa;
+            font-size: 0.9em;
+        }
+
+        .patreon-link {
+            color: #fff;
+            transition: color 0.3s ease;
+            text-decoration: none;
+        }
+
+        .patreon-link:hover {
+            color: #FF424D;  /* Patreon brand color */
+        }
+
+        .patreon-link i {
+            font-size: 1.1em;
+        }
+
+        /* Support icons styles */
+        .support-icons {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 0px;
+        }
+
+        .support-icon-link {
+            color: white;
+            font-size: 1.5em;
+            transition: transform 0.3s ease, color 0.3s ease;
+        }
+
+        .support-icon-link:hover {
+            transform: translateY(-2px);
+        }
+
+        .support-icon-link.patreon:hover {
+            color: #FF424D; /* Patreon brand color */
+        }
+
+        .support-icon-link.kofi:hover {
+            color: #29ABE0; /* Ko-fi brand color */
+        }
+
+        .support-icon-link.github:hover {
+            color: #fe8e86; /* GitHub Sponsors color */
+        }
+
+        /* Modal adjustments */
+        .modal-content {
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .version-container {
+            display: flex;
+            align-items: center;
+        }
+
+        .version-info {
+            color: #aaa;
+            font-size: 0.8em;
+        }
+
+        /* Support Modal Styles */
+        .support-modal {
+            margin: 10vh auto;
+            width: 70%;
+        }
+
+        .support-modal-content {
+            padding: 20px;
+            color: #f1f1f1;
+        }
+
+        .support-modal-content h3 {
+            color: #fff;
+            margin-bottom: 20px;
+            font-size: 1.4em;
+        }
+
+        .support-modal-content p {
+            margin: 15px 0;
+            line-height: 1.6;
+        }
+
+        .support-modal-content ul {
+            margin: 15px 0;
+            padding-left: 20px;
+        }
+
+        .support-modal-content li {
+            margin: 10px 0;
+            line-height: 1.4;
+            color: #ddd;
+        }
+
+        .support-cta {
+            margin-top: 30px;
+            text-align: center;
+        }
+
+        .patreon-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background-color: #FF424D;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+
+        .patreon-button:hover {
+            background-color: #E23B45;
+            transform: translateY(-2px);
+        }
+
+        .patreon-button i {
+            font-size: 1.2em;
+        }
+
+        .support-note {
+            margin-top: 15px;
+            color: #aaa;
+            font-style: italic;
+        }
+
+        .modal-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .mark-all-read-btn {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        .mark-all-read-btn:hover {
+            background-color: #0d8bf2;
+        }
+        
+        /* Notification toggle styles */
+        .notification-toggle-container {
+            display: flex;
+            align-items: center;
+        }
+
+        .notification-toggle-label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.8rem;
+            color: #ccc;
+        }
+
+        .notification-toggle-label span {
+            margin-right: 8px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 40px;
+            height: 20px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #555;
+            transition: .3s;
+            border-radius: 20px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .toggle-slider {
+            background-color: #2196F3;
+        }
+
+        input:checked + #disableNotificationsToggleSlider:before {
+            transform: translateX(14px) !important;
+        }
+        
+        /* Hide notifications for disabled mode */
+        body[data-notifications-disabled="true"] #notifications_button.has-notifications::after {
+            display: none !important;
+        }
+
+        /* Easter Egg Modal Styles */
+        #easterEggModal .modal-content { /* Target specific modal */
+            width: 50%; /* Or your preferred size */
+            background-color: #2c3e50; /* A different dark theme color */
+            border-left: 5px solid #f1c40f; /* Gold border */
+            margin-top: 80px;
+        }
+
+        #easterEggModal .modal-header h2 { /* Target specific modal */
+            color: #f1c40f; /* Gold title */
+        }
+
+        #easterEggModal .modal-body img {
+            max-width: 100%;
+            max-height: 60vh; /* Adjust for content */
+            border-radius: 8px;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        #easterEggModal .modal-body p {
+            margin-top: 15px;
+            color: #ddd;
+            text-align: center;
+        }
+
+        /* "Hacked" Easter Egg Styles */
+        #hack-overlay {
+            position: fixed;
+            top: -2.5%; /* Adjust for oversized dimension */
+            left: -2.5%; /* Adjust for oversized dimension */
+            width: 105%; /* Expand to hide edges during shake */
+            height: 105%; /* Expand to hide edges during shake */
+            background: #000; /* Solid black for full effect */
+            z-index: 9998;
+            display: none; /* Initially hidden, will be set to 'flex' by JS */
+            justify-content: center;
+            align-items: center;
+        }
+        #hack-text {
+            width: 90%; /* Prevent text from hitting screen edges */
+            font-size: 2em;
+            text-shadow: 0 0 15px #0f0, 0 0 15px #0f0; /* Enhanced glow effect */
+            white-space: pre-wrap;
+            color: #0f0;
+            font-family: 'Courier New', Courier, monospace;
+            text-align: center;
+        }
+        .screen-shake {
+            animation: shake 0.4s infinite;
+        }
+        @keyframes shake {
+            0%, 100% { transform: translate(0, 0); }
+            10%, 30%, 50%, 70%, 90% { transform: translate(calc(-1 * var(--shake-intensity)), var(--shake-intensity)); }
+            20%, 40%, 60%, 80% { transform: translate(var(--shake-intensity), calc(-1 * var(--shake-intensity))); }
+        }
+    </style>
     
     {% block head %}{% endblock %}
     
     {% if current_user.is_authenticated %}
-    <script>
+    <script type="text/template">
         const userRole = "{{ current_user.role }}";
         window.isRateLimited = {{ 'true' if is_rate_limited else 'false' }};
     </script>
     {% endif %}
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('.advice-header').forEach(header => {
+                header.addEventListener('click', () => {
+                    const section = header.closest('.advice-section');
+                    section.classList.toggle('expanded');
+                });
+            });
+        });
+    </script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Notifications Modal Logic
+            const notificationsModal = document.getElementById('notificationsModal');
+            const notificationsBtn = document.getElementById('notifications_button');
+            const notificationsCloseBtn = notificationsModal.querySelector('.close');
+            const notificationsContainer = document.getElementById('notifications-container');
+            let notifications = [];
+            
+            // --- Release Notes Modal Elements ---
+            const releaseNotesButton = document.getElementById('releaseNotesButton');
+            const releaseNotesPopup = document.getElementById('releaseNotesPopup');
+            const releaseNotesOverlay = document.getElementById('releaseNotesOverlay');
+            const releaseNotesClose = document.getElementById('releaseNotesClose');
+            const easterEggModal = document.getElementById('easterEggModal');
+            // --- End Release Notes Modal Elements ---
+
+            // Fetch notifications
+            async function fetchNotifications() {
+                try {
+                    const response = await fetch('/base/api/notifications');
+                    const data = await response.json();
+                    notifications = data.notifications || [];
+                    updateNotificationDisplay();
+                    updateNotificationIndicator();
+                } catch (error) {
+                    console.error('Error fetching notifications:', error);
+                }
+            }
+
+            // Update notification display in modal
+            function updateNotificationDisplay() {
+                const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+
+                if (notifications.length === 0) {
+                    notificationsContainer.innerHTML = '<div class="no-notifications">No notifications</div>';
+                    return;
+                }
+
+                notificationsContainer.innerHTML = notifications
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                    .map(notification => {
+                        // Determine read status based on toggle state
+                        const isEffectivelyRead = notificationsDisabled || notification.read;
+                        const readClass = isEffectivelyRead ? 'read' : 'unread';
+
+                        return `
+                        <div class="notification ${readClass}" data-id="${notification.id}">
+                            <div class="notification-header">
+                                <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
+                                <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
+                            </div>
+                            <div class="notification-title">${notification.title}</div>
+                            <div class="notification-message">${notification.message}</div>
+                            ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
+                        </div>
+                    `;
+                    }).join('');
+
+                // Add click handlers for marking as read ONLY IF notifications are NOT disabled
+                if (!notificationsDisabled) {
+                    document.querySelectorAll('.notification.unread').forEach(notif => {
+                        notif.addEventListener('click', async () => {
+                            const id = notif.dataset.id;
+                            await markNotificationRead(id);
+                            // Re-fetch and update display to ensure consistency
+                            await fetchNotifications(); 
+                        });
+                    });
+                }
+            }
+
+            // Update the notification indicator (red dot)
+            function updateNotificationIndicator() {
+                // Safeguard: if the button isn't present (e.g., on the login page), skip any DOM manipulation
+                if (!notificationsBtn) return;
+
+                const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+                // Indicator should only show if notifications are enabled AND there are unread ones
+                const hasUnread = !notificationsDisabled && notifications.some(n => !n.read);
+                notificationsBtn.classList.toggle('has-notifications', hasUnread);
+            }
+
+            // Mark notification as read
+            async function markNotificationRead(id) {
+                try {
+                    await fetch('/base/api/notifications/mark-read', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ id }),
+                    });
+                    const notification = notifications.find(n => n.id === id);
+                    if (notification) {
+                        notification.read = true;
+                    }
+                } catch (error) {
+                    console.error('Error marking notification as read:', error);
+                }
+            }
+
+            // Format timestamp
+            function formatTimestamp(timestamp) {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffHours = Math.abs(now - date) / 36e5;
+
+                if (diffHours < 24) {
+                    return date.toLocaleTimeString();
+                } else if (diffHours < 48) {
+                    return 'Yesterday';
+                } else {
+                    return date.toLocaleDateString();
+                }
+            }
+
+            // Modal controls (only if the notifications button exists on this page)
+            if (notificationsBtn) {
+                notificationsBtn.addEventListener('click', function() {
+                    notificationsModal.style.display = 'block';
+                    document.body.classList.add('modal-open'); // Add class to body
+                    fetchNotifications(); // Refresh notifications when opening modal
+                });
+            }
+
+            notificationsCloseBtn.addEventListener('click', function() {
+                notificationsModal.style.display = 'none';
+                document.body.classList.remove('modal-open'); // Remove class from body
+            });
+
+            window.addEventListener('click', function(event) {
+                if (event.target == notificationsModal) {
+                    notificationsModal.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class from body
+                }
+                // Close release notes if clicking overlay
+                if (event.target == releaseNotesOverlay) {
+                    releaseNotesPopup.style.display = 'none';
+                    releaseNotesOverlay.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class from body
+                }
+                // Close support modal if clicking outside
+                if (event.target == supportModal) {
+                    console.log('Closing support modal via outside click');
+                    supportModal.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Ensure removed for support modal too
+                }
+                // Close Easter Egg modal if clicking outside
+                if (easterEggModal && event.target == easterEggModal) {
+                    easterEggModal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
+                }
+            });
+
+            // Initial fetch
+            fetchNotifications();
+            
+            // Refresh notifications periodically
+            setInterval(fetchNotifications, 30000); // Every 30 seconds
+
+            // ---- Disable Notifications Toggle Logic ----
+            const disableNotificationsToggle = document.getElementById('disableNotificationsToggle');
+            const markAllAsReadBtn = document.getElementById('markAllAsReadBtn');
+            const notificationsDisabledKey = 'notificationsDisabled';
+
+            // Function to update UI based on toggle state
+            function updateNotificationDisabledState(isDisabled) {
+                document.body.setAttribute('data-notifications-disabled', isDisabled);
+                disableNotificationsToggle.checked = isDisabled;
+                if (markAllAsReadBtn) {
+                    markAllAsReadBtn.style.display = isDisabled ? 'none' : 'inline-block';
+                }
+                // Re-render notifications to apply read status if modal is open
+                if (notificationsModal.style.display === 'block') {
+                    updateNotificationDisplay();
+                }
+                // Update indicator immediately
+                updateNotificationIndicator(); 
+            }
+
+            // Load initial state from localStorage
+            const initialDisabledState = localStorage.getItem(notificationsDisabledKey) === 'true';
+            updateNotificationDisabledState(initialDisabledState);
+
+            // Add event listener to the toggle
+            disableNotificationsToggle.addEventListener('change', function() {
+                const isDisabled = this.checked;
+                localStorage.setItem(notificationsDisabledKey, isDisabled);
+                updateNotificationDisabledState(isDisabled);
+            });
+            // ---- End Disable Notifications Toggle Logic ----
+
+            // Support Modal Logic
+            const supportModal = document.getElementById('supportModal');
+            const supportModalClose = document.getElementById('supportModalClose');
+            
+            // Check phalanx status from API
+            async function checkPhalanxStatus() {
+                try {
+                    const response = await fetch('/settings/api/phalanx-disclaimer-status');
+                    const data = await response.json();
+                    return data.hasSeenDisclaimer;
+                } catch (error) {
+                    console.error('Error checking phalanx status:', error);
+                    return false;
+                }
+            }
+            
+            // Check support modal status from API
+            async function checkSupportModalStatus() {
+                try {
+                    const response = await fetch('/settings/api/support-modal-status');
+                    const data = await response.json();
+                    return {
+                        hasSeenSupport: data.hasSeenSupport,
+                        pageViews: data.pageViews
+                    };
+                } catch (error) {
+                    console.error('Error checking support modal status:', error);
+                    return {
+                        hasSeenSupport: false,
+                        pageViews: 0
+                    };
+                }
+            }
+
+            // Increment page views via API
+            async function incrementPageViews() {
+                try {
+                    const response = await fetch('/settings/api/support-modal-pageview', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                    const data = await response.json();
+                    return {
+                        pageViews: data.pageViews,
+                        hasSeenSupport: data.hasSeenSupport
+                    };
+                } catch (error) {
+                    console.error('Error incrementing page views:', error);
+                    return null;
+                }
+            }
+
+            // Mark support modal as seen via API
+            async function markSupportModalSeen() {
+                try {
+                    await fetch('/settings/api/support-modal-seen', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                } catch (error) {
+                    console.error('Error marking support modal as seen:', error);
+                }
+            }
+
+            // Show support modal if conditions are met
+            async function handleSupportModal() {
+                let hasPhalanxAccepted = await checkPhalanxStatus();
+                let { hasSeenSupport, pageViews } = await checkSupportModalStatus();
+
+                // Increment page views if not already seen
+                if (hasPhalanxAccepted && !hasSeenSupport) {
+                    const result = await incrementPageViews();
+                    if (result) {
+                        pageViews = result.pageViews;
+                        hasSeenSupport = result.hasSeenSupport;
+                    }
+                }
+
+                console.log('Support modal conditions:', {
+                    hasPhalanxAccepted,
+                    hasSeenSupport,
+                    pageViews
+                });
+
+                // Temporarily disable the support modal by adding '&& false'
+                if (hasPhalanxAccepted && !hasSeenSupport && pageViews >= 100 && false) {
+                    console.log('Showing support modal in 2 seconds...');
+                    setTimeout(() => {
+                        console.log('Attempting to show support modal now');
+                        supportModal.style.display = 'block';
+                        document.body.classList.add('modal-open'); // Add class for support modal
+                        markSupportModalSeen();
+                    }, 2000);
+                }
+            }
+
+            // Initialize support modal handling
+            handleSupportModal();
+
+            // Support Modal Close Handlers
+            if (supportModalClose) {
+                supportModalClose.addEventListener('click', function() {
+                    console.log('Closing support modal via close button');
+                    supportModal.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class
+                });
+            } else {
+                console.warn('Support modal close button not found');
+            }
+
+            // MDBList Popup Logic
+            async function checkMDBListPopupStatus() {
+                try {
+                    const response = await fetch('/settings/api/mdblist-popup-status');
+                    const data = await response.json();
+                    return data.shouldShow;
+                } catch (error) {
+                    console.error('Error checking MDBList popup status:', error);
+                    return false;
+                }
+            }
+
+            async function markMDBListPopupSeen() {
+                try {
+                    await fetch('/settings/api/mdblist-popup-seen', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                } catch (error) {
+                    console.error('Error marking MDBList popup as seen:', error);
+                }
+            }
+
+            async function addDefaultMDBLists() {
+                try {
+                    const response = await fetch('/settings/api/add-default-mdblists', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                    const data = await response.json();
+                    return data.success;
+                } catch (error) {
+                    console.error('Error adding default MDBLists:', error);
+                    return false;
+                }
+            }
+
+            async function handleMDBListPopup() {
+                // Don't show popup on login page
+                if (window.location.pathname === '/login' || window.location.pathname.includes('/auth/')) {
+                    return;
+                }
+                
+                const shouldShow = await checkMDBListPopupStatus();
+                
+                if (shouldShow) {
+                    console.log('Showing MDBList popup in 2 seconds...');
+                    setTimeout(async () => {
+                        console.log('Attempting to show MDBList popup now');
+                        
+                        // Import showPopup from notifications.js
+                        const { showPopup, POPUP_TYPES } = await import('/static/js/notifications.js');
+                        
+                        // Check if user has dismissed the popup via localStorage
+                        const mdblistPopupDismissed = localStorage.getItem('mdblistPopupDismissed') === 'true';
+                        
+                        if (!mdblistPopupDismissed) {
+                            // Create custom popup with invisible close button using notifications.js styling
+                            const popupOverlay = document.createElement('div');
+                            popupOverlay.className = 'universal-popup';
+                            popupOverlay.style.display = 'flex';
+                            
+                            // Add the CSS styles from notifications.js
+                            const style = document.createElement('style');
+                            style.textContent = `
+                                .universal-popup {
+                                    position: fixed;
+                                    top: 0;
+                                    left: 0;
+                                    width: 100%;
+                                    height: 100%;
+                                    background-color: rgba(0, 0, 0, 0.7);
+                                    display: flex;
+                                    justify-content: center;
+                                    align-items: center;
+                                    z-index: 1000;
+                                }
+                                .universal-popup .popup-content {
+                                    background-color: #2a2a2a;
+                                    padding: 35px;
+                                    border-radius: 8px;
+                                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+                                    max-width: 80%;
+                                    max-height: 80%;
+                                    overflow-y: auto;
+                                    color: #f4f4f4;
+                                    position: relative;
+                                }
+                                .universal-popup .popup-content h3 {
+                                    margin: 0 0 15px;
+                                    font-size: 1.2em;
+                                    text-align: center;
+                                }
+                                .universal-popup .popup-content p {
+                                    margin-bottom: 15px;
+                                }
+                                .universal-popup .popup-buttons {
+                                    display: flex;
+                                    justify-content: center;
+                                    gap: 10px;
+                                    margin-top: 20px;
+                                }
+                                .universal-popup button {
+                                    padding: 8px 15px;
+                                    border: none;
+                                    border-radius: 4px;
+                                    cursor: pointer;
+                                    font-size: 14px;
+                                    transition: background-color 0.3s;
+                                }
+                                .universal-popup button:hover {
+                                    opacity: 0.9;
+                                }
+                                .universal-popup .popup-content.confirm { border-left: 4px solid #2196F3; }
+                                .universal-popup .popup-content.confirm h3 { color: #2196F3; }
+                            `;
+                            document.head.appendChild(style);
+                            
+                            popupOverlay.innerHTML = `
+                                <div class="popup-content confirm" style="max-width: 500px;">
+                                    <h3>Add Default MDBLists</h3>
+                                    <p>Would you like to add some default MDBList sources to get started? These will add popular movies and shows to your wanted list.</p>
+                                    <p>You can always add or remove content sources later in Settings.</p>
+                                    <div class="popup-buttons">
+                                        <button id="mdblistConfirmBtn" style="background-color: #4CAF50; color: white;">Yes, Add Default Lists</button>
+                                        <button id="mdblistCancelBtn" style="background-color: #f44336; color: white;">No, Skip</button>
+                                    </div>
+                                    <span id="mdblistPopupClose" style="position: absolute; top: 10px; right: 15px; cursor: pointer; color: #aaa; font-size: 24px; font-weight: bold; line-height: 1; opacity: 0;">&times;</span>
+                                </div>
+                            `;
+                            
+                            document.body.appendChild(popupOverlay);
+                            
+                            // Add event listeners
+                            document.getElementById('mdblistPopupClose').addEventListener('click', () => {
+                                popupOverlay.remove();
+                                style.remove();
+                                // Save to localStorage so it doesn't show again for this user
+                                localStorage.setItem('mdblistPopupDismissed', 'true');
+                            });
+                            
+                            document.getElementById('mdblistConfirmBtn').addEventListener('click', async () => {
+                                const success = await addDefaultMDBLists();
+                                if (success) {
+                                    showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        title: 'MDBLists Added',
+                                        message: 'Default MDBList sources have been added successfully. You can view and manage them in Settings > Content Sources.',
+                                        autoClose: 5000
+                                    });
+                                } else {
+                                    showPopup({
+                                        type: POPUP_TYPES.ERROR,
+                                        title: 'Error',
+                                        message: 'Failed to add default MDBList sources. You can add them manually in Settings > Content Sources.',
+                                        autoClose: 5000
+                                    });
+                                }
+                                popupOverlay.remove();
+                                style.remove();
+                                markMDBListPopupSeen();
+                            });
+                            
+                            document.getElementById('mdblistCancelBtn').addEventListener('click', () => {
+                                popupOverlay.remove();
+                                style.remove();
+                                markMDBListPopupSeen();
+                            });
+                            
+                            // Close on outside click
+                            popupOverlay.addEventListener('click', (e) => {
+                                if (e.target === popupOverlay) {
+                                    popupOverlay.remove();
+                                    style.remove();
+                                    // Save to localStorage so it doesn't show again for this user
+                                    localStorage.setItem('mdblistPopupDismissed', 'true');
+                                }
+                            });
+                        }
+                    }, 2000);
+                }
+            }
+
+            // Initialize MDBList popup handling
+            handleMDBListPopup();
+
+            // Add ESC key support - Also remove modal-open class
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') {
+                     if (supportModal.style.display === 'block') {
+                        console.log('Closing support modal via ESC key');
+                        supportModal.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                     }
+                     if (notificationsModal.style.display === 'block') {
+                        console.log('Closing notifications modal via ESC key');
+                        notificationsModal.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                     }
+                     if (releaseNotesPopup.style.display === 'block') {
+                        console.log('Closing release notes modal via ESC key');
+                        releaseNotesPopup.style.display = 'none';
+                        releaseNotesOverlay.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                     }
+                     // Add for help modal if needed (assuming it's handled elsewhere)
+                     const helpModal = document.getElementById('help-modal-box');
+                     if (helpModal && helpModal.style.display === 'flex') { // Or however help modal is shown
+                         console.log('Closing help modal via ESC key');
+                         // Add code to hide help modal and remove 'modal-open'
+                         // helpModal.style.display = 'none'; // Example
+                         // document.getElementById('help-overlay').style.display = 'none'; // Example
+                         // document.body.classList.remove('modal-open'); // Example
+                     }
+                     // Close Easter Egg modal via ESC key
+                    if (easterEggModal && easterEggModal.style.display === 'block') {
+                        console.log('Closing easter egg modal via ESC key');
+                        easterEggModal.style.display = 'none';
+                        document.body.classList.remove('modal-open');
+                    }
+                }
+            });
+
+            // ---- Add Mark All Read Button Logic ----
+            if (markAllAsReadBtn) {
+                markAllAsReadBtn.addEventListener('click', async () => {
+                    try {
+                        await fetch('/base/api/notifications/mark-all-read', { method: 'POST' });
+                        // Refresh notifications after marking all as read
+                        await fetchNotifications(); 
+                    } catch (error) {
+                        console.error('Error marking all notifications as read:', error);
+                    }
+                });
+            }
+            // ---- End Mark All Read Button Logic ----
+
+            // --- Release Notes Modal Event Listeners ---
+            if (releaseNotesButton && releaseNotesPopup && releaseNotesOverlay && releaseNotesClose) {
+                releaseNotesButton.addEventListener('click', () => {
+                    // Assuming showReleaseNotesPopup() is defined elsewhere, 
+                    // we'll manually set display here for simplicity
+                    // If showReleaseNotesPopup handles display, integrate there.
+                    releaseNotesPopup.style.display = 'block';
+                    releaseNotesOverlay.style.display = 'block';
+                    document.body.classList.add('modal-open'); // Add class
+                    // Optionally load content if not already loaded
+                    // loadReleaseNotes(); 
+                });
+
+                releaseNotesClose.addEventListener('click', () => {
+                    releaseNotesPopup.style.display = 'none';
+                    releaseNotesOverlay.style.display = 'none';
+                    document.body.classList.remove('modal-open'); // Remove class
+                });
+
+                // Click outside handled by the general window click listener above
+            } else {
+                console.warn('One or more release notes elements not found.');
+            }
+            // --- End Release Notes Modal Event Listeners ---
+
+            // --- Easter Egg Modal Logic ---
+            const easterEggModalClose = document.getElementById('easterEggModalClose');
+
+            if (easterEggModal && easterEggModalClose) {
+                easterEggModalClose.addEventListener('click', function() {
+                    easterEggModal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
+                });
+            } else {
+                console.warn('Easter egg modal elements not found.');
+            }
+
+            // Konami Code
+            const konamiSequence = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
+            let konamiCurrentIndex = 0;
+
+            document.addEventListener('keydown', (e) => {
+                if (!easterEggModal) return; // Do nothing if modal element isn't there
+
+                const key = e.key.toLowerCase();
+                const expectedKey = konamiSequence[konamiCurrentIndex].toLowerCase();
+
+                if (key === expectedKey) {
+                    konamiCurrentIndex++;
+                    if (konamiCurrentIndex === konamiSequence.length) {
+                        easterEggModal.style.display = 'block';
+                        document.body.classList.add('modal-open');
+                        konamiCurrentIndex = 0; // Reset for next time
+                    }
+                } else {
+                    // If the pressed key is the first in the sequence, restart from the second char
+                    if (key === konamiSequence[0].toLowerCase()) {
+                        konamiCurrentIndex = 1;
+                    } else {
+                        // Otherwise, completely reset
+                        konamiCurrentIndex = 0;
+                    }
+                }
+            });
+            // --- End Easter Egg Modal Logic ---
+
+            // --- "Hacked" Easter Egg ---
+            const headerElement = document.querySelector('header');
+            let headerClickCount = 0;
+            let hackInProgress = false;
+
+            if (headerElement) {
+                headerElement.addEventListener('click', (e) => {
+                    // Only trigger if the click is on the header's background, not on interactive elements.
+                    if (e.target.closest('a, button, input, .hamburger-menu, .group-title')) {
+                        return;
+                    }
+
+                    if (hackInProgress) return;
+
+                    headerClickCount++;
+
+                    if (headerClickCount >= 15) {
+                        headerClickCount = 0; // Reset
+                        triggerHackEffect();
+                    }
+                });
+            }
+
+            function sleep(ms) {
+                return new Promise(resolve => setTimeout(resolve, ms));
+            }
+
+            function nextFrame() {
+                return new Promise(resolve => requestAnimationFrame(resolve));
+            }
+
+            async function triggerHackEffect() {
+                const overlay = document.getElementById('hack-overlay');
+                const textElement = document.getElementById('hack-text');
+                const body = document.body;
+
+                if (!overlay || !textElement || hackInProgress) return;
+
+                hackInProgress = true;
+                body.classList.add('modal-open'); // Disable scrolling
+                overlay.style.display = 'flex';
+                overlay.classList.add('screen-shake'); // Apply shake to the overlay
+
+                const messages = [
+                    { text: "ACCESSING MAINFRAME...", delay: 1200, intensity: '1px' },
+                    { text: "BYPASSING FIREWALL...", delay: 1200, intensity: '2px' },
+                    { text: "COMPILING MALWARE...", delay: 1500, intensity: '2px' },
+                    { text: "!!! ACCESS GRANTED !!!", delay: 800, intensity: '2px' },
+                    { text: "YOU JUST GOT HACKED!!????", delay: 3000, intensity: '1px' },
+                    { text: "....kidding.", delay: 3500, intensity: '0px' }
+                ];
+
+                for (const message of messages) {
+                    overlay.style.setProperty('--shake-intensity', message.intensity);
+                    textElement.textContent = message.text;
+                    await nextFrame(); // Wait for the browser to render the change
+                    await sleep(message.delay);
+                }
+
+                // End of sequence
+                overlay.style.display = 'none';
+                overlay.classList.remove('screen-shake'); // Remove shake from the overlay
+                body.classList.remove('modal-open'); // Re-enable scrolling
+                hackInProgress = false; // Allow it to be triggered again
+            }
+            // --- End "Hacked" Easter Egg ---
+
+            /* --- Version 666 Blood Drip Randomizer --- */
+            (function() {
+                const evilVersionEl = document.querySelector('.version-info.version-evil');
+                if (!evilVersionEl) return;
+
+                function randomizeDripDelays() {
+                    // Generate random delays between 4s and 10s
+                    const delay1 = (Math.random() * 6 + 4).toFixed(2) + 's';
+                    const delay2 = (Math.random() * 6 + 4).toFixed(2) + 's';
+                    // Each full drip cycle now lasts 4-10 seconds to ensure a pause between drips
+                    const duration = (Math.random() * 6 + 4).toFixed(2) + 's'; // 4-10 s cycle
+                    evilVersionEl.style.setProperty('--drip-delay1', delay1);
+                    evilVersionEl.style.setProperty('--drip-delay2', delay2);
+                    evilVersionEl.style.setProperty('--drip-duration', duration);
+                }
+
+                // Initial randomization
+                randomizeDripDelays();
+
+                // Re-randomize approximately every 12 seconds
+                setInterval(randomizeDripDelays, 12000);
+            })();
+            /* --- End Version 666 Blood Drip Randomizer --- */
+
+            /* --- Disable Evil Version Button Logic --- */
+            (function() {
+                const btn = document.getElementById('disableEvilButton');
+                const versionEl = document.getElementById('versionInfo');
+                if (!btn || !versionEl) return;
+
+                // If previously disabled, immediately remove class & hide button
+                if (localStorage.getItem('disableEvilVersion') === 'true') {
+                    versionEl.classList.remove('version-evil');
+                    btn.style.display = 'none';
+                    return;
+                }
+
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    localStorage.setItem('disableEvilVersion', 'true');
+                    versionEl.classList.remove('version-evil');
+                    btn.style.display = 'none';
+                });
+            })();
+            /* --- End Disable Evil Version Button Logic --- */
+        });
+    </script>
 </head>
 
 <body data-user-system-enabled="{{ 'true' if is_user_system_enabled() else 'false' }}" 
-      data-program-status="{{ 'Running' if program_is_running() else 'Stopped' }}" 
+      data-program-status="{{ get_program_status() }}" 
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
-      data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}">
+      data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"
+      data-notifications-disabled="false">
     
     <header>
         <div class="header-content">
-            <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="cli_debrid icon" class="header-icon">
-            <div class="title-version">
-                <h1>cli_debrid</h1>
-                <span class="version-info">v{{ get_version_with_branch() }}</span>
-            </div>
-            {% if current_user.is_authenticated and not is_onboarding %}
+            <a href="{{ url_for('root.root') }}" style="text-decoration: none; color: inherit; display: flex; align-items: center;">
+                <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid icon" class="header-icon">
+                <div class="title-version">
+                    <h1>cli_debrid</h1>
+                    {% set version_str = get_version_with_branch() %}
+                    {% set evil = version_str.count('6') >= 3 %}
+                    <div class="version-container">
+                        <a href="https://github.com/godver3/cli_debrid" target="_blank" class="version-info{% if evil %} version-evil{% endif %}" id="versionInfo">v{{ version_str }}</a>
+                        {% if evil %}
+                        <button id="disableEvilButton" class="disable-evil-btn" title="Disable spooky effects">✖</button>
+                        {% endif %}
+                        <i class="fas fa-download update-indicator hidden" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
+                    </div>
+                </div>
+            </a>
             <div class="user-info">
+                {% if current_user.is_authenticated and not is_onboarding %}
                 <span class="username">Welcome, {{ current_user.username }}</span>
-                <i class="fas fa-download update-indicator hidden" id="updateAvailableButton" data-tooltip="global.updateAvailableButton"></i>
+                {% endif %}
+                {# Hide support icons on login page and if explicitly hidden #}
+                {% if request.endpoint != 'auth.login' and (hide_support_message is not defined or not hide_support_message) %}
+                <div class="support-icons">
+                    <a href="https://github.com/sponsors/godver3" target="_blank" class="support-icon-link github" title="Support on GitHub">
+                        <i class="fab fa-github"></i>
+                    </a>
+                    <a href="https://patreon.com/godver3" target="_blank" class="support-icon-link patreon" title="Support on Patreon">
+                        <i class="fab fa-patreon"></i>
+                    </a>
+                    <a href="https://ko-fi.com/godver3" target="_blank" class="support-icon-link kofi" title="Support on Ko-fi">
+                        <i class="fas fa-mug-hot"></i>
+                    </a>
+                    <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" class="support-icon-link discord" title="Join our Discord">
+                        <i class="fab fa-discord"></i>
+                    </a>
+                </div>
+                {% endif %}
             </div>
-            {% endif %}
         </div>
 
         {% if not is_onboarding %}
@@ -66,21 +1384,33 @@
                 {% set menu_groups = {
                     'Main': [
                         ('root.root', 'Home'),
+                        ('scraper.index', 'Add Media'),
                         ('queues.index', 'Queues'),
-                        ('scraper.index', 'Scraper'),
-                        ('content.index', 'Request'),
-                        ('video.browse_videos', 'Player')
+                        ('statistics.calendar_view', 'Calendar'),
+                        ('wiki', 'Wiki', 'https://github.com/godver3/cli_debrid/wiki')
                     ],
                     'System': [
                         ('logs.logs', 'Logs'),
                         ('settings.index', 'Settings'),
-                        ('database.index', 'Database')
+                        ('database.index', 'Database'),
+                        ('database.phalanxdb_status', 'Phalanx DB'),
+                        ('performance.performance_dashboard', 'Performance Dashboard'),
+                        ('torrent_status.torrent_status', 'Torrent Status'),
+                        ('connections.index', 'Connections'),
+                        ('api_summary.index', 'API Summary'),
+                        ('real_time_api.index', 'Real Time API'),
+                        ('library_management.library_shows_overview_page', 'Shows Library Status')
                     ],
                     'Tools': [
                         ('scraper.scraper_tester', 'Tester'),
                         ('debug.debug_functions', 'Debug'),
                         ('database.reverse_parser', 'R. Parser'),
-                        ('program_operation.task_timings', 'Task Timings')
+                        ('program_operation.task_timings', 'Task Manager'),
+                        ('magnet.assign_magnet', 'M. Assign'),
+                        ('debug.manual_blacklist', 'M. Blacklist'),
+                        ('debug.torrent_tracking', 'T. Tracker'),
+                        ('trakt_friends.manage_friends', 'Trakt Friends'),
+                        ('user_token.collect_tokens_page', 'Plex User Token M.')
                     ]
                 } %}
                 
@@ -91,8 +1421,12 @@
                             <li class="menu-group">
                                 <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
                                 <ul class="dropdown">
-                                    {% for route, label in items %}
-                                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                                    {% for item in items %}
+                                        {% if item|length > 2 %}
+                                            <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                        {% else %}
+                                            <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                        {% endif %}
                                     {% endfor %}
                                 </ul>
                             </li>
@@ -108,8 +1442,12 @@
                             <li class="menu-group">
                                 <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
                                 <ul class="dropdown">
-                                    {% for route, label in items %}
-                                        <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                                    {% for item in items %}
+                                        {% if item|length > 2 %}
+                                            <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                        {% else %}
+                                            <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                        {% endif %}
                                     {% endfor %}
                                 </ul>
                             </li>
@@ -121,8 +1459,12 @@
                     <li class="menu-group">
                         <a href="#" class="group-title">{{ group_name }} <i class="fas fa-caret-down"></i></a>
                         <ul class="dropdown">
-                            {% for route, label in items %}
-                                <li><a href="{{ url_for(route) }}">{{ label }}</a></li>
+                            {% for item in items %}
+                                {% if item|length > 2 %}
+                                    <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                {% else %}
+                                    <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                {% endif %}
                             {% endfor %}
                         </ul>
                     </li>
@@ -140,11 +1482,15 @@
                             <span class="button-text">Logout</span>
                         </button>                        
                         {% if current_user.role == 'admin' %}
-                            <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
-                                <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
-                                <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
+                            {% set program_status = get_program_status() %}
+                            <button id="programControlButton" class="icon-button {% if program_status == 'Running' %}stop-program{% elif program_status == 'Starting' %}starting-program{% elif program_status == 'Stopping' %}stopping-program{% else %}start-program{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
+                                <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
+                                <span class="button-text">{% if program_status == 'Running' %}Stop Program{% elif program_status == 'Starting' %}Starting...{% elif program_status == 'Stopping' %}Stopping...{% else %}Start Program{% endif %}</span>
                             </button>
                         {% endif %}
+                        <button class="icon-button" id="notifications_button" role="button" data-tooltip="global.notificationsButton">
+                            <i class="fas fa-bell" style="color: white;"></i>
+                        </button>
                         <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
                             <i class="fas fa-file-alt"></i>
                         </button>
@@ -152,18 +1498,77 @@
                 {% endif %}
             {% else %}
                 <div class="action-controls">
-                    <button id="programControlButton" class="icon-button {{ 'stop-program' if program_is_running() else 'start-program' }}" data-status="{{ 'Running' if program_is_running() else 'Stopped' }}">
-                        <i class="fas {{ 'fa-stop' if program_is_running() else 'fa-play' }}"></i>
-                        <span class="button-text">{{ 'Stop Program' if program_is_running() else 'Start Program' }}</span>
+                    {% set program_status = get_program_status() %}
+                    <button id="programControlButton" class="icon-button {% if program_status == 'Running' %}stop-program{% elif program_status == 'Starting' %}starting-program{% elif program_status == 'Stopping' %}stopping-program{% else %}start-program{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
+                        <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
+                        <span class="button-text">{% if program_status == 'Running' %}Stop Program{% elif program_status == 'Starting' %}Starting...{% elif program_status == 'Stopping' %}Stopping...{% else %}Start Program{% endif %}</span>
+                    </button>
+                    <button class="icon-button" id="notifications_button" role="button" data-tooltip="global.notificationsButton">
+                        <i class="fas fa-bell" style="color: white;"></i>
                     </button>
                     <button class="icon-button" id="releaseNotesButton" data-tooltip="global.releaseNotesButton">
-                        <i class="fas fa-clipboard-list"></i>
+                        <i class="fas fa-file-alt"></i>
                     </button>
                 </div>
             {% endif %}
         </div>
         {% endif %}
     </header>
+
+    {# Hide help button on login page #}
+    {% if request.endpoint != 'auth.login' %}
+    <!-- Help Button (Desktop Only) -->
+    <button id="helpButton" class="icon-button help-button" data-tooltip="global.helpButton">
+        <i class="fas fa-question-circle"></i>
+    </button>
+    {% endif %}
+
+    <!-- START EDIT: Add Pause Status Banner -->
+    <div id="pauseStatusBanner" class="pause-status-banner hidden">
+        <span id="pauseReasonText"></span>
+        <button class="pause-banner-close" onclick="closePauseBanner()">&times;</button>
+    </div>
+    <!-- END EDIT -->
+
+    <!-- Notifications Modal -->
+    <div id="notificationsModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Notifications</h2>
+                <div class="modal-controls">
+                    <button id="markAllAsReadBtn" class="mark-all-read-btn">Mark All as Read</button>
+                    <div class="notification-toggle-container">
+                        <label class="notification-toggle-label" for="disableNotificationsToggle">
+                            <span>Disable Notifications</span>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="disableNotificationsToggle">
+                                <span id="disableNotificationsToggleSlider" class="toggle-slider"></span>
+                            </div>
+                        </label>
+                    </div>
+                    <span class="close">&times;</span>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div id="notifications-container">
+                    <!-- Notifications will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-overlay" class="help-overlay">  </div>
+    <div id="help-modal-box" class="help-modal-box">
+        <div class="help-modal-header">
+            <h2>Help & Information</h2>
+            <button class="help-modal-close" id="help-modal-close">&times;</button>
+        </div>
+        <div class="help-modal-body" id="help-modal-body">
+            <p>Loading help content...</p> 
+            <!-- Help content will be loaded here -->
+        </div>
+    </div>
 
     {% if not is_user_system_enabled() or (is_user_system_enabled() and current_user.is_authenticated) %}
     {% if not is_onboarding %}
@@ -204,13 +1609,35 @@
         </div>
     </div>
     <button class="task-monitor-toggle" id="taskMonitorToggle">
-        <i class="fas fa-tasks"></i>
+        <i class="fas"></i>
+    </button>
+    <button class="rate-limits-section-toggle" id="rateLimitsSectionToggle">
+        <i class="fas fa-chart-line"></i>
     </button>
     {% endif %}
 
     <main>
         {% block content %}{% endblock %}
     </main>
+
+    <!-- Easter Egg Modal -->
+    <div id="easterEggModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🎉 You found an Easter Egg! 🎉</h2>
+                <span class="close" id="easterEggModalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <img src="{{ url_for('static', filename='1.png') }}" alt="Easter Egg Image">
+                <p>Who's awesome? You are!</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- "Hacked" Easter Egg Overlay -->
+    <div id="hack-overlay">
+        <div id="hack-text"></div>
+    </div>
 
     <!-- Release notes popup -->
     <div class="release-notes-overlay" id="releaseNotesOverlay"></div>
@@ -232,6 +1659,49 @@
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
     
+    <!-- Support Modal -->
+    <div id="supportModal" class="modal">
+        <div class="modal-content support-modal">
+            <div class="modal-header">
+                <h2>Support cli_debrid</h2>
+                <span class="close" id="supportModalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="support-modal-content">
+                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. To provide the best possible experience, we utilize:</p>
+                    <ul>
+                        <li>AI models for development</li>
+                        <li>Regular updates and optimizations</li>
+                    </ul>
+                    <p>Your support helps cover these costs and enables:</p>
+                    <ul>
+                        <li>Faster development of new features</li>
+                        <li>Continued growth of the project</li>
+                    </ul>
+                    <div class="support-cta">
+                        <a href="https://github.com/sponsors/godver3" target="_blank" class="patreon-button" style="background-color: #fe8e86;">
+                            <i class="fab fa-github"></i>
+                            Support on GitHub
+                        </a>
+                        <a href="https://patreon.com/godver3" target="_blank" class="patreon-button">
+                            <i class="fab fa-patreon"></i>
+                            Support on Patreon
+                        </a>
+                        <a href="https://ko-fi.com/godver3" target="_blank" class="patreon-button" style="background-color: #29ABE0; margin-top: 10px;">
+                            <i class="fas fa-mug-hot"></i>
+                            Support on Ko-fi
+                        </a>
+                        <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" class="support-icon-link discord" title="Join our Discord">
+                            <i class="fab fa-discord"></i>
+                        </a>
+                        <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     {% block scripts %}{% endblock %}
 </body>
 </html>
+

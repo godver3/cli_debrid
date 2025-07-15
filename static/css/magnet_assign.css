@@ -1,0 +1,292 @@
+.magnet-assign-container {
+    max-width: 1200px;
+    margin: 20px auto;
+    padding: 0 15px;
+}
+
+.magnet-assign-container h2 {
+    margin-bottom: 20px;
+    color: #333;
+}
+
+.card {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    padding: 15px 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+.media-card {
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    padding: 15px;
+    background: #fff;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    height: 100%;
+}
+
+.media-poster {
+    width: 100%;
+    height: auto;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.media-info {
+    padding: 10px 0;
+}
+
+.media-info h6 {
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.form-control-sm {
+    height: 30px;
+    padding: 2px 8px;
+}
+
+.search-results {
+    margin-top: 20px;
+}
+
+.search-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.search-form {
+    background: rgba(40, 40, 40, 0.9);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    color: #f4f4f4;
+}
+
+.form-control {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #333;
+    color: #f4f4f4;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: #666;
+    box-shadow: 0 0 5px rgba(102, 102, 102, 0.5);
+}
+
+.btn-primary {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.btn-primary:hover {
+    background-color: #1976D2;
+}
+
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+    padding: 20px;
+}
+
+.media-card {
+    background: rgba(40, 40, 40, 0.9);
+    border-radius: 8px;
+    overflow: hidden;
+    transition: transform 0.2s;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.media-poster {
+    width: 100%;
+    aspect-ratio: 2/3;
+    object-fit: cover;
+    border-bottom: 1px solid #444;
+}
+
+.media-info {
+    padding: 15px;
+}
+
+.media-info h6 {
+    margin: 0 0 10px 0;
+    color: #f4f4f4;
+    font-size: 1rem;
+}
+
+.media-info p {
+    margin: 5px 0;
+    color: #bbb;
+    font-size: 0.9rem;
+}
+
+.magnet-form {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #444;
+}
+
+.magnet-form input {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 10px;
+    background: #333;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #f4f4f4;
+}
+
+.btn-success {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 8px 15px;
+    border-radius: 4px;
+    cursor: pointer;
+    width: 100%;
+    transition: background-color 0.3s;
+}
+
+.btn-success:hover {
+    background-color: #45a049;
+}
+
+.warning-banner {
+    background-color: #fff3cd;
+    border: 1px solid #ffeeba;
+    color: #856404;
+    padding: 15px 20px;
+    margin-bottom: 20px;
+    border-radius: 8px;
+    text-align: center;
+}
+
+.warning-banner p {
+    margin: 0;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    .results-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    }
+    
+    .search-container {
+        padding: 10px;
+    }
+}
+
+.text-muted {
+    color: #6c757d;
+}
+
+.media-card select {
+    width: 100%;
+    padding: 8px;
+    margin-bottom: 10px;
+    background: #333;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #f4f4f4;
+    cursor: pointer;
+}
+
+.media-card select:focus {
+    outline: none;
+    border-color: #666;
+    box-shadow: 0 0 5px rgba(102, 102, 102, 0.5);
+}
+
+.media-card select option {
+    background: #333;
+    color: #f4f4f4;
+    padding: 8px;
+}
+
+.media-card select[multiple] {
+    height: 150px;
+    overflow-y: auto;
+}
+
+/* Custom scrollbar for the multiple select */
+.media-card select[multiple]::-webkit-scrollbar {
+    width: 8px;
+}
+
+.media-card select[multiple]::-webkit-scrollbar-track {
+    background: #222;
+    border-radius: 4px;
+}
+
+.media-card select[multiple]::-webkit-scrollbar-thumb {
+    background: #666;
+    border-radius: 4px;
+}
+
+.media-card select[multiple]::-webkit-scrollbar-thumb:hover {
+    background: #888;
+}
+
+.media-card .form-text {
+    color: #888;
+    font-size: 0.75rem;
+    margin-top: 0;
+    margin-bottom: 6px;
+    font-style: italic;
+    line-height: 1;
+}
+
+.media-card label {
+    color: #f4f4f4;
+    margin-bottom: 6px;
+    display: block;
+    font-size: 0.9rem;
+}
+
+.media-card .episode-selection .row {
+    display: flex;
+    gap: 10px;
+    margin: 0 -5px;
+}
+
+.media-card .episode-selection .col {
+    flex: 1;
+    padding: 0 5px;
+}
+
+/* Style for disabled select */
+.media-card select:disabled {
+    background: #2a2a2a;
+    cursor: not-allowed;
+    opacity: 0.7;
+}

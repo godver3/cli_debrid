@@ -1,0 +1,286 @@
+/* Styling for the library shows overview page, aligned with base.css theme */
+
+.library-show-item {
+    background-color: #2c2c2c; /* Dark background, common in base.css */
+    border: 1px solid #444;    /* Dark border, common in base.css */
+    border-radius: .25rem;     /* Consistent rounded corners */
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: #f4f4f4;            /* Default light text color from base.css */
+    transition: background-color 0.2s ease-in-out; /* Smooth transition for hover */
+}
+
+.library-show-item:hover {
+    background-color: #333; /* Slight hover effect for the entire item */
+}
+
+.library-show-item.fully-collected-all-selected:hover {
+    background-color: #274621; /* Specific hover for fully collected items */
+}
+
+.library-show-item .show-header { /* New class for the clickable header area */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+    /* border-bottom: 1px solid #444; /* Optional: line between header and details */
+}
+
+.library-show-item h5 {
+    color: #FFA500; /* Orange accent, similar to nav highlights */
+    margin-bottom: 0; /* Adjusted as part of .show-header */
+}
+
+.library-show-item .imdb-link a {
+    color: #888; /* Subdued color for IMDb link */
+    text-decoration: none;
+    font-size: 0.9em;
+}
+.library-show-item .imdb-link a:hover {
+    color: #aaa;
+    text-decoration: underline;
+}
+
+.library-show-item .show-details-content { /* Wrapper for the actual details, for hide/show */
+    /* border-top: 1px dashed #555; /* Separator line from header */
+    /* padding-top: 0.75rem; */
+    /* margin-top: 0.75rem; */ /* Space above details if header doesn't have bottom border */
+    display: none; /* Initially hidden */
+}
+
+.library-show-item .show-details-content.visible {
+    display: block; /* Shown when expanded */
+}
+
+
+.library-show-item .text-danger {
+    font-style: italic;
+    color: #dc3545; /* Standard danger color */
+}
+
+.library-show-item ul {
+    padding-left: 1.25rem;
+    margin-top: 0.5rem;
+    list-style-type: none; /* Removing default bullets for a cleaner look */
+}
+
+.library-show-item ul li {
+    margin-bottom: 0.35rem; /* Space between version items */
+    color: #ccc; /* Slightly dimmer color for list items */
+}
+
+.library-show-item ul li strong {
+    color: #f4f4f4; /* Brighter color for the version name */
+}
+
+/* Toggle icon for expand/collapse */
+.library-show-item .toggle-icon {
+    margin-left: 10px;
+    transition: transform 0.3s ease;
+    color: #888;
+}
+
+.library-show-item .show-header.expanded .toggle-icon {
+    transform: rotate(90deg);
+}
+
+.container-fluid.mt-4 {
+    margin-left: 150px;
+    margin-right: 150px;
+}
+
+/* Alphabetical Pagination Styles */
+.alphabet-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: #222; /* Darker background for pagination bar */
+    border-radius: 4px;
+}
+.alphabet-pagination a, .alphabet-pagination span.active-letter {
+    color: #ccc;
+    padding: 8px 12px; /* Adjusted padding for better touch targets */
+    margin: 3px; /* Adjusted margin */
+    text-decoration: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+    font-weight: 500;
+    font-size: 0.9em; /* Slightly smaller font for pagination items */
+    min-width: 36px; /* Ensure minimum width */
+    text-align: center;
+}
+.alphabet-pagination a:hover {
+    background-color: #FFA500;
+    color: #1a1a1a;
+    border-color: #FFA500;
+}
+.alphabet-pagination span.active-letter { /* For the currently selected letter (no longer an <a>) */
+    background-color: #FFA500;
+    color: #1a1a1a;
+    border-color: #FFA500;
+    cursor: default;
+}
+
+/* Placeholder and Spinner Styles (already in library_shows_overview.html, can be moved here if preferred) */
+.show-details-placeholder {
+    min-height: 50px; 
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+}
+.loading-spinner {
+    border: 4px solid #444; /* Darker base for spinner */
+    border-top: 4px solid #FFA500; /* Orange spinner color */
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.version-selectors {
+    margin-bottom: 20px;
+    padding: 10px 15px; /* Slightly more padding */
+    border: 1px solid #dee2e6; /* Bootstrap-like border color */
+    border-radius: 0.25rem; /* Bootstrap-like border radius */
+    display: flex; /* Align items in a row */
+    align-items: center; /* Center items vertically */
+    flex-wrap: wrap; /* Allow wrapping if many versions */
+}
+
+.version-selectors strong {
+    margin-right: 10px;
+    font-weight: 600; /* Slightly bolder */
+}
+
+.version-selectors label {
+    display: inline-flex; /* Align checkbox and text */
+    align-items: center;
+    margin-right: 10px; /* Spacing between version tags */
+    margin-bottom: 5px; /* Spacing if they wrap */
+    padding: 6px 12px; /* Button-like padding */
+    border: 1px solid #ccc;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-weight: normal;
+    color: #ffffff; /* Default text color */
+    transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, color 0.15s ease-in-out;
+    user-select: none; /* Prevent text selection on click */
+}
+
+.version-selectors input[type="checkbox"] {
+    margin-right: 6px;
+    vertical-align: middle;
+    accent-color: #5a5a5a; /* Dark Grey for the checkbox control itself */
+    /* Optionally hide the default checkbox if the label styling is sufficient */
+    /* appearance: none; */
+    /* -webkit-appearance: none; */
+    /* width: 0; height: 0; margin: 0; opacity: 0; */
+}
+
+/* Style for checked/active version selectors */
+.version-selectors input[type="checkbox"]:checked + span { /* If checkbox is hidden and span is used */
+    /* custom style */
+}
+
+.version-selectors label:has(input[type="checkbox"]:checked) {
+    background-color: #ffa500; /* Back to Blue for the label background when selected */
+    color: rgb(34, 34, 34); /* White text for contrast */
+    border-color: #ffffff; /* Matching border for the label */
+}
+
+.version-selectors label:hover:not(:has(input[type="checkbox"]:checked)) {
+    background-color: #e9ecef; /* Light hover for non-selected items */
+    border-color: #adb5bd;
+}
+
+/* Styles for Collection Status Filter */
+.collection-status-selectors {
+    margin-bottom: 20px;
+    padding: 10px 15px;
+    border: 1px solid #dee2e6;
+    border-radius: 0.25rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.collection-status-selectors strong {
+    margin-right: 10px;
+    font-weight: 600;
+}
+
+.collection-status-selectors label {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 10px;
+    margin-bottom: 5px;
+    padding: 6px 12px;
+    border: 1px solid #ccc;
+    border-radius: 0.25rem;
+    cursor: pointer;
+    font-weight: normal;
+    color: #ffffff;
+    transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, color 0.15s ease-in-out;
+    user-select: none;
+}
+
+.collection-status-selectors input[type="radio"] {
+    margin-right: 6px;
+    vertical-align: middle;
+    accent-color: #5a5a5a; 
+}
+
+.collection-status-selectors label:has(input[type="radio"]:checked) {
+    background-color: #ffa500; 
+    color: rgb(34, 34, 34); 
+    border-color: #ffffff; 
+}
+
+.collection-status-selectors label:hover:not(:has(input[type="radio"]:checked)) {
+    background-color: #e9ecef;
+    border-color: #adb5bd;
+    color: #343a40; /* Darker text on hover for non-selected items */
+}
+
+/* Styling for show containers based on collection status */
+.library-show-item.fully-collected-all-selected {
+    background-color: #1a3a1a; /* Darker Green background for dark theme */
+    border: 1px solid #28a745;    /* Green border, matching the left border */
+    border-left: 5px solid #28a745 !important; /* Prominent green left border */
+    color: #e6ffed; /* Lighter text for contrast on dark green */
+}
+.library-show-item.fully-collected-all-selected .show-header h5 {
+    color: #a2ffa2; /* Lighter green for title */
+}
+.library-show-item.fully-collected-all-selected .imdb-link a {
+    color: #8fbc8f; /* Muted green for links */
+}
+
+.library-show-item.targeted-collection-complete {
+    background-color: #1c2e3f; /* Darker Blue background for dark theme */
+    border: 1px solid #007bff;   /* Blue border, matching the left border */
+    border-left: 5px solid #007bff !important; /* Prominent blue left border */
+    color: #e7f3fe; /* Lighter text for contrast on dark blue */
+}
+.library-show-item.targeted-collection-complete .show-header h5 {
+    color: #add8e6; /* Lighter blue for title */
+}
+.library-show-item.targeted-collection-complete .imdb-link a {
+    color: #87cefa; /* Muted blue for links */
+}
+
+.version-detail-item {
+    padding: 3px 0;
+    /* display: list-item; by default, JS will handle based on filter */
+}

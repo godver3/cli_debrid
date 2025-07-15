@@ -1,49 +1,132 @@
 <div class="onboarding-container">
     <div class="onboarding-navigation">
-        {% if current_step > 1 %}
-            <button class="onboarding-btn prev-step-btn">Previous Step</button>
+        {% set step_num = current_step if current_step != '3a' else 3.5 %}
+        {% if step_num|float > 1 %}
+            <button class="prev-step-btn onboarding-btn">Previous Step</button>
         {% endif %}
-        {% if current_step < 5 %}
-            <button class="onboarding-btn next-step-btn" {% if not can_proceed %}disabled{% endif %}>Next Step</button>
+        {% if step_num|float < 6 %}
+            <button class="next-step-btn onboarding-btn" {% if not session.get('onboarding_step_' ~ current_step ~ '_can_proceed', False) %}disabled{% endif %}>
+                {% if current_step == 3 %}Configure Versions{% else %}Next Step{% endif %}
+            </button>
         {% endif %}
-        {% if current_step == 5 %}
-            <button id="finish-setup" class="onboarding-btn finish-setup-btn">Finish Setup</button>
+        {% if step_num|float == 6 %}
+            <button class="finish-setup-btn onboarding-btn">Finish Setup</button>
         {% endif %}
     </div>
 </div>
+
+<link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
+
+<style>
+    .popup-content.confirm {
+        max-width: 50vw !important;
+    }
+</style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const prevStepBtn = document.querySelector('.prev-step-btn');
     const nextStepBtn = document.querySelector('.next-step-btn');
-    const finishSetupBtn = document.getElementById('finish-setup');
+    const finishSetupBtn = document.querySelector('.finish-setup-btn');
 
     if (prevStepBtn) {
         prevStepBtn.addEventListener('click', function() {
-            window.location.href = '{{ url_for("onboarding.onboarding_step", step=current_step-1) }}';
-        });
-    }
-
-    if (nextStepBtn) {
-        nextStepBtn.addEventListener('click', function() {
-            if (!this.disabled) {
-                window.location.href = '{{ url_for("onboarding.onboarding_step", step=current_step+1) }}';
+            const currentStep = '{{ current_step }}';
+            if (currentStep === '4') {
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step="3a") }}';
+            } else if (currentStep === '3a') {
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step=3) }}';
+            } else {
+                const prevStep = parseInt(currentStep) - 1;
+                window.location.href = '{{ url_for("onboarding.onboarding_step", step="") }}' + prevStep;
             }
         });
     }
 
+    if (nextStepBtn) {
+        const currentStep = '{{ current_step }}';
+        if (currentStep === '3') {
+            nextStepBtn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step="3a") }}';
+                }
+            });
+        } else if (currentStep === '3a') {
+            nextStepBtn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step=4) }}';
+                }
+            });
+        } else if (currentStep !== '2') {
+            nextStepBtn.addEventListener('click', function() {
+                if (!this.disabled) {
+                    const nextStep = parseInt(currentStep) + 1;
+                    window.location.href = '{{ url_for("onboarding.onboarding_step", step="") }}' + nextStep;
+                }
+            });
+        }
+    }
+
     if (finishSetupBtn) {
         finishSetupBtn.addEventListener('click', function() {
-            fetch('{{ url_for("onboarding.complete_onboarding") }}', {
-                method: 'POST',
-            })
-            .then(response => response.json())
-            .then(result => {
-                if (result.success) {
-                    window.location.href = '{{ url_for("root.root") }}';
-                } else {
-                    alert('Error: ' + result.error);
-                }
+            import('/static/js/notifications.js').then(({ showPopup, POPUP_TYPES }) => {
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Complete Setup',
+                    message: `
+                        <p>Your cli_debrid instance is now configured and ready to use!</p>
+                        <p><strong>Here's what happens next:</strong></p>
+                        <ul style="list-style-type: none; padding-left: 0; margin: 15px 0;">
+                            <li style="margin-bottom: 8px;">• The start button and the top right controls program operations</li>
+                            <li style="margin-bottom: 8px;">• Consider setting up webhooks for <a href="https://github.com/godver3/cli_debrid/wiki/Webhooks#overseerr" target="_blank" style="color: #3498db;">Overseerr</a> and <a href="https://github.com/godver3/cli_debrid/wiki/Webhooks#zurg" target="_blank" style="color: #3498db;">Zurg</a> (if using Symlinks)</li>
+                            <li style="margin-bottom: 8px;">• Check the <a href="https://github.com/godver3/cli_debrid" target="_blank" style="color: #3498db;">GitHub page</a> or the <a href="https://github.com/godver3/cli_debrid/wiki" target="_blank" style="color: #3498db;">Wiki</a> for more information</li>
+                            <li style="margin-bottom: 8px;">• Look through the settings menu - there are lots of options to customize cli_debrid</li>
+                            <li style="margin-bottom: 8px;">• Set up your Versions to customize the content you scrape</li>
+                            <li style="margin-bottom: 8px;">• If you have any questions - feel free to join the <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" style="color: #3498db;">Discord server</a> and ask away!</li>
+                        </ul>
+                        <div class="advice-section">
+                            <div class="advice-header">
+                                💡 Want my advice?
+                                <i class="fas fa-chevron-down toggle-icon"></i>
+                            </div>
+                            <div class="advice-content">
+                                I'd recommend that you don't try to replicate entire streaming libraries. Collecting is fun, but don't spam service providers. Above all - make sure you watch your content! It's more fun - I swear.
+                            </div>
+                        </div>
+                        <p>Would you like to proceed to the dashboard?</p>
+                    `,
+                    confirmText: 'Go to Dashboard',
+                    cancelText: 'Stay Here',
+                    onConfirm: () => {
+                        // Complete onboarding and redirect to dashboard
+                        fetch('{{ url_for("onboarding.complete_onboarding") }}', {
+                            method: 'POST',
+                        })
+                        .then(response => response.json())
+                        .then(result => {
+                            if (result.success) {
+                                window.location.href = '{{ url_for("root.root") }}';
+                            } else {
+                                showPopup({
+                                    type: POPUP_TYPES.ERROR,
+                                    title: 'Error',
+                                    message: 'Failed to complete setup: ' + result.error
+                                });
+                            }
+                        });
+                    }
+                });
+
+                // Add click handler for advice section toggle
+                setTimeout(() => {
+                    const adviceHeader = document.querySelector('.popup-content .advice-header');
+                    if (adviceHeader) {
+                        adviceHeader.addEventListener('click', () => {
+                            const section = adviceHeader.closest('.advice-section');
+                            section.classList.toggle('expanded');
+                        });
+                    }
+                }, 100);
             });
         });
     }

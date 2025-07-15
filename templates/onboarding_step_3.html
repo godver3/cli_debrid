@@ -3,8 +3,172 @@
 {% block content %}
 <div class="onboarding-container">
     <h2 class="onboarding-title">Step 3: Add a Scraper</h2>
+    <div class="advice-section">
+        <div class="advice-header">
+            💡 Want my advice?
+            <i class="fas fa-chevron-down toggle-icon"></i>
+        </div>
+        <div class="advice-content">
+            Torrentio and Nyaa are easy to set up and work without any configuration. They're great choices to get started with! After adding a scraper, you'll be able to configure versions to specify what quality and types of releases you want.
+        </div>
+    </div>
+    <p class="info-message">Scraper settings can only be configured when adding a new scraper. To modify settings, you'll need to delete the existing scraper and create a new one.</p>
     <button id="add-scraper-btn" class="onboarding-btn">Add Scraper</button>
 </div>
+
+<style>
+    .info-message {
+        background-color: #1a1a1a;
+        border-left: 4px solid #4CAF50;
+        padding: 0.75rem;
+        margin: 0.75rem 0;
+        color: #888;
+        font-size: 0.85rem;
+    }
+
+    .setting-value[readonly],
+    .setting-value option:disabled {
+        background-color: #2c2c2c;
+        cursor: not-allowed;
+        color: #c1c1c1;
+        opacity: 0.9;
+        pointer-events: none;
+        border: 1px solid #444;
+        font-size: 0.85rem;
+        height: 28px;
+        margin-right: 10px;
+    }
+    
+    .setting-value {
+        width: 100%;
+        padding: 0.2rem 0.4rem;
+        border: 1px solid #444;
+        border-radius: 0.25rem;
+        background-color: #333;
+        color: #f4f4f4;
+        margin: 0;
+    }
+
+    .setting-item {
+        margin-bottom: 0.35rem;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .setting-item label {
+        min-width: 100px;
+        flex-shrink: 0;
+        color: #aaa;
+        font-size: 0.85rem;
+        padding-left: 10px;
+    }
+
+    .scraper-item {
+        background-color: #1a1a1a;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.5rem;
+        border-radius: 0.25rem;
+        border: 1px solid #333;
+    }
+
+    .scraper-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.35rem;
+        padding: 0 0.25rem 0.35rem;
+        border-bottom: 1px solid #333;
+    }
+
+    .scraper-settings {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: 0.25rem 0;
+        max-width: 600px;
+    }
+
+    select.setting-value {
+        padding-right: 1.5rem;
+    }
+
+    .onboarding-btn-delete {
+        background-color: #dc3545;
+        color: white;
+        border: none;
+        padding: 0.2rem 0.4rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        font-size: 0.8rem;
+        opacity: 0.8;
+    }
+
+    .onboarding-btn-delete:hover {
+        background-color: #c82333;
+        opacity: 1;
+    }
+
+    .scraper-header .onboarding-text {
+        font-weight: 500;
+        font-size: 0.95rem;
+        color: #f4f4f4;
+    }
+
+    /* Make the add button more prominent */
+    #add-scraper-btn {
+        opacity: 0.9;
+    }
+    #add-scraper-btn:hover {
+        opacity: 1;
+    }
+
+    /* Scraper selection modal styles */
+    .scraper-option {
+        margin-bottom: 15px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .scraper-option input[type="radio"] {
+        margin: 4px 0;
+    }
+
+    .scraper-option label {
+        color: #f1f1f1;
+        font-weight: bold;
+        margin-right: 12px;
+        min-width: 100px;
+    }
+
+    .scraper-option-description {
+        color: #888;
+        font-size: 0.85rem;
+        flex: 1;
+        min-width: 200px;
+    }
+
+    /* Override popup styles */
+    :root {
+        --popup-width: 600px;
+    }
+
+    .onboarding-title {
+        padding-left: 0.5rem;
+        margin-top: 1rem;
+        margin-bottom: 0.75rem;
+    }
+
+    .onboarding-text-no-config {
+        color: #888;
+        font-style: italic;
+        font-size: 0.85rem;
+        padding-left: 10px;
+    }
+</style>
 
 <div id="existing-scrapers">
     {% if settings.Scrapers %}
@@ -55,14 +219,40 @@ document.addEventListener('DOMContentLoaded', function() {
     function showAddScraperPopup() {
         const scraperTypes = Object.keys(SETTINGS_SCHEMA.Scrapers.schema);
         
+        // Define descriptions for each scraper type
+        const scraperDescriptions = {
+            'Torrentio': 'A powerful scraper that requires no configuration.',
+            'Nyaa': 'Specialized in anime content with no configuration needed.',
+            'OldNyaa': 'DO NOT USE - legacy scraper.',
+            'Jackett': 'Advanced scraper that connects to multiple torrent indexers. Requires URL and API key.',
+            'Zilean': 'Scraper service. Requires URL.',
+            'MediaFusion': 'Scraper service that covers many different services. Good option if Torrentio is not available. Requires URL.'
+        };
+
+        // Create dropdown options with descriptions
+        const formHtml = `
+            <form id="scraperTypeForm">
+                ${scraperTypes.map(type => `
+                    <div class="scraper-option">
+                        <input type="radio" id="${type}" name="scraper_type" value="${type}">
+                        <label for="${type}">${type}</label>
+                        <div class="scraper-option-description">
+                            ${scraperDescriptions[type] || 'No description available'}
+                        </div>
+                    </div>
+                `).join('')}
+            </form>
+        `;
+        
         showPopup({
             type: POPUP_TYPES.PROMPT,
             title: 'Add New Scraper',
             message: 'Select the type of scraper you want to add:',
-            dropdownOptions: scraperTypes.map(type => ({ value: type, text: type })),
+            formHtml: formHtml,
             confirmText: 'Next',
             cancelText: 'Cancel',
-            onConfirm: (selectedType) => {
+            onConfirm: (formData) => {
+                const selectedType = formData.scraper_type;
                 if (selectedType) {
                     showScraperSettingsPopup(selectedType);
                 } else {
@@ -77,6 +267,14 @@ document.addEventListener('DOMContentLoaded', function() {
         let formHtml = '<form id="scraperSettingsForm">';
         let hasSettings = false;
 
+        // Define descriptions for each setting
+        const settingDescriptions = {
+            'url': 'The base URL for the scraper service (e.g., http://localhost:8080)',
+            'api': 'API key required to authenticate with the service',
+            'enabled_indexers': 'Comma-separated list of indexers to enable (leave empty for all)',
+            'opts': 'Additional options or configuration parameters',
+        };
+
         for (const [key, value] of Object.entries(scraperSchema)) {
             if (key === 'enabled') continue;
 
@@ -85,13 +283,16 @@ document.addEventListener('DOMContentLoaded', function() {
             if (value.type === 'boolean') {
                 inputHtml = `<input type="checkbox" id="${key}" name="${key}" ${value.default ? 'checked' : ''}>`;
             } else if (value.type === 'string') {
-                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''}>`;
+                inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''} class="setting-value">`;
             }
 
             formHtml += `
-                <div class="form-group">
-                    <label for="${key}">${key}:</label>
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="${key}" style="display: block; margin-bottom: 5px; color: #f1f1f1;">${key}:</label>
                     ${inputHtml}
+                    <div class="setting-description" style="font-size: 0.85rem; color: #888; margin-top: 3px;">
+                        ${settingDescriptions[key] || 'No description available'}
+                    </div>
                 </div>
             `;
         }
@@ -166,7 +367,7 @@ document.addEventListener('DOMContentLoaded', function() {
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                fetch('/onboarding/scrapers/delete', {
+                fetch('/settings/scrapers/delete', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',

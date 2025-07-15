@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block title %}Visual Database{% endblock %}
+
+{% block head %}
+    {{ super() }} {# Include default head content from base.html #}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/database_visual.css') }}">
+{% endblock %}
+
+{% block content %}
+    <h1 id="visual-browser-title">Visual Database Browser</h1>
+
+    <div id="search-filter-bar">
+        <input type="search" id="visual-search-input" placeholder="Search by title...">
+    </div>
+
+    <div id="grid-container" class="grid-container">
+        <!-- Cards will be loaded here by JavaScript -->
+        <p>Loading items...</p> {# Added loading indicator #}
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    {{ super() }} {# Include default scripts from base.html #}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const gridContainer = document.getElementById('grid-container');
+            const searchInput = document.getElementById('visual-search-input');
+            let offset = 0;
+            const limit = 50; // Number of items to fetch per batch
+            let isLoading = false;
+            let hasMore = true;
+            let currentSearchTerm = '';
+            let debounceTimer;
+
+            // Debounce function
+            function debounce(func, delay) {
+                return function(...args) {
+                    clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(() => {
+                        func.apply(this, args);
+                    }, delay);
+                };
+            }
+
+            // Function to create a card element
+            function createCard(item) {
+                const card = document.createElement('div');
+                card.classList.add('card');
+                card.dataset.itemId = item.imdb_id || item.id;
+                card.dataset.itemType = item.type;
+
+                const posterImg = document.createElement('img');
+                posterImg.classList.add('card-poster'); // Add a class for styling
+
+                // Use the proxy for TMDB paths, otherwise use the path directly (for placeholders)
+                let posterUrl = item.poster_path;
+                if (posterUrl && posterUrl.startsWith('/') && !posterUrl.startsWith('/static/')) {
+                     // Assumes TMDB paths start with / and are not static paths
+                    posterUrl = `/scraper/tmdb_image/w300${posterUrl}`;
+                } else if (!posterUrl) {
+                    // Fallback placeholder if poster_path is missing
+                    posterUrl = '/static/images/placeholder.png';
+                }
+                
+                posterImg.src = posterUrl;
+                posterImg.alt = item.title || 'Poster'; // Alt text
+                // Add error handling for broken images
+                posterImg.onerror = function() {
+                    this.onerror=null; // Prevent infinite loop
+                    this.src='/static/images/placeholder.png'; // Fallback to placeholder
+                    this.classList.add('placeholder-poster'); // Optional: style differently
+                };
+                card.appendChild(posterImg);
+
+                const title = document.createElement('h3');
+                title.textContent = item.title || 'No Title';
+                card.appendChild(title);
+
+                if (item.year) {
+                    const year = document.createElement('p');
+                    year.textContent = `Year: ${item.year}`;
+                    card.appendChild(year);
+                }
+
+                card.addEventListener('click', () => {
+                    console.log(`Clicked ${item.type} ID: ${item.imdb_id || item.id}, Title: ${item.title}`);
+                    alert(`Clicked: ${item.title} (${item.year}) - Type: ${item.type}, ID: ${item.imdb_id || item.id}`);
+                });
+                return card;
+            }
+
+            // Function to fetch items
+            function fetchItems(isSearch = false) { // Add flag for search
+                if (isLoading || (!hasMore && !isSearch)) return; // Allow fetch even if !hasMore during a search reset
+
+                isLoading = true;
+                // If it's a new search, clear the container first
+                if (isSearch) {
+                    gridContainer.innerHTML = '<p id="loading-indicator">Searching...</p>';
+                } else {
+                    // Append loading indicator for infinite scroll
+                    const existingIndicator = document.getElementById('loading-indicator');
+                    if (!existingIndicator) {
+                        gridContainer.insertAdjacentHTML('beforeend', '<p id="loading-indicator">Loading more items...</p>');
+                    }
+                }
+                
+                let url = `{{ url_for("database.visual_data") }}?limit=${limit}&offset=${offset}`;
+                if (currentSearchTerm) {
+                    url += `&search=${encodeURIComponent(currentSearchTerm)}`;
+                }
+
+                fetch(url)
+                    .then(response => {
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        return response.json();
+                    })
+                    .then(data => {
+                        const loadingIndicator = document.getElementById('loading-indicator');
+                        if (loadingIndicator) loadingIndicator.remove();
+
+                        // If it was a search triggered fetch, clear previous results before appending
+                        if (isSearch) {
+                            gridContainer.innerHTML = ''; 
+                        }
+
+                        if (!data.success) throw new Error(data.error || 'Failed to load data');
+                        
+                        if (data.items && data.items.length > 0) {
+                            data.items.forEach(item => {
+                                gridContainer.appendChild(createCard(item));
+                            });
+                            offset += data.items.length;
+                            hasMore = data.has_more;
+                            if (!hasMore && data.items.length > 0) { // Only show if items were actually loaded
+                                gridContainer.insertAdjacentHTML('beforeend', '<p>No more items.</p>');
+                            }
+                        } else {
+                            // If first load (offset 0) or search and no items found
+                            if (offset === 0) {
+                                gridContainer.innerHTML = '<p>No items found matching your criteria.</p>';
+                            }
+                            hasMore = false;
+                        }
+                        isLoading = false;
+                    })
+                    .catch(error => {
+                        isLoading = false;
+                        const loadingIndicator = document.getElementById('loading-indicator');
+                        if (loadingIndicator) loadingIndicator.remove();
+                        // Clear grid on error during search as well
+                        if (isSearch || offset === 0) {
+                             gridContainer.innerHTML = `<p>Error loading data: ${error.message}</p>`;
+                        }
+                        console.error('Error fetching or processing data:', error);
+                        hasMore = false; // Stop trying on error
+                    });
+            }
+
+            // Infinite scroll logic
+            function handleScroll() {
+                // Check if user is near the bottom
+                if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 500) { // 500px threshold
+                    fetchItems(); // Fetch next page for infinite scroll
+                }
+            }
+
+            // Search input handler
+            const handleSearchInput = debounce(() => {
+                const searchTerm = searchInput.value.trim();
+                if (searchTerm !== currentSearchTerm) {
+                    currentSearchTerm = searchTerm;
+                    offset = 0;       // Reset offset for new search
+                    hasMore = true;   // Assume there might be more results
+                    isLoading = false; // Allow fetch immediately
+                    // Clear previous loading/no more items messages explicitly before search fetch
+                    const messageElements = gridContainer.querySelectorAll('p[id^="loading-"], p:not([id])');
+                    messageElements.forEach(el => el.remove());
+                    fetchItems(true); // Trigger fetch with search flag
+                }
+            }, 300); // 300ms debounce delay
+
+            searchInput.addEventListener('input', handleSearchInput);
+
+            window.addEventListener('scroll', handleScroll);
+
+            // Initial load
+            gridContainer.innerHTML = ''; // Clear initial "Loading items..." message
+            fetchItems(); // Initial fetch without search term
+        });
+    </script>
+{% endblock %} 

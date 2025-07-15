@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% block title %}Scraper{% endblock %}
+{% block title %}Add Media{% endblock %}
 {% block content %}
+<meta name="theme-color" content="#333333">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_trending.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
 <style>
-    @import url('{{ url_for('static', filename='css/scraper.css') }}');
-    @import url('{{ url_for('static', filename='css/scraper_trending.css') }}');
-
     .trending-container p {
         font-style: italic;
         color: #888;
@@ -18,6 +21,16 @@
         color: #be1600;
         font-style: italic;
         text-align: center;
+    }
+
+    .requester-notice {
+        background-color: #f39c12;
+        color: white;
+        padding: 10px 15px;
+        text-align: center;
+        border-radius: 5px;
+        margin: 10px 0;
+        font-weight: bold;
     }
 
     .loading {
@@ -79,7 +92,7 @@
         font-weight: bold;
         text-transform: uppercase;
         margin-top: 5px;
-        min-width: 120px;
+        min-width: 40px;
         text-align: center;
         white-space: nowrap;
         overflow: hidden;
@@ -102,7 +115,7 @@
     }
 
     .cache-status.check-unavailable {
-        background-color: #7a00e6;
+        background-color: #607D8B;
         color: white;
     }
 
@@ -110,16 +123,432 @@
         background-color: #607d8b;
         color: white;
     }
+
+    /* Simple CSS reset for checkbox */
+    #skip-cache-check {
+        /* Reset to browser defaults */
+        -webkit-appearance: checkbox !important;
+        -moz-appearance: checkbox !important;
+        appearance: checkbox !important;
+        
+        /* Remove any custom styling */
+        all: revert !important;
+        
+        /* Optional: add minimal styling if needed */
+        margin-right: 5px !important;
+        vertical-align: middle !important;
+    }
+    
+    .checkbox-container label {
+        cursor: pointer !important;
+        vertical-align: middle !important;
+    }
+
+    #skip-cache-check-container {
+        display: none !important;
+    }
+
+
+    .checkbox-container input[type="checkbox"] {
+        all: revert !important;
+    }
+
+    /* Request icon styling - Current blue plus style */
+    .request-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background-color: #3498db; /* Blue */
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 5;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .request-icon:hover {
+        transform: scale(1.1);
+        background-color: #2980b9; /* Darker blue on hover */
+    }
+
+    /* Additional color options - Uncomment to use
+    
+    /* Purple style 
+    .request-icon {
+        background-color: #9b59b6;
+    }
+    .request-icon:hover {
+        background-color: #8e44ad;
+    }
+    */
+    
+    /* Teal style 
+    .request-icon {
+        background-color: #1abc9c;
+    }
+    .request-icon:hover {
+        background-color: #16a085;
+    }
+    */
+    
+    /* Orange style 
+    .request-icon {
+        background-color: #e67e22;
+    }
+    .request-icon:hover {
+        background-color: #d35400;
+    }
+    */
+
+    /* Make request icon follow poster hover animation */
+    .media-poster:hover .request-icon {
+        transform: translateY(0px);
+    }
+
+    /* Combine hover effects when hovering directly on the icon */
+    .media-poster:hover .request-icon:hover {
+        transform: translateY(0px) scale(1);
+        background-color: #2980b9; /* Match the darker blue for consistency */
+    }
+
+    .request-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    /* Version Modal Styles */
+    .version-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .version-modal-content {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 5px;
+        width: 300px;
+        max-width: 90%;
+        color: white;
+    }
+
+    .version-modal h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    .version-checkbox {
+        margin-bottom: 10px;
+    }
+
+    .version-checkbox input[type="checkbox"] {
+        margin-right: 10px;
+    }
+
+    .version-modal-buttons {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 20px;
+    }
+
+    .version-modal-buttons button {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .version-modal-buttons button:first-child {
+        background-color: #2ecc71;
+        color: white;
+    }
+
+    .version-modal-buttons button:last-child {
+        background-color: #7f8c8d;
+        color: white;
+    }
+
+    .media-poster {
+        position: relative;
+    }
+    
+    /* Season selection styles */
+    .version-section-header {
+        margin: 15px 0 10px;
+        border-bottom: 1px solid #555;
+        padding-bottom: 5px;
+    }
+    
+    .version-section-header h4 {
+        margin: 0;
+        font-size: 16px;
+        color: #ccc;
+    }
+    
+    .selection-type-container {
+        margin: 10px 0;
+    }
+    
+    .selection-type-option {
+        margin-bottom: 8px;
+    }
+    
+    .selection-type-option input[type="radio"] {
+        margin-right: 8px;
+    }
+    
+    .season-selection-container {
+        margin: 10px 0;
+        max-height: 200px;
+        overflow-y: auto;
+        padding: 5px;
+        background-color: #444;
+        border-radius: 4px;
+    }
+    
+    .seasons-list {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    .season-checkbox {
+        margin-bottom: 5px;
+    }
+    
+    hr {
+        border: 0;
+        height: 1px;
+        background-color: #555;
+        margin: 15px 0;
+    }
+
+    .sresult {
+        position: relative;
+        margin-bottom: 15px;
+        transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        overflow: visible;
+        margin: -8px 8px; /* Restore original margin */
+        z-index: 1;
+    }
+    
+    .sresult .media-poster {
+        position: relative;
+        display: inline-block;
+        overflow: visible;
+        border-radius: 5px;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    /* Apply hover effects to search results - THE ENTIRE CARD */
+    .sresult:hover {
+        transform: translateY(0px);
+        z-index: 2;
+    }
+    
+    /* Remove the transform from the inner poster since it's now on the card */
+    .sresult:hover .media-poster {
+        transform: none;
+    }
+    
+    .sresult .media-poster img {
+        max-width: 100%;
+        display: block;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 
+            0 4px 6px rgba(0, 0, 0, 0.2),
+            0 0 25px rgba(255, 255, 255, 0.15);
+        border-radius: var(--border-radius-lg);
+    }
+    
+    /* Apply box-shadow enhancement to the img on hover */
+    .sresult:hover .media-poster img {
+        box-shadow: 
+            0 8px 16px rgba(0, 0, 0, 0.3),
+            0 0 50px rgba(255, 255, 255, 0.5);
+    }
+    
+    /* Reduce glow intensity to match trending items */
+    .sresult:hover .media-poster::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: var(--border-radius-lg);
+        box-shadow: none;
+        z-index: -1;
+        pointer-events: none;
+    }
+    
+    /* Remove the effect from the sresult itself */
+    .sresult:hover::after {
+        content: none;
+    }
+    
+    .sresult .searchresult-info {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: var(--spacing-md);
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+        color: var(--text-primary);
+        opacity: 0;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        text-align: center;
+        backdrop-filter: blur(4px);
+        z-index: 2;
+        border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    }
+    
+    /* Make the info section visible on hover */
+    .sresult:hover .searchresult-info {
+        opacity: 1;
+    }
+    
+    .sresult .request-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        z-index: 5;
+    }
+    
+    /* No need for separate transform on the icon, it will move with the card */
+    .sresult:hover .request-icon {
+        transform: none;
+    }
+
+    /* Maintain the icon hover effect */
+    .sresult .request-icon:hover {
+        transform: scale(1.1);
+        background-color: #2980b9;
+    }
+    
+    /* Style for the Request Season button */
+    #requestSeasonButton {
+        background-color: #3498db;
+    }
+    
+    #requestSeasonButton:hover {
+        background-color: #2980b9;
+    }
+    
+    #searchResults {
+        min-width: 95%;
+    }
+
+    /* Search results container similar to trending container */
+    .search-results-container {
+        background-color: #1e1e1e;
+        border-radius: var(--border-radius-md);
+        padding: var(--spacing-md);
+        margin: var(--spacing-lg) auto;
+        width: 95%;
+        max-width: 1200px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .search-results-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-md);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding-bottom: var(--spacing-sm);
+    }
+    
+    .search-results-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin: 0;
+    }
+    
+    .search-results-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+        gap: var(--spacing-md);
+        justify-items: center;
+        row-gap: 40px;
+    }
+    
+    /* Adjust sresult for grid layout */
+    .sresult {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+    }
+
+    /* DB Status Pip Styles */
+    .poster-container {
+        position: relative; /* Ensure the container is positioned for the absolute pip */
+    }
+    
+    .db-status-pip {
+        position: absolute;
+        top: 8px; /* Adjust as needed */
+        right: 8px; /* Adjust as needed */
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1px solid rgba(0, 0, 0, 0.5); /* Optional border */
+        z-index: 10; /* Ensure it's above the poster image/overlay */
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .db-status-collected {
+        background-color: #4CAF50; /* Green */
+    }
+    
+    .db-status-blacklisted {
+        background-color: #f44336; /* Red */
+    }
+    
+    .db-status-processing {
+        background-color: #f39c12; /* Yellow/Orange */
+    }
+
+    /* New: partially collected (mix) */
+    .db-status-partial {
+        background-color: #2196F3; /* Blue */
+        color: white;
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
-        <form id="search-form" action="{{ url_for('scraper.index') }}" method="post">
+        <form id="search-form" onsubmit="return false;">
+            <input type="hidden" id="tmdb_api_key_set" value="{{ 'True' if tmdb_api_key_set else 'False' }}">
+            <input type="hidden" id="is_requester" value="{{ 'True' if is_requester else 'False' }}">
             <input type="text" name="search_term" placeholder="Enter search term" required>
             <select name="version" id="version-select">
-                <option value="No Version">No Version</option>
                 {% for version in versions %}
                     <option value="{{ version }}">{{ version }}</option>
                 {% endfor %}
+                <option value="No Version">No Version</option>
             </select>
+            <div class="checkbox-container specials-checkbox" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+                <input type="checkbox" id="allow-specials" name="allow_specials">
+                <label for="allow-specials" style="color: #ccc; font-size: 0.9em;">Allow Specials</label>
+            </div>
+            <div id="skip-cache-check-container" class="checkbox-container" style="display: inline-block; margin-left: 10px; vertical-align: middle;">
+                <input type="checkbox" id="skip-cache-check" name="skip_cache_check">
+                <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
+            </div>
             <button id="searchformButton" type="submit">Search</button>
         </form>
         {% if not compact_view and not tmdb_api_key_set %}
@@ -140,7 +569,9 @@
                         </button>
                     </div>
                 </div>
-                <div id="movieContainer" class="movie-list"></div>
+                <div class="movie-list">
+                    <div class="scroll-container" id="movieContainer"></div>
+                </div>
             </div>
             <div class="trending-shows">
                 <div class="trending-header">
@@ -154,28 +585,82 @@
                         </button>
                     </div>
                 </div>
-                <div id="showContainer" class="show-list"></div>
+                <div class="show-list">
+                    <div class="scroll-container" id="showContainer"></div>
+                </div>
+            </div>
+            <div class="trending-anime">
+                <div class="trending-header">
+                    <h2 class="trending-title">Trending Anime</h2>
+                    <div class="trending-navigation">
+                        <button id="scrollLeft_anime" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                        </button>
+                        <button id="scrollRight_anime" class="trending-nav-button">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="anime-list">
+                    <div class="scroll-container" id="animeContainer"></div>
+                </div>
             </div>
         </div>
         <div id="seasonResults" style="display: none;">
             <div id="season-info"></div>
-            <select id="seasonDropdown"></select><button id="seasonPackButton">Season Pack</button>
+            <div class="season-controls">
+                <select id="seasonDropdown"></select>
+                <button id="seasonPackButton">Season Pack</button>
+                <button id="requestSeasonButton">Request Season</button>
+            </div>
             <div id="episodeResults"></div>
         </div>
         <div id="overlay" class="overlay">
             <div class="overlay-content">                
-                <span class="close-btn">&times;</span>
+                <button class="close-btn" aria-label="Close">&times;</button>
                 <div id="overlayContent"></div>
             </div>
         </div>
         <div id="searchResult"></div>
         <!-- Add this div for search results -->
         <div id="searchResults" style="display: none;">
-            <h2>Search Results</h2>
-            <div id="resultsList"></div>
+            <div class="search-results-container">
+                <div class="search-results-header">
+                    <h2 class="search-results-title">Search Results</h2>
+                </div>
+                <div id="resultsList" class="search-results-grid"></div>
+            </div>
+        </div>
+
+        <!-- Version Selection Modal -->
+        <div id="versionModal" class="version-modal">
+            <div class="version-modal-content">
+                <h3>Select Versions</h3>
+                <div id="versionCheckboxes">
+                    <!-- Version checkboxes will be dynamically inserted here -->
+                </div>
+                <div class="version-modal-buttons">
+                    <button id="confirmVersions">Request</button>
+                    <button id="cancelVersions">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scrape Version Selection Modal -->
+        <div id="scrapeVersionModal" class="version-modal">
+            <div class="version-modal-content">
+                <h3>Select Scrape Version</h3>
+                <div id="scrapeVersionRadios">
+                    <!-- Version radio buttons will be dynamically inserted here -->
+                </div>
+                <div class="version-modal-buttons">
+                    <button id="confirmScrapeVersion">Scrape</button>
+                    <button id="cancelScrapeVersion">Cancel</button>
+                </div>
+            </div>
         </div>
     </div>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/notifications.js')}}"></script>
+    <script src="{{ url_for('static', filename='js/notifications.js') }} "></script>
 {% endblock %}

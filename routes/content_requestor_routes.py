@@ -1,11 +1,12 @@
 from flask import Blueprint, jsonify, request, render_template
 from .models import user_required, onboarding_required
-from web_scraper import search_trakt
+from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
-from config_manager import load_config
-from metadata.metadata import process_metadata
+from queues.config_manager import load_config
 from database.wanted_items import add_wanted_items
 import logging
+import re
+from utilities.settings import load_config
 
 content_requestor_bp = Blueprint('content', __name__)
 
@@ -30,7 +31,11 @@ def search():
         if not search_term:
             return jsonify({'error': 'No search term provided'}), 400
             
-        results = search_trakt(search_term)
+        # Use the parse_search_term function from web_scraper
+        base_title, season, episode, year, multi = parse_search_term(search_term)
+        
+        # Use the parsed title and year for search
+        results = search_trakt(base_title, year)
         
         # Log the first few results for debugging
         if results:
@@ -47,6 +52,7 @@ def search():
 @user_required
 def request_content():
     """Handle content request."""
+    from metadata.metadata import process_metadata
     try:
         data = request.json
         if not data:
@@ -55,38 +61,107 @@ def request_content():
         tmdb_id = str(data.get('id'))
         media_type = data.get('mediaType', '').lower()
         selected_versions = data.get('versions', [])  # Get selected versions as a list
+        selected_seasons = data.get('seasons', [])  # Get selected seasons if provided
         
         # Convert selected versions to dictionary format
         versions = {version: True for version in selected_versions}
                   
         logging.info(f"Received versions: {versions}")
+        if selected_seasons:
+            logging.info(f"Received seasons: {selected_seasons}")
 
         # Convert TMDB ID to IMDB ID with media type hint
-        imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type=media_type)
+        if media_type == 'movie':
+            imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type=media_type)
+        else:
+            imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type='show')
         
         # Convert 'show' to 'tv' for consistency
         if media_type == 'show':
             media_type = 'tv'
 
         if not imdb_id:
-            return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}'}), 400
+            # Check if any Jackett scrapers are enabled
+            config = load_config()
+            has_enabled_jackett = False
             
+            for instance, settings in config.get('Scrapers', {}).items():
+                if isinstance(settings, dict):
+                    if settings.get('type') == 'Jackett' and settings.get('enabled', False):
+                        has_enabled_jackett = True
+                        break
+            
+            # Get the title directly from the request data
+            title = data.get('title', '')
+            
+            # Only proceed if Jackett is enabled AND title contains UFC
+            if not has_enabled_jackett or 'UFC' not in title.upper():
+                return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID for {media_type}. This is only supported for UFC content with Jackett enabled.'}), 400
+            else:
+                logging.info(f"No IMDB ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
+            
+        # If media_type is 'tv' and no specific seasons are selected (i.e., "whole show"),
+        # fetch all available seasons.
+        if media_type == 'tv' and not selected_seasons and imdb_id:
+            logging.info(f"No specific seasons selected for TMDB ID {tmdb_id} (IMDB ID: {imdb_id}). Fetching all available seasons.")
+            try:
+                seasons_data, _ = DirectAPI.get_show_seasons(imdb_id)
+                if seasons_data:
+                    # Extract season numbers, filtering out season 0 (specials)
+                    all_season_numbers = [int(season_num) for season_num in seasons_data.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                    if all_season_numbers:
+                        selected_seasons = all_season_numbers
+                        logging.info(f"Fetched all available seasons for IMDB ID {imdb_id}: {selected_seasons}")
+                    else:
+                        logging.warning(f"No valid seasons found for IMDB ID {imdb_id} after fetching all seasons.")
+                else:
+                    logging.warning(f"Could not retrieve seasons data for IMDB ID {imdb_id} when fetching all seasons.")
+            except Exception as e:
+                logging.error(f"Error fetching all seasons for IMDB ID {imdb_id}: {str(e)}")
+                # Proceed without pre-populating seasons, behavior will be as before for this case.
+
         # Create wanted item in the format expected by process_metadata
         wanted_item = {
             'imdb_id': imdb_id,
             'tmdb_id': tmdb_id,
-            'media_type': media_type
+            'media_type': media_type,
+            'title': data.get('title'),  # Title from frontend
+            'year': data.get('year'),  # Year from frontend
+            'release_date': data.get('releaseDate'),  # Release date from frontend
+            'overview': data.get('overview'),  # Overview/description if available
+            'vote_average': data.get('voteAverage'),  # Rating if available
+            'backdrop_path': data.get('backdropPath')  # Backdrop image path if available
         }
         
+        # Handle genres formatting
+        genres = data.get('genres', [])
+        if isinstance(genres, str):
+            # If genres come as comma-separated string, convert to list
+            genres = [g.strip() for g in genres.split(',')]
+        elif not isinstance(genres, list):
+            genres = []
+        wanted_item['genres'] = genres
+        
+        # If specific seasons were selected for a TV show, add them to the wanted item
+        if media_type == 'tv' and selected_seasons:
+            wanted_item['requested_seasons'] = selected_seasons
+            
+        # Add the versions to the wanted_item
+        wanted_item['versions'] = versions
+            
         # Process metadata
         processed_items = process_metadata([wanted_item])
         if not processed_items:
-            return jsonify({'error': 'Failed to process metadata'}), 400
+            # Handle cases where process_metadata returns None or an empty dict
+            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Content might already exist or is invalid.")
+            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
         # Combine movies and episodes from processed items
         all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
         if not all_items:
-            return jsonify({'error': 'No valid items after processing'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Content might already exist.")
+            # Return a more specific message indicating the item might already exist or was filtered
+            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
         # Add content source to all items
         for item in all_items:
@@ -105,11 +180,68 @@ def request_content():
 @content_requestor_bp.route('/versions', methods=['GET'])
 @user_required
 def get_versions():
-    """Get available versions from config."""
+    """Get available versions from sources."""
     try:
-        config = load_config()
-        versions = list(config.get('Scraping', {}).get('versions', {}).keys())
+        versions = get_available_versions()
+        logging.info(f"Returning available versions: {versions}")
         return jsonify({'versions': versions})
     except Exception as e:
         logging.error(f"Error getting versions: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@content_requestor_bp.route('/show_seasons', methods=['GET'])
+@user_required
+def get_show_seasons():
+    """Get seasons available for a TV show."""
+    try:
+        tmdb_id = request.args.get('tmdb_id')
+        logging.info(f"Fetching seasons for TMDB ID: {tmdb_id}")
+        
+        if not tmdb_id:
+            logging.error("No TMDB ID provided")
+            return jsonify({'error': 'No TMDB ID provided'}), 400
+            
+        # Convert TMDB ID to IMDB ID
+        logging.info(f"Converting TMDB ID {tmdb_id} to IMDB ID")
+        imdb_id, source = DirectAPI.tmdb_to_imdb(tmdb_id, media_type='show')
+        logging.info(f"Conversion result: IMDB ID: {imdb_id}, Source: {source}")
+        
+        if not imdb_id:
+            logging.error(f"Could not convert TMDB ID {tmdb_id} to IMDB ID")
+            return jsonify({'error': f'Could not convert TMDB ID {tmdb_id} to IMDB ID'}), 400
+            
+        # Get show seasons from API
+        logging.info(f"Fetching seasons for show with IMDB ID {imdb_id}")
+        try:
+            seasons_data, source = DirectAPI.get_show_seasons(imdb_id)
+            logging.info(f"Got seasons data from {source}")
+            logging.debug(f"Full seasons data: {seasons_data}")
+        except Exception as e:
+            logging.error(f"Error in DirectAPI.get_show_seasons: {str(e)}")
+            return jsonify({'error': f'API error: {str(e)}'}), 500
+        
+        if not seasons_data:
+            logging.error(f"No seasons data returned for IMDB ID {imdb_id}")
+            return jsonify({'error': 'Could not retrieve seasons data: Empty response'}), 404
+            
+        # The seasons_data structure is different than expected
+        # It has season numbers as keys directly in the dictionary
+        # instead of a 'seasons' list of objects with 'season_number' property
+        try:
+            # Extract season numbers from the dictionary keys
+            # Ensure keys are integers or can be converted to integers
+            season_numbers = [int(season_num) for season_num in seasons_data.keys() if str(season_num).isdigit()]
+            logging.info(f"Found season numbers in data keys: {season_numbers}")
+            
+            # Filter out season 0 (specials) if present
+            season_numbers = [season for season in season_numbers if season > 0]
+            
+            logging.info(f"Found {len(season_numbers)} seasons for show with TMDB ID {tmdb_id} (IMDB ID: {imdb_id}): {season_numbers}")
+            return jsonify({'success': True, 'seasons': season_numbers})
+        except Exception as e:
+            logging.error(f"Error processing seasons data: {str(e)}")
+            return jsonify({'error': f'Error processing seasons data: {str(e)}'}), 500
+        
+    except Exception as e:
+        logging.error(f"Error getting show seasons: {str(e)}")
         return jsonify({'error': str(e)}), 500 

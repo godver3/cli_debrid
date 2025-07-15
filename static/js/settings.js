@@ -3,6 +3,43 @@ import { showPopup, POPUP_TYPES } from './notifications.js';
 // Declare settingsData globally
 let settingsData = {};
 
+// Helper function for splitting strings while respecting parentheses
+export function splitRespectingParentheses(str, delimiter = ',') {
+    const result = [];
+    let currentToken = "";
+    let parenthesesCount = 0;
+
+    for (let i = 0; i < str.length; i++) {
+        const char = str[i];
+        if (char === '(') {
+            parenthesesCount++;
+        } else if (char === ')') {
+            parenthesesCount--;
+            if (parenthesesCount < 0) {
+                // Gracefully handle mismatched parentheses, though ideally input is well-formed
+                parenthesesCount = 0; 
+            }
+        }
+
+        if (char === delimiter && parenthesesCount === 0) {
+            const trimmedToken = currentToken.trim();
+            if (trimmedToken !== "") {
+                result.push(trimmedToken);
+            }
+            currentToken = "";
+        } else {
+            currentToken += char;
+        }
+    }
+    
+    const trimmedToken = currentToken.trim();
+    if (trimmedToken !== "") {
+        result.push(trimmedToken);
+    }
+    
+    return result;
+}
+
 // Function to load settings data
 function loadSettingsData() {
     return fetch('/settings/api/program_settings')
@@ -37,18 +74,18 @@ function togglePlexSection() {
     console.log('togglePlexSection called');
     
     const fileManagementSelect = document.getElementById('file management-file_collection_management');
-    const plexSection = document.getElementById('plex-settings-section');
+    const plexSettingsInFileManagement = document.getElementById('plex-settings-in-file-management');
     
     console.log('File Management Select element:', fileManagementSelect);
-    console.log('Plex Section element:', plexSection);
+    console.log('Plex Settings element:', plexSettingsInFileManagement);
     
-    if (fileManagementSelect && plexSection) {
+    if (fileManagementSelect && plexSettingsInFileManagement) {
         const shouldDisplay = fileManagementSelect.value === 'Plex';
-        console.log('Should display Plex section:', shouldDisplay);
-        plexSection.style.display = shouldDisplay ? 'block' : 'none';
-        console.log('Set display style to:', plexSection.style.display);
+        console.log('Should display Plex settings:', shouldDisplay);
+        plexSettingsInFileManagement.style.display = shouldDisplay ? 'block' : 'none';
+        console.log('Set display style to:', plexSettingsInFileManagement.style.display);
     } else {
-        console.warn('Missing required elements - fileManagementSelect or plexSection not found');
+        console.warn('Missing required elements - fileManagementSelect or plexSettingsInFileManagement not found');
     }
 
     // Toggle path input fields and Plex symlink settings
@@ -76,17 +113,42 @@ function togglePlexSection() {
     }
 }
 
+// Function to validate content sources
+function validateContentSources(contentSources) {
+    for (const [sourceId, source] of Object.entries(contentSources)) {
+        if (source.enabled && (!source.versions || source.versions.length === 0)) {
+            return {
+                valid: false,
+                message: `Content source "${sourceId}" is enabled but has no versions enabled. Please enable at least one version or disable the content source.`
+            };
+        }
+    }
+    return { valid: true };
+}
+
 // Export the updateSettings function
 export function updateSettings() {
-    const settingsData = {};
+    settingsData = {}; // Reset settingsData
+
+    // First handle all regular inputs (excluding Content Sources which are handled separately)
     const inputs = document.querySelectorAll('#settingsForm input, #settingsForm select, #settingsForm textarea');
     
     inputs.forEach(input => {
         const name = input.name;
+        if (!name) return; // Skip inputs without names
+        
+        // Skip Content Sources inputs - they are handled separately
+        if (name.startsWith('Content Sources.')) return;
+        
+        // Skip radio buttons that are not checked
+        if (input.type === 'radio' && !input.checked) return;
+        
         let value = input.value;
         
         if (input.type === 'checkbox') {
             value = input.checked;
+        } else if (input.type === 'number') {
+            value = parseFloat(value) || 0;
         } else if (value.toLowerCase() === 'true') {
             value = true;
         } else if (value.toLowerCase() === 'false') {
@@ -94,13 +156,6 @@ export function updateSettings() {
         }
 
         const nameParts = name.split('.');
-        // Special handling for content source check period
-        if (nameParts.length >= 3 && nameParts[0] === 'Debug' && nameParts[1] === 'content_source_check_period') {
-            console.log(`Content source check period - Before conversion: name=${name}, value=${value}, type=${typeof value}`);
-            value = parseFloat(value) || 0;
-            console.log(`Content source check period - After conversion: value=${value}, type=${typeof value}`);
-        }
-
         let current = settingsData;
         
         for (let i = 0; i < nameParts.length - 1; i++) {
@@ -113,6 +168,34 @@ export function updateSettings() {
         current[nameParts[nameParts.length - 1]] = value;
     });
 
+    // Ensure Staleness Threshold section exists and has a value
+    if (!settingsData['Staleness Threshold']) {
+        settingsData['Staleness Threshold'] = {};
+    }
+    const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
+    if (stalenessThresholdInput) {
+        const value = parseInt(stalenessThresholdInput.value) || 7;
+        settingsData['Staleness Threshold']['staleness_threshold'] = value;
+        console.log(`Setting staleness threshold to: ${value}`);
+    } else {
+        settingsData['Staleness Threshold']['staleness_threshold'] = 7; // Default value
+        console.log('Using default staleness threshold: 7');
+    }
+
+    // Create Custom Post-Processing section if it doesn't exist
+    if (!settingsData['Custom Post-Processing']) {
+        settingsData['Custom Post-Processing'] = {};
+    }
+
+    // Handle custom post-processing settings
+    const customPostProcessingInputs = document.querySelectorAll('[id^="additional-"][name^="Custom Post-Processing."]');
+    customPostProcessingInputs.forEach(input => {
+        const key = input.name.split('.')[1];
+        settingsData['Custom Post-Processing'][key] = input.type === 'checkbox' ? input.checked : input.value;
+    });
+
+    console.log('Final Custom Post-Processing settings:', settingsData['Custom Post-Processing']);
+    
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
         settingsData['UI Settings'] = {};
@@ -122,6 +205,17 @@ export function updateSettings() {
     const userSystemEnabledCheckbox = document.querySelector('input[name="UI Settings.enable_user_system"]');
     if (userSystemEnabledCheckbox) {
         settingsData['UI Settings']['enable_user_system'] = userSystemEnabledCheckbox.checked;
+    }
+    
+    // Ensure program_logo is correctly captured from radio buttons
+    const selectedLogoRadio = document.querySelector('input[name="UI Settings.program_logo"]:checked');
+    if (selectedLogoRadio) {
+        settingsData['UI Settings']['program_logo'] = selectedLogoRadio.value;
+        console.log("Program logo set to:", selectedLogoRadio.value);
+    } else {
+        // Fallback to default if no radio is checked
+        settingsData['UI Settings']['program_logo'] = 'Default';
+        console.log("No program logo radio selected, using default");
     }
 
     // Process Notification settings
@@ -202,7 +296,7 @@ export function updateSettings() {
             const sourceData = {};
             sourceData.versions = [];
 
-            section.querySelectorAll('input, select').forEach(input => {
+            section.querySelectorAll('input, select, textarea').forEach(input => {
                 const nameParts = input.name.split('.');
                 const fieldName = nameParts[nameParts.length - 1];
                 console.log(`Processing field: ${fieldName}, Type: ${input.type}, Value: ${input.value}, Checked: ${input.checked}`);
@@ -217,6 +311,18 @@ export function updateSettings() {
                     }
                 } else if (input.type === 'select-multiple') {
                     sourceData[fieldName] = Array.from(input.selectedOptions).map(option => option.value);
+                } else if (fieldName === 'exclude_genres') {
+                    // Handle exclude_genres as a list - split by comma and trim whitespace
+                    const value = input.value.trim();
+                    console.log(`Processing exclude_genres for ${sourceId}: input value = "${value}"`);
+                    if (value) {
+                        const genres = value.split(',').map(genre => genre.trim()).filter(genre => genre);
+                        sourceData[fieldName] = genres;
+                        console.log(`Converted to array: ${JSON.stringify(genres)}`);
+                    } else {
+                        sourceData[fieldName] = [];
+                        console.log(`Empty value, set to empty array`);
+                    }
                 } else {
                     sourceData[fieldName] = input.value;
                 }
@@ -246,6 +352,14 @@ export function updateSettings() {
     }
 
     console.log("Final Content Sources data:", JSON.stringify(settingsData['Content Sources'], null, 2));
+    
+    // Debug: Check exclude_genres specifically
+    Object.keys(settingsData['Content Sources']).forEach(sourceId => {
+        const source = settingsData['Content Sources'][sourceId];
+        if (source.exclude_genres !== undefined) {
+            console.log(`Source ${sourceId} exclude_genres:`, source.exclude_genres, `(type: ${typeof source.exclude_genres})`);
+        }
+    });
 
     // Remove any 'Unknown' content sources
     if (settingsData['Content Sources'] && typeof settingsData['Content Sources'] === 'object') {
@@ -254,6 +368,16 @@ export function updateSettings() {
                 delete settingsData['Content Sources'][key];
             }
         });
+    }
+
+    // Validate content sources before saving
+    const contentSourceValidation = validateContentSources(settingsData['Content Sources']);
+    if (!contentSourceValidation.valid) {
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            message: contentSourceValidation.message
+        });
+        return;
     }
 
     // Debug: Log all tabs
@@ -307,22 +431,53 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
-            if (settingsData['Scrapers'][key] && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+            if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
+                console.log(`Removing invalid scraper type: ${settingsData['Scrapers'][key].type} for ID: ${key}`);
                 delete settingsData['Scrapers'][key];
             }
         });
     }
-
+    
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Torbox', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing', 'System Load Regulation'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
         }
     });
+
+    // Handle subtitle providers multi-select
+    const subtitleProvidersSelect = document.getElementById('additional-subtitle_providers');
+    if (subtitleProvidersSelect) {
+        if (!settingsData['Subtitle Settings']) {
+            settingsData['Subtitle Settings'] = {};
+        }
+        settingsData['Subtitle Settings']['subtitle_providers'] = Array.from(subtitleProvidersSelect.selectedOptions).map(option => option.value);
+    }
+
+    // Set default values for Subtitle Settings if not set
+    if (!settingsData['Subtitle Settings']) {
+        settingsData['Subtitle Settings'] = {};
+    }
+    
+    if (settingsData['Subtitle Settings']['enable_subtitles'] === undefined) {
+        settingsData['Subtitle Settings']['enable_subtitles'] = false;
+    }
+    
+    if (!settingsData['Subtitle Settings']['subtitle_languages']) {
+        settingsData['Subtitle Settings']['subtitle_languages'] = 'eng,zho';
+    }
+    
+    if (!settingsData['Subtitle Settings']['subtitle_providers'] || !settingsData['Subtitle Settings']['subtitle_providers'].length) {
+        settingsData['Subtitle Settings']['subtitle_providers'] = ['opensubtitles', 'opensubtitlescom', 'podnapisi', 'tvsubtitles'];
+    }
+    
+    if (!settingsData['Subtitle Settings']['user_agent']) {
+        settingsData['Subtitle Settings']['user_agent'] = 'SubDownloader/1.0 (your-email@example.com)';
+    }
 
     // Log the Debug settings before sending
     if (settingsData.Debug && settingsData.Debug.content_source_check_period) {
@@ -330,6 +485,45 @@ export function updateSettings() {
         Object.entries(settingsData.Debug.content_source_check_period).forEach(([key, value]) => {
             console.log(`${key}: value=${value}, type=${typeof value}`);
         });
+    }
+
+    // Validate symlink templates
+    const movieTemplateInput = document.getElementById('additional-symlink_movie_template');
+    const episodeTemplateInput = document.getElementById('additional-symlink_episode_template');
+
+    if (movieTemplateInput && episodeTemplateInput) {
+        const movieTemplate = movieTemplateInput.value;
+        const episodeTemplate = episodeTemplateInput.value;
+
+        if (movieTemplate.trim() !== '' && !movieTemplate.includes('{imdb_id}')) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Validation Error',
+                message: 'Symlink Movie Template must include {imdb_id}. Settings not saved.'
+            });
+            return; // Stop processing and do not save
+        }
+
+        if (episodeTemplate.trim() !== '' && !episodeTemplate.includes('{imdb_id}')) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Validation Error',
+                message: 'Symlink Episode Template must include {imdb_id}. Settings not saved.'
+            });
+            return; // Stop processing and do not save
+        }
+        
+        // Ensure Debug section exists if not already created by other inputs
+        if (!settingsData['Debug']) {
+            settingsData['Debug'] = {};
+        }
+        settingsData['Debug']['symlink_movie_template'] = movieTemplate;
+        settingsData['Debug']['symlink_episode_template'] = episodeTemplate;
+
+    } else {
+        console.warn('Symlink template input fields not found. Skipping validation.');
+        // Decide if you want to proceed or error out if fields are missing
+        // For now, we'll proceed but log a warning.
     }
 
     const versions = {};
@@ -344,7 +538,8 @@ export function updateSettings() {
                 if (input.type === 'checkbox') {
                     versionData[key] = input.checked;
                 } else if (input.type === 'number') {
-                    if (key === 'max_size_gb') {
+                    // Handle special fields that can be infinity
+                    if (key === 'max_size_gb' || key === 'max_bitrate_mbps') {
                         versionData[key] = input.value === '' ? Infinity : parseFloat(input.value) || 0;
                     } else {
                         versionData[key] = parseFloat(input.value) || 0;
@@ -427,15 +622,30 @@ export function updateSettings() {
             settingsData['Scraping'] = {};
         }
         
-        console.log("Setting uncached_content_handling value");
-        settingsData['Scraping']['uncached_content_handling'] = uncachedHandlingSelect.value;
+        // Handle Hybrid option specially
+        if (uncachedHandlingSelect.value === 'Hybrid') {
+            console.log("Setting uncached_content_handling to 'None' and hybrid_mode to true");
+            settingsData['Scraping']['uncached_content_handling'] = 'None';
+            settingsData['Scraping']['hybrid_mode'] = true;
+        } else {
+            console.log("Setting uncached_content_handling value");
+            settingsData['Scraping']['uncached_content_handling'] = uncachedHandlingSelect.value;
+            settingsData['Scraping']['hybrid_mode'] = false;
+        }
+        
+        // Always set jackett_seeders_only to true
+        console.log("Setting jackett_seeders_only value to true");
+        settingsData['Scraping']['jackett_seeders_only'] = true;
+        
+        // Always set enable_upgrading_cleanup to true
+        console.log("Setting enable_upgrading_cleanup value to true");
+        settingsData['Scraping']['enable_upgrading_cleanup'] = true;
         
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Uncached Handling Method select element not found!");
     }
 
-    // Handle the Jackett Seeders Only checkbox
     const jackettSeedersOnly = document.getElementById('scraping-jackett_seeders_only');
     console.log("Jackett Seeders Only element:", jackettSeedersOnly);
 
@@ -450,8 +660,8 @@ export function updateSettings() {
             settingsData['Scraping'] = {};
         }
         
-        console.log("Setting jackett_seeders_only value");
-        settingsData['Scraping']['jackett_seeders_only'] = jackettSeedersOnly.checked;
+        console.log("Setting jackett_seeders_only value to true");
+        settingsData['Scraping']['jackett_seeders_only'] = true;
         
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
@@ -531,22 +741,43 @@ export function updateSettings() {
     // Handle Reverse Parser settings
     const reverseParserSettings = {
         version_terms: {},
-        default_version: document.getElementById('default-version').value,
-        version_order: [] // New array to store the order
+        default_version: '', // Initialize with a default value
+        version_order: [] 
     };
+
+    const defaultVersionInputElement = document.getElementById('default-version');
+    if (defaultVersionInputElement) {
+        reverseParserSettings.default_version = defaultVersionInputElement.value;
+    } else {
+        console.warn("Element with ID 'default-version' not found. Reverse Parser default_version will use an empty or previously loaded value if available.");
+        // Attempt to preserve existing value if settingsData['Reverse Parser'] was pre-loaded and not cleared
+        // However, settingsData is cleared at the beginning of this function.
+        // A default or handling on the backend for missing value might be necessary.
+    }
 
     // Get the container of all version inputs
     const versionContainer = document.querySelector('#version-terms-container');
     
-    // Get all version inputs in their current order
-    const versionInputs = Array.from(versionContainer.children);
+    if (versionContainer) {
+        const versionInputs = Array.from(versionContainer.children);
     
-    versionInputs.forEach((input, index) => {
-        const version = input.getAttribute('data-version');
-        const terms = input.querySelector('.version-terms').value.split(',').map(term => term.trim()).filter(term => term);
-        reverseParserSettings.version_terms[version] = terms;
-        reverseParserSettings.version_order.push(version); // Add version to order array
-    });
+        versionInputs.forEach((inputElement) => { // index removed as it's not used
+            const version = inputElement.getAttribute('data-version');
+            const termsInputElement = inputElement.querySelector('.version-terms');
+            if (version && termsInputElement) {
+                const termsValue = termsInputElement.value;
+                const terms = splitRespectingParentheses(termsValue);
+                reverseParserSettings.version_terms[version] = terms;
+                reverseParserSettings.version_order.push(version); // Add version to order array
+            } else {
+                console.warn("Skipping a version input in Reverse Parser settings due to missing 'data-version' attribute or '.version-terms' child element.");
+            }
+        });
+    } else {
+        console.warn("Element with ID 'version-terms-container' not found. Reverse Parser version terms and order will be empty or based on pre-loaded data if available.");
+        // As settingsData is cleared at the function start, this will likely result in empty version_terms and version_order
+        // if the container is not found, potentially clearing these settings on save.
+    }
 
     settingsData['Reverse Parser'] = reverseParserSettings;
 
@@ -562,7 +793,19 @@ export function updateSettings() {
         console.warn("Rescrape Missing Files checkbox element not found!");
     }
 
-    const enableUpgrading = document.getElementById('scraping-enable_upgrading'); 
+    // Handle Disable Content Source Caching
+    const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching'); 
+    console.log("Disable Content Source Caching element:", disableContentSourceCaching);
+    
+    if (disableContentSourceCaching) {
+        settingsData['Debug']['disable_content_source_caching'] = disableContentSourceCaching.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Disable Content Source Caching checkbox element not found!");
+    }
+
+    const enableUpgrading = document.getElementById('scraping-enable_upgrading');
     console.log("Enable Upgrading element:", enableUpgrading);
     
     if (enableUpgrading) {
@@ -585,7 +828,7 @@ export function updateSettings() {
     }
 
 
-    const stalenessThreshold = document.getElementById('staleness threshold-staleness_threshold');
+    const stalenessThreshold = document.getElementById('debug-staleness_threshold');
     console.log("Staleness Threshold element:", stalenessThreshold);
     
     if (stalenessThreshold) {
@@ -600,6 +843,30 @@ export function updateSettings() {
         console.warn("Staleness Threshold input element not found!");
     }
     
+    // Set default staleness threshold if not set
+    if (!settingsData['Staleness Threshold']) {
+        settingsData['Staleness Threshold'] = {};
+    }
+    
+    if (settingsData['Staleness Threshold']['staleness_threshold'] === undefined) {
+        console.log("Setting default staleness_threshold to 7 days");
+        settingsData['Staleness Threshold']['staleness_threshold'] = 7;
+    }
+        
+    console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+
+    // Set default sync_deletions if not set
+    if (!settingsData['Sync Deletions']) {
+        settingsData['Sync Deletions'] = {};
+    }
+    
+    if (settingsData['Sync Deletions']['sync_deletions'] === undefined) {
+        console.log("Setting default sync_deletions to true");
+        settingsData['Sync Deletions']['sync_deletions'] = true;
+    }
+        
+    console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+
     const enableReverseOrderScraping = document.getElementById('scraping-enable_reverse_order_scraping');
     console.log("Enable Reverse Order Scraping element:", enableReverseOrderScraping);
     
@@ -610,7 +877,7 @@ export function updateSettings() {
     } else {
         console.warn("Enable Reverse Order Scraping checkbox element not found!");
     }
-    
+
     const disableAdult = document.getElementById('scraping-disable_adult');
     console.log("Disable Adult Content element:", disableAdult);
     
@@ -631,17 +898,6 @@ export function updateSettings() {
         console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
     } else {
         console.warn("Sync Deletions checkbox element not found!");
-    }
-
-    const hybridMode = document.getElementById('scraping-hybrid_mode');
-    console.log("Hybrid Mode element:", hybridMode);
-    
-    if (hybridMode) {
-        settingsData['Scraping']['hybrid_mode'] = hybridMode.checked;
-
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Hybrid Mode checkbox element not found!");
     }
 
     const traktEarlyReleases = document.getElementById('scraping-trakt_early_releases');
@@ -754,17 +1010,6 @@ export function updateSettings() {
         console.warn("Blacklist Duration input element not found!");
     }
 
-    const torboxAPIKey = document.getElementById('torbox-api_key');
-    console.log("Torbox API Key element:", torboxAPIKey);
-    
-    if (torboxAPIKey) {
-        settingsData['Torbox']['api_key'] = torboxAPIKey.value;
-    
-        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
-    } else {
-        console.warn("Torbox API Key input element not found!");
-    }
-
     const plexWatchlistRemoval = document.getElementById('scraping-plex_watchlist_removal');
     console.log("Plex Watchlist Removal element:", plexWatchlistRemoval);
     
@@ -831,7 +1076,68 @@ export function updateSettings() {
         console.warn("Debrid Provider select element not found!");
     }
 
+    const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
+    console.log("Update Plex on File Discovery element:", updatePlexOnFileDiscovery);
+    
+    if (updatePlexOnFileDiscovery) {
+        settingsData['Plex']['update_plex_on_file_discovery'] = updatePlexOnFileDiscovery.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Update Plex on File Discovery checkbox element not found!");
+    }
+
+    const mountedFileLocation = document.getElementById('plex-mounted_file_location');
+    console.log("Plex File Location element:", mountedFileLocation);
+    
+    if (mountedFileLocation) {
+        settingsData['Plex']['mounted_file_location'] = mountedFileLocation.value;
+    
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Plex File Location input element not found!");
+    }
+
+    const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');
+    console.log("Do Not Add Plex Watch History Items To Queue element:", doNotAddPlexWatchHistoryItemsToQueue);
+    
+    if (doNotAddPlexWatchHistoryItemsToQueue) {
+        settingsData['Scraping']['do_not_add_plex_watch_history_items_to_queue'] = doNotAddPlexWatchHistoryItemsToQueue.checked;
+
+        console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
+    } else {
+        console.warn("Do Not Add Plex Watch History Items To Queue checkbox element not found!");
+    }
+
     console.log("Final settings data to be sent:", JSON.stringify(settingsData, null, 2));
+    
+    // Debug: Check exclude_genres in final data
+    if (settingsData['Content Sources']) {
+        Object.keys(settingsData['Content Sources']).forEach(sourceId => {
+            const source = settingsData['Content Sources'][sourceId];
+            if (source.exclude_genres !== undefined) {
+                console.log(`FINAL - Source ${sourceId} exclude_genres:`, source.exclude_genres, `(type: ${typeof source.exclude_genres})`);
+            }
+        });
+    }
+
+    // Set default values for enable_upgrading, disable_adult, and trakt_early_releases
+    if (settingsData['Scraping']['enable_upgrading'] === undefined) {
+        console.log("Setting default enable_upgrading to false");
+        settingsData['Scraping']['enable_upgrading'] = false;
+    }
+        
+    if (settingsData['Scraping']['disable_adult'] === undefined) {
+        console.log("Setting default disable_adult to true");
+        settingsData['Scraping']['disable_adult'] = true;
+    }
+        
+    if (settingsData['Scraping']['trakt_early_releases'] === undefined) {
+        console.log("Setting default trakt_early_releases to false");
+        settingsData['Scraping']['trakt_early_releases'] = false;
+    }
+        
+    console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
 
     return fetch('/settings/api/settings', {
         method: 'POST',
@@ -844,7 +1150,7 @@ export function updateSettings() {
     .then(data => {
         console.log("Server response:", data);
         if (data.status === 'success') {
-            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully' });
+            showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully.<br>Program runner restarted if running.'});
         } else {
             showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: 'Error saving settings: ' + data.message });
         }
@@ -871,7 +1177,9 @@ function updateContentSourceCheckPeriods() {
         'Trakt Lists': 900,
         'Trakt Collection': 900,
         'My Plex Watchlist': 900,
-        'Other Plex Watchlist': 900
+        'Other Plex Watchlist': 900,
+        'My Plex RSS Watchlist': 900,
+        'My Friends Plex RSS Watchlist': 900
     };
 
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);
@@ -892,47 +1200,224 @@ function updateContentSourceCheckPeriods() {
     });
 }
 
+// Function to initialize settings tabs
+function initializeSettingsTabs() {
+    const tabButtons = document.querySelectorAll('.settings-tab-button');
+    const tabContents = document.querySelectorAll('.settings-tab-content');
+    const tabSelect = document.querySelector('.settings-tab-select');
+    
+    if (!tabButtons.length || !tabContents.length || !tabSelect) {
+        console.warn('Settings tabs elements not found');
+        return;
+    }
+    
+    // Tab switching is handled in settings_base.html
+    console.log('Settings tabs initialized');
+}
+
 // Update the DOMContentLoaded event listener
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize settings tabs if needed
+    if (typeof initializeSettingsTabs === 'function') {
+        initializeSettingsTabs();
+    }
+    
     loadSettingsData().then(() => {
+        // Setup radio button handling for program_logo
+        const logoRadioButtons = document.querySelectorAll('input[type="radio"][name="UI Settings.program_logo"]');
+        logoRadioButtons.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.checked) {
+                    saveSingleSetting('UI Settings', 'program_logo', this.value);
+                }
+            });
+        });
+        
         // Initial toggle of Plex section
         togglePlexSection();
-        handleDescriptions();
         
-        // Add event listener for File Management library type changes
-        const fileManagementSelect = document.getElementById('file management-file_collection_management');
-        if (fileManagementSelect) {
-            fileManagementSelect.addEventListener('change', togglePlexSection);
+        // Add event listener for collection management type changes
+        const collectionManagementSelect = document.getElementById('file-management-collection_management_type');
+        if (collectionManagementSelect) {
+            collectionManagementSelect.addEventListener('change', function() {
+                togglePlexSection();
+            });
         }
         
-        // Add mutation observer to handle dynamic changes
-        const requiredTab = document.querySelector('#required');
-        if (requiredTab) {
-            const observer = new MutationObserver((mutations) => {
-                mutations.forEach((mutation) => {
-                    if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
-                        // Check if any of the added nodes contain the Plex section
-                        mutation.addedNodes.forEach((node) => {
-                            if (node.nodeType === 1 && node.querySelector) {  // Element node
-                                const header = node.querySelector('.settings-section-header h4');
-                                if (header && header.textContent.trim() === 'Plex') {
-                                    console.log('Plex section dynamically added, updating visibility');
-                                    togglePlexSection();
-                                }
-                            }
-                        });
-                    }
+        // Add event listener for the "Save Settings" button
+        const saveSettingsButton = document.getElementById('save-settings-button');
+        if (saveSettingsButton) {
+            saveSettingsButton.addEventListener('click', function() {
+                saveSettings();
+            });
+        }
+        
+        // Add event listener for the "Reset Settings" button
+        const resetSettingsButton = document.getElementById('reset-settings-button');
+        if (resetSettingsButton) {
+            resetSettingsButton.addEventListener('click', function() {
+                resetSettings();
+            });
+        }
+        
+        // Add event listeners for content source check periods
+        const contentSourceCheckPeriods = document.getElementById('content-source-check-periods');
+        if (contentSourceCheckPeriods) {
+            const checkPeriodInputs = contentSourceCheckPeriods.querySelectorAll('input[type="number"]');
+            checkPeriodInputs.forEach(function(input) {
+                input.addEventListener('change', function() {
+                    updateContentSourceCheckPeriod(this);
                 });
             });
-            
-            observer.observe(requiredTab, { childList: true, subtree: true });
-        }
-        
-        // Ensure the content-source-check-periods element exists before calling the function
-        if (document.getElementById('content-source-check-periods')) {
-            updateContentSourceCheckPeriods();
         } else {
             console.warn("Element with id 'content-source-check-periods' not found. Make sure it exists in your HTML.");
         }
+        
+        // Hide hybrid mode and jackett seeders only checkboxes
+        hideHybridModeCheckboxes();
+        
+        // Also call it when the scraping tab is shown
+        document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
     });
 });
+
+// Define the hideHybridModeCheckboxes function outside the DOMContentLoaded event
+function hideHybridModeCheckboxes() {
+    // Hide hybrid_mode checkbox completely
+    const hybridModeCheckbox = document.getElementById('scraping-hybrid_mode');
+    if (hybridModeCheckbox) {
+        const hybridModeFormGroup = hybridModeCheckbox.closest('.settings-form-group');
+        if (hybridModeFormGroup) {
+            hybridModeFormGroup.classList.add('hybrid-mode-group');
+        }
+    }
+    
+    // Hide jackett_seeders_only checkbox completely
+    const jackettSeedersOnlyCheckbox = document.getElementById('scraping-jackett_seeders_only');
+    if (jackettSeedersOnlyCheckbox) {
+        const jackettSeedersOnlyFormGroup = jackettSeedersOnlyCheckbox.closest('.settings-form-group');
+        if (jackettSeedersOnlyFormGroup) {
+            jackettSeedersOnlyFormGroup.classList.add('jackett-seeders-only-group');
+        }
+    }
+    
+    // Also hide any version-specific hybrid_mode and jackett_seeders_only checkboxes
+    document.querySelectorAll('input[data-hybrid-mode="true"], input[data-jackett-seeders-only="true"]').forEach(function(checkbox) {
+        const formGroup = checkbox.closest('.settings-form-group');
+        if (formGroup) {
+            if (checkbox.hasAttribute('data-hybrid-mode')) {
+                formGroup.classList.add('hybrid-mode-group');
+            }
+            if (checkbox.hasAttribute('data-jackett-seeders-only')) {
+                formGroup.classList.add('jackett-seeders-only-group');
+            }
+        }
+    });
+}
+
+// Add event listener for the scraping tab content loaded event
+document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
+
+// Function to handle debug settings synchronization
+function syncDebugSettings() {
+    // Get the debug settings from the true_debug tab
+    const ultimateSortOrderSelect = document.getElementById('debug-ultimate_sort_order');
+    const softMaxSizeGbCheckbox = document.getElementById('debug-soft_max_size_gb');
+    const stalenessThresholdInput = document.getElementById('debug-staleness_threshold');
+    
+    if (ultimateSortOrderSelect && softMaxSizeGbCheckbox) {
+        // Add change event listeners to sync with the original settings
+        ultimateSortOrderSelect.addEventListener('change', function() {
+            // Find the original setting in the scraping tab (if it exists)
+            const originalSelect = document.getElementById('scraping-ultimate_sort_order');
+            if (originalSelect) {
+                originalSelect.value = ultimateSortOrderSelect.value;
+            }
+        });
+        
+        softMaxSizeGbCheckbox.addEventListener('change', function() {
+            // Find the original setting in the scraping tab (if it exists)
+            const originalCheckbox = document.getElementById('scraping-soft_max_size_gb');
+            if (originalCheckbox) {
+                originalCheckbox.checked = softMaxSizeGbCheckbox.checked;
+            }
+        });
+    }
+
+    // Handle staleness threshold sync
+    if (stalenessThresholdInput) {
+        stalenessThresholdInput.addEventListener('change', function() {
+            // Update the settingsData object
+            if (!settingsData['Staleness Threshold']) {
+                settingsData['Staleness Threshold'] = {};
+            }
+            settingsData['Staleness Threshold']['staleness_threshold'] = parseInt(stalenessThresholdInput.value) || 7;
+        });
+    }
+}
+
+// Add event listener for the true_debug tab content loaded event
+document.addEventListener('trueDebugContentLoaded', syncDebugSettings);
+document.addEventListener('DOMContentLoaded', syncDebugSettings);
+
+// Function to save a single setting
+function saveSingleSetting(section, key, value) {
+    console.log(`Saving setting: ${section}.${key} = ${value}`);
+    const formData = new FormData();
+    formData.append('section', section);
+    formData.append('key', key);
+    formData.append('value', value);
+    
+    return fetch('/settings/save_single_setting', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === 'success') {
+            console.log(`Setting ${section}.${key} saved successfully`);
+            
+            // Show a small notification
+            const notification = document.createElement('div');
+            notification.className = 'setting-saved-notification';
+            notification.textContent = 'Setting saved!';
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.right = '20px';
+            notification.style.backgroundColor = '#4CAF50';
+            notification.style.color = 'white';
+            notification.style.padding = '10px 20px';
+            notification.style.borderRadius = '4px';
+            notification.style.zIndex = '1000';
+            notification.style.boxShadow = '0 2px 10px rgba(0, 0, 0, 0.3)';
+            notification.style.opacity = '1';
+            notification.style.transition = 'opacity 0.5s';
+            
+            document.body.appendChild(notification);
+            
+            // Remove notification after a delay
+            setTimeout(() => {
+                notification.style.opacity = '0';
+                setTimeout(() => {
+                    notification.remove();
+                }, 500);
+            }, 2000);
+            
+            // Special handling for program_logo - reload the page to show the change
+            if (section === 'UI Settings' && key === 'program_logo') {
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            }
+            
+            return true;
+        } else {
+            console.error(`Error saving setting: ${data.message || 'Unknown error'}`);
+            return false;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        return false;
+    });
+}

@@ -1,4 +1,200 @@
+<style>
+    .settings-description {
+        margin-top: 10px;
+        margin-bottom: 10px;
+        font-style: italic;
+        color: #8f8f8f;
+    }
+
+    .plex-auth-section {
+        padding: 20px;
+        background-color: var(--card-bg);
+        border-radius: 8px;
+    }
+    
+    .plex-auth-btn {
+        background-color: #282a2d;
+        color: #e5a00d;
+        border: 2px solid #e5a00d;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: bold;
+        transition: all 0.3s;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .plex-auth-btn:hover {
+        background-color: #e5a00d;
+        color: #282a2d;
+    }
+    
+    .plex-auth-btn img {
+        height: 20px;
+    }
+    
+    .plex-server-select {
+        margin-top: 15px;
+        display: none;
+    }
+    
+    .plex-server-select.active {
+        display: block;
+    }
+    
+    .plex-server-card {
+        background-color: #2a2a2a;
+        padding: 15px;
+        margin: 10px 0;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: background-color 0.3s;
+    }
+    
+    .plex-server-card:hover {
+        background-color: #3a3a3a;
+    }
+    
+    .plex-server-card.selected {
+        border: 2px solid #e5a00d;
+    }
+    
+    .plex-server-name {
+        font-weight: bold;
+        color: #e5a00d;
+    }
+    
+    .plex-connection-type {
+        font-size: 0.9em;
+        color: #8f8f8f;
+    }
+    
+    .plex-libraries-section {
+        margin-top: 15px;
+        display: none;
+    }
+    
+    .plex-libraries-section.active {
+        display: block;
+    }
+    
+    .plex-library-select {
+        margin: 10px 0;
+    }
+    
+    .plex-library-select select {
+        width: 100%;
+        padding: 8px;
+        background-color: #2a2a2a;
+        color: #f1f1f1;
+        border: 1px solid #3a3a3a;
+        border-radius: 4px;
+    }
+
+    .plex-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+    }
+
+    .plex-modal-content {
+        position: relative;
+        background-color: var(--card-bg);
+        margin: 5% auto;
+        padding: 20px;
+        width: 80%;
+        max-width: 600px;
+        border-radius: 8px;
+        max-height: 90vh;
+        overflow-y: auto;
+    }
+
+    .plex-modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #3a3a3a;
+    }
+
+    .plex-modal-title {
+        font-size: 1.5em;
+        color: #e5a00d;
+    }
+
+    .plex-modal-close {
+        cursor: pointer;
+        font-size: 1.5em;
+        color: #8f8f8f;
+    }
+
+    .plex-modal-close:hover {
+        color: #e5a00d;
+    }
+
+    .plex-modal-step {
+        display: none;
+    }
+
+    .plex-modal-step.active {
+        display: block;
+    }
+
+    .plex-modal-footer {
+        margin-top: 20px;
+        padding-top: 10px;
+        border-top: 1px solid #3a3a3a;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+
+    .plex-modal-btn {
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: bold;
+        transition: all 0.3s;
+    }
+
+    .plex-modal-btn.primary {
+        background-color: #e5a00d;
+        color: #282a2d;
+        border: none;
+    }
+
+    .plex-modal-btn.primary:hover {
+        background-color: #c48c0b;
+    }
+
+    .plex-modal-btn.secondary {
+        background-color: transparent;
+        color: #e5a00d;
+        border: 1px solid #e5a00d;
+    }
+
+    .plex-modal-btn.secondary:hover {
+        background-color: rgba(229, 160, 13, 0.1);
+    }
+</style>
+
 <h3>Required Settings</h3>
+
+{% if environment_mode != 'full' %}
+<div class="alert alert-warning" style="background-color: #fff3cd; color: #856404; margin-top: 10px; padding: 15px; border: 1px solid #ffeaa7; border-radius: 5px; margin-bottom: 20px;">
+    <strong>⚠️ Warning:</strong> You are currently in a restricted environment mode. Avoid adjusting the "Required Settings" content.
+</div>
+{% endif %}
+
+
 <div class="settings-expand-collapse-buttons">
     <button type="button" class="settings-expand-all">Expand All</button>
     <button type="button" class="settings-collapse-all">Collapse All</button>
@@ -46,8 +242,70 @@
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
+    <!-- Plex Authentication Section -->
+    <div class="plex-auth-section">
+        <h3>Plex Authentication</h3>
+        <p class="settings-description">Connect to your Plex Media Server by signing in with your Plex account.</p>
+        <button type="button" id="plex-auth-btn" class="plex-auth-btn">
+            <img src="https://www.plex.tv/wp-content/themes/plex/assets/img/plex-logo.svg" alt="Plex Logo">
+            Sign in to Plex
+        </button>
+        
+        <div id="plex-server-select" class="plex-server-select">
+            <h4>Select Your Plex Server</h4>
+            <div id="plex-servers-list"></div>
+        </div>
+        
+        <div id="plex-libraries-section" class="plex-libraries-section">
+            <h4>Select Your Libraries</h4>
+            <div class="plex-library-select">
+                <label for="movie_libraries">Movie Libraries:</label>
+                <select id="movie_libraries" name="movie_libraries" multiple>
+                </select>
+            </div>
+            <div class="plex-library-select">
+                <label for="shows_libraries">TV Show Libraries:</label>
+                <select id="shows_libraries" name="shows_libraries" multiple>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plex Modal -->
+    <div id="plex-modal" class="plex-modal">
+        <div class="plex-modal-content">
+            <div class="plex-modal-header">
+                <h3 class="plex-modal-title">Plex Configuration</h3>
+                <span class="plex-modal-close">&times;</span>
+            </div>
+            
+            <div id="plex-modal-step-1" class="plex-modal-step active">
+                <h4>Select Your Plex Server</h4>
+                <div id="plex-servers-list"></div>
+            </div>
+            
+            <div id="plex-modal-step-2" class="plex-modal-step">
+                <h4>Configure Libraries</h4>
+                <div class="plex-library-select">
+                    <label for="modal-movie-libraries">Movie Libraries:</label>
+                    <select id="modal-movie-libraries" multiple>
+                    </select>
+                </div>
+                <div class="plex-library-select">
+                    <label for="modal-shows-libraries">TV Show Libraries:</label>
+                    <select id="modal-shows-libraries" multiple>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="plex-modal-footer">
+                <button id="plex-modal-back" class="plex-modal-btn secondary" style="display: none;">Back</button>
+                <button id="plex-modal-next" class="plex-modal-btn primary">Next</button>
+            </div>
+        </div>
+    </div>
         {% for key, value in settings_schema['File Management'].items() %}
-            {% if key != 'tab' and key != 'symlink_organize_by_type' %}
+            {% if key != 'tab' and key != 'symlink_organize_by_type' and key != 'symlink_organize_by_resolution' and key != 'process_non_checking_items' and key != 'symlink_organize_by_version' and key != 'symlink_folder_order' %}
             <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
                 <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
@@ -56,11 +314,29 @@
                            {% if settings.get('File Management', {}).get(key) %}checked{% endif %}>
                 {% elif value.choices %}
                     <select id="file management-{{ key }}" name="File Management.{{ key }}" class="settings-input"
-                            data-section="File Management" data-key="{{ key }}">
+                            data-section="File Management" data-key="{{ key }}"
+                            {% if key == 'file_collection_management' %}data-current-value="{{ settings.get('File Management', {}).get(key, '') }}" 
+                            data-previous-value="{{ settings.get('File Management', {}).get(key, '') }}"
+                            data-is-windows="{{ is_windows | tojson }}" 
+                            data-allow-windows-symlinks="{{ allow_windows_symlinks | tojson }}"
+                            {% endif %}>
+                        {% set current_value = settings.get('File Management', {}).get(key, '') %}
                         {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('File Management', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% set is_disallowed = is_windows and choice == 'Symlinked/Local' and not allow_windows_symlinks %}
+                            <option value="{{ choice }}" 
+                                    {% if current_value == choice %}selected{% endif %} 
+                                    {% if is_disallowed and current_value != 'Symlinked/Local' %}disabled{% endif %}>{{ choice }}</option>
                         {% endfor %}
                     </select>
+                    {% if key == 'file_collection_management' and is_windows and not allow_windows_symlinks %}
+                        {% set current_value = settings.get('File Management', {}).get(key, '') %}
+                            {% if current_value != 'Symlinked/Local' %}
+                            <div class="windows-warning" style="margin-top: 10px; padding: 10px; border-radius: 5px; background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;">
+                                <strong>Warning:</strong> Selecting Symlinked/Local is disabled on Windows unless the 'Allow Symlinks on Windows' debug setting is enabled.
+                            </div>
+                            {% endif %}
+
+                    {% endif %}
                 {% else %}
                     <input type="{{ value.type }}" id="file management-{{ key }}" name="File Management.{{ key }}"
                            value="{{ settings.get('File Management', {}).get(key, '') }}" class="settings-input"
@@ -73,8 +349,46 @@
             </div>
             {% endif %}
         {% endfor %}
+        
+        <!-- Plex settings included in File Management section -->
+        <div id="plex-settings-in-file-management" style="display: none;">
+            <div class="settings-subheader">
+                <h5>Plex Settings</h5>
+            </div>
+            {% for key, value in settings_schema['Plex'].items() %}
+                {% if key != 'tab' %}
+                <div class="settings-form-group">
+                    <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                    {% if value.type == 'boolean' %}
+                        <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
+                               data-section="Plex" data-key="{{ key }}"
+                               {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
+                    {% elif value.choices %}
+                        <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
+                                data-section="Plex" data-key="{{ key }}">
+                            {% for choice in value.choices %}
+                                <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                            {% endfor %}
+                        </select>
+                    {% else %}
+                        <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
+                               value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
+                               data-section="Plex" data-key="{{ key }}"
+                               {% if key in ['movie_libraries', 'shows_libraries'] %}data-plex-required="true"{% endif %}
+                               {% if key == 'disable_plex_library_checks' %}data-plex-required="true"{% endif %}
+                               {% if value.sensitive %}type="password"{% endif %}>
+                    {% endif %}
+                    {% if value.description %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
     </div>
 </div>
+
+
 
 <div class="settings-section">
     <div class="settings-section-header">
@@ -82,6 +396,9 @@
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
+        <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
+        <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
+        <br>
         {% for key, value in settings_schema['Trakt'].items() %}
             {% if key != 'tab' %}
             <div class="settings-form-group">
@@ -109,19 +426,12 @@
             </div>
             {% endif %}
         {% endfor %}
-    </div>
-</div>
-
-<!-- Trakt Authorization Section -->
-<div class="settings-section">
-    <div class="settings-section-header">
-        <h4>Trakt Authorization</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        <p class="settings-description">Click the button below to authorize Trakt. You must first enter your Client ID and Client Secret. These can be retrieved by creating an app at 
-            <a href="https://trakt.tv/oauth/applications/">Trakt Applications</a>
-        </p>
+        
+        <!-- Trakt Authorization -->
+        <div class="settings-subheader">
+            <h5>Authorization</h5>
+        </div>
+        <p class="settings-description">Click the button below to authorize Trakt. You must first have entered your Client ID and Client Secret above (after creating an application).</p>
         <button id="trakt-auth-btn" class="settings-button">Authorize Trakt</button>
         <div id="trakt-auth-status" class="trakt-status"></div>
         <div id="trakt-auth-code" class="trakt-auth-code" style="display: none;">
@@ -131,40 +441,495 @@
     </div>
 </div>
 
-<!-- Always include Plex section but initially hidden -->
-<div class="settings-section" id="plex-settings-section" style="display: none;">
-    <div class="settings-section-header">
-        <h4>Plex</h4>
-        <span class="settings-toggle-icon">+</span>
-    </div>
-    <div class="settings-section-content">
-        {% for key, value in settings_schema['Plex'].items() %}
-            {% if key != 'tab' %}
-            <div class="settings-form-group">
-                <label for="plex-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="plex-{{ key }}" name="Plex.{{ key }}"
-                           data-section="Plex" data-key="{{ key }}"
-                           {% if settings.get('Plex', {}).get(key) %}checked{% endif %}>
-                {% elif value.choices %}
-                    <select id="plex-{{ key }}" name="Plex.{{ key }}" class="settings-input"
-                            data-section="Plex" data-key="{{ key }}">
-                        {% for choice in value.choices %}
-                            <option value="{{ choice }}" {% if settings.get('Plex', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
-                        {% endfor %}
-                    </select>
-                {% else %}
-                    <input type="{{ value.type }}" id="plex-{{ key }}" name="Plex.{{ key }}"
-                           value="{{ settings.get('Plex', {}).get(key, '') }}" class="settings-input"
-                           data-section="Plex" data-key="{{ key }}"
-                           {% if value.sensitive %}type="password"{% endif %}>
-                {% endif %}
-                {% if value.description %}
-                    <p class="settings-description">{{ value.description }}</p>
-                {% endif %}
-            </div>
-            {% endif %}
-        {% endfor %}
-    </div>
-</div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Get the elements
+    const updatePlexOnDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
+    const disablePlexChecks = document.getElementById('plex-disable_plex_library_checks');
 
+    // Function to handle mutual exclusivity
+    function handlePlexSettingsChange(event) {
+        if (event.target === disablePlexChecks) {
+            if (disablePlexChecks.checked) {
+                // If disable checks is enabled, disable the other one
+                updatePlexOnDiscovery.checked = false;
+            }
+        } else {
+            // If either of the first two are modified
+            if (updatePlexOnDiscovery.checked) {
+                disablePlexChecks.checked = false;
+            }
+        }
+    }
+
+    // Add event listeners
+    updatePlexOnDiscovery.addEventListener('change', handlePlexSettingsChange);
+    disablePlexChecks.addEventListener('change', handlePlexSettingsChange);
+});
+</script>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+document.addEventListener('DOMContentLoaded', function() {
+    const collectionTypeSelect = document.querySelector('select[name="File Management.file_collection_management"]');
+    // Read values from data attributes, parsing the JSON string representation
+    const isWindows = collectionTypeSelect ? JSON.parse(collectionTypeSelect.dataset.isWindows || 'false') : false;
+    const allowWindowsSymlinks = collectionTypeSelect ? JSON.parse(collectionTypeSelect.dataset.allowWindowsSymlinks || 'false') : false;
+
+    if (collectionTypeSelect) {
+        updateUIVisibility(collectionTypeSelect.value);
+
+        collectionTypeSelect.addEventListener('change', async function(event) {
+            const previousValue = this.getAttribute('data-previous-value');
+            const newValue = this.value;
+
+            // If the value didn't actually change (e.g., clicked disabled option or re-selected same), do nothing
+            if (newValue === previousValue) {
+                return;
+            }
+            
+            // Prevent immediate change & temporarily revert for confirmation dialog
+            event.preventDefault();
+            event.stopPropagation();
+            this.value = previousValue; // Revert visually for confirmation
+            
+            // Confirmation logic
+            let confirmMessage = 'Changing the collection management type may affect your existing library structure. Are you sure you want to proceed?';
+            if (previousValue === 'Symlinked/Local' && newValue === 'Plex') {
+                confirmMessage = 'Changing from Symlinked/Local to Plex management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
+            } else if (previousValue === 'Plex' && newValue === 'Symlinked/Local') {
+                confirmMessage = 'Changing from Plex to Symlinked/Local management is an advanced process that may affect your existing library structure. Are you sure you want to proceed?';
+            } // (Add other conditions if needed)
+            
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: '⚠️ Change Collection Management Type',
+                message: confirmMessage,
+                confirmText: 'Yes, Change',
+                cancelText: 'No, Keep Current',
+                onConfirm: () => {
+                    // Apply the change
+                    this.value = newValue;
+                    this.setAttribute('data-previous-value', newValue); // Update previous value reference
+                    
+                    // Trigger settings change event & UI update
+                    const settingsEvent = new CustomEvent('settings-changed', {
+                        detail: {
+                            section: 'File Management',
+                            key: 'file_collection_management',
+                            value: newValue
+                        }
+                    });
+                    document.dispatchEvent(settingsEvent);
+                    updateUIVisibility(newValue);
+                },
+                onCancel: () => {
+                    // Value is already visually reverted, do nothing further
+                }
+            });
+        });
+
+        function updateUIVisibility(value) {
+            const plexSection = document.getElementById('plex-settings-in-file-management');
+            const symlinkFields = [
+                document.querySelector('div.settings-form-group:has(#file\\ management-original_files_path)'),
+                document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)'),
+                ...document.querySelectorAll('.symlink-plex-setting')
+            ];
+
+            if (value === 'Plex') {
+                if (plexSection) plexSection.style.display = 'block';
+                symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
+            } else if (value === 'Symlinked/Local') {
+                if (plexSection) plexSection.style.display = 'none';
+                symlinkFields.forEach(field => { if (field) field.style.display = 'block'; });
+            } else {
+                if (plexSection) plexSection.style.display = 'none';
+                symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
+            }
+        }
+    }
+
+    // Plex-related variables
+    const plexAuthBtn = document.getElementById('plex-auth-btn');
+    const modal = document.getElementById('plex-modal');
+    const closeBtn = document.querySelector('.plex-modal-close');
+    const nextBtn = document.getElementById('plex-modal-next');
+    const backBtn = document.getElementById('plex-modal-back');
+    const step1 = document.getElementById('plex-modal-step-1');
+    const step2 = document.getElementById('plex-modal-step-2');
+    
+    let plexToken = null;
+    let selectedServer = null;
+    let currentStep = 1;
+
+    // Modal control functions
+    function resetModal() {
+        currentStep = 1;
+        step1.classList.add('active');
+        step2.classList.remove('active');
+        backBtn.style.display = 'none';
+        nextBtn.textContent = 'Next';
+        selectedServer = null;
+
+        // Hide step 2 button if not using Plex management
+        const managementType = document.querySelector('select[name="File Management.file_collection_management"]').value;
+        if (managementType !== 'Plex') {
+            nextBtn.textContent = 'Finish';
+        }
+    }
+
+    if (closeBtn) {
+        closeBtn.onclick = function() {
+            modal.style.display = 'none';
+            resetModal();
+        }
+    }
+
+    /*
+    // Commenting out the window.onclick listener to prevent closing the modal by clicking the backdrop
+    window.onclick = function(event) {
+        if (event.target == modal) {
+            modal.style.display = 'none';
+            resetModal();
+        }
+    }
+    */
+
+    if (nextBtn) {
+        nextBtn.onclick = function() {
+            const managementType = document.querySelector('select[name="File Management.file_collection_management"]').value;
+            
+            if (currentStep === 1) {
+                if (!selectedServer) {
+                    showPopup({
+                        type: POPUP_TYPES.WARNING,
+                        title: 'Warning',
+                        message: 'Please select a server first.',
+                        autoClose: 3000
+                    });
+                    return;
+                }
+
+                // If not using Plex management, skip library selection
+                if (managementType !== 'Plex') {
+                    const connection = selectedServer.connections.find(c => c.local) || selectedServer.connections[0];
+                    
+                    // Update only the Plex connection details
+                    if (managementType === 'Symlinked/Local') {
+                        document.querySelector('input[name="File Management.plex_url_for_symlink"]').value = connection.uri;
+                        document.querySelector('input[name="File Management.plex_token_for_symlink"]').value = plexToken;
+                    }
+                    
+                    // Close the modal
+                    modal.style.display = 'none';
+                    resetModal();
+                    
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        title: 'Success',
+                        message: 'Plex configuration completed successfully!',
+                        autoClose: 3000
+                    });
+                    return;
+                }
+
+                // Continue with library selection for Plex management
+                step1.classList.remove('active');
+                step2.classList.add('active');
+                backBtn.style.display = 'block';
+                nextBtn.textContent = 'Finish';
+                currentStep = 2;
+            } else {
+                // Save the selected libraries and update the main form
+                const modalMovieLibraries = document.getElementById('modal-movie-libraries');
+                const modalShowsLibraries = document.getElementById('modal-shows-libraries');
+                const connection = selectedServer.connections.find(c => c.local) || selectedServer.connections[0];
+                
+                // Update form fields for Plex management
+                document.querySelector('input[name="Plex.url"]').value = connection.uri;
+                document.querySelector('input[name="Plex.token"]').value = plexToken;
+                
+                // Update library fields
+                const movieLibrariesInput = document.querySelector('input[name="Plex.movie_libraries"]');
+                const showsLibrariesInput = document.querySelector('input[name="Plex.shows_libraries"]');
+                
+                if (movieLibrariesInput && showsLibrariesInput) {
+                    const selectedMovies = Array.from(modalMovieLibraries.selectedOptions).map(opt => opt.value);
+                    const selectedShows = Array.from(modalShowsLibraries.selectedOptions).map(opt => opt.value);
+                    
+                    movieLibrariesInput.value = selectedMovies.join(',');
+                    showsLibrariesInput.value = selectedShows.join(',');
+                }
+                
+                // Close the modal
+                modal.style.display = 'none';
+                resetModal();
+                
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Plex configuration completed successfully!',
+                    autoClose: 3000
+                });
+            }
+        }
+    }
+
+    // Server selection function
+    async function selectServer(server, event) {
+        // Remove selection from other cards
+        document.querySelectorAll('.plex-server-card').forEach(card => {
+            card.classList.remove('selected');
+        });
+        
+        // Select this card
+        if (event && event.currentTarget) {
+            event.currentTarget.classList.add('selected');
+        }
+        selectedServer = server;
+        
+        // Prefer local connection if available
+        const connection = server.connections.find(c => c.local) || server.connections[0];
+        
+        try {
+            const librariesResponse = await fetch(`/onboarding/plex/libraries?url=${encodeURIComponent(connection.uri)}&token=${plexToken}`);
+            const librariesData = await librariesResponse.json();
+            
+            if (librariesData.success) {
+                // Clear existing options
+                const modalMovieLibraries = document.getElementById('modal-movie-libraries');
+                const modalShowsLibraries = document.getElementById('modal-shows-libraries');
+                modalMovieLibraries.innerHTML = '';
+                modalShowsLibraries.innerHTML = '';
+                
+                // Add libraries to appropriate selects
+                librariesData.libraries.forEach(library => {
+                    const option = document.createElement('option');
+                    option.value = library.title;
+                    option.textContent = library.title;
+                    
+                    if (library.type === 'movie') {
+                        modalMovieLibraries.appendChild(option);
+                    } else if (library.type === 'show') {
+                        modalShowsLibraries.appendChild(option);
+                    }
+                });
+                
+                // Enable the Next button
+                nextBtn.disabled = false;
+            } else {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: librariesData.error || 'Failed to fetch libraries'
+                });
+            }
+        } catch (error) {
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Failed to fetch libraries: ' + error.message
+            });
+        }
+    }
+
+    // Plex authentication
+    if (plexAuthBtn) {
+        plexAuthBtn.addEventListener('click', async function() {
+            try {
+                // Add loading state to button
+                plexAuthBtn.disabled = true;
+                plexAuthBtn.innerHTML = `
+                    <img src="https://www.plex.tv/wp-content/themes/plex/assets/img/plex-logo.svg" alt="Plex Logo">
+                    <span>Connecting to Plex...</span>
+                `;
+
+                // First create a pin
+                const pinResponse = await fetch('/onboarding/plex/auth/pin', {
+                    method: 'POST'
+                });
+                const pinData = await pinResponse.json();
+                
+                if (!pinData.success) {
+                    throw new Error(pinData.error || 'Failed to create pin');
+                }
+
+                console.log('Pin created successfully:', pinData);
+
+                const width = 500;
+                const height = 600;
+                const left = window.screenX + (window.outerWidth - width) / 2;
+                const top = window.screenY + (window.outerHeight - height) / 2;
+
+                // Start polling for pin status
+                let pollInterval;
+                const startPolling = async () => {
+                    pollInterval = setInterval(async () => {
+                        try {
+                            const pollResponse = await fetch('/onboarding/plex/auth/pin/check', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    pin_id: pinData.pin.id
+                                })
+                            });
+                            const pollData = await pollResponse.json();
+                            console.log('Poll response:', pollData);
+
+                            if (pollData.success && pollData.token) {
+                                clearInterval(pollInterval);
+                                console.log('Authentication successful, proceeding with token');
+                                
+                                // Use the token to verify and proceed
+                                const verifyResponse = await fetch('/onboarding/plex/verify_token', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({
+                                        token: pollData.token
+                                    })
+                                });
+                                const verifyData = await verifyResponse.json();
+                                console.log('Verify response:', verifyData);
+
+                                if (verifyData.success && verifyData.valid) {
+                                    plexToken = pollData.token;
+                                    showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        title: 'Success',
+                                        message: `Successfully connected as ${verifyData.username}`,
+                                        autoClose: 3000
+                                    });
+
+                                    console.log('Fetching Plex servers...');
+                                    // Continue with server discovery
+                                    const response = await fetch(`/onboarding/plex/discover?token=${plexToken}`);
+                                    const data = await response.json();
+                                    console.log('Server discovery response:', data);
+                                    
+                                    if (data.success) {
+                                        // First prepare the server list
+                                        const plexServerslist = document.getElementById('plex-modal-step-1').querySelector('#plex-servers-list');
+                                        plexServerslist.innerHTML = '';
+                                        
+                                        if (data.servers && data.servers.length > 0) {
+                                            data.servers.forEach(server => {
+                                                console.log('Adding server:', server.name);
+                                                const serverCard = document.createElement('div');
+                                                serverCard.className = 'plex-server-card';
+                                                serverCard.innerHTML = `
+                                                    <div class="plex-server-name">${server.name}</div>
+                                                    <div class="plex-connection-type">
+                                                        ${server.owned ? 'Owned Server' : 'Shared Server'}
+                                                        ${server.connections.some(c => c.local) ? ' (Local Access Available)' : ''}
+                                                    </div>
+                                                `;
+                                                
+                                                serverCard.addEventListener('click', (event) => selectServer(server, event));
+                                                plexServerslist.appendChild(serverCard);
+                                            });
+                                        } else {
+                                            console.log('No servers found');
+                                            plexServerslist.innerHTML = '<div class="no-servers">No Plex servers found. Make sure you have access to at least one Plex server.</div>';
+                                        }
+                                        
+                                        // Show the modal after everything is ready
+                                        modal.style.display = 'block';
+                                    } else {
+                                        throw new Error(data.error || 'Failed to connect to Plex');
+                                    }
+                                } else {
+                                    throw new Error(verifyData.error || 'Invalid Plex token');
+                                }
+                            } else if (pollData.error && pollData.error !== "waiting_for_auth") {
+                                clearInterval(pollInterval);
+                                throw new Error(pollData.error);
+                            }
+                        } catch (error) {
+                            clearInterval(pollInterval);
+                            console.error('Error during polling:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                title: 'Error',
+                                message: error.message
+                            });
+                        }
+                    }, 2000); // Poll every 2 seconds
+                };
+                
+                // Open the Plex auth window
+                const authWindow = window.open(
+                    pinData.pin.authUrl,
+                    'PlexAuth',
+                    `width=${width},height=${height},left=${left},top=${top}`
+                );
+
+                if (!authWindow) {
+                    throw new Error('Popup blocked! Please allow popups for this site and try again.');
+                }
+
+                // Start polling
+                startPolling();
+
+                // Clean up interval if the window is closed
+                const checkWindow = setInterval(() => {
+                    if (authWindow.closed) {
+                        clearInterval(checkWindow);
+                        clearInterval(pollInterval);
+                    }
+                }, 1000);
+
+            } catch (error) {
+                console.error('Error:', error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to start Plex authentication: ' + error.message
+                });
+            } finally {
+                // Reset button state
+                plexAuthBtn.disabled = false;
+                plexAuthBtn.innerHTML = `
+                    <img src="https://www.plex.tv/wp-content/themes/plex/assets/img/plex-logo.svg" alt="Plex Logo">
+                    <span>Sign in to Plex</span>
+                `;
+            }
+        });
+    }
+
+    // Handle file management type changes
+    const fileManagementSelect = document.querySelector('select[name="File Management.file_collection_management"]');
+    if (fileManagementSelect) {
+        fileManagementSelect.addEventListener('change', function() {
+            const managementType = this.value;
+            const plexSection = document.getElementById('plex-settings-in-file-management');
+            const symlinkFields = document.querySelectorAll('.symlink-plex-setting');
+
+            if (managementType === 'Plex') {
+                if (plexSection) plexSection.style.display = 'block';
+                symlinkFields.forEach(field => {
+                    if (field) field.style.display = 'none';
+                });
+            } else if (managementType === 'Symlinked/Local') {
+                if (plexSection) plexSection.style.display = 'none';
+                symlinkFields.forEach(field => {
+                    if (field) field.style.display = 'block';
+                });
+            } else {
+                if (plexSection) plexSection.style.display = 'none';
+                symlinkFields.forEach(field => {
+                    if (field) field.style.display = 'none';
+                });
+            }
+        });
+
+        // Trigger initial state
+        fileManagementSelect.dispatchEvent(new Event('change'));
+    }
+});
+</script>

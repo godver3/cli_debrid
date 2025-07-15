@@ -2,10 +2,9 @@ import logging
 import json
 import os
 from typing import Dict, Any
-from database import get_all_media_items, update_media_item_state, update_media_item
 from debrid import get_debrid_provider
 from queues.adding_queue import AddingQueue
-from not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
+from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from debrid.common import extract_hash_from_magnet, download_and_extract_hash
 from .torrent_processor import TorrentProcessor
 from .media_matcher import MediaMatcher
@@ -19,6 +18,7 @@ class PendingUncachedQueue:
         self.media_matcher = MediaMatcher()
 
     def update(self):
+        from database import get_all_media_items
         self.items = [dict(row) for row in get_all_media_items(state="Pending Uncached")]
         self._deserialize_scrape_results()
 
@@ -114,76 +114,105 @@ class PendingUncachedQueue:
         item_identifier = queue_manager.generate_identifier(item)
         logging.info(f"Successfully added pending uncached item: {item_identifier}")
         
-        scrape_results = self._get_parsed_scrape_results(item)
-        logging.debug(f"Parsed scrape_results: {scrape_results[:5]}...")  # Log first 5 items
-        
         # Get the torrent info from the debrid provider
         torrent_info = self.debrid_provider.get_torrent_info(torrent_id)
-        if torrent_info and 'files' in torrent_info:
-            # Match content using MediaMatcher
-            files = torrent_info['files']
-            matches = self.media_matcher.match_content(files, item)
+        if not torrent_info or 'files' not in torrent_info:
+            logging.error(f"Failed to get torrent info or files for {item_identifier} with torrent_id {torrent_id}")
+            self._handle_failed_add(item, queue_manager)
+            return
+
+        files = torrent_info['files']
+        
+        # Parse torrent files using MediaMatcher's _parse_file_info
+        # Note: _parse_file_info is an internal method. Ideally, MediaMatcher would expose a public parser.
+        parsed_torrent_files = [
+            parsed_file for f in files
+            if (parsed_file := self.media_matcher._parse_file_info(f)) is not None
+        ]
+
+        if not parsed_torrent_files:
+            logging.debug(f"No valid video files found in torrent for {item_identifier} after parsing.")
+            self._handle_failed_add(item, queue_manager)
+            return
+
+        # Match content using MediaMatcher's find_best_match_from_parsed
+        # find_best_match_from_parsed expects parsed_files, item. No XEM mapping passed here.
+        match_result = self.media_matcher.find_best_match_from_parsed(parsed_torrent_files, item)
             
-            if not matches:
-                logging.debug(f"No matching files found in torrent for {item_identifier}")
-                self._handle_failed_add(item, queue_manager)
-                return
+        if not match_result:
+            logging.debug(f"No matching file found in torrent for {item_identifier} using find_best_match_from_parsed.")
+            self._handle_failed_add(item, queue_manager)
+            return
                 
-            # Get the best matching file
-            matched_file = matches[0][0]  # First match's path
-            filename = os.path.basename(matched_file)
-            logging.debug(f"Best matching file for {item_identifier}: {filename}")
+        # match_result is a tuple: (matching_filepath_basename, item_dict)
+        filename = match_result[0] # This is already the basename
+        logging.debug(f"Best matching file for {item_identifier}: {filename}")
             
-            # Update database and item with matched file
-            update_media_item(item['id'], filled_by_file=filename)
-            item['filled_by_file'] = filename
+        # Update database and item with matched file
+        from database import update_media_item
+        update_media_item(item['id'], filled_by_file=filename)
+        item['filled_by_file'] = filename
             
-            # Move the main item to checking
-            queue_manager.move_to_checking(
-                item=item,
-                from_queue="Pending Uncached",
-                title=item.get('title', ''),
-                link=item.get('filled_by_magnet', ''),
-                filled_by_file=filename,
-                torrent_id=torrent_id
+        # Move the main item to checking
+        queue_manager.move_to_checking(
+            item=item,
+            from_queue="Pending Uncached",
+            title=item.get('title', ''),
+            link=item.get('filled_by_magnet', ''),
+            filled_by_file=filename,
+            torrent_id=torrent_id
+        )
+        self.remove_item(item)
+            
+        # Check for related items if it's an episode
+        if item.get('type') == 'episode':
+            logging.debug(f"Checking for related episodes for {item_identifier}")
+
+            # Get items from Scraping and Wanted queues via queue_manager
+            scraping_queue = queue_manager.queues.get('Scraping')
+            scraping_items = scraping_queue.get_contents() if scraping_queue else []
+            
+            wanted_queue = queue_manager.queues.get('Wanted')
+            wanted_items = wanted_queue.get_contents() if wanted_queue else []
+            
+            related_item_tuples = self.media_matcher.find_related_items(
+                parsed_torrent_files=parsed_torrent_files,
+                scraping_items=scraping_items,
+                wanted_items=wanted_items,
+                original_item=item 
             )
-            self.remove_item(item)
-            
-            # Check for related items if it's an episode
-            if item.get('type') == 'episode':
-                logging.debug(f"Checking for related episodes for {item_identifier}")
-                # Get other items from the pending uncached queue
-                pending_items = [i for i in self.items if i['id'] != item['id']]
-                related_items = self.media_matcher.find_related_items(files, pending_items, item)
                 
-                if related_items:
-                    logging.debug(f"Found {len(related_items)} related items for {item_identifier}")
+            if related_item_tuples:
+                logging.debug(f"Found {len(related_item_tuples)} related items for {item_identifier}")
                 
-                # Move related items to checking
-                for related in related_items:
-                    related_identifier = f"{related.get('title')} S{related.get('season_number')}E{related.get('episode_number')}"
-                    logging.debug(f"Processing related item: {related_identifier}")
-                    related_matches = self.media_matcher.match_content(files, related)
-                    if related_matches:
-                        related_file = related_matches[0][0]  # First match's path
-                        related_filename = os.path.basename(related_file)
-                        logging.debug(f"Moving related item {related_identifier} to checking with file: {related_filename}")
-                        queue_manager.move_to_checking(
-                            item=related,
-                            from_queue="Pending Uncached",
-                            title=related.get('title', ''),
-                            link=related.get('filled_by_magnet', ''),
-                            filled_by_file=related_filename,
-                            torrent_id=torrent_id
-                        )
-                    else:
-                        logging.debug(f"No matching files found for related item: {related_identifier}")
+            main_item_magnet_link = item.get('filled_by_magnet', '')
+
+            for related_item_dict, related_filename_basename in related_item_tuples:
+                related_identifier = f"{related_item_dict.get('title')} S{related_item_dict.get('season_number')}E{related_item_dict.get('episode_number')}"
+                logging.debug(f"Processing related item: {related_identifier}")
+                
+                # find_related_items already determined the match and file.
+                logging.debug(f"Moving related item {related_identifier} to checking with file: {related_filename_basename}")
+                
+                from_queue_state = related_item_dict.get('state', 'Unknown')
+                
+                queue_manager.move_to_checking(
+                    item=related_item_dict,
+                    from_queue=from_queue_state,
+                    title=related_item_dict.get('title', ''),
+                    link=main_item_magnet_link, # Use the main item's magnet link
+                    filled_by_file=related_filename_basename,
+                    torrent_id=torrent_id
+                )
+                # These items are from 'Scraping' or 'Wanted' queues, not self.items.
+                # Their state transition is handled by move_to_checking.
             
     def _handle_failed_add(self, item: Dict[str, Any], queue_manager):
         item_identifier = queue_manager.generate_identifier(item)
         logging.error(f"Failed to add pending uncached item: {item_identifier}")
         
         # Move back to Wanted state
+        from database import update_media_item_state
         update_media_item_state(item['id'], 'Wanted')
         self.remove_item(item)
 
@@ -207,5 +236,9 @@ class PendingUncachedQueue:
         else:
             logging.error(f"Invalid scrape_results format for {item.get('id')}")
             return []
+
+    def contains_item_id(self, item_id):
+        """Check if the queue contains an item with the given ID"""
+        return any(i['id'] == item_id for i in self.items)
 
     # Add other methods as needed

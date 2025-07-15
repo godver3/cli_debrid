@@ -1,0 +1,332 @@
+<h3>Debug Settings</h3>
+<div class="settings-expand-collapse-buttons">
+    <button type="button" class="settings-expand-all">Expand All</button>
+    <button type="button" class="settings-collapse-all">Collapse All</button>
+</div>
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Debug Settings</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <!-- Ultimate Sort Order -->
+            <div class="settings-form-group">
+                <label for="debug-ultimate_sort_order" class="settings-title">Ultimate Sort Order:</label>
+                <select id="debug-ultimate_sort_order" name="Scraping.ultimate_sort_order" class="settings-input"
+                        data-section="Scraping" data-key="ultimate_sort_order">
+                    <option value="None" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'None' or not settings.get('Scraping', {}).get('ultimate_sort_order') %}selected{% endif %}>None</option>
+                    <option value="Size: large to small" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: large to small' %}selected{% endif %}>Size: large to small</option>
+                    <option value="Size: small to large" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: small to large' %}selected{% endif %}>Size: small to large</option>
+                </select>
+                <p class="settings-description">Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic</p>
+            </div>
+
+            <!-- Soft Max Size GB -->
+            <div class="settings-form-group">
+                <label for="debug-soft_max_size_gb" class="settings-title">Soft Max Size Gb:</label>
+                <input type="checkbox" id="debug-soft_max_size_gb" name="Scraping.soft_max_size_gb"
+                       data-section="Scraping" data-key="soft_max_size_gb"
+                       {% if settings.get('Scraping', {}).get('soft_max_size_gb', False) %}checked{% endif %}>
+                <p class="settings-description">If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available</p>
+            </div>
+
+            <!-- Use Symlinks on Windows -->
+            <div class="settings-form-group">
+                <label for="debug-use_symlinks_on_windows" class="settings-title">Allow Symlinks on Windows:</label>
+                <input type="checkbox" id="debug-use_symlinks_on_windows" name="Debug.use_symlinks_on_windows"
+                       data-section="Debug" data-key="use_symlinks_on_windows"
+                       {% if settings.get('Debug', {}).get('use_symlinks_on_windows', False) %}checked{% endif %}>
+                <p class="settings-description">Allow the use of symlinks on Windows. WARNING: Creating symlinks on Windows requires administrator privileges or Developer Mode to be enabled.</p>
+            </div>
+
+            <!-- Staleness Threshold -->
+            <div class="settings-form-group">
+                <label for="debug-staleness_threshold" class="settings-title">Staleness Threshold (Days):</label>
+                <input type="number" id="debug-staleness_threshold" name="Staleness Threshold.staleness_threshold"
+                       value="{{ settings.get('Staleness Threshold', {}).get('staleness_threshold', 7) }}" class="settings-input"
+                       data-section="Staleness Threshold" data-key="staleness_threshold">
+                <p class="settings-description">Staleness threshold for metadata (in days)</p>
+            </div>
+
+            <!-- Sort By Uncached Status -->
+            <div class="settings-form-group">
+                <label for="debug-sort_by_uncached_status" class="settings-title">Sort By Uncached Status:</label>
+                <input type="checkbox" id="debug-sort_by_uncached_status" name="Debug.sort_by_uncached_status"
+                       data-section="Debug" data-key="sort_by_uncached_status"
+                       {% if settings.get('Debug', {}).get('sort_by_uncached_status', False) %}checked{% endif %}>
+                <p class="settings-description">Sort results by uncached status over cached status</p>
+            </div>
+            
+            <!-- Checking Queue Period -->
+            <div class="settings-form-group">
+                <label for="debug-checking_queue_period" class="settings-title">Checking Queue Period:</label>
+                <input type="number" id="debug-checking_queue_period" name="Debug.checking_queue_period"
+                       value="{{ settings.get('Debug', {}).get('checking_queue_period', 3600) }}" class="settings-input"
+                       data-section="Debug" data-key="checking_queue_period">
+                <p class="settings-description">Checking queue max period (in seconds) before moving items back to Wanted queue</p>
+            </div>
+            
+            <!-- Enable Reverse Order Scraping -->
+            <div class="settings-form-group">
+                <label for="debug-enable_reverse_order_scraping" class="settings-title">Enable Reverse Order Scraping:</label>
+                <input type="checkbox" id="debug-enable_reverse_order_scraping" name="Debug.enable_reverse_order_scraping"
+                       data-section="Debug" data-key="enable_reverse_order_scraping"
+                       {% if settings.get('Debug', {}).get('enable_reverse_order_scraping', False) %}checked{% endif %}>
+                <p class="settings-description">Enable reverse order scraping</p>
+            </div>
+            
+            <!-- Disable Not Wanted Check -->
+            <div class="settings-form-group">
+                <label for="debug-disable_not_wanted_check" class="settings-title">Disable Not Wanted Check:</label>
+                <input type="checkbox" id="debug-disable_not_wanted_check" name="Debug.disable_not_wanted_check"
+                       data-section="Debug" data-key="disable_not_wanted_check"
+                       {% if settings.get('Debug', {}).get('disable_not_wanted_check', False) %}checked{% endif %}>
+                <p class="settings-description">Disable the not wanted check for items in the queue</p>
+            </div>
+
+            <!-- Timezone Override -->
+            <div class="settings-form-group">
+                <label for="debug-timezone_override" class="settings-title">Timezone Override:</label>
+                <input type="text" id="debug-timezone_override" name="Debug.timezone_override"
+                       value="{{ settings.get('Debug', {}).get('timezone_override', '') }}" class="settings-input"
+                       data-section="Debug" data-key="timezone_override">
+                <p class="settings-description">Override the system timezone (e.g. 'America/New_York')</p>
+            </div>
+
+            <!-- Disable Content Source Caching -->
+            <div class="settings-form-group">
+                <label for="debug-disable_content_source_caching" class="settings-title">Disable Content Source Caching:</label>
+                <input type="checkbox" id="debug-disable_content_source_caching" name="Debug.disable_content_source_caching"
+                       data-section="Debug" data-key="disable_content_source_caching"
+                       {% if settings.get('Debug', {}).get('disable_content_source_caching', False) %}checked{% endif %}>
+                <p class="settings-description">Disable caching for content sources</p>
+            </div>
+
+            <!-- Enable Crash Test -->
+            <div class="settings-form-group">
+                <label for="debug-enable_crash_test" class="settings-title">Enable Crash Test:</label>
+                <input type="checkbox" id="debug-enable_crash_test" name="Debug.enable_crash_test"
+                       data-section="Debug" data-key="enable_crash_test"
+                       {% if settings.get('Debug', {}).get('enable_crash_test', False) %}checked{% endif %}>
+                <p class="settings-description">Enable crash testing functionality</p>
+            </div>
+
+            <!-- Cinesync Path -->
+            <div class="settings-form-group">
+                <label for="debug-cinesync_path" class="settings-title">Cinesync Path:</label>
+                <input type="text" id="debug-cinesync_path" name="Debug.cinesync_path"
+                       value="{{ settings.get('Debug', {}).get('cinesync_path', '') }}" class="settings-input"
+                       data-section="Debug" data-key="cinesync_path">
+                <p class="settings-description">Path to Cinesync installation</p>
+            </div>
+
+            <!-- Emby URL -->
+            <div class="settings-form-group">
+                <label for="debug-emby_jellyfin_url" class="settings-title">Emby/Jellyfin URL:</label>
+                <input type="text" id="debug-emby_jellyfin_url" name="Debug.emby_jellyfin_url"
+                       value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_jellyfin_url">
+                <p class="settings-description">URL for Emby or Jellyfin server</p>
+            </div>
+
+            <!-- Emby Token -->
+            <div class="settings-form-group">
+                <label for="debug-emby_jellyfin_token" class="settings-title">Emby/Jellyfin Token:</label>
+                <input type="password" id="debug-emby_jellyfin_token" name="Debug.emby_jellyfin_token"
+                       value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_jellyfin_token">
+                <p class="settings-description">Authentication token for Emby or Jellyfin</p>
+            </div>
+
+            <!-- Ignore Wanted Queue Throttling -->
+            <div class="settings-form-group">
+                <label for="debug-ignore_wanted_queue_throttling" class="settings-title">Ignore Wanted Queue Throttling:</label>
+                <input type="checkbox" id="debug-ignore_wanted_queue_throttling" name="Debug.ignore_wanted_queue_throttling"
+                       data-section="Debug" data-key="ignore_wanted_queue_throttling"
+                       {% if settings.get('Debug', {}).get('ignore_wanted_queue_throttling', False) %}checked{% endif %}>
+                <p class="settings-description">Ignore Wanted Queue throttling limits. Allows Wanted queue to move all eligible items to Scraping regardless of Scraping queue size. USE WITH CAUTION.</p>
+            </div>
+
+            <!-- Tracemalloc Sample Rate -->
+            <div class="settings-form-group">
+                <label for="debug-tracemalloc_sample_rate" class="settings-title">Tracemalloc Sample Rate:</label>
+                <input type="number" id="debug-tracemalloc_sample_rate" name="Debug.tracemalloc_sample_rate"
+                       value="{{ settings.get('Debug', {}).get('tracemalloc_sample_rate', 100) }}" class="settings-input"
+                       min="1" data-section="Debug" data-key="tracemalloc_sample_rate">
+                <p class="settings-description">Sample rate for tracemalloc (1 in X tasks). Lower values give more frequent data but increase overhead significantly. Default: 100.</p>
+            </div>
+
+            <!-- Plex Removal Cache Delay -->
+            <div class="settings-form-group">
+                <label for="debug-plex_removal_cache_delay_minutes" class="settings-title">Plex Removal Cache Delay (Minutes):</label>
+                <input type="number" id="debug-plex_removal_cache_delay_minutes" name="Debug.plex_removal_cache_delay_minutes"
+                       value="{{ settings.get('Debug', {}).get('plex_removal_cache_delay_minutes', 360) }}" class="settings-input"
+                       min="1" data-section="Debug" data-key="plex_removal_cache_delay_minutes">
+                <p class="settings-description">Delay in minutes before processing a cached Plex removal operation. Default: 360 (6 hours).</p>
+            </div>
+
+            <!-- Emphasize Number of Items Over Quality -->
+            <div class="settings-form-group">
+                <label for="debug-emphasize_number_of_items_over_quality" class="settings-title">Emphasize Number of Items Over Quality:</label>
+                <input type="checkbox" id="debug-emphasize_number_of_items_over_quality" name="Debug.emphasize_number_of_items_over_quality"
+                       data-section="Debug" data-key="emphasize_number_of_items_over_quality"
+                       {% if settings.get('Debug', {}).get('emphasize_number_of_items_over_quality', False) %}checked{% endif %}>
+                <p class="settings-description">Emphasize the number of items over quality when ranking results</p>
+            </div>
+            
+            <!-- Sanitizer Replacement Character -->
+            <div class="settings-form-group">
+                <label for="debug-sanitizer_replacement_character" class="settings-title">Sanitizer Replacement Character:</label>
+                <input type="text" id="debug-sanitizer_replacement_character" name="Debug.sanitizer_replacement_character"
+                       value="{{ settings.get('Debug', {}).get('sanitizer_replacement_character', '_') }}" class="settings-input"
+                       data-section="Debug" data-key="sanitizer_replacement_character" maxlength="1">
+                <p class="settings-description">Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.</p>
+                <div id="sanitizer-char-error" class="settings-error" style="display: none; color: red;">Invalid character. Please use a character that is valid for filenames.</div>
+            </div>
+            
+            <!-- Max Upgrading Score -->
+            <div class="settings-form-group">
+                <label for="debug-max_upgrading_score" class="settings-title">Max Upgrading Score:</label>
+                <input type="number" step="any" id="debug-max_upgrading_score" name="Debug.max_upgrading_score"
+                       value="{{ settings.get('Debug', {}).get('max_upgrading_score', settings_schema.Debug.max_upgrading_score.default) }}" class="settings-input"
+                       data-section="Debug" data-key="max_upgrading_score">
+                <p class="settings-description">{{ settings_schema.Debug.max_upgrading_score.description }}</p>
+            </div>
+            
+            <!-- Delayed Scrape Based On Score -->
+            <div class="settings-form-group">
+                <label for="debug-delayed_scrape_based_on_score" class="settings-title">Delayed Scrape Based On Score:</label>
+                <input type="checkbox" id="debug-delayed_scrape_based_on_score" name="Debug.delayed_scrape_based_on_score"
+                       data-section="Debug" data-key="delayed_scrape_based_on_score"
+                       {% if settings.get('Debug', {}).get('delayed_scrape_based_on_score', false) %}checked{% endif %}>
+                <p class="settings-description">If enabled, only accept results above the minimum scrape score for a limited period before accepting lower scored releases.</p>
+            </div>
+
+            <!-- Delayed Scrape Time Limit -->
+            <div class="settings-form-group">
+                <label for="debug-delayed_scrape_time_limit" class="settings-title">Delayed Scrape Time Limit (Hours):</label>
+                <input type="number" step="any" min="0.1" id="debug-delayed_scrape_time_limit" name="Debug.delayed_scrape_time_limit"
+                       value="{{ settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) }}" class="settings-input"
+                       data-section="Debug" data-key="delayed_scrape_time_limit">
+                <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
+            </div>
+
+            <!-- Minimum Scrape Score -->
+            <div class="settings-form-group">
+                <label for="debug-minimum_scrape_score" class="settings-title">Minimum Scrape Score:</label>
+                <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
+                       value="{{ settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) }}" class="settings-input"
+                       data-section="Debug" data-key="minimum_scrape_score">
+                <p class="settings-description">Minimum scrape score to accept results above.</p>
+            </div>
+
+            <!-- Alternate Scraping Time Strategy -->
+            <div class="settings-form-group">
+                <label for="debug-use_alternate_scrape_time_strategy" class="settings-title">Enable Alternate Scraping Time Strategy:</label>
+                <input type="checkbox" id="debug-use_alternate_scrape_time_strategy" name="Debug.use_alternate_scrape_time_strategy"
+                       data-section="Debug" data-key="use_alternate_scrape_time_strategy"
+                       {% if settings.get('Debug', {}).get('use_alternate_scrape_time_strategy', false) %}checked{% endif %}>
+                <p class="settings-description">Enable alternate scraping time strategy: Instead of scraping based on queue offsets/airtime/release date, scrape all items with release dates and airtimes within the past 24 hours of the user-identified time each day.</p>
+            </div>
+            <div class="settings-form-group">
+                <label for="debug-alternate_scrape_time_24h" class="settings-title">Alternate Scrape Time (24h format):</label>
+                <input type="text" id="debug-alternate_scrape_time_24h" name="Debug.alternate_scrape_time_24h"
+                       value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', settings_schema.Debug.alternate_scrape_time_24h.default) }}"
+                       class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
+                <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
+            </div>
+            
+            <!-- Skip Initial Multi Scrape for New Content -->
+            <div class="settings-form-group">
+                <label for="debug-skip_initial_multi_scrape_for_new_content" class="settings-title">Skip Initial Multi-Scrape for New Content:</label>
+                <input type="checkbox" id="debug-skip_initial_multi_scrape_for_new_content" name="Debug.skip_initial_multi_scrape_for_new_content"
+                       data-section="Debug" data-key="skip_initial_multi_scrape_for_new_content"
+                       {% if settings.get('Debug', {}).get('skip_initial_multi_scrape_for_new_content', False) %}checked{% endif %}>
+                <p class="settings-description">Skip the initial multi-provider scrape for new content (released within the past 7 days).</p>
+            </div>
+
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const sanitizerInput = document.getElementById('debug-sanitizer_replacement_character');
+                    const errorDiv = document.getElementById('sanitizer-char-error');
+                    
+                    // Valid characters for both Windows and Linux filesystems
+                    const validChars = /^[a-zA-Z0-9\-\.~_\[\]]$/;
+                    
+                    sanitizerInput.addEventListener('input', function() {
+                        // Limit to one character
+                        if (this.value.length > 1) {
+                            this.value = this.value.charAt(0);
+                        }
+                        
+                        // Validate character
+                        if (this.value && !validChars.test(this.value)) {
+                            errorDiv.style.display = 'block';
+                            this.setCustomValidity('Invalid character');
+                        } else {
+                            errorDiv.style.display = 'none';
+                            this.setCustomValidity('');
+                        }
+                    });
+                    
+                    // Initial validation
+                    if (sanitizerInput.value && !validChars.test(sanitizerInput.value)) {
+                        errorDiv.style.display = 'block';
+                        sanitizerInput.setCustomValidity('Invalid character');
+                    }
+                });
+            </script>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Initialize expand/collapse functionality
+        initializeExpandCollapse();
+    });
+
+    document.addEventListener('trueDebugContentLoaded', function() {
+        // Initialize expand/collapse functionality when tab is loaded
+        initializeExpandCollapse();
+    });
+
+    function initializeExpandCollapse() {
+        // Add click event to section headers
+        document.querySelectorAll('.settings-section-header').forEach(function(header) {
+            header.addEventListener('click', function() {
+                const content = this.nextElementSibling;
+                const icon = this.querySelector('.settings-toggle-icon');
+                
+                if (content.style.display === 'none' || !content.style.display) {
+                    content.style.display = 'block';
+                    icon.textContent = '-';
+                } else {
+                    content.style.display = 'none';
+                    icon.textContent = '+';
+                }
+            });
+        });
+
+        // Add click events to expand/collapse all buttons
+        document.querySelector('.settings-expand-all').addEventListener('click', function() {
+            document.querySelectorAll('.settings-section-content').forEach(function(content) {
+                content.style.display = 'block';
+            });
+            document.querySelectorAll('.settings-toggle-icon').forEach(function(icon) {
+                icon.textContent = '-';
+            });
+        });
+
+        document.querySelector('.settings-collapse-all').addEventListener('click', function() {
+            document.querySelectorAll('.settings-section-content').forEach(function(content) {
+                content.style.display = 'none';
+            });
+            document.querySelectorAll('.settings-toggle-icon').forEach(function(icon) {
+                icon.textContent = '+';
+            });
+        });
+    }
+</script>

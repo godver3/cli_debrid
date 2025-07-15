@@ -1,0 +1,238 @@
+{% extends "base.html" %}  {# Or your actual base template #}
+
+{% block title %}Event Calendar{% endblock %}
+
+{% block head_content %}
+{{ super() }}
+{# Link to your main CSS file that will contain calendar styles #}
+{# <link rel="stylesheet" href="{{ url_for('static', filename='css/calendar_view.css') }}"> #}
+{# For now, styles are in base.css or added directly below in a <style> tag for this example #}
+{% endblock %}
+
+{% block content %}
+<div class="container calendar-page-container">
+
+    <!-- New 3-Week Calendar Grid View -->
+    {% if three_week_grid_days %}
+        <div class="calendar-grid-section">
+            <div class="calendar-grid-header">
+                <h2>{{ three_week_grid_header }}</h2>
+            </div>
+            <table class="calendar-grid">
+                <thead>
+                    <tr>
+                        <th>Mon</th>
+                        <th>Tue</th>
+                        <th>Wed</th>
+                        <th>Thu</th>
+                        <th>Fri</th>
+                        <th>Sat</th>
+                        <th>Sun</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for week_of_dates in three_week_grid_days %}
+                    <tr>
+                        {% for day_date_obj in week_of_dates %}
+                            {% set day_iso_str = day_date_obj.isoformat() %}
+                            {% set day_display_str = day_date_obj.strftime("%A, %B %d, %Y") %}
+                            {# Special display names for today, yesterday, tomorrow #}
+                            {% if day_date_obj == today_date %}
+                                {% set day_display_str = "Today, " + day_date_obj.strftime("%B %d") %}
+                            {% elif day_date_obj == yesterday_date %}
+                                {% set day_display_str = "Yesterday, " + day_date_obj.strftime("%B %d") %}
+                            {% elif day_date_obj == tomorrow_date %}
+                                {% set day_display_str = "Tomorrow, " + day_date_obj.strftime("%B %d") %}
+                            {% endif %}
+
+                            {% set td_classes = ["calendar-day-cell"] %} {# Added class for JS targeting #}
+                            {% if day_date_obj == today_date %}
+                                {% set td_classes = td_classes + ["is-today"] %}
+                            {% endif %}
+                            
+                            <td class="{{ td_classes | join(' ') }}" data-dateiso="{{ day_iso_str }}" data-displaydate="{{ day_display_str }}">
+                                <div class="day-number">{{ day_date_obj.day }}</div>
+                                {% if grouped_events.get(day_iso_str) and grouped_events[day_iso_str]['items'] %}
+                                    <ul class="grid-event-list">
+                                        {% for event in grouped_events[day_iso_str]['items'] | sort(attribute='sort_datetime') %}
+                                            {% if loop.index <= 3 %} 
+                                            <li class="grid-event-item event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}"
+                                                title="{{ event.title }} - {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %} ({{ event.display_status.replace('_', ' ') | title }})">
+                                                {{ event.title | truncate(20, True) }}
+                                            </li>
+                                            {% elif loop.index == 4 %}
+                                            <li class="grid-event-item more-events">...</li>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </ul>
+                                {% else %}
+                                    <div class="no-events-in-cell"></div> {# Placeholder for empty cells to maintain height/clickability consistency #}
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="calendar-grid-section">
+             <div class="calendar-grid-header">
+                <h2>Calendar</h2>
+            </div>
+            <p style="text-align: center; padding: 20px;">No event data available to display in the calendar grid.</p>
+        </div>
+    {% endif %}
+
+    <!-- Existing Timeline View (modified to use new variable names) -->
+    <div class="calendar-timeline-section">
+        <h2 class="timeline-header">Media Schedule</h2>
+
+        {% if not sorted_dates_for_timeline %}
+            <p class="no-timeline-events">No events found for the timeline view.</p>
+        {% else %}
+            {% for date_iso_str in sorted_dates_for_timeline %}
+                {% set group = grouped_events[date_iso_str] %}
+                {# Ensure group['items'] exists and is not empty before accessing [0] #}
+                {% if group['items'] %} 
+                    {% set current_event_date_obj = group['items'][0].date %} {# Use ['items'] to access the list #}
+                    
+                    {# MODIFIED Filter for timeline: Show events ONLY from yesterday, today, or tomorrow #}
+                    {% if current_event_date_obj == today_date or current_event_date_obj == yesterday_date or current_event_date_obj == tomorrow_date %}
+                        <div class="calendar-day-group">
+                            {# Use the display_str_timeline prepared in Python #}
+                            <h3>{{ group.display_str_timeline }}</h3>
+                            <ul class="calendar-event-list">
+                                {% for event in group['items'] | sort(attribute='sort_datetime') %} {# Sort within the day #}
+                                    <li class="calendar-event event-type-{{ event.type }} status-{{ event.display_status | replace('_', '-') }}">
+                                        <div class="event-time">
+                                            {% if event.time %}
+                                                {{ event.time }}
+                                            {% else %}
+                                                <span class="all-day-indicator">All Day</span>
+                                            {% endif %}
+                                        </div>
+                                        <div class="event-details">
+                                            <span class="event-title">{{ event.title }}</span>
+                                            <span class="event-category">
+                                                {% if event.type == 'movie' %}Movie{% elif event.type == 'tv_show' %}TV Episode{% endif %}
+                                            </span>
+                                            <span class="event-status-badge status-{{ event.display_status | replace('_', '-') }}">
+                                                {{ event.display_status.replace('_', ' ') | title }}
+                                            </span>
+                                        </div>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal for Day Events -->
+<div id="day-events-modal-overlay" class="day-events-modal-overlay"></div>
+<div id="day-events-modal" class="day-events-modal">
+    <div class="day-events-modal-header">
+        <h3 id="day-events-modal-title">Events for [Date]</h3>
+        <button id="day-events-modal-close" class="day-events-modal-close">&times;</button>
+    </div>
+    <div id="day-events-modal-body" class="day-events-modal-body">
+        <!-- Event items will be injected here by JavaScript -->
+        <p class="no-modal-events" style="display:none;">No events scheduled for this day.</p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const modal = document.getElementById('day-events-modal');
+        const modalOverlay = document.getElementById('day-events-modal-overlay');
+        const modalTitle = document.getElementById('day-events-modal-title');
+        const modalBody = document.getElementById('day-events-modal-body');
+        const modalCloseButton = document.getElementById('day-events-modal-close');
+        const noModalEventsMessage = modal.querySelector('.no-modal-events');
+
+        // Make grouped_events available to JavaScript
+        // Ensure this is properly escaped and parsed if it contains complex data
+        const allGroupedEvents = JSON.parse('{{ grouped_events | tojson | safe }}');
+        const use24HourFormatJS = {{ use_24hour_format | tojson }};
+
+        document.querySelectorAll('.calendar-day-cell').forEach(cell => {
+            cell.addEventListener('click', function () {
+                const dateISO = this.dataset.dateiso;
+                const displayDate = this.dataset.displaydate;
+                
+                modalTitle.textContent = 'Events for ' + displayDate;
+                modalBody.innerHTML = ''; // Clear previous events
+                noModalEventsMessage.style.display = 'none';
+
+                if (allGroupedEvents[dateISO] && allGroupedEvents[dateISO].items && allGroupedEvents[dateISO].items.length > 0) {
+                    const events = allGroupedEvents[dateISO].items.sort((a, b) => {
+                        // Sort by sort_datetime within JS
+                        const dtA = new Date(a.sort_datetime);
+                        const dtB = new Date(b.sort_datetime);
+                        return dtA - dtB;
+                    });
+
+                    const ul = document.createElement('ul');
+                    ul.className = 'modal-event-list';
+
+                    events.forEach(event => {
+                        const li = document.createElement('li');
+                        li.className = `modal-event-item event-type-${event.type} status-${event.display_status.replace(/_/g, '-')}`;
+                        
+                        let timeStr = '';
+                        if (event.time) {
+                            timeStr = event.time; // Already formatted in Python
+                        } else {
+                            timeStr = '<span class="all-day-indicator">All Day</span>';
+                        }
+
+                        const typeStr = event.type === 'movie' ? 'Movie' : 'TV Episode';
+                        const statusStr = event.display_status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                        li.innerHTML = `
+                            <div class="modal-event-time">${timeStr}</div>
+                            <div class="modal-event-details">
+                                <span class="modal-event-title">${event.title}</span>
+                                <span class="modal-event-category">${typeStr}</span>
+                                <span class="modal-event-status-badge status-${event.display_status.replace(/_/g, '-')}">
+                                    ${statusStr}
+                                </span>
+                            </div>
+                        `;
+                        ul.appendChild(li);
+                    });
+                    modalBody.appendChild(ul);
+                } else {
+                    noModalEventsMessage.style.display = 'block';
+                }
+
+                modal.style.display = 'flex';
+                modalOverlay.style.display = 'block';
+                document.body.classList.add('modal-open');
+            });
+        });
+
+        function closeModal() {
+            modal.style.display = 'none';
+            modalOverlay.style.display = 'none';
+            document.body.classList.remove('modal-open');
+        }
+
+        modalCloseButton.addEventListener('click', closeModal);
+        modalOverlay.addEventListener('click', closeModal);
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && modal.style.display === 'flex') {
+                closeModal();
+            }
+        });
+    });
+</script>
+{% endblock %}

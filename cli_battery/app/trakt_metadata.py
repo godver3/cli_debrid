@@ -3,7 +3,7 @@ import json
 import time
 import os
 import pickle
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from urllib.parse import urlparse, urlencode
 import requests
 from requests.exceptions import RequestException
@@ -26,7 +26,6 @@ from collections import deque
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
 REQUEST_TIMEOUT = 10  # seconds
-trakt_auth = TraktAuth()
 
 class TraktMetadata:
     def __init__(self):
@@ -45,8 +44,9 @@ class TraktMetadata:
             self.request_times.popleft()
         
         # Check if we've hit the rate limit
-        # if len(self.request_times) >= self.max_requests:
-        #     return False
+        #if len(self.request_times) >= self.max_requests:
+        #    logger.warning(f"Rate limit reached. Currently at {len(self.request_times)} requests in the last {self.time_window} seconds.")
+        #    return False
         
         # Add the current request time
         self.request_times.append(current_time)
@@ -58,6 +58,9 @@ class TraktMetadata:
             time.sleep(300)  # Wait for 5 minutes
             return self._make_request(url)  # Retry the request
 
+        # Always get fresh auth data before making requests
+        self.trakt_auth.reload_auth()
+        
         if not self.trakt_auth.is_authenticated():
             logger.info("Not authenticated. Attempting to refresh token.")
             if not self.trakt_auth.refresh_access_token():
@@ -74,6 +77,8 @@ class TraktMetadata:
             response = requests.get(url, headers=headers, timeout=10)
             if response.status_code == 401:
                 logger.warning("Received 401 Unauthorized. Attempting to refresh token.")
+                # Reload auth data and try to refresh
+                self.trakt_auth.reload_auth()
                 if self.trakt_auth.refresh_access_token():
                     # Update the header with the new token and retry the request
                     headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
@@ -122,107 +127,192 @@ class TraktMetadata:
     def _search_by_imdb(self, imdb_id: str):
         """Search for content by IMDB ID to get Trakt slug"""
         url = f"{self.base_url}/search/imdb/{imdb_id}?type=show,movie"
+        logger.debug(f"Trakt Search URL: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
             results = response.json()
-            if results:
+            logger.debug(f"Trakt Search Raw Results for {imdb_id}: {results}")
+            if results:  # This is true if results is not None and not an empty list/dict
+                logger.debug(f"Trakt Search: Taking first result for {imdb_id}: {results[0]}")
                 return results[0]  # Return first match
+            else: # Explicitly log if results is empty
+                logger.warning(f"Trakt Search for IMDb ID {imdb_id} returned 200 OK but with an empty result list. URL: {url}")
+        elif response:
+            logger.warning(f"Trakt Search for {imdb_id} failed with status {response.status_code}: {response.text}. URL: {url}")
+        else:
+            logger.warning(f"Trakt Search for {imdb_id} received no response from _make_request. URL: {url}")
         return None
 
     def _get_show_data(self, imdb_id):
-        # First search to get the show's Trakt slug
+        # First search to get the show's Trakt slug and ID
         search_result = self._search_by_imdb(imdb_id)
         if not search_result or search_result['type'] != 'show':
+            logger.debug(f"Trakt: Search for IMDB {imdb_id} did not return a show. Result: {search_result}")
             return None
             
         show = search_result['show']
-        slug = show['ids']['slug']
+        trakt_id = show['ids']['trakt']
+        if not trakt_id:
+            logger.error(f"Trakt: Missing trakt ID in search result for IMDb {imdb_id}. Result: {search_result}")
+            return None
         
-        # Now get the full show data using the slug
-        url = f"{self.base_url}/shows/{slug}?extended=full"
+        # Now get the full show data using the Trakt ID
+        url = f"{self.base_url}/shows/{trakt_id}?extended=full"
+        logger.debug(f"Trakt: Fetching full show data using Trakt ID '{trakt_id}' with URL: {url}")
         response = self._make_request(url)
         if response and response.status_code == 200:
-            return response.json()
+            show_data_raw = response.json()
+            logger.debug(f"Trakt: Raw response from {url}: {show_data_raw}")
+            returned_imdb_id = show_data_raw.get('ids', {}).get('imdb')
+            if returned_imdb_id != imdb_id:
+                logger.error(f"Trakt API Mismatch! Requested IMDb {imdb_id} but /shows/{trakt_id} endpoint returned data for IMDb {returned_imdb_id}. Raw Data: {show_data_raw}")
+                return None
+            return show_data_raw
+        elif response:
+            logger.warning(f"Trakt: Fetching full show data from {url} (using Trakt ID {trakt_id}) failed with status {response.status_code}: {response.text}")
+        else:
+            logger.warning(f"Trakt: Fetching full show data from {url} (using Trakt ID {trakt_id}) received no response.")
         return None
 
     def _get_movie_data(self, imdb_id):
-        # First search to get the movie's Trakt slug
-        search_result = self._search_by_imdb(imdb_id)
-        if not search_result or search_result['type'] != 'movie':
-            return None
-            
-        movie = search_result['movie']
-        slug = movie['ids']['slug']
-        
-        # Now get the full movie data using the slug
-        url = f"{self.base_url}/movies/{slug}?extended=full"
-        response = self._make_request(url)
+        # Attempt to fetch movie data directly using IMDb ID
+        direct_url = f"{self.base_url}/movies/{imdb_id}?extended=full"
+        logger.info(f"TraktMetadata._get_movie_data: Fetching movie data directly using IMDb ID '{imdb_id}' with URL: {direct_url}")
+        response = self._make_request(direct_url)
+
         if response and response.status_code == 200:
-            movie_data = response.json()
-            
-            # Get aliases and add them to the movie data
-            aliases = self._get_movie_aliases(slug)
-            if aliases:
-                movie_data['aliases'] = aliases
-                
-            return movie_data
+            movie_data_raw = response.json()
+            logger.info(f"TraktMetadata._get_movie_data: Raw response from direct movie URL {direct_url}: {movie_data_raw}")
+
+            returned_imdb_id = movie_data_raw.get('ids', {}).get('imdb')
+            if returned_imdb_id != imdb_id:
+                logger.error(f"Trakt API Mismatch! Requested IMDb {imdb_id} but endpoint {direct_url} returned data for IMDb {returned_imdb_id}. Raw Data: {movie_data_raw}")
+                return None
+
+            slug = movie_data_raw.get('ids', {}).get('slug')
+
+            if slug:
+                logger.info(f"TraktMetadata._get_movie_data: Fetching aliases for movie slug {slug} (IMDb: {imdb_id})")
+                aliases = self._get_movie_aliases(slug)  # _get_movie_aliases needs slug
+                if aliases:
+                    movie_data_raw['aliases'] = aliases
+                    logger.info(f"TraktMetadata._get_movie_data: Successfully added aliases for {imdb_id}.")
+                else:
+                    logger.info(f"TraktMetadata._get_movie_data: No aliases found or error fetching aliases for {imdb_id}.")
+
+                # Fetch release dates - use the SLUG endpoint as it appears more accurate
+                releases_raw = None
+                release_url = f"{self.base_url}/movies/{slug}/releases"
+                logger.info(
+                    "TraktMetadata._get_movie_data: Attempting to fetch release dates from slug endpoint: %s (IMDb: %s)",
+                    release_url, imdb_id
+                )
+                resp_rel = self._make_request(release_url)
+                if resp_rel and resp_rel.status_code == 200:
+                    temp_json = resp_rel.json()
+                    if temp_json:  # Non-empty list
+                        releases_raw = temp_json
+                        logger.info("Successfully obtained %d release records from %s", len(releases_raw), release_url)
+                    else:
+                        logger.info("Received empty release list from %s", release_url)
+                else:
+                    logger.info("Failed to obtain releases from %s (status: %s)", release_url, resp_rel.status_code if resp_rel else 'No response')
+
+                if releases_raw is not None:
+                    formatted_releases = defaultdict(list)
+                    for release_item in releases_raw:
+                        country = release_item.get('country')
+                        release_date_str = release_item.get('release_date')
+                        release_type = release_item.get('release_type')
+                        if country and release_date_str:
+                            try:
+                                date_obj = iso8601.parse_date(release_date_str)
+                                if date_obj.tzinfo is not None:
+                                    from metadata.metadata import _get_local_timezone
+                                    date_obj = date_obj.astimezone(_get_local_timezone())
+                                formatted_releases[country].append({
+                                    'date': date_obj.date().isoformat(),
+                                    'type': release_type
+                                })
+                            except iso8601.ParseError:
+                                logger.warning(
+                                    "Could not parse release date: %s for movie %s (country=%s)",
+                                    release_date_str, imdb_id, country
+                                )
+                            except Exception as e_date:
+                                logger.error("Error processing release date %s for %s: %s", release_date_str, imdb_id, e_date)
+
+                    movie_data_raw['release_dates'] = dict(formatted_releases)
+                    logger.info("TraktMetadata._get_movie_data: Stored formatted release dates for %s (countries=%d)", imdb_id, len(formatted_releases))
+                else:
+                    logger.info("TraktMetadata._get_movie_data: No release dates found for %s via any endpoint", imdb_id)
+            else:
+                logger.warning(f"TraktMetadata._get_movie_data: Slug not found for IMDb {imdb_id}. Cannot fetch aliases or release dates by slug. Data: {movie_data_raw}")
+
+            logger.info(f"TraktMetadata._get_movie_data: Successfully fetched and processed movie data for {imdb_id} using direct lookup.")
+            return movie_data_raw
+        elif response: # Handle non-200 responses for the direct movie lookup
+            logger.warning(f"TraktMetadata._get_movie_data: Direct fetching movie data from {direct_url} failed with status {response.status_code}: {response.text}")
+            if response.status_code == 404:
+                 logger.warning(f"TraktMetadata._get_movie_data: Movie with IMDb ID {imdb_id} not found directly on Trakt (404). URL: {direct_url}")
+        else: # No response from _make_request
+            logger.warning(f"TraktMetadata._get_movie_data: Direct fetching movie data from {direct_url} received no response from _make_request.")
+        
+        # Fallback to search-based method if direct lookup fails and it's not a 404 or auth issue?
+        # For now, if direct lookup fails, we return None.
+        # The previous code using _search_by_imdb follows, now effectively a fallback or unused.
+        # To avoid accidental execution of old logic, I am removing it from this flow.
+        # If a fallback is desired, it needs to be explicitly designed.
+
+        logger.warning(f"TraktMetadata._get_movie_data: Failed to get movie data for {imdb_id} via direct lookup. Previous search-based logic is now bypassed.")
         return None
 
-    def get_show_seasons_and_episodes(self, imdb_id):
-        # First search to get the show's Trakt slug
-        logger.debug(f"Searching for show slug with IMDb ID: {imdb_id}")
-        search_result = self._search_by_imdb(imdb_id)
-        if not search_result or search_result['type'] != 'show':
-            logger.warning(f"Could not find show or invalid type for IMDb ID: {imdb_id}")
-            return None, None
-            
-        show = search_result['show']
-        slug = show['ids']['slug']
-        logger.debug(f"Found show slug: {slug}")
-        
-        # Now get the seasons data using the slug
-        url = f"{self.base_url}/shows/{slug}/seasons?extended=full,episodes"
-        logger.debug(f"Fetching seasons data from: {url}")
+    def get_show_seasons_and_episodes(self, imdb_id, include_specials: bool = False):
+        # Get seasons data directly using IMDB ID
+        url = f"{self.base_url}/shows/{imdb_id}/seasons?extended=full,episodes"
+        logger.debug(f"Fetching seasons data from: {url} (Include Specials: {include_specials})")
         response = self._make_request(url)
         if response and response.status_code == 200:
-            seasons_data = response.json()
-            logger.debug(f"Raw seasons data received: {len(seasons_data)} seasons")
-            logger.debug(f"Raw seasons data structure: {json.dumps(seasons_data, indent=2)}")
+            seasons_data_raw = response.json()
+            logger.debug(f"Raw seasons response from Trakt for {imdb_id}: {json.dumps(seasons_data_raw)}")
+            logger.debug(f"Raw seasons data received: {len(seasons_data_raw)} seasons")
             
             processed_seasons = {}
-            for season in seasons_data:
-                if season['number'] is not None and season['number'] > 0:
-                    season_number = season['number']
-                    logger.debug(f"Processing season {season_number}")
-                    logger.debug(f"Season {season_number} raw data: {json.dumps(season, indent=2)}")
-                    
-                    episodes = season.get('episodes', [])
-                    logger.debug(f"Found {len(episodes)} episodes in season {season_number}")
-                    
-                    processed_seasons[season_number] = {
-                        'episode_count': season.get('episode_count', 0),
-                        'episodes': {}
+            for season in seasons_data_raw:
+                season_number = season.get('number')
+                if season_number is None:
+                    logger.warning(f"Skipping season with null number for IMDb ID {imdb_id}")
+                    continue
+
+                if not include_specials and season_number == 0:
+                    logger.debug(f"Skipping season 0 for {imdb_id} as include_specials is False.")
+                    continue
+
+                logger.debug(f"Processing season {season_number}")
+                
+                episodes = season.get('episodes', [])
+                
+                processed_seasons[season_number] = {
+                    'episode_count': season.get('episode_count', len(episodes)),
+                    'episodes': {}
+                }
+                
+                for episode in episodes:
+                    episode_number = episode.get('number')
+                    if episode_number is None:
+                        logger.warning(f"Episode in season {season_number} has no number: {json.dumps(episode, indent=2)}")
+                        continue
+                        
+                    processed_seasons[season_number]['episodes'][episode_number] = {
+                        'title': episode.get('title', ''),
+                        'overview': episode.get('overview', ''),
+                        'runtime': episode.get('runtime', 0),
+                        'first_aired': episode.get('first_aired'),
+                        'imdb_id': episode['ids'].get('imdb')
                     }
-                    
-                    for episode in episodes:
-                        episode_number = episode.get('number')
-                        if episode_number is None:
-                            logger.warning(f"Episode in season {season_number} has no number: {json.dumps(episode, indent=2)}")
-                            continue
-                            
-                        logger.debug(f"Processing S{season_number}E{episode_number}")
-                        processed_seasons[season_number]['episodes'][episode_number] = {
-                            'title': episode.get('title', ''),
-                            'overview': episode.get('overview', ''),
-                            'runtime': episode.get('runtime', 0),
-                            'first_aired': episode.get('first_aired'),
-                            'imdb_id': episode['ids'].get('imdb')
-                        }
-                        logger.debug(f"Added episode S{season_number}E{episode_number}: {processed_seasons[season_number]['episodes'][episode_number]}")
-                    
-                    logger.debug(f"Completed season {season_number} with {len(processed_seasons[season_number]['episodes'])} episodes")
+                
+                logger.debug(f"Completed season {season_number} with {len(processed_seasons[season_number]['episodes'])} episodes")
             
-            logger.debug(f"Final processed seasons structure: {json.dumps(processed_seasons, indent=2)}")
             return processed_seasons, 'trakt'
             
         logger.warning(f"Failed to get seasons data. Status code: {response.status_code if response else 'No response'}")
@@ -360,10 +450,35 @@ class TraktMetadata:
         return "Posters not available through Trakt API"
 
     def get_release_dates(self, imdb_id):
-        url = f"{self.base_url}/movies/{imdb_id}/releases"
+        """Get all release dates for a movie using its Trakt slug (more reliable)."""
+        logger.info(f"Fetching release dates for movie IMDb ID: {imdb_id} by finding its slug.")
+        
+        # First search to get the movie's Trakt slug
+        search_result = self._search_by_imdb(imdb_id)
+        if not search_result or search_result.get('type') != 'movie':
+            logger.warning(f"Could not find a movie with IMDb ID {imdb_id} via search.")
+            return None
+            
+        movie = search_result.get('movie')
+        if not movie:
+            logger.warning(f"Search result for {imdb_id} did not contain a 'movie' object.")
+            return None
+
+        slug = movie.get('ids', {}).get('slug')
+        if not slug:
+            logger.warning(f"Could not find slug for {imdb_id} in search result.")
+            return None
+
+        logger.info(f"Found slug '{slug}' for IMDb ID {imdb_id}. Fetching releases.")
+        url = f"{self.base_url}/movies/{slug}/releases"
         response = self._make_request(url)
+
         if response and response.status_code == 200:
             releases = response.json()
+            if not releases:
+                logger.warning(f"No release dates found for slug {slug} from {url} (empty list).")
+                return None
+
             formatted_releases = defaultdict(list)
             for release in releases:
                 country = release.get('country')
@@ -372,9 +487,9 @@ class TraktMetadata:
                 if country and release_date:
                     try:
                         date = iso8601.parse_date(release_date)
-                        # Convert to UTC if necessary
                         if date.tzinfo is not None:
-                            date = date.astimezone(timezone.utc)
+                            from metadata.metadata import _get_local_timezone
+                            date = date.astimezone(_get_local_timezone())
                         formatted_releases[country].append({
                             'date': date.date().isoformat(),
                             'type': release_type
@@ -382,7 +497,16 @@ class TraktMetadata:
                     except iso8601.ParseError:
                         logger.warning(f"Could not parse date: {release_date} for {imdb_id} in {country}")
             return dict(formatted_releases)
-        return None
+
+        elif response:
+            logger.warning(
+                f"Failed to fetch release dates for slug {slug} from {url}. "
+                f"Status: {response.status_code}, Response: {response.text}"
+            )
+            return None
+        else: # No response
+            logger.warning(f"No response from {url} when fetching release dates for slug {slug}.")
+            return None
 
     def convert_tmdb_to_imdb(self, tmdb_id, media_type=None):
         """
@@ -443,6 +567,80 @@ class TraktMetadata:
                     aliases[country].append(title)
             return dict(aliases)
         return None
+
+    def search_media(self, query: str, year: Optional[int] = None, media_type: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
+        """
+        Search Trakt for movies or shows based on query, optionally filtering by year and type.
+        Args:
+            query: The search query (title).
+            year: Optional year to filter by. (NO LONGER USED FOR API CALL)
+            media_type: Optional type ('movie' or 'show') to filter by.
+        Returns:
+            A list of search result dictionaries, or None if an error occurs.
+            Each dictionary contains keys like 'title', 'year', 'imdb_id', 'tmdb_id', 'type'.
+        """
+        logger.debug(f"Searching Trakt: query='{query}', year={year} (year not used in API call), type={media_type}")
+        
+        # Determine search type filter for URL
+        search_type = media_type if media_type in ['movie', 'show'] else 'movie,show'
+        
+        # Construct URL parameters
+        params = {'query': query, 'extended': 'full'}
+        # if year: # <-- REMOVE OR COMMENT OUT THIS BLOCK
+        #     params['years'] = str(year)
+            
+        encoded_params = urlencode(params)
+        url = f"{self.base_url}/search/{search_type}?{encoded_params}"
+        
+        logger.debug(f"Constructed Trakt Search URL (without year filter): {url}")
+        
+        response = self._make_request(url)
+        
+        if response and response.status_code == 200:
+            try:
+                results_raw = response.json()
+                logger.debug(f"Raw search results from Trakt: {results_raw}")
+                
+                processed_results = []
+                if isinstance(results_raw, list):
+                    for item_raw in results_raw:
+                        item_type = item_raw.get('type')
+                        item_data = item_raw.get(item_type) # Get 'movie' or 'show' object
+                        
+                        if item_type and item_data and isinstance(item_data, dict):
+                            # Perform year filtering client-side IF a year was provided
+                            if year and item_data.get('year') != year:
+                                logger.debug(f"Skipping item '{item_data.get('title')}' (year {item_data.get('year')}) due to year mismatch with requested year {year}.")
+                                continue
+
+                            ids = item_data.get('ids', {})
+                            processed_results.append({
+                                'title': item_data.get('title'),
+                                'year': item_data.get('year'),
+                                'imdb_id': ids.get('imdb'),
+                                'tmdb_id': ids.get('tmdb'),
+                                'type': item_type
+                            })
+                        else:
+                            logger.warning(f"Skipping invalid search result item: {item_raw}")
+                            
+                    logger.info(f"Processed {len(processed_results)} search results for query '{query}' (after potential client-side year filtering)")
+                    return processed_results
+                else:
+                    logger.error(f"Trakt search response was not a list: {type(results_raw)}")
+                    return None
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to decode JSON response from Trakt search: {e}")
+                return None
+            except Exception as e:
+                 logger.error(f"Unexpected error processing Trakt search results: {e}", exc_info=True)
+                 return None
+        elif response: # Covers 500 errors and other non-200s if raise_for_status wasn't hit or was handled
+            logger.warning(f"Trakt Search for '{query}' failed with status {response.status_code}: {response.text}")
+            return None
+        else: # No response from _make_request (e.g., network error, pre-request auth failure)
+            logger.warning(f"Trakt Search for '{query}' received no response from _make_request.")
+            return None
 
 # Add this to your MetadataManager class
 def refresh_trakt_metadata(self, imdb_id: str) -> None:

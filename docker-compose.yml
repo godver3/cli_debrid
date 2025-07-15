@@ -6,11 +6,13 @@ services:
     ports:
       - "5000:5000"
       - "5001:5001"
+      - "8888:8888"
     volumes:
       - /host/location/db_content:/user/db_content
       - /host/location/config:/user/config
       - /host/location/logs:/user/logs
-      - /media/mount:/media/mount # optional - used by video player
+      - /mnt:/mnt
+      - /host/location/phalanx_db_hyperswarm/autobase_storage_v4:/app/phalanx_db_hyperswarm/autobase_storage_v4
     environment:
       - TZ=America/Edmonton
     restart: unless-stopped

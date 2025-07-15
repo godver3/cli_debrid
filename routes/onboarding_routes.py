@@ -1,12 +1,17 @@
 from flask import Blueprint, jsonify, request, render_template, redirect, url_for, flash, abort, session
 from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash
-from settings import load_config, get_setting, save_config
-from settings_schema import SETTINGS_SCHEMA
-from config_manager import add_scraper, add_content_source, load_config
+from utilities.settings import load_config, get_setting, save_config
+from utilities.settings_schema import SETTINGS_SCHEMA
+from queues.config_manager import add_scraper, add_content_source, load_config
 import logging
+import platform
 from routes.trakt_routes import check_trakt_auth_status
 import json
+import requests
+import uuid
+import urllib.parse
+from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
@@ -43,30 +48,56 @@ def get_next_onboarding_step():
     if 'Scrapers' not in config or not config['Scrapers']:
         return 3
     
+    # Step 3a: Check if versions are configured
+    if 'Scraping' not in config or 'versions' not in config['Scraping'] or not config['Scraping']['versions']:
+        return '3a'
+    
     # Step 4: Check if at least one content source is configured
     if 'Content Sources' not in config or not config['Content Sources']:
         return 4
     
-    # If all steps are completed, return the final step (5)
-    return 5
+    # Step 5: Check if library management is configured
+    if 'Libraries' not in config or not config['Libraries']:
+        return 5
+
+    # If all steps are completed, return the final step (6)
+    return 6
 
 @onboarding_bp.route('/')
 @login_required
 def onboarding():
     return render_template('onboarding.html', is_onboarding=True)
 
-@onboarding_bp.route('/step/<int:step>', methods=['GET', 'POST'])
+@onboarding_bp.route('/step/<step>', methods=['GET', 'POST'])
 @login_required
 def onboarding_step(step):
     from routes.auth_routes import db
 
-    if step < 1 or step > 5:
+    # Convert step to int if it's not '3a'
+    try:
+        step_num = int(step) if step != '3a' else step
+    except ValueError:
+        abort(404)
+
+    # Validate step range
+    if isinstance(step_num, int) and (step_num < 1 or step_num > 6):
+        abort(404)
+    elif step_num == '3a' and step != '3a':
         abort(404)
     
     config = load_config()
     can_proceed = False
 
-    if step == 1:
+    # Handle step 6 (final step)
+    if step_num == 6:
+        can_proceed = True  # Always allow finishing the onboarding process
+        return render_template('onboarding_step_6.html', 
+                             current_step=step_num, 
+                             can_proceed=can_proceed, 
+                             is_onboarding=True)
+
+    # Handle other steps...
+    if step_num == 1:
         admin_created = not current_user.is_default
         can_proceed = admin_created
 
@@ -92,39 +123,93 @@ def onboarding_step(step):
                 return jsonify({'success': False, 'error': 'Passwords do not match'})
 
         return render_template('onboarding_step_1.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed, 
                                admin_created=admin_created, 
                                is_onboarding=True)
        
-    if step == 2:
+    elif step_num == 2:
         required_settings = [
-            ('Plex', 'url'),
-            ('Plex', 'token'),
-            ('Plex', 'shows_libraries'),
-            ('Plex', 'movie_libraries'),
             ('Debrid Provider', 'provider'),
             ('Debrid Provider', 'api_key'),
             ('Trakt', 'client_id'),
             ('Trakt', 'client_secret')
         ]
 
+        # Check if platform is Windows
+        is_windows = platform.system() == 'Windows'
+
         if request.method == 'POST':
             try:
                 config = load_config()
-                config['Plex'] = {
-                    'url': request.form['plex_url'],
-                    'token': request.form['plex_token'],
-                    'shows_libraries': request.form['shows_libraries'],
-                    'movie_libraries': request.form['movie_libraries']
+                
+                # Handle file management type
+                file_management_type = request.form.get('file_collection_management', 'Plex')
+                original_files_path = request.form.get('original_files_path', '/mnt/zurg/__all__')
+                
+                # Get Plex URL and token - try both regular and symlink fields
+                plex_url = request.form.get('plex_url_for_symlink', '') or request.form.get('plex_url', '')
+                plex_token = request.form.get('plex_token_for_symlink', '') or request.form.get('plex_token', '')
+                
+                # Debug logging
+                logging.info("Form data received:")
+                logging.info(f"file_management_type: {file_management_type}")
+                logging.info(f"plex_url from regular field: {request.form.get('plex_url', '')}")
+                logging.info(f"plex_url from symlink field: {request.form.get('plex_url_for_symlink', '')}")
+                logging.info(f"plex_token from regular field: {request.form.get('plex_token', '')}")
+                logging.info(f"plex_token from symlink field: {request.form.get('plex_token_for_symlink', '')}")
+                logging.info(f"Final plex_url: {plex_url}")
+                logging.info(f"Final plex_token: {plex_token}")
+                
+                # Set up File Management section with all fields
+                config['File Management'] = {
+                    'file_collection_management': file_management_type,
+                    'original_files_path': original_files_path,
+                    'symlinked_files_path': request.form.get('symlinked_files_path', '/mnt/symlinked'),
+                    'symlink_organize_by_type': True,
+                    'plex_url_for_symlink': plex_url,
+                    'plex_token_for_symlink': plex_token
                 }
+
+                # Process Plex library strings
+                raw_movie_libraries = request.form.get('movie_libraries', '')
+                processed_movie_libraries = ','.join([lib.strip() for lib in raw_movie_libraries.split(',') if lib.strip()]) if raw_movie_libraries else ''
+                
+                raw_shows_libraries = request.form.get('shows_libraries', '')
+                processed_shows_libraries = ','.join([lib.strip() for lib in raw_shows_libraries.split(',') if lib.strip()]) if raw_shows_libraries else ''
+
+                # Set up Plex section with all fields
+                config['Plex'] = {
+                    'url': plex_url,
+                    'token': plex_token,
+                    'shows_libraries': processed_shows_libraries,
+                    'movie_libraries': processed_movie_libraries,
+                    'update_plex_on_file_discovery': request.form.get('Plex.update_plex_on_file_discovery', 'false') == 'on',
+                    'mounted_file_location': original_files_path
+                }
+
+                # Add required settings based on mode
+                if file_management_type == 'Symlinked/Local':
+                    required_settings.extend([
+                        ('File Management', 'symlinked_files_path'),
+                        ('File Management', 'original_files_path')
+                    ])
+                
+                # Add Plex-specific required settings if we have Plex URL and token
+                if plex_url and plex_token:
+                    required_settings.extend([
+                        ('Plex', 'url'),
+                        ('Plex', 'token')
+                    ])
+                    if file_management_type == 'Plex':
+                        required_settings.extend([
+                            ('Plex', 'shows_libraries'),
+                            ('Plex', 'movie_libraries')
+                        ])
                 
                 # Handle debrid provider selection
                 provider = request.form.get('debrid_provider', 'RealDebrid')
-                if provider == 'RealDebrid':
-                    api_key = request.form.get('realdebrid_api_key', '')
-                else:
-                    api_key = request.form.get('torbox_api_key', '')
+                api_key = request.form.get('debrid_api_key', '')
                 
                 config['Debrid Provider'] = {
                     'provider': provider,
@@ -135,6 +220,7 @@ def onboarding_step(step):
                     'client_id': request.form['trakt_client_id'],
                     'client_secret': request.form['trakt_client_secret']
                 }
+                
                 save_config(config)
                 
                 # Check if all required settings are now present
@@ -147,33 +233,68 @@ def onboarding_step(step):
         # For GET requests, load existing settings if any
         config = load_config()
         can_proceed = all(get_setting(category, key) for category, key in required_settings)
+        is_windows = platform.system() == 'Windows'  # Proper platform detection
+        
+        # Get Trakt auth status
+        trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
+        
+        # Determine if Windows symlinks are allowed
+        allow_windows_symlinks_value = config.get('Debug', {}).get('use_symlinks_on_windows', False)
         
         return render_template('onboarding_step_2.html', 
-                               current_step=step, 
-                               can_proceed=can_proceed,
-                               settings=config, is_onboarding=True)
-    if step == 3:
+                               current_step=step_num, 
+                               can_proceed=can_proceed, 
+                               settings=config, 
+                               trakt_status=trakt_status,
+                               is_onboarding=True,
+                               is_windows=is_windows,
+                               allow_windows_symlinks=allow_windows_symlinks_value)
+
+    elif step_num == 3:
         config = load_config()
         can_proceed = 'Scrapers' in config and bool(config['Scrapers'])
         return render_template('onboarding_step_3.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
                                SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
 
-    if step == 4:
+    elif step_num == '3a':
+        config = load_config()
+        can_proceed = 'Scraping' in config and 'versions' in config['Scraping'] and bool(config['Scraping']['versions'])
+        return render_template('onboarding_step_3a.html', 
+                               current_step=step_num, 
+                               can_proceed=can_proceed, 
+                               settings=config, 
+                               is_onboarding=True)
+
+    elif step_num == 4:
         config = load_config()
         can_proceed = 'Content Sources' in config and bool(config['Content Sources'])
+        # Get the dictionary of version configurations
+        versions_dict = config.get('Scraping', {}).get('versions', {})
+        # Extract the names (keys) into a list
+        configured_versions = list(versions_dict.keys())
         return render_template('onboarding_step_4.html', 
-                               current_step=step, 
+                               current_step=step_num, 
                                can_proceed=can_proceed, 
                                settings=config, 
-                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, is_onboarding=True)
+                               SETTINGS_SCHEMA=SETTINGS_SCHEMA, 
+                               configured_versions=configured_versions,
+                               is_onboarding=True)
 
-    elif step == 5:
-        can_proceed = True  # Always allow finishing the onboarding process
-        return render_template('onboarding_step_5.html', current_step=step, can_proceed=can_proceed, is_onboarding=True)
+    elif step_num == 5:
+        # Library Management step
+        config = load_config()
+        can_proceed = 'Libraries' in config and bool(config['Libraries'])
+        return render_template('onboarding_step_5.html', 
+                             current_step=step_num, 
+                             can_proceed=can_proceed,
+                             settings=config, 
+                             is_onboarding=True)
 
+    # If no matching step is found
+    abort(404)
 
 @onboarding_bp.route('/complete', methods=['POST'])
 @login_required
@@ -194,8 +315,11 @@ def update_can_proceed():
     step = data.get('step')
     can_proceed = data.get('can_proceed')
     
-    if step in [1, 2, 3, 4]:
-        session[f'onboarding_step_{step}_can_proceed'] = can_proceed
+    # Convert step to string to match the check list
+    step_str = str(step)
+    
+    if step_str in ['1', '2', '3', '3a', '4', '5']:
+        session[f'onboarding_step_{step_str}_can_proceed'] = can_proceed
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Invalid step'}), 400
@@ -260,6 +384,7 @@ def setup_admin():
     return render_template('setup_admin.html', is_onboarding=True)
 
 @onboarding_bp.route('/content_sources/add', methods=['POST'])
+@admin_required
 def add_onboarding_content_source():
     from routes.auth_routes import db
 
@@ -270,7 +395,26 @@ def add_onboarding_content_source():
     if not source_type or not source_config:
         return jsonify({'success': False, 'error': 'Invalid content source data'}), 400
 
+    # --- Convert versions list to dictionary format --- START
+    # if 'versions' in source_config:
+    #     if isinstance(source_config['versions'], list):
+    #         source_config['versions'] = {v: True for v in source_config['versions']}
+    #     elif not isinstance(source_config['versions'], dict):
+    #         # Import logging if not already imported at the top
+    #         import logging 
+    #         logging.warning(f"Onboarding: Invalid 'versions' format for {source_type}: {source_config['versions']}. Resetting to empty dict.")
+    #         source_config['versions'] = {}
+    # --- Convert versions list to dictionary format --- END
+
     try:
+        # Ensure 'versions' is present and is a list if it exists in source_config
+        if 'versions' in source_config and not isinstance(source_config['versions'], list):
+             # If it's not a list (e.g., the frontend somehow sent it wrong),
+             # default to an empty list or handle error as appropriate.
+             # For now, let's ensure it's at least an empty list if present but not list.
+             logging.warning(f"Onboarding: Received non-list 'versions' for {source_type}. Ensuring list format.")
+             source_config['versions'] = list(source_config.get('versions', [])) # Attempt conversion or default
+
         new_source_id = add_content_source(source_type, source_config)
         
         # Mark onboarding as complete
@@ -281,6 +425,9 @@ def add_onboarding_content_source():
 
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
+        # Log the error including traceback for better debugging
+        import traceback
+        logging.error(f"Error in add_onboarding_content_source: {str(e)}\\n{traceback.format_exc()}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @onboarding_bp.route('/content_sources/get', methods=['GET'])
@@ -296,6 +443,7 @@ def get_onboarding_content_sources():
     })
 
 @onboarding_bp.route('/scrapers/add', methods=['POST'])
+@admin_required
 def add_onboarding_scraper():
     logging.info(f"Received request to add scraper during onboarding. Content-Type: {request.content_type}")
     logging.info(f"Request data: {request.data}")
@@ -336,3 +484,502 @@ def get_onboarding_scrapers():
         'scrapers': config.get('Scrapers', {}),
         'scraper_types': scraper_types
     })
+
+@onboarding_bp.route('/settings/api/update', methods=['POST'])
+@admin_required
+def update_settings():
+    try:
+        data = request.json
+        config = load_config()
+        
+        # Update each setting in the config
+        for setting_path, value in data.items():
+            # Split the path into category and key
+            category, key = setting_path.split('.')
+            
+            # Ensure category exists in config
+            if category not in config:
+                config[category] = {}
+            
+            # Update the setting
+            config[category][key] = value
+        
+        # Save the updated config
+        save_config(config)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error updating settings: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@onboarding_bp.route('/settings/validate/onboarding-settings', methods=['POST'])
+@login_required
+def validate_onboarding_settings():
+    try:
+        data = request.json
+        management_type = data.get('management_type')
+        config = load_config()
+        
+        # For skip option
+        if management_type == 'skip':
+            # Save minimal library configuration
+            if 'Libraries' not in config:
+                config['Libraries'] = {}
+            config['Libraries']['setup_skipped'] = True
+            save_config(config)
+            return jsonify({
+                'valid': True,
+                'checks': [{
+                    'name': 'Library Management',
+                    'valid': True,
+                    'message': 'Library management setup has been skipped.'
+                }]
+            })
+            
+        # For fresh Plex setup
+        elif management_type == 'fresh':
+            checks = []
+            is_valid = True
+            
+            # Check if Plex settings are configured
+            plex_settings = config.get('Plex', {})
+            if not plex_settings.get('url') or not plex_settings.get('token'):
+                is_valid = False
+                checks.append({
+                    'name': 'Plex Configuration',
+                    'valid': False,
+                    'message': 'Plex URL and token are required for fresh setup.'
+                })
+            else:
+                checks.append({
+                    'name': 'Plex Configuration',
+                    'valid': True,
+                    'message': 'Plex settings are properly configured.'
+                })
+                
+            return jsonify({
+                'valid': is_valid,
+                'checks': checks
+            })
+            
+        # For existing Plex setups
+        elif management_type in ['plex_direct', 'plex_symlink']:
+            checks = []
+            is_valid = True
+            
+            # Validate based on setup type
+            if management_type == 'plex_direct':
+                # Check for direct mount requirements - only validate if path is provided
+                mount_path = config.get('File Management', {}).get('original_files_path')
+                # Since original_files_path is optional, we don't need to validate it if it's empty
+                if mount_path:
+                    checks.append({
+                        'name': 'Mount Configuration',
+                        'valid': True,
+                        'message': 'Mount path is configured. Note: Path existence cannot be verified within Docker.'
+                    })
+                # Don't add any validation check if mount_path is empty since it's optional
+                    
+            elif management_type == 'plex_symlink':
+                # Check for symlink requirements
+                symlink_path = config.get('File Management', {}).get('symlinked_files_path')
+                if not symlink_path:
+                    is_valid = False
+                    checks.append({
+                        'name': 'Symlink Configuration',
+                        'valid': False,
+                        'message': 'Symlink path is not configured.'
+                    })
+                else:
+                    checks.append({
+                        'name': 'Symlink Configuration',
+                        'valid': True,
+                        'message': 'Symlink path is configured. Note: Path existence cannot be verified within Docker.'
+                    })
+                    
+                # Check original files path only if provided (optional)
+                original_path = config.get('File Management', {}).get('original_files_path')
+                if original_path:
+                    checks.append({
+                        'name': 'Original Files Path',
+                        'valid': True,
+                        'message': 'Original files path is configured. Note: Path existence cannot be verified within Docker.'
+                    })
+                    
+            return jsonify({
+                'valid': is_valid,
+                'checks': checks
+            })
+            
+        else:
+            return jsonify({
+                'valid': False,
+                'checks': [{
+                    'name': 'Configuration Error',
+                    'valid': False,
+                    'message': f'Invalid management type: {management_type}'
+                }]
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'valid': False,
+            'checks': [{
+                'name': 'System Error',
+                'valid': False,
+                'message': str(e)
+            }]
+        }), 500
+
+@onboarding_bp.route('/plex/discover', methods=['GET'])
+@login_required
+def discover_plex_servers():
+    """Discover available Plex servers using X-Plex-Token."""
+    try:
+        from plexapi.myplex import MyPlexAccount
+        from plexapi.exceptions import Unauthorized, NotFound
+        
+        token = request.args.get('token')
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'No token provided'
+            }), 400
+            
+        try:
+            account = MyPlexAccount(token=token)
+            resources = account.resources()
+            servers = []
+            
+            for resource in resources:
+                if resource.provides == 'server':
+                    connections = []
+                    for connection in resource.connections:
+                        if connection.local:
+                            connections.append({
+                                'uri': connection.uri,
+                                'local': True
+                            })
+                        else:
+                            connections.append({
+                                'uri': connection.uri,
+                                'local': False
+                            })
+                    
+                    servers.append({
+                        'name': resource.name,
+                        'clientIdentifier': resource.clientIdentifier,
+                        'connections': connections,
+                        'owned': resource.owned,
+                        'home': resource.home
+                    })
+            
+            return jsonify({
+                'success': True,
+                'servers': servers,
+                'username': account.username
+            })
+            
+        except Unauthorized:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid Plex token'
+            }), 401
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@onboarding_bp.route('/plex/libraries', methods=['GET'])
+@login_required
+def get_plex_libraries():
+    """Get available libraries from a Plex server."""
+    try:
+        from plexapi.server import PlexServer
+        from plexapi.exceptions import Unauthorized, NotFound
+        
+        url = request.args.get('url')
+        token = request.args.get('token')
+        
+        if not url or not token:
+            return jsonify({
+                'success': False,
+                'error': 'URL and token are required'
+            }), 400
+            
+        try:
+            # Clean up URL
+            url = url.rstrip('/')
+            plex = PlexServer(url, token)
+            sections = plex.library.sections()
+            
+            libraries = []
+            for section in sections:
+                libraries.append({
+                    'key': section.key,
+                    'title': section.title,
+                    'type': section.type,
+                    'locations': section.locations
+                })
+            
+            return jsonify({
+                'success': True,
+                'libraries': libraries
+            })
+            
+        except Unauthorized:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid Plex token'
+            }), 401
+        except NotFound:
+            return jsonify({
+                'success': False,
+                'error': 'Could not connect to Plex server'
+            }), 404
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@onboarding_bp.route('/plex/auth/pin', methods=['POST'])
+@admin_required
+def create_plex_pin():
+    try:
+        import uuid
+        
+        # Get the client ID from the session or generate a new one
+        client_id = session.get('plex_client_id', str(uuid.uuid4()))
+        session['plex_client_id'] = client_id  # Store for future use
+        
+        # Define headers for Plex API
+        headers = {
+            'Accept': 'application/json',
+            'X-Plex-Product': 'cli_debrid',
+            'X-Plex-Version': '0.6.06',
+            'X-Plex-Client-Identifier': client_id,
+            'X-Plex-Platform': 'Web',
+            'X-Plex-Platform-Version': '1.0',
+            'X-Plex-Device': 'Browser',
+            'X-Plex-Device-Name': 'cli_debrid_browser',
+            'X-Plex-Device-Screen-Resolution': '1920x1080',
+            'X-Plex-Language': 'en',
+            'X-Plex-Model': 'hosted'
+        }
+        
+        # Make request to Plex to create a pin
+        response = requests.post(
+            'https://plex.tv/api/v2/pins',
+            headers=headers,
+            json={'strong': True}
+        )
+        
+        if response.status_code == 201:
+            pin_data = response.json()
+            
+            # Store pin data in session
+            session['plex_pin_id'] = pin_data['id']
+            
+            # Construct the auth URL - using the correct format
+            auth_url = (
+                'https://app.plex.tv/auth#?' + 
+                f'clientID={client_id}&' +
+                f'code={pin_data["code"]}&' +
+                'context%5Bdevice%5D%5Bproduct%5D=cli_debrid&' +
+                'context%5Bdevice%5D%5Bversion%5D=0.6.06&' +
+                'context%5Bdevice%5D%5Bplatform%5D=Web&' +
+                'context%5Bdevice%5D%5BplatformVersion%5D=1.0&' +
+                'context%5Bdevice%5D%5Bdevice%5D=Browser&' +
+                'context%5Bdevice%5D%5BdeviceName%5D=cli_debrid_browser&' +
+                'context%5Bdevice%5D%5Bmodel%5D=hosted&' +
+                'context%5Bdevice%5D%5BscreenResolution%5D=1920x1080&' +
+                'context%5Bdevice%5D%5Blanguage%5D=en&' +
+                f'forwardUrl={urllib.parse.quote(url_for("onboarding.plex_auth_callback", pinId=pin_data["id"], clientId=client_id, _external=True))}'
+            )
+            
+            return jsonify({
+                'success': True,
+                'pin': {
+                    'id': pin_data['id'],
+                    'code': pin_data['code'],
+                    'clientId': client_id,
+                    'authUrl': auth_url
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to create pin: {response.status_code}'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@onboarding_bp.route('/plex/auth/callback')
+def plex_auth_callback():
+    """Handle Plex OAuth callback."""
+    try:
+        pin_id = request.args.get('pinId')
+        client_id = request.args.get('clientId')
+        
+        if not pin_id or not client_id:
+            return render_template('plex_auth_callback.html', 
+                                 success=False, 
+                                 error='Missing required parameters')
+        
+        return render_template('plex_auth_callback.html')
+            
+    except Exception as e:
+        return render_template('plex_auth_callback.html', 
+                             success=False, 
+                             error=str(e))
+
+@onboarding_bp.route('/plex/verify_token', methods=['POST'])
+@admin_required
+def verify_plex_token():
+    """Verify if a Plex token is valid."""
+    try:
+        token = request.json.get('token')
+        if not token:
+            return jsonify({
+                'success': False,
+                'error': 'Token is required'
+            }), 400
+            
+        # Get client ID from session or request
+        client_id = session.get('plex_client_id') or request.json.get('clientId')
+        if not client_id:
+            return jsonify({
+                'success': False,
+                'error': 'No client ID found'
+            }), 400
+            
+        # Make request to verify token
+        response = requests.get(
+            'https://plex.tv/api/v2/user',
+            headers={
+                'Accept': 'application/json',
+                'X-Plex-Token': token,
+                'X-Plex-Client-Identifier': client_id,
+                'X-Plex-Product': 'cli_debrid'
+            }
+        )
+        
+        if response.status_code == 200:
+            user_data = response.json()
+            return jsonify({
+                'success': True,
+                'valid': True,
+                'username': user_data.get('username', 'Unknown')
+            })
+        elif response.status_code == 401:
+            return jsonify({
+                'success': True,
+                'valid': False,
+                'error': 'Invalid token'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to verify token: {response.status_code}'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@onboarding_bp.route('/plex/auth/pin/check', methods=['POST'])
+@admin_required
+def check_plex_pin():
+    """Check the status of a Plex auth pin."""
+    try:
+        pin_id = request.json.get('pin_id')
+        if not pin_id:
+            return jsonify({
+                'success': False,
+                'error': 'Pin ID is required'
+            }), 400
+
+        # Get the client ID from session
+        client_id = session.get('plex_client_id')
+        if not client_id:
+            return jsonify({
+                'success': False,
+                'error': 'No client ID found in session'
+            }), 400
+
+        # Make request to check pin status
+        headers = {
+            'Accept': 'application/json',
+            'X-Plex-Client-Identifier': client_id
+        }
+
+        response = requests.get(
+            f'https://plex.tv/api/v2/pins/{pin_id}',
+            headers=headers
+        )
+
+        if response.status_code == 200:
+            pin_data = response.json()
+            if pin_data.get('authToken'):
+                # Pin has been authorized
+                return jsonify({
+                    'success': True,
+                    'token': pin_data['authToken']
+                })
+            else:
+                # Pin is still waiting for authorization
+                return jsonify({
+                    'success': False,
+                    'error': 'waiting_for_auth'
+                })
+        elif response.status_code == 404:
+            return jsonify({
+                'success': False,
+                'error': 'Pin not found'
+            }), 404
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to check pin status: {response.status_code}'
+            }), response.status_code
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@onboarding_bp.route('/skip', methods=['GET', 'POST'])
+@login_required
+def skip_onboarding():
+    from routes.auth_routes import db
+
+    if request.method == 'GET':
+        return render_template('skip_onboarding.html', is_onboarding=True)
+
+    try:
+        current_user.onboarding_complete = True
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'Onboarding skipped successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

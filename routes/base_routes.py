@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, current_app, request, make_response, Response
 import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import sys
 import traceback
@@ -10,6 +10,20 @@ from functools import wraps
 import time
 import hashlib
 import json
+from pathlib import Path
+import errno # Add errno for file locking checks
+from apscheduler.triggers.interval import IntervalTrigger # Add this import
+import pytz # Add pytz for timezone handling
+import markdown
+import threading
+from .models import user_required # Assuming user_required can be imported
+
+# Import notification functions
+from .notifications import (
+    get_all_notifications as get_notifications_data,
+    mark_single_notification_read,
+    mark_all_notifications_read as mark_all_read
+)
 
 # Global cache storage
 _function_cache = {}
@@ -17,90 +31,121 @@ _function_last_modified = {}
 _function_etags = {}
 
 def generate_etag(data):
-    """Generate an ETag for the given data"""
+    """Generate an ETag for the given data using MD5"""
+    # Use json.dumps with sort_keys=True for consistent hashing
     return hashlib.md5(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 def clear_cache():
     """Clear the update check cache"""
     try:
-        # Get the check_for_update function and call its clear method
-        if hasattr(check_for_update, 'clear'):
+        # Check if check_for_update exists and has a clear method
+        if 'check_for_update' in globals() and hasattr(check_for_update, 'clear'):
             check_for_update.clear()
-            #logging.info("Successfully cleared update check cache")
+        # Check if get_notifications exists and has a clear method
+        if 'get_notifications' in globals() and hasattr(get_notifications, 'clear'):
+            get_notifications.clear()
+        #logging.info("Successfully cleared function caches")
+    except NameError:
+        # This might happen if the functions haven't been defined yet during import cycles
+        logging.warning("Could not clear cache for functions - likely an import timing issue.")
     except Exception as e:
         logging.error(f"Error clearing cache: {str(e)}", exc_info=True)
 
 def cache_for_seconds(seconds):
-    """Enhanced caching decorator with ETag support"""
+    """Enhanced caching decorator with ETag support, handles JSON data."""
     def decorator(func):
-        cache_key = func.__name__  # Use function name as the cache namespace
+        cache_key = func.__name__
         if cache_key not in _function_cache:
             _function_cache[cache_key] = {}
             _function_last_modified[cache_key] = {}
             _function_etags[cache_key] = {}
-        
-        # Add clear method to the decorated function
+
         def clear():
             if cache_key in _function_cache:
                 _function_cache[cache_key].clear()
                 _function_last_modified[cache_key].clear()
                 _function_etags[cache_key].clear()
-        
+                #logging.debug(f"Cache cleared for function: {cache_key}")
+
+
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Skip caching for streaming responses
             if func.__name__.endswith('_stream'):
                 return func(*args, **kwargs)
-                
+
             now = time.time()
-            key = (args, frozenset(kwargs.items()))
-            
-            #logging.debug(f"Cache request for {func.__name__} with key {key}")
-            
-            # Check if client sent If-None-Match header
+            # Create a hashable key from args and kwargs
+            key_tuple = (args, frozenset(kwargs.items()))
+            try:
+                # Most args/kwargs should be hashable
+                key = key_tuple
+            except TypeError:
+                 # Fallback for unhashable types: use stable repr
+                 key = repr(key_tuple)
+
+
+            # ETag check
             if_none_match = request.headers.get('If-None-Match')
-            if if_none_match and key in _function_etags[cache_key] and _function_etags[cache_key][key] == if_none_match:
+            cached_etag = _function_etags[cache_key].get(key)
+            if if_none_match and cached_etag and cached_etag == if_none_match:
                 #logging.debug(f"ETag match for {func.__name__}, returning 304")
                 return '', 304  # Not Modified
-            
-            # Check if we have a valid cached value
+
+            # Cache check
             if key in _function_cache[cache_key]:
-                result, timestamp = _function_cache[cache_key][key]
+                cached_data, timestamp = _function_cache[cache_key][key]
                 if now - timestamp < seconds:
-                    #logging.debug(f"Cache hit for {func.__name__}, returning cached value. Age: {now - timestamp:.1f}s")
-                    if isinstance(result, Response):
-                        return result
-                    response = make_response(jsonify(result))
-                    response.headers['ETag'] = _function_etags[cache_key].get(key, '')
-                    response.headers['Cache-Control'] = f'private, max-age={seconds}'
+                    #logging.debug(f"Cache hit for {func.__name__}. Age: {now - timestamp:.1f}s")
+                    response = make_response(jsonify(cached_data)) # Assume 200 OK for cached data
+                    # Use cached ETag if available, otherwise generate (should usually be cached)
+                    etag_to_use = cached_etag or generate_etag(cached_data)
+                    response.headers['ETag'] = etag_to_use
+                    # Calculate remaining cache time for Cache-Control
+                    remaining_time = max(0, int(seconds - (now - timestamp)))
+                    response.headers['Cache-Control'] = f'private, max-age={remaining_time}'
                     return response
-            
-            # If no valid cached value, call the function
+                # else: cache expired
+
+
+            # Call the function if no valid cache or expired
+            #logging.debug(f"Cache miss or expired for {func.__name__}. Calling function.")
             result = func(*args, **kwargs)
-            
-            # Don't cache Response objects
-            if isinstance(result, Response):
-                #logging.debug(f"Not caching Response object for {func.__name__}")
-                return result
-                
-            _function_cache[cache_key][key] = (result, now)
+
+            # Check if the result indicates an error or is a direct Response
+            # These should not be cached.
+            is_response_like = hasattr(result, 'get_data') and hasattr(result, 'status_code')
+            is_response_tuple = (isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], int) and
+                                 hasattr(result[0], 'get_data') and hasattr(result[0], 'status_code'))
+
+            if is_response_like or is_response_tuple:
+                #logging.debug(f"Not caching error/direct response for {func.__name__}")
+                return result # Return the error/direct response without caching
+
+            # --- Cache the successful JSON data result ---
+            # Assume 'result' is JSON-serializable data if it wasn't an error/Response
+            data_to_cache = result
+            _function_cache[cache_key][key] = (data_to_cache, now)
             _function_last_modified[cache_key][key] = now
-            
-            # Generate new ETag
-            etag = str(hash((str(result), now)))
+
+            # Generate and store ETag for the fresh data
+            etag = generate_etag(data_to_cache)
             _function_etags[cache_key][key] = etag
-            
-            response = make_response(jsonify(result))
+            #logging.debug(f"Generated ETag for {func.__name__}: {etag}")
+
+
+            # Create the response for the fresh data
+            response = make_response(jsonify(data_to_cache)) # Assume 200 OK
             response.headers['ETag'] = etag
             response.headers['Cache-Control'] = f'private, max-age={seconds}'
-            
+            #logging.debug(f"Caching successful response for {func.__name__}")
             return response
-            
-        wrapper.clear = clear  # Attach clear method to the wrapper
+
+        wrapper.clear = clear # Attach clear method
         return wrapper
     return decorator
 
-base_bp = Blueprint('base', __name__)
+base_bp = Blueprint('base', __name__, template_folder='../templates', static_folder='../static')
 
 def get_current_branch():
     try:
@@ -220,7 +265,7 @@ def get_release_notes():
 @base_bp.route('/api/check-update', methods=['GET'])
 @cache_for_seconds(3600)  # Cache for 1 hour
 def check_for_update():
-    from settings import get_setting
+    from utilities.settings import get_setting
     #logging.debug(f"get_setting('Debug', 'check_for_updates', True): {get_setting('Debug', 'check_for_updates', True)}")
     if not get_setting('Debug', 'check_for_updates', True):
         #logging.debug("Update check disabled by user setting")
@@ -303,70 +348,213 @@ def check_for_update():
             'error': str(e)
         }
 
+@base_bp.route('/api/notifications')
+@cache_for_seconds(30)  # Cache for 30 seconds
+def get_notifications():
+    """Get notifications via the centralized notification handler."""
+    result_data, status_code = get_notifications_data()
+    if status_code != 200:
+        # If there was an error getting data, return the error response directly
+        # This will bypass the cache mechanism in the updated decorator.
+        return jsonify(result_data), status_code
+    # If successful, return just the data dictionary for caching.
+    return result_data
+
+@base_bp.route('/api/notifications/mark-read', methods=['POST'])
+@user_required
+def mark_notification_read():
+    """Mark a notification as read via the centralized handler."""
+    notification_id = request.json.get('id')
+    if not notification_id:
+        return jsonify({"error": "Notification ID required"}), 400
+    
+    result, status_code = mark_single_notification_read(notification_id)
+    return jsonify(result), status_code
+
+@base_bp.route('/api/notifications/mark-all-read', methods=['POST'])
+@user_required
+def mark_all_notifications_read():
+    """Mark all notifications as read via the centralized handler."""
+    result, status_code = mark_all_read()
+    return jsonify(result), status_code
+
 @base_bp.route('/api/task-stream')
 def task_stream():
     """Stream task updates. No caching for streaming endpoints."""
+    app = current_app._get_current_object()
     def generate():
         while True:
-            try:
-                program_runner = get_program_runner()
-                current_time = datetime.now().timestamp()
-                
-                if program_runner is not None and program_runner.is_running():
-                    last_run_times = program_runner.last_run_times
-                    task_intervals = program_runner.task_intervals
-                    
+            with app.app_context():
+                try:
+                    program_runner = get_program_runner()
+                    tz = program_runner.scheduler.timezone if program_runner and program_runner.scheduler else pytz.utc
+                    current_time_dt = datetime.now(tz)
+
+                    # Renamed to reflect its purpose before filtering
+                    potential_running_task_ids = []
+                    ui_visible_running_tasks_list = [] # This will be sent to UI
+
+                    is_paused = False
+                    pause_info_to_send = {
+                        "reason_string": None, "error_type": None, "service_name": None,
+                        "status_code": None, "retry_count": 0
+                    }
                     tasks_info = []
-                    for task, last_run in last_run_times.items():
-                        interval = task_intervals.get(task, 0)
-                        time_since_last_run = current_time - last_run
-                        next_run = max(0, interval - time_since_last_run)
+                    program_running_state = False
+                    
+                    # Get current monotonic time ONCE for consistent check across tasks in this iteration
+                    current_monotonic_now = time.monotonic()
+
+                    if program_runner is not None:
+                        program_running_state = program_runner.is_running()
+
+                        # Get all actually running task IDs and their start times
+                        potential_running_tasks_with_starts = {}
+                        try:
+                            # Atomically get the set of currently running task IDs
+                            with program_runner._running_task_lock:
+                                current_task_ids_snapshot = list(program_runner.currently_executing_tasks)
+                            
+                            # Atomically get their start times
+                            with program_runner._executing_task_start_times_lock:
+                                for task_id in current_task_ids_snapshot:
+                                    if task_id in program_runner.executing_task_start_times:
+                                        potential_running_tasks_with_starts[task_id] = program_runner.executing_task_start_times[task_id]
+                                    else:
+                                        logging.warning(f"Task '{task_id}' in currently_executing_tasks but missing from executing_task_start_times. Won't be shown as running this cycle.")
                         
-                        if task in program_runner.enabled_tasks:
-                            tasks_info.append({
-                                'name': task,
-                                'last_run': last_run,
-                                'next_run': next_run if task not in program_runner.currently_running_tasks else 0,
-                                'interval': interval,
-                                'enabled': True,
-                                'running': task in program_runner.currently_running_tasks
-                            })
-                    
-                    tasks_info.sort(key=lambda x: x['name'])
-                    
+                        except Exception as read_err:
+                             logging.error(f"Error reading running task data for UI stifling: {read_err}", exc_info=True)
+                             # potential_running_tasks_with_starts remains empty
+
+                        # Filter tasks based on duration for UI display
+                        for task_id, start_time_monotonic in potential_running_tasks_with_starts.items():
+                            duration_monotonic = current_monotonic_now - start_time_monotonic
+                            if duration_monotonic >= 0.1:  # Stifle period of 1 second
+                                ui_visible_running_tasks_list.append(task_id)
+                            else:
+                                # This logging can be verbose if many short tasks run
+                                logging.debug(f"Task '{task_id}' running for {duration_monotonic:.3f}s, stifled from UI display.")
+                        
+                        # Get pause state
+                        is_paused = program_runner.queue_paused
+                        if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
+                            pause_info_to_send = program_runner.pause_info.copy()
+
+                        # Get scheduled task list (this part remains the same)
+                        if program_running_state and program_runner.scheduler:
+                            with program_runner.scheduler_lock:
+                                jobs = program_runner.scheduler.get_jobs()
+                                for job in jobs:
+                                    interval = None
+                                    if isinstance(job.trigger, IntervalTrigger):
+                                        interval = job.trigger.interval.total_seconds()
+
+                                    if interval is not None and interval < 150: # Skip tasks with interval < 150 seconds
+                                        continue
+
+                                    next_run_timestamp = None
+                                    if job.next_run_time:
+                                        next_run_aware = job.next_run_time.astimezone(tz)
+                                        next_run_timestamp = next_run_aware.timestamp()
+
+                                    enabled = job.next_run_time is not None
+
+                                    time_until_next = None
+                                    if enabled and next_run_timestamp:
+                                        time_until_next = max(0, next_run_timestamp - current_time_dt.timestamp())
+
+                                    tasks_info.append({
+                                        'name': job.id,
+                                        'next_run': time_until_next,
+                                        'next_run_timestamp': next_run_timestamp,
+                                        'interval': interval,
+                                        'enabled': enabled,
+                                    })
+                            tasks_info.sort(key=lambda x: x['name'])
+
+                    # Construct the data payload using the new filtered list for running tasks
                     data = {
                         'success': True,
-                        'running': True,
+                        'running': program_running_state,
                         'tasks': tasks_info,
-                        'paused': program_runner.queue_manager.is_paused() if hasattr(program_runner, 'queue_manager') else False,
-                        'pause_reason': program_runner.pause_reason
+                        'paused': is_paused,
+                        'pause_info': pause_info_to_send,
+                        'running_tasks_list': ui_visible_running_tasks_list # Use the filtered list
                     }
-                else:
-                    data = {
-                        'success': True,
-                        'running': False,
-                        'tasks': [],
-                        'paused': False,
-                        'pause_reason': None
+
+                    yield f"data: {json.dumps(data, default=str)}\n\n"
+
+                except Exception as e:
+                    logging.error(f"Error in task stream generate loop: {str(e)}", exc_info=True)
+                    default_error_pause_info = {
+                        "reason_string": "Error in task stream.", "error_type": "STREAM_ERROR", 
+                        "service_name": "System", "status_code": None, "retry_count": 0
                     }
-                
-                yield f"data: {json.dumps(data, default=str)}\n\n"
-                    
-            except Exception as e:
-                logging.error(f"Error in task stream: {str(e)}")
-                yield f"data: {json.dumps({'success': False, 'error': str(e)})}\n\n"
-            
-            time.sleep(1)  # Check for updates every second
-    
+                    yield f"data: {json.dumps({'success': False, 'running': False, 'tasks': [], 'paused': False, 'pause_info': default_error_pause_info, 'running_tasks_list': [], 'error': str(e)})}\n\n" # Send empty list on error
+
+            time.sleep(1) # Stream updates every 1 second
+
     response = Response(generate(), mimetype='text/event-stream')
     response.headers.update({
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type',
-        'X-Accel-Buffering': 'no'  # Disable buffering in Nginx
+        'X-Accel-Buffering': 'no'
     })
-    return response 
+    return response
+
+# Helper function to safely create filename from path
+def path_to_filename(page_path):
+    if not page_path or page_path == '/':
+        return 'root_index' # Or just 'index', 'home', etc.
+    
+    # Remove leading/trailing slashes and replace others with underscores
+    filename = page_path.strip('/').replace('/', '_')
+    
+    # Basic sanitization (allow alphanumeric, underscore, hyphen)
+    filename = "".join(c for c in filename if c.isalnum() or c in ('_', '-')).rstrip('_')
+    
+    return filename if filename else 'root_index' # Fallback if sanitization resulted in empty string
+
+def get_resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError: # Changed from generic Exception to AttributeError for _MEIPASS
+        # Not running in a PyInstaller bundle.
+        # Assumes this file (base_routes.py) is in a 'routes' subdirectory of the project root.
+        # So, going up one level gives the project root.
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    return os.path.join(base_path, relative_path)
+
+@base_bp.route('/api/help-content')
+def get_help_content():
+    page_path = request.args.get('page_path', '/')
+    help_dir = get_resource_path('help_content') # <-- NEW WAY
+    
+    filename_base = path_to_filename(page_path)
+    specific_filepath = os.path.join(help_dir, f"{filename_base}.md")
+    default_filepath = os.path.join(help_dir, 'default.md')
+
+    filepath_to_use = default_filepath # Default to default.md
+    if os.path.exists(specific_filepath):
+        filepath_to_use = specific_filepath
+    elif not os.path.exists(default_filepath):
+         return jsonify(success=False, error="Help content directory or default file not found."), 500
+
+    try:
+        with open(filepath_to_use, 'r', encoding='utf-8') as f:
+            md_content = f.read()
+        
+        html_content = markdown.markdown(md_content, extensions=['fenced_code', 'tables'])
+        return jsonify(success=True, html=html_content)
+        
+    except Exception as e:
+        current_app.logger.error(f"Error reading/parsing help file {filepath_to_use}: {e}")
+        return jsonify(success=False, error="Could not load help content."), 500
 
 # Clear check-update cache on startup
 clear_cache()

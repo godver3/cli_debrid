@@ -20,6 +20,63 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentVersion = null;
     let originalVersionSettings = {};
     let modifiedVersionSettings = {};
+    let currentItemGenres = [];
+
+    // Check for URL parameters
+    function checkForUrlParameters() {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('id') && urlParams.has('title') && urlParams.has('media_type')) {
+            const id = urlParams.get('id');
+            const title = urlParams.get('title');
+            const year = urlParams.get('year');
+            const mediaType = urlParams.get('media_type');
+            
+            console.log(`Auto-selecting item from URL params: ${title} (${year}), type: ${mediaType}, id: ${id}`);
+            
+            // Create an item object from the URL parameters
+            const item = {
+                id: id,
+                title: title,
+                year: year ? parseInt(year) : null,
+                mediaType: mediaType
+            };
+            
+            // Auto-convert TMDB ID to IMDB ID if needed
+            fetch(`/scraper/convert_tmdb_to_imdb/${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    item.imdbId = data.imdb_id;
+                    
+                    // Select the item and show the scrape section
+                    selectItem(item);
+                    showScrapeSection();
+                    
+                    // Load the TV details if it's a TV show
+                    if (mediaType === 'tv') {
+                        fetch(`/scraper/get_tv_details/${id}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.success) {
+                                    populateSeasonEpisodeSelects(data);
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error fetching TV show details:', error);
+                            });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error converting TMDB ID to IMDB ID:', error);
+                    
+                    // Still select the item even if IMDB ID conversion fails
+                    selectItem(item);
+                    showScrapeSection();
+                });
+        }
+    }
+
+    // Call the function to check for URL parameters
+    checkForUrlParameters();
 
     searchButton.addEventListener('click', performSearch);
     searchInput.addEventListener('keypress', function(e) {
@@ -250,7 +307,43 @@ document.addEventListener('DOMContentLoaded', function() {
     
         // Load versions for the selected item
         loadVersions();
+        
+        // Fetch genre information for the selected item
+        fetchItemGenres(item);
     }
+
+    function fetchItemGenres(item) {
+        console.log('Fetching genres for item:', item);
+        
+        // Use the same approach as the main scraper - fetch genre info from TMDB via the get_media_meta endpoint
+        fetch('/scraper/get_media_meta', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                tmdb_id: item.id,
+                media_type: item.mediaType === 'tv' || item.mediaType === 'show' ? 'tv' : 'movie'
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.warn('Could not fetch genre information:', data.error);
+                currentItemGenres = [];
+            } else {
+                // The get_media_meta returns genres as an array of genre names
+                currentItemGenres = data.genres || [];
+                console.log('Fetched genres for item:', currentItemGenres);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching genres:', error);
+            currentItemGenres = [];
+        });
+    }
+
+
 
     function populateSeasonEpisodeSelects(data) {
         const seasonSelect = document.getElementById('season-select');
@@ -381,51 +474,82 @@ document.addEventListener('DOMContentLoaded', function() {
         originalSettingsContainer.innerHTML = `<h3>Original ${settings.display_name || version} Settings</h3>`;
         modifiedSettingsContainer.innerHTML = `<h3>Modified ${settings.display_name || version} Settings</h3>`;
     
-        for (const [key, value] of Object.entries(settings)) {
-            if (key !== 'display_name') {
-                const formGroup = document.createElement('div');
-                formGroup.className = 'settings-form-group';
+        // Define the order of settings
+        const settingsOrder = [
+            'max_resolution',
+            'resolution_wanted',
+            'min_size_gb',
+            'max_size_gb',
+            'min_bitrate_mbps',
+            'max_bitrate_mbps',
+            'resolution_weight',
+            'size_weight',
+            'bitrate_weight',
+            'similarity_weight',
+            'similarity_threshold',
+            'similarity_threshold_anime',
+            'enable_hdr',
+            'hdr_weight',
+            'filter_in',
+            'filter_out',
+            'preferred_filter_in',
+            'preferred_filter_out'
+        ];
     
-                let labelText = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                
-                console.log(`Setting ${key} to:`, value);
+        // Sort the settings according to the defined order
+        const sortedSettings = Object.entries(settings)
+            .filter(([key]) => key !== 'display_name')
+            .sort(([a], [b]) => {
+                const aIndex = settingsOrder.indexOf(a);
+                const bIndex = settingsOrder.indexOf(b);
+                if (aIndex === -1) return 1;  // Put unknown settings at the end
+                if (bIndex === -1) return -1;
+                return aIndex - bIndex;
+            });
     
-                // Rename the fields
-                if (key === 'max_resolution') {
-                    labelText = 'Resolution Wanted';
-                } else if (key === 'resolution_wanted') {
-                    labelText = 'Resolution Symbol';
-                }
+        for (const [key, value] of sortedSettings) {
+            const formGroup = document.createElement('div');
+            formGroup.className = 'settings-form-group';
     
-                const label = document.createElement('label');
-                label.className = 'settings-title';
-                label.setAttribute('for', `scraping-${version}-${key}`);
-                label.textContent = `${labelText}:`;
+            let labelText = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            
+            console.log(`Setting ${key} to:`, value);
     
-                // Create input elements for both original and modified settings
-                let [originalInput, modifiedInput] = createInputElements(key, value);
-    
-                // Set up original input
-                originalInput.id = `original-scraping-${version}-${key}`;
-                originalInput.name = `Original.Scraping.versions.${version}.${key}`;
-                originalInput.className = 'settings-input original-input';
-                originalInput.disabled = true;
-    
-                // Set up modified input
-                modifiedInput.id = `scraping-${version}-${key}`;
-                modifiedInput.name = `Scraping.versions.${version}.${key}`;
-                modifiedInput.className = 'settings-input';
-    
-                const originalGroup = formGroup.cloneNode(true);
-                originalGroup.appendChild(label.cloneNode(true));
-                originalGroup.appendChild(originalInput);
-                originalSettingsContainer.appendChild(originalGroup);
-    
-                const modifiedGroup = formGroup.cloneNode(true);
-                modifiedGroup.appendChild(label.cloneNode(true));
-                modifiedGroup.appendChild(modifiedInput);
-                modifiedSettingsContainer.appendChild(modifiedGroup);
+            // Rename the fields
+            if (key === 'max_resolution') {
+                labelText = 'Resolution Wanted';
+            } else if (key === 'resolution_wanted') {
+                labelText = 'Resolution Symbol';
             }
+    
+            const label = document.createElement('label');
+            label.className = 'settings-title';
+            label.setAttribute('for', `scraping-${version}-${key}`);
+            label.textContent = `${labelText}:`;
+    
+            // Create input elements for both original and modified settings
+            let [originalInput, modifiedInput] = createInputElements(key, value);
+    
+            // Set up original input
+            originalInput.id = `original-scraping-${version}-${key}`;
+            originalInput.name = `Original.Scraping.versions.${version}.${key}`;
+            originalInput.className = 'settings-input original-input';
+            originalInput.disabled = true;
+    
+            // Set up modified input
+            modifiedInput.id = `scraping-${version}-${key}`;
+            modifiedInput.name = `Scraping.versions.${version}.${key}`;
+            modifiedInput.className = 'settings-input';
+    
+            const originalGroup = formGroup.cloneNode(true);
+            originalGroup.appendChild(label.cloneNode(true));
+            originalGroup.appendChild(originalInput);
+            originalSettingsContainer.appendChild(originalGroup);
+    
+            const modifiedGroup = formGroup.cloneNode(true);
+            modifiedGroup.appendChild(label.cloneNode(true));
+            modifiedGroup.appendChild(modifiedInput);
+            modifiedSettingsContainer.appendChild(modifiedGroup);
         }
     
         // Add the save button
@@ -445,7 +569,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function createInputElements(key, value) {
         let originalInput, modifiedInput;
     
-        if (key === 'enable_hdr') {
+        if (typeof value === 'boolean') {
             originalInput = document.createElement('input');
             originalInput.type = 'checkbox';
             originalInput.checked = value;
@@ -461,7 +585,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 originalInput.appendChild(optionElement);
                 modifiedInput.appendChild(optionElement.cloneNode(true));
             });
-            // Ensure the correct option is selected for both inputs
             originalInput.value = value;
             modifiedInput.value = value;
         } else if (key === 'resolution_wanted') {
@@ -475,7 +598,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 originalInput.appendChild(optionElement);
                 modifiedInput.appendChild(optionElement.cloneNode(true));
             });
-            // Ensure the correct option is selected for both inputs
             originalInput.value = value;
             modifiedInput.value = value;
         } else if (['filter_in', 'filter_out'].includes(key)) {
@@ -484,6 +606,34 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (['preferred_filter_in', 'preferred_filter_out'].includes(key)) {
             originalInput = createPreferredFilterList(key, value, true);
             modifiedInput = createPreferredFilterList(key, value, false);
+        } else if (key === 'max_size_gb' || key === 'min_size_gb' || key === 'max_bitrate_mbps' || key === 'min_bitrate_mbps') {
+            // Size and bitrate fields
+            originalInput = document.createElement('input');
+            originalInput.type = 'number';
+            originalInput.step = '0.01';  // Allow decimal values
+            originalInput.min = '0';      // Don't allow negative values
+            originalInput.placeholder = key.startsWith('max_') ? 'No limit' : '0';
+            originalInput.value = (value === '' || value === null || value === Infinity) ? '' : value;
+            modifiedInput = originalInput.cloneNode(true);
+        } else if (key.endsWith('_weight')) {
+            // Weight fields
+            originalInput = document.createElement('input');
+            originalInput.type = 'number';
+            originalInput.step = '1';     // Integer values only
+            originalInput.min = '0';      // Don't allow negative values
+            originalInput.placeholder = '0';
+            originalInput.value = value;
+            modifiedInput = originalInput.cloneNode(true);
+        } else if (key.includes('similarity_threshold')) {
+            // Similarity threshold fields
+            originalInput = document.createElement('input');
+            originalInput.type = 'number';
+            originalInput.step = '0.01';  // Allow decimal values
+            originalInput.min = '0';      // Min value 0
+            originalInput.max = '1';      // Max value 1
+            originalInput.placeholder = '0.8';
+            originalInput.value = value;
+            modifiedInput = originalInput.cloneNode(true);
         } else {
             originalInput = document.createElement('input');
             originalInput.type = typeof value === 'number' ? 'number' : 'text';
@@ -600,6 +750,37 @@ document.addEventListener('DOMContentLoaded', function() {
         return itemContainer;
     }
 
+    function getModifiedVersionSettings() {
+        const settings = {};
+        document.querySelectorAll('#modifiedSettings .settings-input').forEach(input => {
+            const settingKey = input.id.split('-')[2];
+            if (input.type === 'checkbox') {
+                settings[settingKey] = input.checked;
+            } else if (input.type === 'select-one') {
+                settings[settingKey] = input.value;
+            } else if (settingKey === 'filter_in' || settingKey === 'filter_out') {
+                settings[settingKey] = Array.from(input.querySelectorAll('.filter-input')).map(item => item.value).filter(Boolean);
+            } else if (settingKey === 'preferred_filter_in' || settingKey === 'preferred_filter_out') {
+                settings[settingKey] = Array.from(input.querySelectorAll('.preferred-filter-item')).map(item => {
+                    const term = item.querySelector('.filter-input').value;
+                    const weight = parseInt(item.querySelector('.filter-weight').value);
+                    return term && !isNaN(weight) ? [term, weight] : null;
+                }).filter(Boolean);
+            } else if (settingKey === 'max_size_gb' || settingKey === 'min_size_gb' || settingKey === 'max_bitrate_mbps' || settingKey === 'min_bitrate_mbps') {
+                // Handle size and bitrate fields
+                if (input.value === '' || input.value === null) {
+                    settings[settingKey] = settingKey.startsWith('max_') ? Infinity : 0;
+                } else {
+                    const numValue = parseFloat(input.value);
+                    settings[settingKey] = isNaN(numValue) ? (settingKey.startsWith('max_') ? Infinity : 0) : numValue;
+                }
+            } else {
+                settings[settingKey] = input.value;
+            }
+        });
+        return settings;
+    }
+
     function runScrape() {
         Loading.show();
         const version = document.getElementById('version-select').value;
@@ -607,6 +788,11 @@ document.addEventListener('DOMContentLoaded', function() {
     
         const isTV = currentItem.mediaType === 'tv' || currentItem.mediaType === 'show';
         
+        // Use the fetched genres from TMDB instead of keyword-based detection
+        const genres = currentItemGenres || [];
+        
+        console.log(`Using fetched genres for "${currentItem.title || currentItem.name}":`, genres);
+
         const scrapeData = {
             imdb_id: document.getElementById('imdbId').value || '',
             tmdb_id: currentItem.id,
@@ -614,7 +800,9 @@ document.addEventListener('DOMContentLoaded', function() {
             year: currentItem.year,
             movie_or_episode: isTV ? 'episode' : 'movie',
             version: version,
-            modifiedSettings: modifiedSettings
+            modifiedSettings: modifiedSettings,
+            genres: genres,  // Add genres to the scrape data
+            skip_cache_check: true  // Always skip cache check in scraper tester
         };
     
         // Add TV show specific information
@@ -643,18 +831,27 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(data => {
             console.log('Received data:', data);  // Log the entire response
     
-            if (!data || (!data.originalResults && !data.adjustedResults)) {
+            if (!data || ( (!data.originalResults && !data.adjustedResults) && (!data.originalFilteredOutResults && !data.adjustedFilteredOutResults) ) ) {
                 console.error('Invalid response structure:', data);
                 throw new Error('Invalid response structure');
             }
     
             const originalResults = data.originalResults || [];
             const adjustedResults = data.adjustedResults || [];
+            const originalFilteredOutResults = data.originalFilteredOutResults || [];
+            const adjustedFilteredOutResults = data.adjustedFilteredOutResults || [];
             
             console.log('Original results:', originalResults);
             console.log('Adjusted results:', adjustedResults);
+            console.log('Original filtered out results:', originalFilteredOutResults);
+            console.log('Adjusted filtered out results:', adjustedFilteredOutResults);
     
-            displayScrapeResults({originalResults, adjustedResults});
+            displayScrapeResults({
+                originalResults, 
+                adjustedResults, 
+                originalFilteredOutResults, 
+                adjustedFilteredOutResults
+            });
         })
         .catch(error => {
             console.error('Error:', error);
@@ -666,79 +863,215 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
    
-    function getModifiedVersionSettings() {
-        const settings = {};
-        document.querySelectorAll('#modifiedSettings .settings-input').forEach(input => {
-            const settingKey = input.id.split('-')[2];
-            if (input.type === 'checkbox') {
-                settings[settingKey] = input.checked;
-            } else if (input.type === 'select-one') {
-                settings[settingKey] = input.value;
-            } else if (settingKey === 'filter_in' || settingKey === 'filter_out') {
-                settings[settingKey] = Array.from(input.querySelectorAll('.filter-input')).map(item => item.value).filter(Boolean);
-            } else if (settingKey === 'preferred_filter_in' || settingKey === 'preferred_filter_out') {
-                settings[settingKey] = Array.from(input.querySelectorAll('.preferred-filter-item')).map(item => {
-                    const term = item.querySelector('.filter-input').value;
-                    const weight = parseInt(item.querySelector('.filter-weight').value);
-                    return term && !isNaN(weight) ? [term, weight] : null;
-                }).filter(Boolean);
-            } else {
-                settings[settingKey] = input.value;
-            }
-        });
-        return settings;
-    }
-
     function displayScrapeResults(data) {
-        originalResults.innerHTML = '<h3>Original Results</h3>';
-        adjustedResults.innerHTML = '<h3>Adjusted Results</h3>';
+        const originalResultsDiv = document.getElementById('original-results');
+        const adjustedResultsDiv = document.getElementById('adjusted-results');
+
+        // Clear previous results and set main headings with counts
+        const originalPassedCount = (data.originalResults || []).length;
+        const originalFilteredCount = (data.originalFilteredOutResults || []).length;
+        const adjustedPassedCount = (data.adjustedResults || []).length;
+        const adjustedFilteredCount = (data.adjustedFilteredOutResults || []).length;
         
-        if (data.originalResults && data.originalResults.length > 0) {
-            originalResults.appendChild(createResultsTable(data.originalResults));
-        } else {
-            originalResults.innerHTML += '<p>No original results found</p>';
+        if (originalResultsDiv) originalResultsDiv.innerHTML = `<h3>Original Results (${originalPassedCount} passed, ${originalFilteredCount} filtered)</h3>`;
+        if (adjustedResultsDiv) adjustedResultsDiv.innerHTML = `<h3>Adjusted Results (${adjustedPassedCount} passed, ${adjustedFilteredCount} filtered)</h3>`;
+
+        console.log("Original Results Div:", originalResultsDiv);
+        console.log("Adjusted Results Div:", adjustedResultsDiv);
+        
+        // Combine passed and filtered out results for the "Original" column
+        // Add a marker to distinguish them
+        const passedOriginalResults = (data.originalResults || []).map(r => ({ ...r, __isActuallyFilteredOut: false }));
+        const filteredOriginalResults = (data.originalFilteredOutResults || []).map(r => ({ ...r, __isActuallyFilteredOut: true }));
+        const allOriginalDisplayItems = passedOriginalResults.concat(filteredOriginalResults);
+
+        if (originalResultsDiv) {
+            if (allOriginalDisplayItems.length > 0) {
+                originalResultsDiv.appendChild(createResultsTable(allOriginalDisplayItems, 'original'));
+            } else {
+                originalResultsDiv.innerHTML += '<p>No original results or filtered out items to display.</p>';
+            }
         }
     
-        if (data.adjustedResults && data.adjustedResults.length > 0) {
-            adjustedResults.appendChild(createResultsTable(data.adjustedResults));
-        } else {
-            adjustedResults.innerHTML += '<p>No adjusted results found</p>';
+        // Combine passed and filtered out results for the "Adjusted" column
+        // Add a marker to distinguish them
+        const passedAdjustedResults = (data.adjustedResults || []).map(r => ({ ...r, __isActuallyFilteredOut: false }));
+        const filteredAdjustedResults = (data.adjustedFilteredOutResults || []).map(r => ({ ...r, __isActuallyFilteredOut: true }));
+        const allAdjustedDisplayItems = passedAdjustedResults.concat(filteredAdjustedResults);
+
+        if (adjustedResultsDiv) {
+            if (allAdjustedDisplayItems.length > 0) {
+                adjustedResultsDiv.appendChild(createResultsTable(allAdjustedDisplayItems, 'adjusted'));
+            } else {
+                adjustedResultsDiv.innerHTML += '<p>No adjusted results or filtered out items to display.</p>';
+            }
         }
     
-        scrapeResults.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Ensure scrapeResults element exists before trying to scroll
+        const scrapeResultsElement = document.getElementById('scrape-results');
+        if (scrapeResultsElement) {
+            scrapeResultsElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
     
-        // Add click event listeners to result items
+        // Add click event listeners to result items (both passed and filtered out)
         document.querySelectorAll('.result-item').forEach(item => {
-            item.addEventListener('click', function() {
-                const resultIndex = Array.from(this.parentNode.children).indexOf(this);
-                const result = this.parentNode.id === 'original-results' 
-                    ? data.originalResults[resultIndex] 
-                    : data.adjustedResults[resultIndex];
-                displayScoreBreakdown(result);
+            const new_item = item.cloneNode(true); // Clone to remove old listeners
+            item.parentNode.replaceChild(new_item, item);
+
+            new_item.addEventListener('click', function() {
+                const tableElement = this.closest('table');
+                if (!tableElement) return;
+
+                const columnDiv = this.closest('.results-column');
+                if (!columnDiv) return;
+                
+                const tableId = columnDiv.id;
+                
+                // Find the original data object. This relies on the __isActuallyFilteredOut flag
+                // and the order of concatenation.
+                let resultData;
+                const displayedItems = (tableId === 'original-results') ? allOriginalDisplayItems : allAdjustedDisplayItems;
+                const originalPassedItems = (tableId === 'original-results') ? (data.originalResults || []) : (data.adjustedResults || []);
+                const originalFilteredOutItems = (tableId === 'original-results') ? (data.originalFilteredOutResults || []) : (data.adjustedFilteredOutResults || []);
+                
+                // Get the index from the tbody (now properly structured)
+                const tbody = tableElement.querySelector('tbody');
+                const rowIndex = Array.from(tbody.children).indexOf(this); // Index in the displayed table (excluding header)
+                const clickedItemData = displayedItems[rowIndex];
+
+                if (clickedItemData) {
+                    if (clickedItemData.__isActuallyFilteredOut) {
+                        // For filtered out items, show the filter reason
+                        displayFilterReason(clickedItemData);
+                    } else {
+                        // For passed items, show score breakdown
+                        // To find the correct item in the original non-filtered array,
+                        // we need to count how many non-filtered items appeared before this one.
+                        let originalIndex = -1;
+                        let nonFilteredCount = 0;
+                        for(let i=0; i <= rowIndex; i++) {
+                            if (displayedItems[i] && !displayedItems[i].__isActuallyFilteredOut) {
+                                if (i === rowIndex) {
+                                    originalIndex = nonFilteredCount;
+                                }
+                                nonFilteredCount++;
+                            }
+                        }
+                        if (originalIndex !== -1 && originalIndex < originalPassedItems.length) {
+                             resultData = originalPassedItems[originalIndex];
+                        }
+                        
+                        if (resultData) {
+                            displayScoreBreakdown(resultData);
+                        }
+                    }
+                }
             });
         });
     }
     
-    function createResultsTable(results) {
+    function createResultsTable(results, type /* 'original' or 'adjusted' */) {
         const table = document.createElement('table');
         table.className = 'settings-table';
-        table.innerHTML = `
-            <tr>
-                <th>Title</th>
-                <th>Score</th>
-            </tr>
+        
+        // Create proper table structure with thead and tbody
+        const thead = document.createElement('thead');
+        const tbody = document.createElement('tbody');
+        
+        // Header (no Filter Reason column)
+        const headerRow = thead.insertRow();
+        headerRow.innerHTML = `
+            <th>Title</th>
+            <th>Source</th>
+            <th>Score</th>
         `;
+        
+        table.appendChild(thead);
+        table.appendChild(tbody);
+        
         results.forEach((result, index) => {
-            const row = table.insertRow();
-            row.className = 'result-item';
-            row.innerHTML = `
-                <td>${result.title || 'N/A'}</td>
-                <td>${result.score_breakdown ? result.score_breakdown.total_score.toFixed(2) : 'N/A'}</td>
-            `;
+            const isFilteredOut = result.__isActuallyFilteredOut; 
+
+            const row = tbody.insertRow();
+            row.className = 'result-item' + (isFilteredOut ? ' filtered-out-item' : '');
+            row.dataset.type = type + (isFilteredOut ? '-filtered-out-actual' : '-passed-actual');
+            row.dataset.index = index;
+
+            const titleCell = row.insertCell();
+            titleCell.textContent = result.title || result.original_title || 'N/A';
+
+            const sourceCell = row.insertCell();
+            sourceCell.textContent = result.source || 'N/A';
+
+            const scoreCell = row.insertCell();
+            if (isFilteredOut) {
+                scoreCell.textContent = result.filter_reason || 'Filtered';
+                scoreCell.className = 'filter-reason-cell';
+                scoreCell.title = result.filter_reason || 'Filtered';
+            } else {
+                scoreCell.textContent = result.score_breakdown && result.score_breakdown.total_score !== undefined 
+                    ? result.score_breakdown.total_score.toFixed(2) 
+                    : (result.score !== undefined ? result.score.toFixed(2) : 'N/A');
+            }
         });
         return table;
     }
     
+    function displayFilterReason(result) {
+        const scoreBreakdown = document.getElementById('score-breakdown');
+        scoreBreakdown.innerHTML = '<h3 class="score-breakdown-title">Filter Reason</h3>';
+        scoreBreakdown.className = 'settings-section score-breakdown-container';
+
+        const filterReasonDiv = document.createElement('div');
+        filterReasonDiv.className = 'filter-reason-display';
+
+        const titleElement = document.createElement('h4');
+        titleElement.textContent = result.title || result.original_title || 'Unknown Title';
+        titleElement.className = 'filtered-item-title';
+        filterReasonDiv.appendChild(titleElement);
+
+        const reasonElement = document.createElement('div');
+        reasonElement.className = 'filter-reason-text';
+        reasonElement.innerHTML = `<strong>Reason for filtering:</strong> ${result.filter_reason || 'Unknown reason'}`;
+        filterReasonDiv.appendChild(reasonElement);
+
+        // Add additional details if available
+        const detailsList = document.createElement('ul');
+        detailsList.className = 'filter-details-list';
+
+        if (result.source) {
+            const sourceItem = document.createElement('li');
+            sourceItem.innerHTML = `<strong>Source:</strong> ${result.source}`;
+            detailsList.appendChild(sourceItem);
+        }
+
+        if (result.size !== undefined) {
+            const sizeItem = document.createElement('li');
+            sizeItem.innerHTML = `<strong>Size:</strong> ${result.size.toFixed(2)} GB`;
+            detailsList.appendChild(sizeItem);
+        }
+
+        if (result.parsed_info) {
+            const parsedInfo = result.parsed_info;
+            if (parsedInfo.resolution) {
+                const resolutionItem = document.createElement('li');
+                resolutionItem.innerHTML = `<strong>Resolution:</strong> ${parsedInfo.resolution}`;
+                detailsList.appendChild(resolutionItem);
+            }
+            if (parsedInfo.year) {
+                const yearItem = document.createElement('li');
+                yearItem.innerHTML = `<strong>Year:</strong> ${parsedInfo.year}`;
+                detailsList.appendChild(yearItem);
+            }
+        }
+
+        if (detailsList.children.length > 0) {
+            filterReasonDiv.appendChild(detailsList);
+        }
+
+        scoreBreakdown.appendChild(filterReasonDiv);
+    }
+
     function displayScoreBreakdown(result) {
         const scoreBreakdown = document.getElementById('score-breakdown');
         scoreBreakdown.innerHTML = '<h3 class="score-breakdown-title">Score Breakdown</h3>';
@@ -871,4 +1204,3 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('modifiedSettings').addEventListener('input', updateSaveButtonState);
 document.getElementById('modifiedSettings').addEventListener('change', updateSaveButtonState);
 });
-

@@ -76,7 +76,7 @@ test.py
 utilities/nohup.out
 flask_session
 *.lock
-config/*.json
+/config/*.json
 .aider*
 build.sh
 dist
@@ -127,7 +127,7 @@ build/
 # Project specific
 test_output.mp4
 user/
-config/*.json
+/config/*.json
 .aider*
 
 # Virtual Environment
@@ -139,6 +139,24 @@ nohup.out
 run.sh
 
 ~
-config/config.json.backup
-config/secret_key
-config
+/config/config.json.backup
+/config/secret_key
+/config
+auto_blacklist
+
+orbit_data/
+ipfs_test/
+orbit_service/node_modules/
+
+go_orbit_service
+gunjs_cache_prototype
+gunjs_prototype
+libp2p_test
+orbit_service
+orbit_test
+orbitdb_prototype
+threads_test
+phalanx_db*
+phalanx_db/
+deployment/
+backup_debridify_postgres_volume.sh

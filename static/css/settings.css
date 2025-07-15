@@ -133,4 +133,93 @@ button.delete-scraper-btn:disabled,
     align-items: center;
 }
 
-/* Rest of your existing styles... */ 
+/* Hide hybrid mode and jackett seeders only checkboxes */
+.settings-form-group.hybrid-mode-group,
+.settings-form-group.jackett-seeders-only-group {
+    display: none !important;
+}
+
+/* Also hide any form group with hybrid_mode or jackett_seeders_only checkbox */
+.settings-form-group:has(#scraping-hybrid_mode),
+.settings-form-group:has(input[data-hybrid-mode="true"]),
+.settings-form-group:has(#scraping-jackett_seeders_only),
+.settings-form-group:has(input[data-jackett-seeders-only="true"]) {
+    display: none !important;
+}
+
+/* Add specific styling for the Import Liked Lists button */
+.import-liked-to-source-btn, .get-user-watchlist-btn {
+    background-color: #2196F3; /* Blue background */
+    color: white;
+    border: none !important;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.3s ease; /* Smooth transition */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px; /* Match delete button height */
+    margin: 5px 0; /* Adjust margin as needed */
+    font-size: 0.9em; /* Match delete button font size */
+    font-weight: 500;
+    text-align: center;
+    line-height: normal; /* Ensure text aligns well */
+}
+
+.import-liked-to-source-btn:hover:not(:disabled), .get-user-watchlist-btn:hover:not(:disabled) {
+    background-color: #1976D2; /* Darker blue on hover */
+}
+
+/* Disabled state for the import button */
+.import-liked-to-source-btn:disabled, .get-user-watchlist-btn:disabled {
+    background-color: #6c757d !important; /* Grey background when disabled */
+    color: #ccc !important;
+    cursor: not-allowed !important;
+    opacity: 0.65 !important;
+}
+
+/* Responsive styles for settings */
+@media screen and (max-width: 1245px) {
+    .settings-container {
+        width: 100%;
+        padding: 15px;
+    }
+
+    .settings-section-header {
+        padding: 12px 10px;
+    }
+
+    .settings-section-content {
+        padding: 12px 10px;
+    }
+
+    .settings-form-group {
+        margin-bottom: 12px;
+        padding: 8px;
+    }
+
+    .settings-input {
+        padding: 10px;
+        font-size: 16px; /* Larger font for better mobile usability */
+    }
+
+    .settings-title {
+        margin-bottom: 8px;
+        font-size: 16px;
+    }
+
+    /* Adjust button sizes for better touch targets */
+    .delete-scraper-btn,
+    .delete-source-btn,
+    .delete-version-btn,
+    .rename-version-btn,
+    .duplicate-source-btn,
+    .duplicate-scraper-btn,
+    .duplicate-version-btn {
+        min-height: 36px;
+        min-width: 36px;
+        padding: 8px 12px;
+        margin: 4px;
+    }
+} 

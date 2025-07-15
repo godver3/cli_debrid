@@ -34,7 +34,9 @@
                 { value: 'MediaFusion', text: 'MediaFusion' },
                 { value: 'Jackett', text: 'Jackett' },
                 { value: 'Torrentio', text: 'Torrentio' },
-                { value: 'Nyaa', text: 'Nyaa' }
+                { value: 'Nyaa', text: 'Nyaa' },
+                { value: 'Prowlarr', text: 'Prowlarr' },
+                { value: 'OldNyaa', text: 'Old Nyaa (Do Not Use)' }
             ],
             confirmText: 'Add',
             cancelText: 'Cancel',
@@ -180,7 +182,7 @@
             <label for="{{ scraper_id }}-enabled" class="settings-title">Enabled:</label>
             <input type="checkbox" id="{{ scraper_id }}-enabled" name="Scrapers.{{ scraper_id }}.enabled" {% if config.enabled %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.enabled">
         </div>
-        {% if config.type in ['Zilean', 'MediaFusion', 'Jackett'] %}
+        {% if config.type in ['Zilean', 'MediaFusion', 'Jackett', 'Prowlarr'] %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-url" class="settings-title">URL:</label>
             <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">
@@ -193,6 +195,16 @@
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-enabled-indexers" class="settings-title">Enabled Indexers:</label>
             <input type="text" id="{{ scraper_id }}-enabled-indexers" name="Scrapers.{{ scraper_id }}.enabled_indexers" value="{{ config.enabled_indexers }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.enabled_indexers">
+        </div>
+        {% elif config.type == 'Prowlarr' %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-api_key" class="settings-title">API Key:</label>
+            <input type="text" id="{{ scraper_id }}-api_key" name="Scrapers.{{ scraper_id }}.api_key" value="{{ config.api_key }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api_key">
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-tags" class="settings-title">Indexer IDs:</label>
+            <input type="text" id="{{ scraper_id }}-tags" name="Scrapers.{{ scraper_id }}.tags" value="{{ config.tags }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.tags" placeholder="e.g., 1,5,23">
+            <small class="settings-description">Comma-separated list of numeric Prowlarr Indexer IDs. If provided, searches will only use these indexers, otherwise all indexers will be used.</small>
         </div>
         {% endif %}
         {% elif config.type == 'Torrentio' %}

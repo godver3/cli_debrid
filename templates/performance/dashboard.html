@@ -1,0 +1,641 @@
+{% extends "base.html" %}
+
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/performance.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="header">
+        <h2>Performance Dashboard</h2>
+        <button id="export-btn">
+            <i class="fas fa-download"></i> Export Data
+        </button>
+    </div>
+    
+    <div class="row">
+        <!-- System Resources -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-microchip"></i> System Resources
+                </div>
+                <div class="card-body">
+                    <div id="system-resources">
+                        <div class="mb-3">
+                            <h5><i class="fas fa-tachometer-alt"></i> CPU Usage</h5>
+                            <div class="progress mb-2">
+                                <div id="cpu-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                <div id="cpu-text" class="progress-text">0%</div>
+                            </div>
+                            <div id="cpu-details" class="metric-details"></div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <h5><i class="fas fa-memory"></i> Memory Usage</h5>
+                            <div class="progress mb-2">
+                                <div id="memory-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
+                                <div id="memory-text" class="progress-text">0%</div>
+                            </div>
+                            <div id="memory-details" class="metric-details"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Memory Analysis -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-chart-bar"></i> Memory Analysis
+                </div>
+                <div class="card-body">
+                    <div id="memory-analysis">
+                        <div class="memory-metrics">
+                            <div class="metric-item">
+                                <h6>Average RSS Memory</h6>
+                                <span id="avg-rss-memory">0.0 MB</span>
+                            </div>
+                            <div class="metric-item">
+                                <h6>Peak RSS Memory</h6>
+                                <span id="max-rss-memory">0.0 MB</span>
+                            </div>
+                            <div class="metric-item">
+                                <h6>Average Virtual Memory</h6>
+                                <span id="avg-vms-memory">0.0 MB</span>
+                            </div>
+                            <div class="metric-item">
+                                <h6>Peak Virtual Memory</h6>
+                                <span id="max-vms-memory">0.0 MB</span>
+                            </div>
+                        </div>
+                        <div class="memory-type-metrics">
+                            <div class="memory-type">
+                                <h6><i class="fas fa-microchip"></i> Anonymous Memory</h6>
+                                <div class="memory-stats">
+                                    <span id="anon-memory-size">Size: 0 MB</span>
+                                    <span id="anon-memory-count">Mappings: 0</span>
+                                </div>
+                            </div>
+                            <div class="memory-type">
+                                <h6><i class="fas fa-file"></i> File-backed Memory</h6>
+                                <div class="memory-stats">
+                                    <span id="file-memory-size">Size: 0 MB</span>
+                                    <span id="file-memory-count">Mappings: 0</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="memory-chart-small">
+                            <canvas id="memory-distribution-chart"></canvas>
+                        </div>
+                        <div class="file-details mt-3">
+                            <h6><i class="fas fa-folder-open"></i> Open Files</h6>
+                            <div class="file-list">
+                                <!-- Files will be populated here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Memory Growth -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-chart-line"></i> Memory Growth
+                </div>
+                <div class="card-body">
+                    <div id="memory-growth" class="memory-analysis">
+                        <div class="memory-chart-container">
+                            <canvas id="memory-history-chart"></canvas>
+                        </div>
+                        <div id="memory-growth-text" class="mt-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Resource Handles -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-plug"></i> Resource Handles
+                </div>
+                <div class="card-body">
+                    <div id="resource-handles" class="resource-handles">
+                        <div><strong>Open Files:</strong> <span id="open-files-count">0</span></div>
+                        <div><strong>File Types:</strong> <span id="file-types">None</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- CPU Profile -->
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-chart-pie"></i> CPU Profile
+                </div>
+                <div class="card-body">
+                    <div id="cpu-profile">
+                        <div class="cpu-summary">
+                            <div class="cpu-stat">
+                                <h6>Average CPU</h6>
+                                <span id="avg-cpu-percent">0.0%</span>
+                            </div>
+                            <div class="cpu-stat">
+                                <h6>Peak CPU</h6>
+                                <span id="max-cpu-percent">0.0%</span>
+                            </div>
+                            <div class="cpu-stat">
+                                <h6>CPU Time</h6>
+                                <span id="cpu-time">User: 0.0s | System: 0.0s</span>
+                            </div>
+                        </div>
+                        
+                        <div class="cpu-chart-container">
+                            <canvas id="cpu-history-chart"></canvas>
+                        </div>
+                        
+                        <div class="cpu-threads mt-4">
+                            <h6>Active Threads <span id="thread-count" class="badge bg-secondary">0</span></h6>
+                            <div id="thread-list" class="thread-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+function formatBytes(bytes, decimals = 2) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
+}
+
+let currentPerformanceData = null;  // Store the current data globally
+let cpuHistoryChart = null;
+let memoryHistoryChart = null;
+let memoryDistributionChart = null;
+
+function downloadJson(data, filename) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+}
+
+function updateDashboard() {
+    // Fetch basic performance data
+    console.log('Fetching performance data at:', new Date().toISOString());
+    fetch('/performance/api/performance/log?hours=1')
+        .then(response => response.json())
+        .then(data => {
+            console.log('Received data with timestamps:', 
+                data.entries[0]?.timestamp, 'to', 
+                data.entries[data.entries.length-1]?.timestamp);
+            currentPerformanceData = data;
+            
+            if (data.entries && data.entries.length > 0) {
+                const entries = data.entries;
+                const basicMetrics = entries.findLast(entry => entry.type === 'basic_metrics');
+                
+                if (basicMetrics) {
+                    const metrics = basicMetrics.metrics;
+                    // Update CPU Usage
+                    const cpuPercent = metrics.cpu_percent || 0;
+                    const cpuBar = document.getElementById('cpu-progress');
+                    const cpuText = document.getElementById('cpu-text');
+                    
+                    cpuBar.style.width = `${Math.min(cpuPercent, 100)}%`;
+                    cpuText.textContent = `${cpuPercent.toFixed(1)}%`;
+                    
+                    document.getElementById('cpu-details').innerHTML = 
+                        `<strong>System Time:</strong> ${metrics.cpu_system_time.toFixed(2)}s ` +
+                        `<strong>User Time:</strong> ${metrics.cpu_user_time.toFixed(2)}s`;
+
+                    // Update Memory Progress
+                    const memoryBar = document.getElementById('memory-progress');
+                    const memoryText = document.getElementById('memory-text');
+                    // Calculate actual memory usage percentage based on RSS
+                    const totalMemory = metrics.memory_vms;  // Total available memory
+                    const usedMemory = metrics.memory_rss;   // Actually used memory
+                    const memoryPercent = (usedMemory / totalMemory) * 100;
+                    
+                    memoryBar.style.width = `${Math.min(memoryPercent, 100)}%`;
+                    memoryText.textContent = `${memoryPercent.toFixed(1)}%`;
+                    
+                    document.getElementById('memory-details').innerHTML = 
+                        `<strong>RSS Memory:</strong> ${metrics.memory_rss.toFixed(2)} MB ` +
+                        `<strong>Virtual Memory:</strong> ${metrics.memory_vms.toFixed(2)} MB ` +
+                        `<strong>Swap Used:</strong> ${metrics.swap_used.toFixed(2)} MB`;
+                }
+
+                // Update memory history chart with basic metrics entries
+                const basicMetricsEntries = entries.filter(e => e.type === 'basic_metrics');
+                updateMemoryChart(basicMetricsEntries);
+
+                // Make a separate request for detailed memory information
+                fetch('/performance/api/performance/log')
+                    .then(response => response.json())
+                    .then(fullData => {
+                        // Get the latest entry with detailed memory info
+                        const detailedMemory = fullData.entries.findLast(entry => entry.memory);
+                        if (detailedMemory) {
+                            // Create a combined data object
+                            const combinedData = {
+                                entries: [...entries, detailedMemory],
+                                summary: data.summary
+                            };
+                            
+                            // Update memory analysis with the combined data
+                            updateMemoryAnalysis(combinedData);
+                            
+                            // Debug logging
+                            console.log('Basic Metrics Count:', basicMetricsEntries.length);
+                            console.log('Latest Detailed Memory:', detailedMemory);
+                        }
+                    })
+                    .catch(error => console.error('Error fetching detailed memory data:', error));
+            }
+        })
+        .catch(error => console.error('Error fetching performance data:', error));
+
+    // Update CPU metrics separately
+    fetch('/performance/api/performance/cpu?hours=1&threads=true')
+        .then(response => response.json())
+        .then(data => {
+            if (data.summary) {
+                // Update CPU summary statistics
+                document.getElementById('avg-cpu-percent').textContent = 
+                    `${data.summary.avg_cpu_percent.toFixed(1)}%`;
+                document.getElementById('max-cpu-percent').textContent = 
+                    `${data.summary.max_cpu_percent.toFixed(1)}%`;
+                
+                // Get the latest entry for CPU times
+                const latestEntry = data.entries[data.entries.length - 1];
+                if (latestEntry && latestEntry.metrics && latestEntry.metrics.cpu_times) {
+                    const cpuTimes = latestEntry.metrics.cpu_times;
+                    document.getElementById('cpu-time').textContent = 
+                        `User: ${cpuTimes.user.toFixed(1)}s | System: ${cpuTimes.system.toFixed(1)}s`;
+                }
+                
+                // Update thread information
+                if (latestEntry && latestEntry.metrics && latestEntry.metrics.thread_times) {
+                    const threadTimes = latestEntry.metrics.thread_times;
+                    document.getElementById('thread-count').textContent = threadTimes.length;
+                    
+                    const threadList = document.getElementById('thread-list');
+                    threadList.innerHTML = threadTimes
+                        .map(thread => `
+                            <div class="thread-item">
+                                <div class="thread-id">Thread ${thread.id}</div>
+                                <div class="thread-times">
+                                    <span class="user-time">User: ${thread.user_time.toFixed(2)}s</span>
+                                    <span class="system-time">System: ${thread.system_time.toFixed(2)}s</span>
+                                </div>
+                                <div class="thread-bar">
+                                    <div class="bar-user" style="width: ${(thread.user_time / (thread.user_time + thread.system_time)) * 100}%"></div>
+                                    <div class="bar-system" style="width: ${(thread.system_time / (thread.user_time + thread.system_time)) * 100}%"></div>
+                                </div>
+                            </div>
+                        `)
+                        .join('');
+                }
+                
+                // Update CPU history chart
+                updateCpuChart(data.entries);
+            }
+        })
+        .catch(error => console.error('Error fetching CPU data:', error));
+}
+
+function updateCpuChart(entries) {
+    const ctx = document.getElementById('cpu-history-chart').getContext('2d');
+    
+    const labels = entries.map(entry => {
+        const date = new Date(entry.timestamp);
+        return date.toLocaleTimeString();
+    });
+    
+    const cpuData = entries.map(entry => entry.metrics.process_cpu_percent || 0);
+    
+    // Calculate max value for dynamic y-axis
+    const maxCpu = Math.max(...cpuData);
+    const yAxisMax = Math.ceil(maxCpu * 1.1); // Add 10% padding, and ensure it's at least the max value
+
+    const chartData = {
+        labels: labels,
+        datasets: [{
+            label: 'CPU Usage %',
+            data: cpuData,
+            borderColor: '#f44336',
+            backgroundColor: 'rgba(244, 67, 54, 0.1)',
+            tension: 0.4,
+            fill: true
+        }]
+    };
+
+    const config = {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 0
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    suggestedMax: yAxisMax,
+                    ticks: {
+                        callback: value => `${value}%`
+                    }
+                }
+            }
+        }
+    };
+
+    if (cpuHistoryChart) {
+        cpuHistoryChart.data = chartData;
+        cpuHistoryChart.options = config.options;
+        cpuHistoryChart.update('none');
+    } else {
+        cpuHistoryChart = new Chart(ctx, config);
+    }
+}
+
+function updateMemoryChart(entries) {
+    const ctx = document.getElementById('memory-history-chart').getContext('2d');
+    
+    // Sort entries by timestamp
+    entries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    
+    // Reduce data points by taking every 10th entry
+    const reducedEntries = entries.filter((_, index) => index % 10 === 0);
+    
+    // Get entries spaced roughly 10 minutes apart for the log
+    const lastEntry = entries[entries.length - 1];
+    const tenMinEntries = [];
+    let currentTime = new Date(lastEntry.timestamp + 'Z');
+    
+    // Work backwards through the entries to find ones at 10-minute intervals
+    for (let i = 0; i < 5; i++) {
+        const targetTime = new Date(currentTime.getTime() - i * 10 * 60 * 1000);
+        // Find the entry closest to this target time
+        const closestEntry = entries.reduce((prev, curr) => {
+            const prevDiff = Math.abs(new Date(prev.timestamp + 'Z') - targetTime);
+            const currDiff = Math.abs(new Date(curr.timestamp + 'Z') - targetTime);
+            return currDiff < prevDiff ? curr : prev;
+        });
+        tenMinEntries.push(closestEntry);
+    }
+    
+    // Debug logging for entries
+    console.log('Memory Growth Entries:', tenMinEntries.map(entry => ({
+        original: entry.timestamp,
+        parsed: new Date(entry.timestamp + 'Z'),
+        local: new Date(entry.timestamp + 'Z').toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        })
+    })));
+    
+    // Update memory growth text with spaced entries (newest first)
+    const growthHtml = tenMinEntries
+        .map(entry => {
+            const metrics = entry.metrics;
+            const date = new Date(entry.timestamp + 'Z');  // Append Z to ensure UTC parsing
+            const timestamp = date.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true,  // Change to true to use 12-hour format
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+            });
+            return `
+                <div class="memory-growth-item">
+                    <span class="timestamp">${timestamp}</span>
+                    <div class="memory-values">
+                        <span class="rss">RSS: ${metrics.memory_rss.toFixed(2)} MB</span>
+                        <span class="vms">VMS: ${metrics.memory_vms.toFixed(2)} MB</span>
+                        <span class="swap">Swap: ${metrics.swap_used.toFixed(2)} MB</span>
+                    </div>
+                </div>`;
+        }).join('');
+    
+    document.getElementById('memory-growth-text').innerHTML = growthHtml;
+    
+    // Debug logging for chart labels
+    const chartLabels = reducedEntries.map(entry => {
+        const date = new Date(entry.timestamp + 'Z');
+        const label = date.toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit', 
+            hour12: false,
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
+        });
+        return label;
+    });
+    console.log('Chart Labels (last 5):', chartLabels.slice(-5));
+    
+    const labels = chartLabels;
+    
+    const memoryData = reducedEntries.map(entry => ({
+        rss: entry.metrics.memory_rss || 0,
+        vms: entry.metrics.memory_vms || 0
+    }));
+
+    // Calculate max value for consistent y-axis
+    const maxMemory = Math.max(
+        ...memoryData.map(d => Math.max(d.rss, d.vms))
+    );
+    const yAxisMax = Math.ceil(maxMemory * 1.1); // Add 10% padding
+
+    const chartData = {
+        labels: labels,
+        datasets: [
+            {
+                label: 'RSS Memory',
+                data: memoryData.map(d => d.rss),
+                borderColor: '#2196f3',
+                backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                tension: 0.4,
+                fill: true
+            },
+            {
+                label: 'Virtual Memory',
+                data: memoryData.map(d => d.vms),
+                borderColor: '#9c27b0',
+                backgroundColor: 'rgba(156, 39, 176, 0.1)',
+                tension: 0.4,
+                fill: true
+            }
+        ]
+    };
+
+    const config = {
+        type: 'line',
+        data: chartData,
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: {
+                duration: 0
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                tooltip: {
+                    callbacks: {
+                        title: (tooltipItems) => {
+                            const index = tooltipItems[0].dataIndex;
+                            const timestamp = entries[index].timestamp;
+                            const date = new Date(timestamp + 'Z');
+                            return date.toLocaleString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false,
+                                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                            });
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        maxRotation: 0,
+                        autoSkip: true,
+                        maxTicksLimit: 10
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    suggestedMax: yAxisMax,
+                    ticks: {
+                        callback: value => `${value} MB`
+                    }
+                }
+            }
+        }
+    };
+
+    if (memoryHistoryChart) {
+        memoryHistoryChart.data = chartData;
+        memoryHistoryChart.options = config.options;
+        memoryHistoryChart.update('none');
+    } else {
+        memoryHistoryChart = new Chart(ctx, config);
+    }
+}
+
+function updateMemoryAnalysis(data) {
+    if (data.entries && data.entries.length > 0) {
+        // Calculate summary statistics from basic_metrics entries
+        const basicMetricsEntries = data.entries.filter(e => e.type === 'basic_metrics');
+        if (basicMetricsEntries.length > 0) {
+            const rssValues = basicMetricsEntries.map(e => e.metrics.memory_rss);
+            const vmsValues = basicMetricsEntries.map(e => e.metrics.memory_vms);
+            
+            const avgRss = rssValues.reduce((a, b) => a + b) / rssValues.length;
+            const maxRss = Math.max(...rssValues);
+            const avgVms = vmsValues.reduce((a, b) => a + b) / vmsValues.length;
+            const maxVms = Math.max(...vmsValues);
+
+            // Update memory analysis metrics
+            document.getElementById('avg-rss-memory').textContent = `${avgRss.toFixed(1)} MB`;
+            document.getElementById('max-rss-memory').textContent = `${maxRss.toFixed(1)} MB`;
+            document.getElementById('avg-vms-memory').textContent = `${avgVms.toFixed(1)} MB`;
+            document.getElementById('max-vms-memory').textContent = `${maxVms.toFixed(1)} MB`;
+        }
+
+        // Get the latest entry with detailed memory info
+        const detailedMemory = data.entries.findLast(entry => entry.memory);
+        if (detailedMemory && detailedMemory.memory) {
+            const memory = detailedMemory.memory;
+            
+            // Update anonymous memory stats
+            document.getElementById('anon-memory-size').textContent = 
+                `Size: ${memory.anonymous?.formatted_size || '0 B'}`;
+            document.getElementById('anon-memory-count').textContent = 
+                `Mappings: ${memory.anonymous?.count || 0}`;
+            
+            // Update file-backed memory stats
+            document.getElementById('file-memory-size').textContent = 
+                `Size: ${memory.file_backed?.formatted_size || '0 B'}`;
+            document.getElementById('file-memory-count').textContent = 
+                `Mappings: ${memory.file_backed?.count || 0}`;
+            
+            // Update open files list
+            const openFiles = memory.open_files?.files || [];
+            const fileList = document.querySelector('.file-list');
+            fileList.innerHTML = openFiles
+                .map(file => `
+                    <div class="file-item">
+                        <div class="file-info">
+                            <div class="file-path" title="${file.path}">${file.path.split('/').pop()}</div>
+                            <div class="file-path-full">${file.path}</div>
+                        </div>
+                        <div class="file-stats">
+                            <div class="file-size">${formatBytes(file.size)}</div>
+                        </div>
+                    </div>
+                `)
+                .join('');
+            
+            // Update open files summary
+            document.getElementById('open-files-count').textContent = 
+                `${memory.open_files?.count || 0}`;
+            document.getElementById('file-types').textContent = 
+                openFiles.length > 0 ? openFiles.map(f => f.path.split('.').pop()).filter((v, i, a) => a.indexOf(v) === i).join(', ') : 'None';
+        }
+    }
+}
+
+// Add click handler for export button
+document.getElementById('export-btn').addEventListener('click', () => {
+    if (currentPerformanceData) {
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadJson(currentPerformanceData, `performance-data-${timestamp}.json`);
+    }
+});
+
+// Initialize charts and start updates when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    updateDashboard();
+    // Force a refresh after 1 second to ensure we get latest data
+    setTimeout(updateDashboard, 1000);
+    setInterval(updateDashboard, 60000);
+});
+</script>
+{% endblock %}
