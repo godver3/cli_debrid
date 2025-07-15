@@ -60,9 +60,10 @@ def add_collected_items(media_items_batch, recent=False):
                     WHERE filled_by_file IN ({placeholders})
                        OR upgrading_from IN ({placeholders})
                        OR location_basename IN ({placeholders})
+                       OR location_on_disk IN ({placeholders})
                 '''
                 
-                params = batch * 3
+                params = batch * 4
                 cursor = conn.execute(query, params)
                 existing_items.extend(cursor.fetchall())
                 cursor.close()
@@ -72,11 +73,13 @@ def add_collected_items(media_items_batch, recent=False):
                 filled_by_file = row['filled_by_file']
                 upgrading_from = os.path.basename(row['upgrading_from'] or '')
                 location_basename = row['location_basename']
+                location_on_disk = os.path.basename(row['location_on_disk'] or '')
                 state = row['state']
 
                 if state == 'Collected':
                     if filled_by_file: existing_collected_files.add(filled_by_file)
                     if location_basename: existing_collected_files.add(location_basename)
+                    if location_on_disk: existing_collected_files.add(location_on_disk)
                 if state == 'Upgrading':
                     if filled_by_file:
                         existing_collected_files.add(filled_by_file)
@@ -90,6 +93,8 @@ def add_collected_items(media_items_batch, recent=False):
                     existing_file_map[upgrading_from] = dict_row
                 if location_basename:
                     existing_file_map[location_basename] = dict_row
+                if location_on_disk:
+                    existing_file_map[location_on_disk] = dict_row
 
         filtered_out_files = set()
         filtered_media_items_batch = []

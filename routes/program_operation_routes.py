@@ -527,7 +527,7 @@ def attempt_trakt_auto_reauth():
         return False
 
 # --- START EDIT: New internal function for program start logic ---
-def _execute_start_program(skip_connectivity_check: bool = False):
+def _execute_start_program(skip_connectivity_check: bool = False, is_restart: bool = False):
     """
     Core logic to start the program.
     This is intended to be called internally by main.py or by the Flask route.
@@ -615,7 +615,8 @@ def _execute_start_program(skip_connectivity_check: bool = False):
             time.sleep(1)
 
         logging.info(f"[_execute_start_program] Proceeding to start runner_instance (ID: {id(runner_instance)}).")
-        threading.Thread(target=runner_instance.start).start()
+        # Pass the is_restart parameter to the runner's start method
+        threading.Thread(target=lambda: runner_instance.start(is_restart=is_restart)).start()
         current_app.config['PROGRAM_RUNNING'] = True
         
         global program_runner # module-level global in this file
@@ -649,7 +650,15 @@ def start_program():
     logging.info("--- /api/start_program HTTP endpoint called, delegating to _execute_start_program ---")
     # _execute_start_program uses current_app.program_runner which is set up in main.py
     # The Flask app context is active here.
-    result = _execute_start_program()
+    # Check if this is a restart request from the request data
+    is_restart = False
+    try:
+        if request.is_json and request.json:
+            is_restart = request.json.get('is_restart', False)
+    except Exception as e:
+        logging.warning(f"Could not parse request JSON: {e}")
+    
+    result = _execute_start_program(is_restart=is_restart)
     
     # Determine HTTP status code based on result
     http_status_code = 200

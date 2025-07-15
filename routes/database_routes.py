@@ -22,6 +22,7 @@ from queues.config_manager import get_content_source_display_names, load_config
 from database import update_media_item_state
 from utilities.local_library_scan import convert_item_to_symlink
 from database.database_writing import update_media_item
+from database.symlink_verification import add_symlinked_file_for_verification
 # import math # Removed unused import
 database_bp = Blueprint('database', __name__)
 
@@ -1014,6 +1015,46 @@ def bulk_queue_action():
                     except Exception as e:
                         error_count += 1
                         errors.append(f"Item {item_id}: {str(e)}")
+            elif action == 'verify_symlinks':
+                logging.info("Entering 'verify_symlinks' block.")
+                for item_id in batch:
+                    try:
+                        item = get_media_item_by_id(item_id)
+                        if not item:
+                            error_count += 1
+                            errors.append(f"Item {item_id} not found")
+                            continue
+
+                        # Check if item has a symlink path
+                        symlink_path = item.get('location_on_disk')
+                        if not symlink_path:
+                            error_count += 1
+                            errors.append(f"Item {item_id}: No symlink path found")
+                            continue
+
+                        # Check if the symlink file exists
+                        if not os.path.exists(symlink_path):
+                            error_count += 1
+                            errors.append(f"Item {item_id}: Symlink file does not exist at {symlink_path}")
+                            continue
+
+                        # Add to verification queue
+                        success = add_symlinked_file_for_verification(item_id, symlink_path)
+                        if success:
+                            total_processed += 1
+                            logging.info(f"Added item {item_id} to symlink verification queue")
+                        else:
+                            error_count += 1
+                            errors.append(f"Item {item_id}: Failed to add to verification queue")
+                    except sqlite3.OperationalError as e:
+                        if "database is locked" in str(e):
+                            logging.error("Database is locked during bulk verify_symlinks.")
+                            return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                        error_count += 1
+                        errors.append(f"Item {item_id}: {str(e)}")
+                    except Exception as e:
+                        error_count += 1
+                        errors.append(f"Item {item_id}: {str(e)}")
             else:
                 logging.warning(f"Bulk action returning error: Invalid action '{action}'")
                 # No need to explicitly resume here, finally block will handle it.
@@ -1032,7 +1073,8 @@ def bulk_queue_action():
                 "early_release": "marked as early release and moved to Wanted queue",
                 "rescrape": "deleted files/Plex entries for and moved to Wanted queue", # Added rescrape message
                 "force_priority": "marked for forced priority",
-                "resync": "resynchronized"
+                "resync": "resynchronized",
+                "verify_symlinks": "added to symlink verification queue"
             }
             action_text = action_map.get(action, f"processed ({action})")
             message = f"Successfully {action_text} {total_processed} items"

@@ -105,7 +105,7 @@ def make_request(
         
         # Some endpoints return no content
         if response.status_code == 204:
-            return None
+            return {"success": True, "status_code": 204}
             
         # Parse JSON response
         try:

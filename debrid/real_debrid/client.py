@@ -623,6 +623,11 @@ class RealDebridProvider(DebridProvider):
             traffic_info = make_request('GET', '/traffic/details', self.api_key)
             overall_traffic = make_request('GET', '/traffic', self.api_key)
 
+            # Validate traffic_info response
+            if not isinstance(traffic_info, dict):
+                logging.error(f"Invalid traffic_info response type: {type(traffic_info)}")
+                return {'downloaded': 0, 'limit': None}
+
             try:
                 # Get today in UTC since Real-Debrid uses UTC dates
                 today_utc = datetime.utcnow().strftime("%Y-%m-%d")
@@ -630,9 +635,23 @@ class RealDebridProvider(DebridProvider):
                 # Get today's traffic
                 daily_traffic = traffic_info.get(today_utc, {})
                 
+                # If no data for today, try yesterday as fallback
                 if not daily_traffic:
-                    logging.error(f"No traffic data found for {today_utc}")
-                    return {'downloaded': 0, 'limit': None}
+                    yesterday_utc = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+                    daily_traffic = traffic_info.get(yesterday_utc, {})
+                    if daily_traffic:
+                        logging.info(f"No traffic data found for {today_utc}, using yesterday's data ({yesterday_utc})")
+                    else:
+                        # Try to find the most recent available date
+                        available_dates = sorted(traffic_info.keys(), reverse=True)
+                        if available_dates:
+                            most_recent_date = available_dates[0]
+                            daily_traffic = traffic_info.get(most_recent_date, {})
+                            logging.info(f"Using most recent available traffic data from {most_recent_date}")
+                        else:
+                            # Log available dates for debugging
+                            logging.warning(f"No traffic data found for {today_utc} or {yesterday_utc}. No available dates found.")
+                            return {'downloaded': 0, 'limit': None}
                     
                 daily_bytes = daily_traffic.get('bytes', 0)
                 # Convert bytes to GB (1 GB = 1024^3 bytes)
@@ -770,19 +789,53 @@ class RealDebridProvider(DebridProvider):
             # Make the deletion request with retries for rate limiting
             max_retries = 3
             retry_delay = 5  # Start with 5 seconds delay
+            removal_successful = False
+            
+            logging.info(f"Attempting to remove torrent {torrent_id} from Real-Debrid (reason: {removal_reason})")
+            
             for retry_attempt in range(max_retries):
                 try:
                     # Use the api_key property
-                    make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
-                    break  # Success, exit retry loop
+                    result = make_request('DELETE', f'/torrents/delete/{torrent_id}', self.api_key)
+                    # Check if the request was successful (either None for backward compatibility or success dict)
+                    if result is None or (isinstance(result, dict) and result.get('success')):
+                        removal_successful = True
+                        logging.info(f"Successfully removed torrent {torrent_id} from Real-Debrid (attempt {retry_attempt + 1})")
+                        break  # Success, exit retry loop
+                    else:
+                        # Unexpected response format
+                        logging.error(f"Unexpected response format from DELETE request: {result}")
+                        raise ProviderUnavailableError(f"Unexpected response format: {result}")
                 except ProviderUnavailableError as e:
                     if "429" in str(e) and retry_attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
                         logging.warning(f"Rate limit (429) hit when removing torrent {torrent_id}. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
                         time.sleep(wait_time)
                     else:
-                        # Re-raise if it's not a 429 error or we've exhausted retries
+                        # If it's a 429 error and we've exhausted retries, treat as removed anyway
+                        if "429" in str(e):
+                            logging.warning(f"Rate limit hit when removing torrent {torrent_id} after all retries. Will mark as removed anyway.")
+                            removal_successful = True
+                            break
+                        # Re-raise if it's not a 429 error
                         raise
+
+            if not removal_successful:
+                logging.error(f"Failed to remove torrent {torrent_id} after {max_retries} attempts")
+                raise ProviderUnavailableError(f"Failed to remove torrent {torrent_id} after {max_retries} attempts")
+
+            # Verify the torrent was actually removed
+            try:
+                verification_result = make_request('GET', f'/torrents/info/{torrent_id}', self.api_key)
+                if verification_result is not None:
+                    logging.warning(f"Torrent {torrent_id} still exists after removal attempt. This may indicate a Real-Debrid API issue.")
+                else:
+                    logging.info(f"Verified torrent {torrent_id} was successfully removed from Real-Debrid")
+            except Exception as verify_e:
+                if "404" in str(verify_e):
+                    logging.info(f"Verified torrent {torrent_id} was successfully removed from Real-Debrid (404 response)")
+                else:
+                    logging.warning(f"Could not verify removal of torrent {torrent_id}: {str(verify_e)}")
 
             # Update status and tracking
             self.update_status(torrent_id, TorrentStatus.REMOVED)

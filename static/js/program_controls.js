@@ -49,8 +49,21 @@ export function initializeProgramControls() {
             }
         }
 
-        fetch(`/program_operation/api/${action}_program`, { method: 'POST' })
-            .then(response => response.json())
+        fetch(`/program_operation/api/${action}_program`, { 
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({}) // Send empty JSON object
+        })
+            .then(response => {
+                // Check if the response is actually JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error(`Expected JSON response but got ${contentType || 'unknown content type'}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 if (data.status === 'success') {
                     updateButtonState(action === 'start' ? 'Starting' : 'Stopping');
@@ -197,7 +210,14 @@ export function initializeProgramControls() {
         }
 
         fetch('/settings/api/program_settings')
-            .then(response => response.json())
+            .then(response => {
+                // Check if the response is actually JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error(`Expected JSON response but got ${contentType || 'unknown content type'}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 currentSettings = data;
             })
@@ -208,11 +228,21 @@ export function initializeProgramControls() {
 
     function fetchProgramStatus() {
         fetch('/program_operation/api/program_status')
-            .then(response => response.json())
+            .then(response => {
+                // Check if the response is actually JSON
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/json')) {
+                    throw new Error(`Expected JSON response but got ${contentType || 'unknown content type'}`);
+                }
+                return response.json();
+            })
             .then(data => {
                 updateButtonState(data.status);
             })
-            .catch(error => console.error('Error fetching program status:', error));
+            .catch(error => {
+                console.error('Error fetching program status:', error);
+                // Don't update button state on error to avoid UI issues
+            });
     }
 
     // Fetch settings initially and then every 30 seconds
