@@ -662,7 +662,7 @@ def update_statistics_summary(force=False):
             update_check_start = time.perf_counter()
             if not force:
                 cursor.execute("""
-                    SELECT last_updated, datetime('now', '-1 minute')
+                    SELECT last_updated, datetime('now', 'localtime', '-1 minute'), datetime('now', 'localtime')
                     FROM statistics_summary 
                     WHERE id=1
                 """)
@@ -672,6 +672,15 @@ def update_statistics_summary(force=False):
                 if last_update_check and last_update_check[0] >= last_update_check[1]:
                     logging.debug("Statistics updated recently, skipping update")
                     return
+                elif last_update_check and last_update_check[0] > last_update_check[2]:
+                    # If the timestamp is in the future, reset it and continue with update
+                    logging.warning("Statistics timestamp is in the future, resetting to current time")
+                    cursor.execute("""
+                        UPDATE statistics_summary 
+                        SET last_updated = datetime('now', 'localtime')
+                        WHERE id = 1
+                    """)
+                    conn.commit()
             update_check_time = time.perf_counter() - update_check_start
             logging.info(f"Update check took {update_check_time*1000:.2f}ms")
             
@@ -865,7 +874,8 @@ def get_statistics_summary():
             cursor.execute('''
                 SELECT total_movies, total_shows, total_episodes, 
                     last_updated, 
-                    datetime('now', '-5 minute')
+                    datetime('now', '-5 minute'),
+                    datetime('now', 'localtime')
                 FROM statistics_summary 
                 WHERE id = 1
             ''')
@@ -960,6 +970,57 @@ def get_statistics_summary():
                 result = get_collected_counts()
                 logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
+                
+        elif result[3] > result[5]:
+            # Data exists but timestamp is in the future - reset it and update
+            logging.warning("Statistics timestamp is in the future, resetting and updating")
+            if conn:
+                conn.close()
+                conn = None
+            
+            try:
+                # Update data with force=True to bypass timestamp check
+                update_start = time.perf_counter()
+                update_statistics_summary(force=True)
+                update_time = time.perf_counter() - update_start
+                logging.info(f"Statistics update took {update_time*1000:.2f}ms")
+                
+                # Open a new connection to get the fresh data
+                new_conn_start = time.perf_counter()
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT total_movies, total_shows, total_episodes, last_updated
+                    FROM statistics_summary 
+                    WHERE id = 1
+                ''')
+                updated_result = cursor.fetchone()
+                new_conn_time = time.perf_counter() - new_conn_start
+                logging.info(f"New connection and data fetch took {new_conn_time*1000:.2f}ms")
+                
+                if updated_result:
+                    return {
+                        'total_movies': updated_result[0],
+                        'total_shows': updated_result[1],
+                        'total_episodes': updated_result[2],
+                        'last_updated': updated_result[3]
+                    }
+                else:
+                    logging.error("Failed to retrieve updated statistics")
+                    fallback_start = time.perf_counter()
+                    result = get_collected_counts()
+                    logging.info(f"Fallback counts after update failure took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                    return result
+            except Exception as e:
+                logging.error(f"Error updating statistics: {str(e)}")
+                fallback_start = time.perf_counter()
+                result = get_collected_counts()
+                logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
+                return result
+        else:
+            # Data exists and is current - return it
+            pass
             
         # Return the valid data we found
         overall_time = time.perf_counter() - overall_start

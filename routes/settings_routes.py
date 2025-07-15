@@ -1224,6 +1224,66 @@ def update_settings():
                     "message": error_msg
                 }), 400
 
+        # Handle mutual exclusivity between Plex and Jellyfin/Emby settings
+        # Check the Media Server Type to determine which settings to keep
+        file_management_settings = new_settings.get('File Management', {})
+        media_server_type = file_management_settings.get('media_server_type', '')
+        
+        # Check if Jellyfin/Emby settings are being updated
+        debug_settings = new_settings.get('Debug', {})
+        if 'emby_jellyfin_url' in debug_settings and debug_settings['emby_jellyfin_url'].strip():
+            # Jellyfin/Emby URL is being set
+            if media_server_type == 'jellyfin':
+                # User has selected Jellyfin/Emby, clear Plex settings
+                logging.info("Jellyfin/Emby URL detected and Media Server Type is Jellyfin, clearing Plex settings")
+                
+                # Clear Plex settings in the new_settings to prevent them from being saved
+                if 'Plex' in new_settings:
+                    new_settings['Plex']['url'] = ''
+                    new_settings['Plex']['token'] = ''
+                
+                # Clear File Management Plex settings
+                if 'File Management' in new_settings:
+                    new_settings['File Management']['plex_url_for_symlink'] = ''
+                    new_settings['File Management']['plex_token_for_symlink'] = ''
+                
+                # Also clear these settings in the current config to ensure they're cleared
+                if 'Plex' not in config:
+                    config['Plex'] = {}
+                config['Plex']['url'] = ''
+                config['Plex']['token'] = ''
+                
+                if 'File Management' not in config:
+                    config['File Management'] = {}
+                config['File Management']['plex_url_for_symlink'] = ''
+                config['File Management']['plex_token_for_symlink'] = ''
+            else:
+                logging.info("Jellyfin/Emby URL detected but Media Server Type is not Jellyfin, keeping Plex settings")
+            
+        # Check if Plex settings are being updated
+        plex_settings = new_settings.get('Plex', {})
+        
+        plex_url_being_set = (plex_settings.get('url', '').strip() or 
+                             file_management_settings.get('plex_url_for_symlink', '').strip())
+        
+        if plex_url_being_set:
+            if media_server_type == 'plex':
+                # User has selected Plex, clear Jellyfin/Emby settings
+                logging.info("Plex URL detected and Media Server Type is Plex, clearing Jellyfin/Emby settings")
+                
+                # Clear Jellyfin/Emby settings in the new_settings
+                if 'Debug' in new_settings:
+                    new_settings['Debug']['emby_jellyfin_url'] = ''
+                    new_settings['Debug']['emby_jellyfin_token'] = ''
+                
+                # Also clear these settings in the current config
+                if 'Debug' not in config:
+                    config['Debug'] = {}
+                config['Debug']['emby_jellyfin_url'] = ''
+                config['Debug']['emby_jellyfin_token'] = ''
+            else:
+                logging.info("Plex URL detected but Media Server Type is not Plex, keeping Jellyfin/Emby settings")
+
         # Function to recursively update the main config dictionary
         def update_nested_dict(current, new):
             for key, value in new.items():

@@ -438,7 +438,9 @@ class WantedQueue:
             sort_by_release_date = get_setting("Queue", "sort_by_release_date_desc", False)
             if sort_by_release_date:
                 order_by_clauses.append("release_date DESC")
-            order_by_clauses.append("imdb_id ASC")
+                order_by_clauses.append("title ASC")
+            else:
+                order_by_clauses.append("title ASC")
             order_by_clauses.append("CASE WHEN type = 'episode' THEN season_number ELSE NULL END ASC NULLS FIRST")
             order_by_clauses.append("CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC NULLS FIRST")
             
@@ -480,18 +482,17 @@ class WantedQueue:
                 def get_source_priority_key(item):
                     source = item.get('content_source', '')
                     priority_index = source_priority_list.index(source) if source in source_priority_list else len(source_priority_list)
-                    imdb_id_val = item.get('imdb_id') or '' 
-                    season_num_val = item.get('season_number') if item.get('type') == 'episode' else float('inf')
-                    if season_num_val is None and item.get('type') == 'episode': season_num_val = float('-inf') 
-                    episode_num_val = item.get('episode_number') if item.get('type') == 'episode' else float('inf')
-                    if episode_num_val is None and item.get('type') == 'episode': episode_num_val = float('-inf')
-                    release_date_val = item.get('release_date') or '' 
                     type_priority = 0 
                     if sort_order_type == "Movies First":
                         type_priority = 0 if item.get('type') == 'movie' else 1
                     elif sort_order_type == "Episodes First":
                         type_priority = 0 if item.get('type') == 'episode' else 1
-                    return (priority_index, type_priority, release_date_val if sort_by_release_date else '', imdb_id_val, season_num_val, episode_num_val)
+                    
+                    if sort_by_release_date:
+                        release_date_val = item.get('release_date') or ''
+                        return (priority_index, type_priority, release_date_val, item.get('title', ''))
+                    else:
+                        return (priority_index, type_priority, item.get('title', ''))
                 candidate_items.sort(key=get_source_priority_key)
 
             # 4. Process Candidate Items

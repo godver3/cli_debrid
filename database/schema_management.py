@@ -357,6 +357,81 @@ def migrate_schema():
                 conn.execute('ALTER TABLE symlinked_files_verification ADD COLUMN permanently_failed BOOLEAN DEFAULT FALSE')
                 logging.info("Successfully added permanently_failed column to symlinked_files_verification table.")
 
+        # Fix future timestamps in statistics_summary table
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
+        if cursor.fetchone():
+            # Check if there are any future timestamps in the statistics_summary table
+            cursor.execute("""
+                SELECT COUNT(*) FROM statistics_summary 
+                WHERE last_updated > datetime('now', 'localtime')
+            """)
+            future_timestamps_count = cursor.fetchone()[0]
+            
+            if future_timestamps_count > 0:
+                logging.warning(f"Found {future_timestamps_count} statistics_summary entries with future timestamps. Fixing...")
+                
+                # Reset future timestamps to current time
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET last_updated = datetime('now', 'localtime')
+                    WHERE last_updated > datetime('now', 'localtime')
+                """)
+                
+                updated_rows = cursor.rowcount
+                logging.info(f"Fixed {updated_rows} statistics_summary entries with future timestamps.")
+            else:
+                logging.debug("No future timestamps found in statistics_summary table.")
+            
+            # Also check and fix other timestamp fields that might have future dates
+            cursor.execute("""
+                SELECT COUNT(*) FROM statistics_summary 
+                WHERE latest_movie_collected > datetime('now', 'localtime')
+                   OR latest_episode_collected > datetime('now', 'localtime')
+                   OR latest_upgraded > datetime('now', 'localtime')
+            """)
+            other_future_timestamps_count = cursor.fetchone()[0]
+            
+            if other_future_timestamps_count > 0:
+                logging.warning(f"Found {other_future_timestamps_count} statistics_summary entries with future timestamps in other fields. Fixing...")
+                
+                # Reset future timestamps to NULL (since we don't know the correct historical time)
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET latest_movie_collected = NULL
+                    WHERE latest_movie_collected > datetime('now', 'localtime')
+                """)
+                
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET latest_episode_collected = NULL
+                    WHERE latest_episode_collected > datetime('now', 'localtime')
+                """)
+                
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET latest_upgraded = NULL
+                    WHERE latest_upgraded > datetime('now', 'localtime')
+                """)
+                
+                logging.info("Fixed future timestamps in other statistics_summary fields.")
+            else:
+                logging.debug("No future timestamps found in other statistics_summary fields.")
+            
+            # Ensure statistics_summary table has at least one row
+            cursor.execute("SELECT COUNT(*) FROM statistics_summary")
+            row_count = cursor.fetchone()[0]
+            
+            if row_count == 0:
+                logging.info("Statistics_summary table is empty. Creating initial row...")
+                cursor.execute("""
+                    INSERT INTO statistics_summary 
+                    (id, total_movies, total_shows, total_episodes, last_updated)
+                    VALUES (1, 0, 0, 0, datetime('now', 'localtime'))
+                """)
+                logging.info("Created initial statistics_summary row.")
+            else:
+                logging.debug(f"Statistics_summary table has {row_count} row(s).")
+
         # Remove the existing index if it exists
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
 

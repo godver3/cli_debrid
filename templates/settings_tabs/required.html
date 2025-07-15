@@ -304,8 +304,9 @@
             </div>
         </div>
     </div>
+
         {% for key, value in settings_schema['File Management'].items() %}
-            {% if key != 'tab' and key != 'symlink_organize_by_type' and key != 'symlink_organize_by_resolution' and key != 'process_non_checking_items' and key != 'symlink_organize_by_version' and key != 'symlink_folder_order' %}
+            {% if key != 'tab' and key != 'symlink_organize_by_type' and key != 'symlink_organize_by_resolution' and key != 'process_non_checking_items' and key != 'symlink_organize_by_version' and key != 'symlink_folder_order' and key != 'media_server_type' %}
             <div class="settings-form-group {% if key in ['plex_url_for_symlink', 'plex_token_for_symlink'] %}symlink-plex-setting{% endif %}">
                 <label for="file management-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
@@ -347,8 +348,26 @@
                     <p class="settings-description">{{ value.description }}</p>
                 {% endif %}
             </div>
+            
+            <!-- Insert Media Server Selection after symlinked_files_path -->
+            {% if key == 'symlinked_files_path' %}
+            <!-- Media Server Selection for Symlinked/Local -->
+            <div id="media-server-selection" style="display: none;">
+
+                <div class="settings-form-group">
+                    <label for="media-server-type" class="settings-title">Media Server Type:</label>
+                    <select id="media-server-type" name="File Management.media_server_type" class="settings-input">
+                        <option value="plex" {% if settings.get('File Management', {}).get('media_server_type', 'plex') == 'plex' %}selected{% endif %}>Plex</option>
+                        <option value="jellyfin" {% if settings.get('File Management', {}).get('media_server_type', 'plex') == 'jellyfin' %}selected{% endif %}>Jellyfin/Emby</option>
+                    </select>
+                    <p class="settings-description">Select which media server to use for symlink updates.</p>
+                </div>
+            </div>
+            {% endif %}
             {% endif %}
         {% endfor %}
+        
+
         
         <!-- Plex settings included in File Management section -->
         <div id="plex-settings-in-file-management" style="display: none;">
@@ -384,6 +403,26 @@
                 </div>
                 {% endif %}
             {% endfor %}
+        </div>
+        
+        <!-- Jellyfin/Emby settings included in File Management section -->
+        <div id="jellyfin-settings-in-file-management" style="display: none;">
+            <div class="settings-form-group">
+                <label for="jellyfin-url" class="settings-title">Jellyfin/Emby URL:</label>
+                <input type="text" id="jellyfin-url" name="Debug.emby_jellyfin_url"
+                       value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_jellyfin_url"
+                       autocomplete="off">
+                <p class="settings-description">URL for Emby or Jellyfin server (e.g. http://localhost:8096)</p>
+            </div>
+            <div class="settings-form-group">
+                <label for="jellyfin-token" class="settings-title">Jellyfin/Emby Token:</label>
+                <input type="password" id="jellyfin-token" name="Debug.emby_jellyfin_token"
+                       value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}" class="settings-input"
+                       data-section="Debug" data-key="emby_jellyfin_token"
+                       autocomplete="new-password">
+                <p class="settings-description">Authentication token for Emby or Jellyfin</p>
+            </div>
         </div>
     </div>
 </div>
@@ -442,6 +481,47 @@
 </div>
 
 <script>
+// Global function for updating media server settings
+function updateMediaServerSettings() {
+    const mediaServerType = document.getElementById('media-server-type');
+    const plexSection = document.getElementById('plex-settings-in-file-management');
+    const jellyfinSection = document.getElementById('jellyfin-settings-in-file-management');
+    const plexUrlField = document.querySelector('input[name="File Management.plex_url_for_symlink"]').closest('.settings-form-group');
+    const plexTokenField = document.querySelector('input[name="File Management.plex_token_for_symlink"]').closest('.settings-form-group');
+    
+    console.log('updateMediaServerSettings called');
+    console.log('mediaServerType:', mediaServerType);
+    console.log('mediaServerType.value:', mediaServerType ? mediaServerType.value : 'null');
+    console.log('plexSection:', plexSection);
+    console.log('jellyfinSection:', jellyfinSection);
+    console.log('plexUrlField:', plexUrlField);
+    console.log('plexTokenField:', plexTokenField);
+    
+    if (mediaServerType && plexSection && jellyfinSection) {
+        if (mediaServerType.value === 'plex') {
+            console.log('Setting to Plex');
+            // For Symlinked/Local mode, only show the symlink-specific Plex fields, not the full Plex settings
+            plexSection.style.display = 'none';
+            jellyfinSection.style.display = 'none';
+            if (plexUrlField) plexUrlField.style.display = 'block';
+            if (plexTokenField) plexTokenField.style.display = 'block';
+        } else if (mediaServerType.value === 'jellyfin') {
+            console.log('Setting to Jellyfin');
+            plexSection.style.display = 'none';
+            jellyfinSection.style.display = 'block';
+            if (plexUrlField) plexUrlField.style.display = 'none';
+            if (plexTokenField) plexTokenField.style.display = 'none';
+        } else {
+            // Default case - hide both sections if no media server type is selected
+            console.log('No media server type selected, hiding both sections');
+            plexSection.style.display = 'none';
+            jellyfinSection.style.display = 'none';
+            if (plexUrlField) plexUrlField.style.display = 'none';
+            if (plexTokenField) plexTokenField.style.display = 'none';
+        }
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     // Get the elements
     const updatePlexOnDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
@@ -532,23 +612,42 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function updateUIVisibility(value) {
             const plexSection = document.getElementById('plex-settings-in-file-management');
+            const jellyfinSection = document.getElementById('jellyfin-settings-in-file-management');
+            const mediaServerSelection = document.getElementById('media-server-selection');
             const symlinkFields = [
                 document.querySelector('div.settings-form-group:has(#file\\ management-original_files_path)'),
-                document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)'),
-                ...document.querySelectorAll('.symlink-plex-setting')
+                document.querySelector('div.settings-form-group:has(#file\\ management-symlinked_files_path)')
             ];
+            const plexSpecificFields = document.querySelectorAll('.symlink-plex-setting');
 
             if (value === 'Plex') {
                 if (plexSection) plexSection.style.display = 'block';
+                if (jellyfinSection) jellyfinSection.style.display = 'none';
+                if (mediaServerSelection) mediaServerSelection.style.display = 'none';
                 symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
+                plexSpecificFields.forEach(field => { if (field) field.style.display = 'none'; });
             } else if (value === 'Symlinked/Local') {
                 if (plexSection) plexSection.style.display = 'none';
+                if (jellyfinSection) jellyfinSection.style.display = 'none';
+                if (mediaServerSelection) mediaServerSelection.style.display = 'block';
                 symlinkFields.forEach(field => { if (field) field.style.display = 'block'; });
+                // Don't show Plex-specific fields here, let updateMediaServerSettings handle them
+                plexSpecificFields.forEach(field => { if (field) field.style.display = 'none'; });
+                // Show the appropriate media server settings based on current selection
+                // Use setTimeout to ensure the media server type is properly initialized
+                setTimeout(() => {
+                    updateMediaServerSettings();
+                }, 0);
             } else {
                 if (plexSection) plexSection.style.display = 'none';
+                if (jellyfinSection) jellyfinSection.style.display = 'none';
+                if (mediaServerSelection) mediaServerSelection.style.display = 'none';
                 symlinkFields.forEach(field => { if (field) field.style.display = 'none'; });
+                plexSpecificFields.forEach(field => { if (field) field.style.display = 'none'; });
             }
         }
+
+
     }
 
     // Plex-related variables
@@ -902,34 +1001,64 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Handle file management type changes
-    const fileManagementSelect = document.querySelector('select[name="File Management.file_collection_management"]');
-    if (fileManagementSelect) {
-        fileManagementSelect.addEventListener('change', function() {
-            const managementType = this.value;
-            const plexSection = document.getElementById('plex-settings-in-file-management');
-            const symlinkFields = document.querySelectorAll('.symlink-plex-setting');
+            // Handle file management type changes
+        const fileManagementSelect = document.querySelector('select[name="File Management.file_collection_management"]');
+        if (fileManagementSelect) {
+            fileManagementSelect.addEventListener('change', function() {
+                const managementType = this.value;
+                const plexSection = document.getElementById('plex-settings-in-file-management');
+                const jellyfinSection = document.getElementById('jellyfin-settings-in-file-management');
+                const mediaServerSelection = document.getElementById('media-server-selection');
+                const symlinkFields = document.querySelectorAll('.symlink-plex-setting');
 
-            if (managementType === 'Plex') {
-                if (plexSection) plexSection.style.display = 'block';
-                symlinkFields.forEach(field => {
-                    if (field) field.style.display = 'none';
-                });
-            } else if (managementType === 'Symlinked/Local') {
-                if (plexSection) plexSection.style.display = 'none';
-                symlinkFields.forEach(field => {
-                    if (field) field.style.display = 'block';
-                });
-            } else {
-                if (plexSection) plexSection.style.display = 'none';
-                symlinkFields.forEach(field => {
-                    if (field) field.style.display = 'none';
-                });
+                if (managementType === 'Plex') {
+                    if (plexSection) plexSection.style.display = 'block';
+                    if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    if (mediaServerSelection) mediaServerSelection.style.display = 'none';
+                    symlinkFields.forEach(field => {
+                        if (field) field.style.display = 'none';
+                    });
+                } else if (managementType === 'Symlinked/Local') {
+                    if (plexSection) plexSection.style.display = 'none';
+                    if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    if (mediaServerSelection) mediaServerSelection.style.display = 'block';
+                    symlinkFields.forEach(field => {
+                        if (field) field.style.display = 'block';
+                    });
+                    // Show the appropriate media server settings based on current selection
+                    updateMediaServerSettings();
+                } else {
+                    if (plexSection) plexSection.style.display = 'none';
+                    if (jellyfinSection) jellyfinSection.style.display = 'none';
+                    if (mediaServerSelection) mediaServerSelection.style.display = 'none';
+                    symlinkFields.forEach(field => {
+                        if (field) field.style.display = 'none';
+                    });
+                }
+            });
+
+            // Trigger initial state
+            fileManagementSelect.dispatchEvent(new Event('change'));
+        }
+
+        // Handle media server type changes
+        const mediaServerTypeSelect = document.getElementById('media-server-type');
+        if (mediaServerTypeSelect) {
+            console.log('Found media server type select:', mediaServerTypeSelect);
+            mediaServerTypeSelect.addEventListener('change', function() {
+                console.log('Media server type changed to:', this.value);
+                updateMediaServerSettings();
+            });
+            
+            // Set initial state for media server settings
+            const fileManagementType = document.querySelector('select[name="File Management.file_collection_management"]').value;
+            console.log('Initial file management type:', fileManagementType);
+            if (fileManagementType === 'Symlinked/Local') {
+                console.log('Setting initial media server settings');
+                updateMediaServerSettings();
             }
-        });
-
-        // Trigger initial state
-        fileManagementSelect.dispatchEvent(new Event('change'));
-    }
+        } else {
+            console.log('Media server type select not found');
+        }
 });
 </script>

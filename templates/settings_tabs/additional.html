@@ -69,14 +69,13 @@
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
                         {% if key == 'content_source_priority' %}
-                        <div id="content-source-priority-container" class="content-source-priority">
+                        <!-- <div id="content-source-priority-container" class="content-source-priority" style="display: none;">
                             <p class="settings-description" style="margin-top: 5px;">
                                 <strong>Drag and drop to reorder enabled content sources:</strong>
                             </p>
                             <ul id="content-source-list" class="content-source-list">
-                                <!-- Content sources will be loaded here dynamically -->
                             </ul>
-                        </div>
+                        </div> -->
                         <style>
                             .content-source-priority {
                                 margin-top: 10px;
@@ -271,12 +270,22 @@
     </div>
     {% elif section == "Queue" %}
     <div class="settings-section">
+
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
             <span class="settings-toggle-icon">+</span>
         </div>
+
         <div class="settings-section-content">
+            <div class="settings-form-group">
+                <div class="settings-warning-text" style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; margin-bottom: 15px; display: block !important;">
+                    <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
+                    Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+                </div>
+            </div>
+
             {% for key, value in section_data.items() %}
+
                 {% if key != 'tab' and key != 'blacklist_duration' and key != 'item_process_delay_seconds' %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -317,14 +326,13 @@
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
                         {% if key == 'content_source_priority' %}
-                        <div id="content-source-priority-container" class="content-source-priority">
+                        <!-- <div id="content-source-priority-container" class="content-source-priority">
                             <p class="settings-description" style="margin-top: 5px;">
                                 <strong>Drag and drop to reorder enabled content sources:</strong>
                             </p>
                             <ul id="content-source-list" class="content-source-list">
-                                <!-- Content sources will be loaded here dynamically -->
                             </ul>
-                        </div>
+                        </div> -->
                         <style>
                             .content-source-priority {
                                 margin-top: 10px;
@@ -384,7 +392,7 @@
                                 opacity: 1;
                             }
                         </style>
-                        <script>
+                        <!-- <script>
                             document.addEventListener('DOMContentLoaded', function() {
                                 const sourceList = document.getElementById('content-source-list');
                                 let draggingElement = null;
@@ -491,7 +499,7 @@
                                 // Load content sources when the page loads
                                 loadEnabledContentSources();
                             });
-                        </script>
+                        </script> -->
                         {% endif %}
                     {% endif %}
                 </div>
@@ -700,13 +708,12 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Enable automatic subtitle downloading for media files using 'Subsource'. Requires Symlink File Management.</p>
+            <p class="settings-description">Enable automatic subtitle downloading for media files. Requires Symlink File Management. Activate with caution as the Subtitle downloader adds roughly 20 seconds of overhead per file processed. Consider instead filtering for MULTI releases with the language of your preference.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
         <!-- only_current_file, apply_to_* settings removed as downsub now processes single files only -->
 
-        <!-- OpenSubtitles settings removed
         <div class="settings-form-group">
             <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>
             <input type="text" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
@@ -724,7 +731,6 @@
                    data-section="Subtitle Settings" data-key="opensubtitles_password">
             <p class="settings-description">OpenSubtitles password for subtitle downloads</p>
         </div>
-        OpenSubtitles settings removed -->
 
         <div class="settings-form-group">
             <label for="additional-subtitle_languages" class="settings-title">Subtitle Languages:</label>
