@@ -1913,9 +1913,23 @@ class ProgramRunner:
 
         logging.info("Time until next task run:\n" + "\n".join(debug_info))
 
-    def run_initialization(self):
+    def run_initialization(self, is_restart=False):
+        """Run initialization sequence.
+        
+        Args:
+            is_restart (bool): If True, skip initialization as this is a mid-run restart.
+                              This prevents unnecessary processing and potential data loss
+                              when the program is restarted after settings changes.
+        """
         self._initializing = True 
         logging.info("Running initialization...")
+        
+        # Skip initialization if this is a restart (mid-run) or if explicitly disabled
+        if is_restart:
+            logging.info("Skipping initialization as this is a restart (mid-run)")
+            self._initializing = False
+            return
+            
         skip_initial_plex_update = get_setting('Debug', 'skip_initial_plex_update', False)
         
         disable_initialization = get_setting('Debug', 'disable_initialization', '')
@@ -1927,7 +1941,7 @@ class ProgramRunner:
         
         self._initializing = False
 
-    def start(self):
+    def start(self, is_restart=False):
         if self._running and self.scheduler and self.scheduler.running:
             logging.info("ProgramRunner.start called, but program is already running.")
             return
@@ -1946,6 +1960,8 @@ class ProgramRunner:
 
         self._initializing = True
         self._stopping = False 
+        # Store the is_restart parameter for use in run_initialization
+        self._is_restart = is_restart
         logging.info("ProgramRunner: Initializing...")
         
         try:
@@ -2065,7 +2081,8 @@ class ProgramRunner:
             logging.info("Starting program run loop (monitoring scheduler state)")
             self._running = True  # Make sure running flag is set
 
-            self.run_initialization()
+            # Pass the is_restart parameter to run_initialization
+            self.run_initialization(is_restart=getattr(self, '_is_restart', False))
 
             # *** START EDIT: Simplified run loop ***
             # The main loop now just keeps the script alive while the scheduler runs.
@@ -2501,6 +2518,13 @@ class ProgramRunner:
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         heartbeat_file = os.path.join(db_content_dir, 'program_heartbeat')
         
+        # Ensure directory exists
+        try:
+            os.makedirs(os.path.dirname(heartbeat_file), exist_ok=True)
+        except (IOError, OSError) as e:
+            logging.error(f"Failed to create heartbeat directory: {e}")
+            return False
+        
         if not os.path.exists(heartbeat_file):
             logging.warning("Heartbeat file does not exist - creating new one")
             self.update_heartbeat()
@@ -2514,7 +2538,13 @@ class ProgramRunner:
                     self.update_heartbeat()
                     return True
                     
-                last_heartbeat = int(content)
+                try:
+                    last_heartbeat = int(content)
+                except ValueError:
+                    logging.error(f"Invalid heartbeat value in file: '{content}' - updating it")
+                    self.update_heartbeat()
+                    return True
+                    
                 time_diff = current_time - last_heartbeat
                 
                 # Update in-memory cache from file
@@ -2526,8 +2556,11 @@ class ProgramRunner:
                     return False
                 
                 return True
-        except (IOError, OSError, ValueError) as e:
-            logging.error(f"Error checking heartbeat file: {e}")
+        except (IOError, OSError) as e:
+            logging.error(f"Error reading heartbeat file: {e}")
+            return False
+        except Exception as e:
+            logging.error(f"Unexpected error checking heartbeat: {e}")
             return False
 
     def task_send_notifications(self):
@@ -3936,7 +3969,6 @@ class ProgramRunner:
                     verified_count += 1
                 else:
                     # Item still exists - log, attempt removal again using remove_file_from_plex, increment attempts
-                    # --- START EDIT ---
                     logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex. Attempting removal using remove_file_from_plex...")
                     # Call remove_file_from_plex instead of remove_symlink_from_plex
                     removal_successful = remove_file_from_plex(item_title, item_path, episode_title)
@@ -3944,7 +3976,6 @@ class ProgramRunner:
                         logging.info(f"[VERIFY] Successfully triggered removal via remove_file_from_plex for '{item_path}'. Will verify later.")
                     else:
                         logging.error(f"[VERIFY] Failed to trigger removal via remove_file_from_plex for '{item_path}'.")
-                    # --- END EDIT ---
 
                     logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}' as it still exists.")
                     increment_removal_attempt(item_id)
@@ -3995,7 +4026,6 @@ class ProgramRunner:
         start_time = time.time()
         conn = None
         updated_count = 0
-        # inserted_count = 0 # Removed as combined count is simpler
         failed_count = 0
         processed_shows = set() # Track shows processed in this run
         shows_with_versions_updated = set() # Track shows where versions were processed
@@ -4516,7 +4546,6 @@ class ProgramRunner:
                     # Should not happen if lock_acquired is True, but log defensively # REVERTED
                     # logging.error(f"Error releasing heavy task lock for '{task_name_for_logging}': {e_release}") # REVERTED
             # --- End Release heavy task lock --- # REVERTED
-    # *** END EDIT ***
 
     def task_regulate_system_load(self):
         """Monitors CPU and RAM usage and dynamically adjusts inter-task sleep time to regulate system load."""

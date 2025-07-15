@@ -10,6 +10,8 @@ import threading
 import concurrent.futures
 import time
 import re
+import random
+import requests
 
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
@@ -151,8 +153,53 @@ def contains_target_episode(results: List[Dict[str, Any]], target_episode: int, 
     
     return False
 
+def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters: int, max_retries: int = 3, initial_delay: float = 1.0) -> List[Any]:
+    """Scrape Nyaa with exponential backoff retry logic for HTTP errors."""
+    
+    for attempt in range(max_retries):
+        try:
+            logging.debug(f"Nyaa search attempt {attempt + 1}/{max_retries} for query: {query}")
+            results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
+            return results
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            
+            # Check for specific HTTP errors that should trigger retries
+            is_retryable_error = (
+                '429' in error_str or  # Rate limit
+                '504' in error_str or  # Gateway timeout
+                '502' in error_str or  # Bad gateway
+                '503' in error_str or  # Service unavailable
+                'timeout' in error_str or
+                'connection' in error_str
+            )
+            
+            if is_retryable_error and attempt < max_retries - 1:
+                # Calculate exponential backoff with jitter
+                delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                
+                if '429' in error_str:
+                    logging.warning(f"Nyaa rate limit (429) hit. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}")
+                elif '504' in error_str:
+                    logging.warning(f"Nyaa gateway timeout (504) hit. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}")
+                else:
+                    logging.warning(f"Nyaa request failed with retryable error. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}. Error: {str(e)}")
+                
+                time.sleep(delay)
+                continue
+            else:
+                # Either not a retryable error or we've exhausted retries
+                if is_retryable_error:
+                    logging.error(f"Nyaa request failed after {max_retries} attempts with retryable error: {str(e)}")
+                else:
+                    logging.error(f"Nyaa request failed with non-retryable error: {str(e)}")
+                raise
+    
+    return []  # Should not reach here, but just in case
+
 def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, is_translated_search: bool = False) -> List[Dict[str, Any]]:
-    """Scrape Nyaa using nyaapy."""
+    """Scrape Nyaa using nyaapy with proper error handling."""
     # Map settings to nyaapy parameters
     category = 1 # Default to Anime
     subcategory = 2 # Default to English-translated
@@ -188,11 +235,13 @@ def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, conten
             query += f" {episode:02d}"  # Just episode number with leading zero
     
     try:
-        results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
+        # Use the new retry-enabled search function
+        results = scrape_nyaa_with_retry(query, category, subcategory, filters)
+        
         if not results and str(year) in query:
             # Try alternative query without the year
             alt_query = query.replace(str(year), "").strip()
-            results = Nyaa.search(keyword=alt_query, category=category, subcategory=subcategory, filters=filters)
+            results = scrape_nyaa_with_retry(alt_query, category, subcategory, filters)
         
         processed_results = []
         for torrent in results:
@@ -265,8 +314,8 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
         try:
             # Add small delay between searches to prevent rate limiting
             if format_type != list(episode_formats.keys())[0]:  # Skip delay for first format
-                time.sleep(0.3)  # 300ms delay
-                
+                time.sleep(0.5)  # Increased delay to 500ms for better rate limiting
+            
             format_type, results = scrape_with_format(format_type, format_pattern)
             format_results[format_type] = results
             all_results.extend(results)
@@ -284,6 +333,7 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
                 
         except Exception as e:
             logging.error(f"Error scraping format {format_type}: {e}")
+            # Continue to next format even if this one failed
             continue
     
     # Determine best format based on number of results that contain target episode

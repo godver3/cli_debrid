@@ -2355,9 +2355,6 @@ def get_trakt_token_status():
 def get_verification_queue():
     """Get the contents of the symlink verification queue."""
     try:
-        # Get verification stats
-        stats = get_verification_stats()
-        
         # Get unverified files (limit to 500 to prevent overwhelming the UI)
         unverified_files = get_unverified_files(limit=500)
         
@@ -2382,6 +2379,11 @@ def get_verification_queue():
                 'last_attempt': file['last_attempt'],
                 'type': file['type']
             })
+        
+        # Get basic stats but override unverified count with actual displayed count
+        stats = get_verification_stats()
+        stats['unverified'] = len(formatted_files)  # Use actual count of displayed items
+        stats.pop('multiple_attempts', None)  # Hide the multiple attempts stat
         
         return jsonify({
             'success': True,
