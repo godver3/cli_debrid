@@ -199,7 +199,12 @@ def get_all_wanted_from_enabled_sources():
                              is_substep=True)
 
 def initialize(skip_initial_plex_update=False):
-    """Initialize the application state."""
+    """Initialize the application state.
+    
+    Note: This function is typically called on fresh program starts.
+    For mid-run restarts (e.g., after settings changes), initialization
+    is skipped to avoid unnecessary processing and potential data loss.
+    """
     from metadata.metadata import refresh_release_dates
     # Reset initialization status
     initialization_status['current_step'] = ''

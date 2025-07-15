@@ -186,7 +186,10 @@ document.addEventListener('DOMContentLoaded', function() {
             type: POPUP_TYPES.PROMPT,
             title: 'Add New Content Source',
             message: 'Select the type of content source you want to add:',
-            dropdownOptions: sourceTypes.map(type => ({ value: type, text: type })),
+            dropdownOptions: sourceTypes.map(type => ({ 
+                value: type, 
+                text: type === 'Overseerr' ? 'Overseerr/Jellyseerr' : type 
+            })),
             confirmText: 'Next',
             cancelText: 'Cancel',
             onConfirm: (selectedType) => {

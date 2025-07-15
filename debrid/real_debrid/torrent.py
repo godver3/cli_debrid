@@ -187,6 +187,7 @@ def get_torrent_files(api_key: str, hash_value: str) -> List[Dict]:
 def remove_torrent(api_key: str, torrent_id: str) -> None:
     """Remove a torrent from Real-Debrid"""
     logging.error(f"Removing torrent {torrent_id} - THIS FUNCTION IS DEPRECATED AND SHOULD NOT BE CALLED")
+    logging.error("Use the remove_torrent method from RealDebridProvider class instead")
     
     # Add retry mechanism for rate limit errors
     max_retries = 3
@@ -194,8 +195,14 @@ def remove_torrent(api_key: str, torrent_id: str) -> None:
     
     for retry_attempt in range(max_retries):
         try:
-            make_request('DELETE', f'/torrents/delete/{torrent_id}', api_key)
-            return  # Success, exit function
+            result = make_request('DELETE', f'/torrents/delete/{torrent_id}', api_key)
+            # Check if the request was successful (either None for backward compatibility or success dict)
+            if result is None or (isinstance(result, dict) and result.get('success')):
+                return  # Success, exit function
+            else:
+                # Unexpected response format
+                logging.error(f"Unexpected response format from DELETE request: {result}")
+                raise ProviderUnavailableError(f"Unexpected response format: {result}")
         except ProviderUnavailableError as e:
             if "429" in str(e) and retry_attempt < max_retries - 1:
                 wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
@@ -246,8 +253,13 @@ def cleanup_stale_torrents(api_key: str) -> None:
             added_date = datetime.fromtimestamp(torrent['added'])
             if datetime.now() - added_date > timedelta(hours=24):
                 try:
-                    remove_torrent(api_key, torrent['id'])
-                    logging.info(f"Removed stale torrent {torrent['id']}")
+                    # Use make_request directly instead of the deprecated remove_torrent function
+                    result = make_request('DELETE', f'/torrents/delete/{torrent["id"]}', api_key)
+                    # Check if the request was successful (either None for backward compatibility or success dict)
+                    if result is None or (isinstance(result, dict) and result.get('success')):
+                        logging.info(f"Removed stale torrent {torrent['id']}")
+                    else:
+                        logging.error(f"Failed to remove stale torrent {torrent['id']}: unexpected response format {result}")
                 except ProviderUnavailableError as e:
                     if "429" in str(e):
                         logging.warning(f"Rate limit hit when removing stale torrent {torrent['id']}. Will continue with next torrent.")

@@ -1321,7 +1321,7 @@ def update_settings():
         if was_program_running:
             try:
                 from routes.program_operation_routes import _execute_start_program
-                start_result = _execute_start_program(skip_connectivity_check=True)
+                start_result = _execute_start_program(skip_connectivity_check=True, is_restart=True)
                 if start_result.get("status") == "success":
                     logging.info("Program restarted successfully after settings save.")
                     return jsonify({"status": "success", "message": "Settings updated successfully and program restarted"})
@@ -2494,3 +2494,140 @@ def get_liked_trakt_lists_for_import():
         logging.error(f"Error fetching liked Trakt lists details: {str(e)}", exc_info=True)
         # Return failure if there was an error during fetch
         return jsonify({'success': False, 'error': f'Failed to fetch liked lists details: {str(e)}'}), 500
+
+@settings_bp.route('/api/mdblist-popup-status')
+def get_mdblist_popup_status():
+    try:
+        # Check if we're in limited environment mode
+        from utilities.set_supervisor_env import is_limited_environment
+        limited_env = is_limited_environment()
+        
+        if not limited_env:
+            return jsonify({'shouldShow': False})
+        
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        status_file = os.path.join(db_content_dir, 'mdblist_popup.json')
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                return jsonify({'shouldShow': not status.get('seen', False)})
+        return jsonify({'shouldShow': True})
+    except Exception as e:
+        logging.error(f"Error checking MDBList popup status: {str(e)}")
+        return jsonify({'shouldShow': False})
+
+@settings_bp.route('/api/mdblist-popup-seen', methods=['POST'])
+@admin_required
+def mark_mdblist_popup_seen():
+    try:
+        # Ensure db_content directory exists
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        os.makedirs(db_content_dir, exist_ok=True)
+        
+        # Save the status
+        status_file = os.path.join(db_content_dir, 'mdblist_popup.json')
+        
+        # Create the file with proper permissions
+        with open(status_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'seen': True,
+                'timestamp': datetime.now().isoformat()
+            }, f, indent=4)
+        
+        logging.info("MDBList popup marked as seen")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error saving MDBList popup status: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/add-default-mdblists', methods=['POST'])
+@admin_required
+def add_default_mdblists():
+    try:
+        config = load_config()
+        if 'Content Sources' not in config:
+            config['Content Sources'] = {}
+        
+        # Check if MDBList sources already exist
+        existing_mdblists = [source_id for source_id in config['Content Sources'].keys() 
+                           if source_id.startswith('MDBList_')]
+        
+        if existing_mdblists:
+            return jsonify({'success': False, 'error': 'MDBList sources already exist'}), 400
+        
+        # Get available versions from config
+        available_versions = list(config.get('Scraping', {}).get('versions', {}).keys())
+        if not available_versions:
+            # If no versions configured, create a default 1080p version
+            if 'Scraping' not in config:
+                config['Scraping'] = {}
+            if 'versions' not in config['Scraping']:
+                config['Scraping']['versions'] = {}
+            
+            config['Scraping']['versions']['1080p'] = {
+                'enable_hdr': False,
+                'max_resolution': '1080p',
+                'resolution_wanted': '<=',
+                'resolution_weight': 3,
+                'hdr_weight': 3,
+                'similarity_weight': 3,
+                'size_weight': 3,
+                'bitrate_weight': 3,
+                'preferred_filter_in': [],
+                'preferred_filter_out': [],
+                'filter_in': [],
+                'filter_out': [],
+                'min_size_gb': 0.01,
+                'max_size_gb': None,
+                'wake_count': None,
+                'require_physical_release': False
+            }
+            available_versions = ['1080p']
+            logging.info("Created default 1080p version for MDBLists")
+        
+        # Use the first available version (or 1080p as fallback)
+        default_version = available_versions[0] if available_versions else '1080p'
+        
+        # Default MDBList configurations
+        default_mdblists = {
+            "MDBList_1": {
+                "enabled": True,
+                "urls": "https://mdblist.com/lists/hdlists/top-ten-pirated-movies-of-the-week-torrent-freak-com",
+                "versions": {
+                    default_version: True
+                },
+                "type": "MDBList",
+                "media_type": "All",
+                "display_name": "New Movies",
+                "allow_specials": False,
+                "custom_symlink_subfolder": "",
+                "cutoff_date": "",
+                "exclude_genres": []
+            },
+            "MDBList_2": {
+                "enabled": True,
+                "urls": "https://mdblist.com/lists/godver3/top-10-shows",
+                "versions": {
+                    default_version: True
+                },
+                "type": "MDBList",
+                "media_type": "All",
+                "display_name": "New Shows",
+                "allow_specials": False,
+                "custom_symlink_subfolder": "",
+                "cutoff_date": "",
+                "exclude_genres": []
+            }
+        }
+        
+        # Add the default MDBLists to the config
+        for source_id, source_config in default_mdblists.items():
+            config['Content Sources'][source_id] = source_config
+        
+        save_config(config)
+        
+        logging.info(f"Default MDBList sources added successfully using version: {default_version}")
+        return jsonify({'success': True, 'message': f'Default MDBList sources added successfully using version: {default_version}'})
+    except Exception as e:
+        logging.error(f"Error adding default MDBLists: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500

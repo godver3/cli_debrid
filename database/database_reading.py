@@ -467,9 +467,10 @@ def get_media_items_by_ids_batch(item_ids: List[int]) -> List[Dict]:
 def get_media_item_by_filename(filename: str) -> Optional[Dict]:
     """
     Retrieve a media item from the database based on its filename.
+    Checks multiple location fields: filled_by_file, location_on_disk, location_basename.
 
     Args:
-        filename: The name of the file associated with the media item (filled_by_file column).
+        filename: The name of the file associated with the media item.
 
     Returns:
         A dictionary containing the media item's details, or None if not found.
@@ -477,9 +478,16 @@ def get_media_item_by_filename(filename: str) -> Optional[Dict]:
     conn = get_db_connection()
     try:
         # Select all columns for the matching filename
-        # Using filled_by_file as the target column for the filename lookup
-        query = 'SELECT * FROM media_items WHERE filled_by_file = ?'
-        cursor = conn.execute(query, (filename,))
+        # Check multiple location fields to find the item
+        query = '''
+            SELECT * FROM media_items 
+            WHERE filled_by_file = ? 
+               OR location_on_disk LIKE ? 
+               OR location_basename = ?
+        '''
+        # Use LIKE for location_on_disk to handle full paths, exact match for others
+        location_on_disk_pattern = f'%{filename}'
+        cursor = conn.execute(query, (filename, location_on_disk_pattern, filename))
         item = cursor.fetchone()
         
         if item:

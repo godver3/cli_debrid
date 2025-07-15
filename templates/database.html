@@ -46,10 +46,12 @@
             <select id="bulk-change-version" class="bulk-action-select" disabled>
                 <option value="">Change Selected Version...</option>
             </select>
-            <button id="bulk-early-release" class="bulk-action-btn" disabled>Mark Selected as Early Release</button>
+            <button id="bulk-early-release" class="bulk-action-btn" disabled>Early Release</button>
             <button id="bulk-force-priority" class="bulk-action-btn" disabled>Force Priority</button>
             <!-- NEW: Manual resync for selected items -->
             <button id="bulk-resync" class="bulk-action-btn" disabled>Resync Selected</button>
+            <!-- NEW: Manual symlink verification for selected items -->
+            <button id="bulk-verify-symlinks" class="bulk-action-btn" disabled>Verify Symlinks</button>
         </div>
     </div>
     <div id="column-selector-wrapper">
@@ -1742,6 +1744,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const bulkForcePriorityBtn = document.getElementById('bulk-force-priority');
     // NEW constant for resync button
     const bulkResyncBtn = document.getElementById('bulk-resync');
+    // NEW constant for verify symlinks button
+    const bulkVerifySymlinksBtn = document.getElementById('bulk-verify-symlinks');
 
     // Fetch available versions and populate the version dropdown
     fetch('/settings/get_scraping_versions')
@@ -1869,6 +1873,8 @@ document.addEventListener('DOMContentLoaded', function() {
         bulkForcePriorityBtn.disabled = selectedCount === 0;
         // NEW: enable/disable resync button
         bulkResyncBtn.disabled = selectedCount === 0;
+        // NEW: enable/disable verify symlinks button
+        bulkVerifySymlinksBtn.disabled = selectedCount === 0;
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
@@ -2180,6 +2186,23 @@ document.addEventListener('DOMContentLoaded', function() {
             cancelText: 'Cancel',
             onConfirm: () => {
                 executeBulkAction(selectedItems, 'resync', null, 'Resync', 'resynchronized');
+            }
+        });
+    });
+
+    // NEW: Bulk verify symlinks handler
+    bulkVerifySymlinksBtn.addEventListener('click', function() {
+        const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
+            .map(cb => cb.dataset.itemId);
+        if (selectedItems.length === 0) return;
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Symlink Verification',
+            message: `Add ${selectedItems.length} item(s) to the symlink verification queue? This will verify that the symlinked files are properly scanned into Plex.`,
+            confirmText: 'Verify',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBulkAction(selectedItems, 'verify_symlinks', null, 'Symlink Verification', 'added to verification queue');
             }
         });
     });
