@@ -739,10 +739,66 @@
     }
 
     function updateInitializationStatus(data) {
-        const initStatus = document.getElementById('initialization-status');
-        const progressContainer = document.getElementById('progress-container');
-        const progressBar = document.getElementById('init-progress');
-        const stepText = document.getElementById('init-step-text');
+
+        let initStatus = document.getElementById('initialization-status');
+        let progressContainer = document.getElementById('progress-container');
+        let progressBar = document.getElementById('init-progress');
+        let stepText = document.getElementById('init-step-text');
+
+        // If elements don't exist, create them
+        if (!initStatus || !progressContainer || !progressBar || !stepText) {
+            console.warn('Initialization status elements not found, creating them dynamically');
+            
+            const container = document.querySelector('.container');
+            if (!container) {
+                console.error('Container element not found');
+                return;
+            }
+            
+            // Create the initialization status elements
+            initStatus = document.createElement('div');
+            initStatus.id = 'initialization-status';
+            initStatus.className = 'alert alert-info';
+            initStatus.style.display = 'none';
+            
+            stepText = document.createElement('span');
+            stepText.id = 'init-step-text';
+            stepText.textContent = 'Initializing system...';
+            
+            progressContainer = document.createElement('div');
+            progressContainer.id = 'progress-container';
+            progressContainer.className = 'progress mt-2';
+            progressContainer.style.display = 'none';
+            
+            progressBar = document.createElement('div');
+            progressBar.id = 'init-progress';
+            progressBar.className = 'progress-bar';
+            progressBar.setAttribute('role', 'progressbar');
+            progressBar.style.width = '0%';
+            progressBar.setAttribute('aria-valuenow', '0');
+            progressBar.setAttribute('aria-valuemin', '0');
+            progressBar.setAttribute('aria-valuemax', '100');
+            
+            // Add the icon
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-sync fa-spin';
+            
+            // Assemble the elements
+            initStatus.appendChild(icon);
+            initStatus.appendChild(document.createTextNode(' '));
+            initStatus.appendChild(stepText);
+            progressContainer.appendChild(progressBar);
+            initStatus.appendChild(progressContainer);
+            
+            // Insert after the connection-status element
+            const connectionStatus = document.getElementById('connection-status');
+            if (connectionStatus && connectionStatus.nextSibling) {
+                container.insertBefore(initStatus, connectionStatus.nextSibling);
+            } else {
+                container.appendChild(initStatus);
+            }
+            
+        }
 
         if (!data || !data.current_step) {
             initStatus.style.display = 'none';
@@ -764,7 +820,6 @@
         // Ensure progress stays within bounds
         progress = Math.max(0, Math.min(100, progress));
         
-        console.log(`Progress: ${progress.toFixed(1)}%, Step: ${data.current_step}, Phase: ${data.current_phase || 'none'}`);
         
         // Update progress bar
         progressBar.style.width = `${progress}%`;
@@ -841,11 +896,7 @@
                 } else {
                     remainingTimeEl.textContent = data.remaining_scrape_time;
                 }
-                // Debug logging
-                console.log('[DEBUG] items_per_hour:', data.items_per_hour,
-                            'remaining_scrape_time:', data.remaining_scrape_time,
-                            'items_remaining:', data.items_remaining,
-                            'allQueuesEmpty:', allQueuesEmpty);
+
                 statsDiv.style.display = 'block';
             } else if (statsDiv) {
                 statsDiv.style.display = 'none';
@@ -893,7 +944,7 @@
                         </div>
                     `;
                     queueContents.appendChild(queueDiv);
-                    addTooltipEventListeners(queueDiv);
+                    // addTooltipEventListeners(queueDiv); // Commented out to see if it's causing issues
                 }
             });
 
@@ -932,6 +983,8 @@
         } else if (data.program_status === "Starting") {
             if (data.initialization_status) {
                 updateInitializationStatus(data.initialization_status);
+            } else {
+                console.warn('Starting status but no initialization_status provided');
             }
             queueContents.style.display = 'none';
         } else if (data.program_status === "Stopped" || data.program_status === "Stopping") {
@@ -976,7 +1029,9 @@
                 
                 if (!hasReceivedFirstResponse) {
                     hasReceivedFirstResponse = true;
-                    loadingIndicator.style.display = 'none';
+                    if (loadingIndicator) {
+                        loadingIndicator.style.display = 'none';
+                    }
                     // Clear any error messages on successful connection
                     clearErrorMessages();
                 }
@@ -1196,11 +1251,16 @@
 
     // Initial setup
     document.addEventListener('DOMContentLoaded', function() {
-        // Initialize global tooltips (fetches data, sets up static ones if any)
-        initializeGlobalTooltips(); 
+        console.log('DOMContentLoaded event fired');
         
-        // Then set up the queue stream which will dynamically add its own tooltips
-        setupQueueStream();
+        // Initialize global tooltips (fetches data, sets up static ones if any)
+        // initializeGlobalTooltips(); // Commented out to see if it's causing issues
+        
+        // Add a small delay to ensure DOM is fully ready before setting up the stream
+        setTimeout(() => {
+            console.log('Setting up queue stream after DOM ready delay');
+            setupQueueStream();
+        }, 50);
     });
 
     // Handle page visibility changes (especially important for mobile)
