@@ -1708,7 +1708,9 @@ class ProgramRunner:
                                     for item in all_items:
                                         release_date = item.get('release_date')
                                         if not release_date or release_date.lower() == 'unknown':
-                                            items_filtered_date.append(item)
+                                            # Skip items with unknown release dates when cutoff date is set
+                                            cutoff_date_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                             continue
                                         try:
                                             item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1718,9 +1720,9 @@ class ProgramRunner:
                                                 cutoff_date_skipped += 1
                                                 logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                         except ValueError:
-                                            # If we can't parse the date, allow the item through
-                                            items_filtered_date.append(item)
-                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
+                                            # If we can't parse the date, skip the item when cutoff date is set
+                                            cutoff_date_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
                                     all_items = items_filtered_date
                                     if cutoff_date_skipped > 0:
                                         logging.debug(f"Batch {source}: Skipped {cutoff_date_skipped} items due to cutoff date")
@@ -1826,7 +1828,9 @@ class ProgramRunner:
                                 for item in all_items:
                                     release_date = item.get('release_date')
                                     if not release_date or release_date.lower() == 'unknown':
-                                        items_filtered_date.append(item)
+                                        # Skip items with unknown release dates when cutoff date is set
+                                        cutoff_date_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                         continue
                                     try:
                                         item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1836,12 +1840,12 @@ class ProgramRunner:
                                             cutoff_date_skipped += 1
                                             logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                     except ValueError:
-                                        # If we can't parse the date, allow the item through
-                                        items_filtered_date.append(item)
-                                        logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
-                                    all_items = items_filtered_date
-                                    if cutoff_date_skipped > 0:
-                                        logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
+                                        # If we can't parse the date, skip the item when cutoff date is set
+                                        cutoff_date_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
+                                all_items = items_filtered_date
+                                if cutoff_date_skipped > 0:
+                                    logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
 
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items

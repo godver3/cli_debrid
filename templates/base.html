@@ -961,123 +961,36 @@
                         const mdblistPopupDismissed = localStorage.getItem('mdblistPopupDismissed') === 'true';
                         
                         if (!mdblistPopupDismissed) {
-                            // Create custom popup with invisible close button using notifications.js styling
-                            const popupOverlay = document.createElement('div');
-                            popupOverlay.className = 'universal-popup';
-                            popupOverlay.style.display = 'flex';
-                            
-                            // Add the CSS styles from notifications.js
-                            const style = document.createElement('style');
-                            style.textContent = `
-                                .universal-popup {
-                                    position: fixed;
-                                    top: 0;
-                                    left: 0;
-                                    width: 100%;
-                                    height: 100%;
-                                    background-color: rgba(0, 0, 0, 0.7);
-                                    display: flex;
-                                    justify-content: center;
-                                    align-items: center;
-                                    z-index: 1000;
-                                }
-                                .universal-popup .popup-content {
-                                    background-color: #2a2a2a;
-                                    padding: 35px;
-                                    border-radius: 8px;
-                                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-                                    max-width: 80%;
-                                    max-height: 80%;
-                                    overflow-y: auto;
-                                    color: #f4f4f4;
-                                    position: relative;
-                                }
-                                .universal-popup .popup-content h3 {
-                                    margin: 0 0 15px;
-                                    font-size: 1.2em;
-                                    text-align: center;
-                                }
-                                .universal-popup .popup-content p {
-                                    margin-bottom: 15px;
-                                }
-                                .universal-popup .popup-buttons {
-                                    display: flex;
-                                    justify-content: center;
-                                    gap: 10px;
-                                    margin-top: 20px;
-                                }
-                                .universal-popup button {
-                                    padding: 8px 15px;
-                                    border: none;
-                                    border-radius: 4px;
-                                    cursor: pointer;
-                                    font-size: 14px;
-                                    transition: background-color 0.3s;
-                                }
-                                .universal-popup button:hover {
-                                    opacity: 0.9;
-                                }
-                                .universal-popup .popup-content.confirm { border-left: 4px solid #2196F3; }
-                                .universal-popup .popup-content.confirm h3 { color: #2196F3; }
-                            `;
-                            document.head.appendChild(style);
-                            
-                            popupOverlay.innerHTML = `
-                                <div class="popup-content confirm" style="max-width: 500px;">
-                                    <h3>Add Default MDBLists</h3>
-                                    <p>Would you like to add some default MDBList sources to get started? These will add popular movies and shows to your wanted list.</p>
-                                    <p>You can always add or remove content sources later in Settings.</p>
-                                    <div class="popup-buttons">
-                                        <button id="mdblistConfirmBtn" style="background-color: #4CAF50; color: white;">Yes, Add Default Lists</button>
-                                        <button id="mdblistCancelBtn" style="background-color: #f44336; color: white;">No, Skip</button>
-                                    </div>
-                                    <span id="mdblistPopupClose" style="position: absolute; top: 10px; right: 15px; cursor: pointer; color: #aaa; font-size: 24px; font-weight: bold; line-height: 1; opacity: 0;">&times;</span>
-                                </div>
-                            `;
-                            
-                            document.body.appendChild(popupOverlay);
-                            
-                            // Add event listeners
-                            document.getElementById('mdblistPopupClose').addEventListener('click', () => {
-                                popupOverlay.remove();
-                                style.remove();
-                                // Save to localStorage so it doesn't show again for this user
-                                localStorage.setItem('mdblistPopupDismissed', 'true');
-                            });
-                            
-                            document.getElementById('mdblistConfirmBtn').addEventListener('click', async () => {
-                                const success = await addDefaultMDBLists();
-                                if (success) {
-                                    showPopup({
-                                        type: POPUP_TYPES.SUCCESS,
-                                        title: 'MDBLists Added',
-                                        message: 'Default MDBList sources have been added successfully. You can view and manage them in Settings > Content Sources.',
-                                        autoClose: 5000
-                                    });
-                                } else {
-                                    showPopup({
-                                        type: POPUP_TYPES.ERROR,
-                                        title: 'Error',
-                                        message: 'Failed to add default MDBList sources. You can add them manually in Settings > Content Sources.',
-                                        autoClose: 5000
-                                    });
-                                }
-                                popupOverlay.remove();
-                                style.remove();
-                                markMDBListPopupSeen();
-                            });
-                            
-                            document.getElementById('mdblistCancelBtn').addEventListener('click', () => {
-                                popupOverlay.remove();
-                                style.remove();
-                                markMDBListPopupSeen();
-                            });
-                            
-                            // Close on outside click
-                            popupOverlay.addEventListener('click', (e) => {
-                                if (e.target === popupOverlay) {
-                                    popupOverlay.remove();
-                                    style.remove();
+                            showPopup({
+                                type: POPUP_TYPES.CONFIRM,
+                                title: 'Add Default MDBLists',
+                                message: 'Would you like to add some default MDBList sources to get started? These will add popular movies and shows to your wanted list.<br><br>You can always add or remove content sources later in Settings.',
+                                confirmText: 'Yes, Add Default Lists',
+                                cancelText: 'No, Skip',
+                                hiddenCloseButton: true,
+                                onConfirm: async () => {
+                                    const success = await addDefaultMDBLists();
+                                    if (success) {
+                                        showPopup({
+                                            type: POPUP_TYPES.SUCCESS,
+                                            title: 'MDBLists Added',
+                                            message: 'Default MDBList sources have been added successfully. You can view and manage them in Settings > Content Sources.',
+                                            autoClose: 5000
+                                        });
+                                    } else {
+                                        showPopup({
+                                            type: POPUP_TYPES.ERROR,
+                                            title: 'Error',
+                                            message: 'Failed to add default MDBList sources. You can add them manually in Settings > Content Sources.',
+                                            autoClose: 5000
+                                        });
+                                    }
+                                    markMDBListPopupSeen();
+                                },
+                                onCancel: () => {
+                                    markMDBListPopupSeen();
+                                },
+                                onHiddenClose: () => {
                                     // Save to localStorage so it doesn't show again for this user
                                     localStorage.setItem('mdblistPopupDismissed', 'true');
                                 }

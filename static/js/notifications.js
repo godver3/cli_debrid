@@ -21,7 +21,9 @@ export function showPopup(options) {
         formHtml,  // New option for custom form HTML
         onConfirm,
         onCancel,
-        autoClose = 5000
+        autoClose = 5000,
+        hiddenCloseButton = false,  // New option for hidden close button
+        onHiddenClose = null  // Callback for hidden close button
     } = options;
 
     const popup = document.createElement('div');
@@ -55,6 +57,11 @@ export function showPopup(options) {
         `;
     } else {
         content += `<div class="popup-buttons"><button id="popupClose">Close</button></div>`;
+    }
+    
+    // Add hidden close button if requested
+    if (hiddenCloseButton) {
+        content += `<span id="hiddenCloseButton" style="position: absolute; top: 10px; right: 15px; cursor: pointer; color: #aaa; font-size: 24px; font-weight: bold; line-height: 1; opacity: 0;">&times;</span>`;
     }
 
     content += `</div>`;
@@ -258,6 +265,17 @@ export function showPopup(options) {
         if (autoClose) {
             setTimeout(closePopup, autoClose);
         }
+    }
+    
+    // Add event listener for hidden close button if it exists
+    const hiddenCloseButtonElement = popup.querySelector('#hiddenCloseButton');
+    if (hiddenCloseButtonElement) {
+        hiddenCloseButtonElement.addEventListener('click', () => {
+            if (onHiddenClose) {
+                onHiddenClose();
+            }
+            closePopup();
+        });
     }
 }
 

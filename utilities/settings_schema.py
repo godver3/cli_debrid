@@ -170,6 +170,12 @@ SETTINGS_SCHEMA = {
             "description": "Plex authentication token (optional)",
             "default": "",
             "sensitive": True
+        },
+        "media_server_type": {
+            "type": "string",
+            "description": "Media server type to use for symlink updates when using Symlinked/Local file collection management",
+            "default": "plex",
+            "choices": ["plex", "jellyfin"]
         }
     },
     "Debrid Provider": {
