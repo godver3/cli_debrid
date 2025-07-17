@@ -2045,11 +2045,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle bulk delete
     bulkDeleteBtn.addEventListener('click', function() {
+        // Prevent multiple rapid clicks
+        if (this.disabled) return;
+        
         const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
             .map(checkbox => checkbox.dataset.itemId);
         
         if (selectedItems.length === 0) return;
 
+        // Disable button temporarily to prevent multiple clicks
+        this.disabled = true;
+
+        // Helper to re-enable the button
+        function reenableBulkDeleteBtn() {
+            bulkDeleteBtn.disabled = false;
+        }
+        
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Deletion',
@@ -2063,10 +2074,13 @@ document.addEventListener('DOMContentLoaded', function() {
             `,
             confirmText: 'Delete',
             cancelText: 'Cancel',
-            onConfirm: () => { // Removed async here, executeBulkAction is async
+            onConfirm: () => {
                 const blacklistItems = document.getElementById('bulk-blacklist-checkbox').checked;
                 executeBulkAction(selectedItems, 'delete', blacklistItems.toString(), 'Deletion', 'deleted');
+                reenableBulkDeleteBtn();
             },
+            onCancel: reenableBulkDeleteBtn,
+            onHiddenClose: reenableBulkDeleteBtn
         });
     });
 

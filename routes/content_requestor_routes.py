@@ -116,6 +116,27 @@ def request_content():
                         logging.warning(f"No valid seasons found for IMDB ID {imdb_id} after fetching all seasons.")
                 else:
                     logging.warning(f"Could not retrieve seasons data for IMDB ID {imdb_id} when fetching all seasons.")
+                    
+                    # Try fallback: force refresh metadata to get seasons data
+                    logging.info(f"Attempting fallback metadata refresh for {imdb_id} to get seasons data...")
+                    try:
+                        refreshed_metadata, _ = DirectAPI.force_refresh_metadata(imdb_id)
+                        if refreshed_metadata and 'seasons' in refreshed_metadata:
+                            refreshed_seasons = refreshed_metadata['seasons']
+                            if isinstance(refreshed_seasons, dict) and refreshed_seasons:
+                                # Extract season numbers from the refreshed data
+                                refreshed_season_numbers = [int(season_num) for season_num in refreshed_seasons.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                                if refreshed_season_numbers:
+                                    selected_seasons = refreshed_season_numbers
+                                    logging.info(f"Successfully fetched {len(refreshed_season_numbers)} seasons via fallback for IMDB ID {imdb_id}: {refreshed_season_numbers}")
+                                else:
+                                    logging.warning(f"Fallback seasons fetch returned no valid season numbers for IMDB ID {imdb_id}")
+                            else:
+                                logging.warning(f"Fallback seasons fetch returned invalid seasons data for IMDB ID {imdb_id}")
+                        else:
+                            logging.warning(f"Fallback metadata refresh failed or returned no seasons data for IMDB ID {imdb_id}")
+                    except Exception as fallback_error:
+                        logging.error(f"Error during fallback seasons fetch for IMDB ID {imdb_id}: {fallback_error}")
             except Exception as e:
                 logging.error(f"Error fetching all seasons for IMDB ID {imdb_id}: {str(e)}")
                 # Proceed without pre-populating seasons, behavior will be as before for this case.
@@ -222,6 +243,30 @@ def get_show_seasons():
         
         if not seasons_data:
             logging.error(f"No seasons data returned for IMDB ID {imdb_id}")
+            
+            # Try fallback: force refresh metadata to get seasons data
+            logging.info(f"Attempting fallback metadata refresh for {imdb_id} to get seasons data...")
+            try:
+                refreshed_metadata, _ = DirectAPI.force_refresh_metadata(imdb_id)
+                if refreshed_metadata and 'seasons' in refreshed_metadata:
+                    refreshed_seasons = refreshed_metadata['seasons']
+                    if isinstance(refreshed_seasons, dict) and refreshed_seasons:
+                        # Extract season numbers from the refreshed data
+                        refreshed_season_numbers = [int(season_num) for season_num in refreshed_seasons.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                        if refreshed_season_numbers:
+                            # Filter out season 0 (specials) if present
+                            refreshed_season_numbers = [season for season in refreshed_season_numbers if season > 0]
+                            logging.info(f"Successfully fetched {len(refreshed_season_numbers)} seasons via fallback for IMDB ID {imdb_id}: {refreshed_season_numbers}")
+                            return jsonify({'success': True, 'seasons': refreshed_season_numbers})
+                        else:
+                            logging.warning(f"Fallback seasons fetch returned no valid season numbers for IMDB ID {imdb_id}")
+                    else:
+                        logging.warning(f"Fallback seasons fetch returned invalid seasons data for IMDB ID {imdb_id}")
+                else:
+                    logging.warning(f"Fallback metadata refresh failed or returned no seasons data for IMDB ID {imdb_id}")
+            except Exception as fallback_error:
+                logging.error(f"Error during fallback seasons fetch for IMDB ID {imdb_id}: {fallback_error}")
+            
             return jsonify({'error': 'Could not retrieve seasons data: Empty response'}), 404
             
         # The seasons_data structure is different than expected

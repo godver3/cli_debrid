@@ -756,7 +756,65 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                    
                     if not seasons_to_process_for_this_item_instance:
                         logging.info(f"No seasons determined for active processing for show {current_item_metadata.get('title')} (IMDb {imdb_id}) from item {item_from_input_list.get('content_source_detail', '')}. Specific requested: {requested_specific_seasons}, Metadata seasons: {all_season_numbers_in_metadata}.")
-                        continue
+                        
+                        # Try to manually fetch seasons data as a fallback
+                        if not all_season_numbers_in_metadata:
+                            logging.info(f"Attempting manual seasons fetch for {imdb_id} as fallback...")
+                            try:
+                                # Try to force refresh the metadata to get seasons data
+                                from cli_battery.app.direct_api import DirectAPI
+                                refreshed_metadata, _ = DirectAPI.force_refresh_metadata(imdb_id)
+                                if refreshed_metadata and 'seasons' in refreshed_metadata:
+                                    refreshed_seasons = refreshed_metadata['seasons']
+                                    if isinstance(refreshed_seasons, dict) and refreshed_seasons:
+                                        # Extract season numbers from the refreshed data
+                                        refreshed_season_numbers = [int(season_num) for season_num in refreshed_seasons.keys() if str(season_num).isdigit() and int(season_num) > 0]
+                                        if refreshed_season_numbers:
+                                            logging.info(f"Successfully fetched {len(refreshed_season_numbers)} seasons via fallback for {imdb_id}: {refreshed_season_numbers}")
+                                            # Update the seasons data and retry processing
+                                            seasons_data_from_metadata = refreshed_seasons
+                                            all_season_numbers_in_metadata = set(refreshed_season_numbers)
+                                            
+                                            # Recalculate seasons to process
+                                            if requested_specific_seasons:
+                                                valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
+                                                if len(valid_requested) != len(requested_specific_seasons):
+                                                    logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but refreshed metadata only contains {all_season_numbers_in_metadata}. Processing valid: {valid_requested}")
+                                                seasons_to_process_for_this_item_instance = valid_requested
+                                            else:
+                                                content_source_id = item_from_input_list.get('content_source')
+                                                allow_specials_setting_for_source = False
+                                                if content_source_id:
+                                                    from queues.config_manager import load_config
+                                                    config = load_config()
+                                                    cs_config = config.get('Content Sources', {}).get(content_source_id, {})
+                                                    if isinstance(cs_config, dict): allow_specials_setting_for_source = cs_config.get('allow_specials', False)
+                                                
+                                                seasons_to_process_for_this_item_instance = {
+                                                    s_num for s_num in all_season_numbers_in_metadata if allow_specials_setting_for_source or s_num != 0
+                                                }
+                                            
+                                            # If we now have seasons to process, continue with the processing
+                                            if seasons_to_process_for_this_item_instance:
+                                                logging.info(f"Retrying processing with {len(seasons_to_process_for_this_item_instance)} seasons for {imdb_id}")
+                                            else:
+                                                logging.warning(f"Fallback seasons fetch succeeded but no valid seasons to process for {imdb_id}")
+                                                continue
+                                        else:
+                                            logging.warning(f"Fallback seasons fetch returned no valid season numbers for {imdb_id}")
+                                            continue
+                                    else:
+                                        logging.warning(f"Fallback seasons fetch returned invalid seasons data for {imdb_id}")
+                                        continue
+                                else:
+                                    logging.warning(f"Fallback metadata refresh failed or returned no seasons data for {imdb_id}")
+                                    continue
+                            except Exception as fallback_error:
+                                logging.error(f"Error during fallback seasons fetch for {imdb_id}: {fallback_error}")
+                                continue
+                        else:
+                            # We have season numbers but none are valid for processing
+                            continue
 
                     current_item_episodes = []
                     for season_num_to_process in seasons_to_process_for_this_item_instance:

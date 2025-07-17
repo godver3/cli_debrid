@@ -258,7 +258,7 @@ class ProgramRunner:
             'task_refresh_download_stats': 300,    # Run every 5 minutes
             'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
             'task_verify_symlinked_files': 7200,    # Run every 120 minutes (if enabled)
-            'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled)
+            'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled) - supports both Plex and Jellyfin/Emby
             'task_reconcile_queues': 3600,         # Run every 1 hour
             'task_check_database_health': 3600,    # Run every hour
             'task_sync_time': 3600,                # Run every hour
@@ -567,31 +567,26 @@ class ProgramRunner:
                       logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
 
         if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-             # Enable symlink task if configured and not toggled off (Removal task handled above)
-            if get_setting('File Management', 'plex_url_for_symlink') and get_setting('File Management', 'plex_token_for_symlink'):
+             # Enable symlink task if configured (Plex OR Jellyfin/Emby) and not toggled off
+            plex_configured = (get_setting('File Management', 'plex_url_for_symlink') and 
+                              get_setting('File Management', 'plex_token_for_symlink'))
+            jellyfin_configured = (get_setting('Debug', 'emby_jellyfin_url', default='').strip() and 
+                                  get_setting('Debug', 'emby_jellyfin_token', default='').strip())
+            
+            if plex_configured or jellyfin_configured:
                 symlink_task = 'task_verify_symlinked_files'
                 is_symlink_toggled_off = saved_states.get(self._normalize_task_name(symlink_task), True) is False
-                # --- START EDIT: Removed reference to removal_task toggle check here ---
-                # is_removal_toggled_off = saved_states.get(self._normalize_task_name(removal_task), True) is False
-                # --- END EDIT ---
 
                 if not is_symlink_toggled_off and symlink_task not in self.enabled_tasks:
                     self.enabled_tasks.add(symlink_task)
-                    logging.info("Enabled symlink verification task based on settings.")
+                    media_server = "Jellyfin/Emby" if jellyfin_configured else "Plex"
+                    logging.info(f"Enabled symlink verification task based on {media_server} settings.")
             else:
-                 # Disable if settings are off and not toggled on
+                 # Disable if no media server settings are configured and not toggled on
                  is_symlink_toggled_on = saved_states.get(self._normalize_task_name('task_verify_symlinked_files'), False) is True
-                 # --- START EDIT: Removed reference to removal_task toggle check here ---
-                 # is_removal_toggled_on = saved_states.get(self._normalize_task_name('task_verify_plex_removals'), False) is True
-                 # --- END EDIT ---
                  if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
                      self.enabled_tasks.remove('task_verify_symlinked_files')
-                     logging.info("Disabled symlink verification task as settings are off.")
-                 # --- START EDIT: Removed removal task disable logic here (handled above) ---
-                 # if 'task_verify_plex_removals' in self.enabled_tasks and not is_removal_toggled_on:
-                 #     self.enabled_tasks.remove('task_verify_plex_removals')
-                 #     logging.info("Disabled Plex removal verification task as settings are off.")
-                 # --- END EDIT ---
+                     logging.info("Disabled symlink verification task as no media server settings are configured.")
 
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
@@ -607,6 +602,15 @@ class ProgramRunner:
                  self.enabled_tasks.remove(task_name)
                  logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
+        # Check for limited environment and enable library maintenance task by default
+        from utilities.set_supervisor_env import is_limited_environment
+        if is_limited_environment():
+            task_name = 'task_run_library_maintenance'
+            is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
+            if not is_toggled_off and task_name not in self.enabled_tasks:
+                self.enabled_tasks.add(task_name)
+                logging.info(f"Enabled '{task_name}' by default in limited environment.")
+        
         if get_setting('Debug', 'enable_library_maintenance_task', False):
             task_name = 'task_run_library_maintenance'
             is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
@@ -614,11 +618,13 @@ class ProgramRunner:
                 self.enabled_tasks.add(task_name)
                 logging.info(f"Enabled '{task_name}' based on Debug setting.")
         else:
-            task_name = 'task_run_library_maintenance'
-            is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
-            if task_name in self.enabled_tasks and not is_toggled_on:
-                 self.enabled_tasks.remove(task_name)
-                 logging.info(f"Disabled '{task_name}' as Debug setting is off.")
+            # Only disable if not in limited environment (limited environment takes precedence)
+            if not is_limited_environment():
+                task_name = 'task_run_library_maintenance'
+                is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
+                if task_name in self.enabled_tasks and not is_toggled_on:
+                     self.enabled_tasks.remove(task_name)
+                     logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
         # 5. Ensure legacy individual Scraping/Adding tasks are removed *after* all logic
         # --- START REVERT: Comment out or remove this block ---
@@ -3816,8 +3822,8 @@ class ProgramRunner:
             logging.error(f"Error verifying symlinked files: {e}")
 
     def task_verify_plex_removals(self):
-        """Verify that files marked for removal are actually gone from Plex using title-based search."""
-        logging.info("[TASK] Running Plex removal verification task.")
+        """Verify that files marked for removal are actually gone from the configured media server (Plex or Jellyfin/Emby) using title-based search."""
+        logging.info("[TASK] Running media server removal verification task.")
 
         # Determine Plex connection details based on settings
         plex_url, plex_token = None, None
