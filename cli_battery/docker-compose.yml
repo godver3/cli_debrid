@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  cli-battery:
+    build: .
+    image: cli-battery:latest
+    container_name: cli-battery
+    ports:
+      - "5001:5001"
+    environment:
+      - CLI_DEBRID_BATTERY_PORT=5001
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - battery-network
+
+networks:
+  battery-network:
+    driver: bridge 

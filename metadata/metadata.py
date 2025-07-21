@@ -120,7 +120,7 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
             title = original_item.get('title', '')
         
         # Try to convert TMDB to IMDB
-        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=converted_item_media_type)
+        imdb_id, conversion_source = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=converted_item_media_type)
         
         # If conversion failed, check if we can proceed with Jackett
         if not imdb_id:
@@ -974,7 +974,7 @@ def parse_date(date_str: Optional[str]) -> Optional[str]:
     return None
 
 def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
-    if 'imdb_id' in item:
+    if 'imdb_id' in item and item.get('imdb_id'):
         return item['imdb_id']
     
     if 'tmdb_id' not in item:
@@ -982,8 +982,12 @@ def get_imdb_id_if_missing(item: Dict[str, Any]) -> Optional[str]:
         return None
     
     tmdb_id = item['tmdb_id']
+    media_type = item.get('media_type')
     
-    imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id))
+    # Convert 'tv' to 'show' for DirectAPI compatibility
+    api_media_type = 'show' if media_type == 'tv' else media_type
+    
+    imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=api_media_type)
     return imdb_id
 
 def refresh_release_dates():

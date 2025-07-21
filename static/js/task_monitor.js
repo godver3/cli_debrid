@@ -247,23 +247,29 @@ function setupTaskStream() {
                 // --- START EDIT: Update Pause Banner with new logic ---
                 if (pauseBannerElement && pauseReasonTextElement) {
                     if (isPaused && pauseInfo && pauseInfo.reason_string) {
-                        let displayMessage = `Queue Paused: ${pauseInfo.reason_string}`; // Default detailed message
+                        // Check if banner was recently dismissed (within debounce period)
+                        const timeSinceDismissed = Date.now() - pauseBannerDismissedAt;
+                        const canShowBanner = timeSinceDismissed > PAUSE_BANNER_DEBOUNCE_MS;
+                        
+                        if (canShowBanner) {
+                            let displayMessage = `Queue Paused: ${pauseInfo.reason_string}`; // Default detailed message
 
-                        if (pauseInfo.error_type === 'UNAUTHORIZED' || pauseInfo.status_code === 401) {
-                            const serviceName = pauseInfo.service_name || 'Debrid service';
-                            displayMessage = `Queue Paused: ${serviceName} API Key is invalid or unauthorized. Please check your settings.`;
-                        } else if (pauseInfo.error_type === 'FORBIDDEN' || pauseInfo.status_code === 403) {
-                            const serviceName = pauseInfo.service_name || 'Debrid service';
-                            displayMessage = `Queue Paused: ${serviceName} API access forbidden. Check API key, IP, or account status.`;
-                        } else if (pauseInfo.error_type === 'CONNECTION_ERROR') {
-                             // Keep the detailed reason_string for general connection errors as it includes retry counts.
-                            displayMessage = `Queue Paused: ${pauseInfo.reason_string}`;
+                            if (pauseInfo.error_type === 'UNAUTHORIZED' || pauseInfo.status_code === 401) {
+                                const serviceName = pauseInfo.service_name || 'Debrid service';
+                                displayMessage = `Queue Paused: ${serviceName} API Key is invalid or unauthorized. Please check your settings.`;
+                            } else if (pauseInfo.error_type === 'FORBIDDEN' || pauseInfo.status_code === 403) {
+                                const serviceName = pauseInfo.service_name || 'Debrid service';
+                                displayMessage = `Queue Paused: ${serviceName} API access forbidden. Check API key, IP, or account status.`;
+                            } else if (pauseInfo.error_type === 'CONNECTION_ERROR') {
+                                 // Keep the detailed reason_string for general connection errors as it includes retry counts.
+                                displayMessage = `Queue Paused: ${pauseInfo.reason_string}`;
+                            }
+                            // Add more conditions for other error_types (RATE_LIMIT, DB_HEALTH, SYSTEM_SCHEDULED) if needed for banner.
+                            // For now, they will use the default pauseInfo.reason_string.
+
+                            pauseReasonTextElement.textContent = displayMessage;
+                            pauseBannerElement.classList.remove('hidden');
                         }
-                        // Add more conditions for other error_types (RATE_LIMIT, DB_HEALTH, SYSTEM_SCHEDULED) if needed for banner.
-                        // For now, they will use the default pauseInfo.reason_string.
-
-                        pauseReasonTextElement.textContent = displayMessage;
-                        pauseBannerElement.classList.remove('hidden');
                     } else {
                         pauseBannerElement.classList.add('hidden');
                     }
@@ -770,10 +776,15 @@ function enableTaskMonitor() {
 }
 
 // Function to close the pause banner
+// Track when the pause banner was last dismissed
+let pauseBannerDismissedAt = 0;
+const PAUSE_BANNER_DEBOUNCE_MS = 15000; // 15 seconds
+
 function closePauseBanner() {
     const banner = document.getElementById('pauseStatusBanner');
     if (banner) {
         banner.classList.add('hidden');
+        pauseBannerDismissedAt = Date.now(); // Record when it was dismissed
     }
 }
 

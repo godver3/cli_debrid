@@ -200,6 +200,7 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
+{% if environment_mode == 'full' %}
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Debrid Provider</h4>
@@ -235,7 +236,9 @@
         {% endfor %}
     </div>
 </div>
+{% endif %}
 
+{% if environment_mode == 'full' %}
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>File Management</h4>
@@ -426,8 +429,7 @@
         </div>
     </div>
 </div>
-
-
+{% endif %}
 
 <div class="settings-section">
     <div class="settings-section-header">
@@ -445,19 +447,23 @@
                 {% if value.type == 'boolean' %}
                     <input type="checkbox" id="trakt-{{ key }}" name="Trakt.{{ key }}"
                            data-section="Trakt" data-key="{{ key }}"
-                           {% if settings.get('Trakt', {}).get(key) %}checked{% endif %}>
+                           {% if settings.get('Trakt', {}).get(key) %}checked{% endif %}
+                           {% if environment_mode != 'full' and key in ['client_id', 'client_secret'] %}disabled readonly{% endif %}>
                 {% elif value.choices %}
                     <select id="trakt-{{ key }}" name="Trakt.{{ key }}" class="settings-input"
-                            data-section="Trakt" data-key="{{ key }}">
+                            data-section="Trakt" data-key="{{ key }}"
+                            {% if environment_mode != 'full' and key in ['client_id', 'client_secret'] %}disabled readonly{% endif %}>
                         {% for choice in value.choices %}
                             <option value="{{ choice }}" {% if settings.get('Trakt', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
                         {% endfor %}
                     </select>
                 {% else %}
-                    <input type="{{ value.type }}" id="trakt-{{ key }}" name="Trakt.{{ key }}"
+                    <input type="{% if key in ['client_id', 'client_secret'] and environment_mode != 'full' %}password{% else %}{{ value.type }}{% endif %}"
+                           id="trakt-{{ key }}" name="Trakt.{{ key }}"
                            value="{{ settings.get('Trakt', {}).get(key, '') }}" class="settings-input"
                            data-section="Trakt" data-key="{{ key }}"
-                           {% if value.sensitive %}type="password"{% endif %}>
+                           {% if (value.sensitive or (key in ['client_id', 'client_secret'] and environment_mode != 'full')) %}type="password"{% endif %}
+                           {% if environment_mode != 'full' and key in ['client_id', 'client_secret'] %}readonly disabled{% endif %}>
                 {% endif %}
                 {% if value.description %}
                     <p class="settings-description">{{ value.description }}</p>

@@ -277,6 +277,80 @@ def check_plex_connection():
             }
         }
 
+def check_jellyfin_connection():
+    """Check connection to Jellyfin/Emby if configured."""
+    jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
+
+    if not jellyfin_url or not jellyfin_token:
+        return None  # Not configured
+
+    try:
+        # Ensure URL ends with a slash
+        if not jellyfin_url.endswith('/'):
+            jellyfin_url += '/'
+        
+        system_info_url = f"{jellyfin_url}System/Info"
+        
+        headers = {
+            'X-Emby-Token': jellyfin_token,
+            'Accept': 'application/json'
+        }
+        
+        response = requests.get(system_info_url, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            try:
+                server_info = response.json()
+                return {
+                    'name': 'Jellyfin/Emby',
+                    'connected': True,
+                    'error': None,
+                    'details': {
+                        'url': jellyfin_url,
+                        'server_name': server_info.get('ServerName'),
+                        'version': server_info.get('Version')
+                    }
+                }
+            except ValueError:
+                 return {
+                    'name': 'Jellyfin/Emby',
+                    'connected': False,
+                    'error': 'Failed to parse JSON response',
+                    'details': {
+                        'url': jellyfin_url
+                    }
+                }
+        else:
+            return {
+                'name': 'Jellyfin/Emby',
+                'connected': False,
+                'error': f'Status code: {response.status_code}',
+                'details': { 'url': jellyfin_url }
+            }
+
+    except requests.Timeout:
+        return {
+            'name': 'Jellyfin/Emby',
+            'connected': False,
+            'error': 'Connection timed out',
+            'details': { 'url': jellyfin_url }
+        }
+    except requests.ConnectionError:
+        return {
+            'name': 'Jellyfin/Emby',
+            'connected': False,
+            'error': 'Connection refused',
+            'details': { 'url': jellyfin_url }
+        }
+    except Exception as e:
+        return {
+            'name': 'Jellyfin/Emby',
+            'connected': False,
+            'error': str(e),
+            'details': { 'url': jellyfin_url }
+        }
+
 def check_mounted_files_connection():
     """Check if mounted files location is accessible."""
     # Try original_files_path first, then fall back to Plex mounted_file_location
@@ -341,17 +415,26 @@ def check_phalanx_db_connection():
     if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
         return None # Return None if the service is disabled
 
-    # Determine host based on environment mode
+    # --- Use the same env logic as PhalanxDBClassManager ---
     environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
-    if environment_mode == 'full':
-        host = 'localhost'
+    try:
+        phalanx_port = int(os.environ.get('CLI_DEBRID_PHALANX_PORT', 8888))
+    except ValueError:
+        phalanx_port = 8888
+
+    if environment_mode == 'limited':
+        # Always use Docker host IP (can be customized if needed)
+        phalanx_base_url = 'http://host.docker.internal'
     else:
-        # For non-full environments (e.g., Docker containers), use environment variable or fallback
-        # This follows the same pattern as CLI Battery connection
-        host = os.environ.get('CLI_DEBRID_PHALANX_HOST', 'host.docker.internal')
-    
-    port = 8888
-    url = f'http://{host}:{port}'
+        phalanx_host = os.environ.get('CLI_DEBRID_PHALANX_HOST')
+        if phalanx_host:
+            phalanx_base_url = f'http://{phalanx_host}'
+        else:
+            phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
+
+    phalanx_base_url = phalanx_base_url.rstrip('/')
+    url = f'{phalanx_base_url}:{phalanx_port}'
+    # --- End env logic ---
 
     try:
         response = requests.get(url, timeout=5) # Increased timeout to 5s
@@ -365,8 +448,8 @@ def check_phalanx_db_connection():
                 'error': None,
                 'details': {
                     'url': url,
-                    'host': host,
-                    'port': port
+                    'host': phalanx_base_url,
+                    'port': phalanx_port
                 }
             }
         else:
@@ -377,8 +460,8 @@ def check_phalanx_db_connection():
                 'error': f'Unexpected response: Status {response.status_code}',
                 'details': {
                     'url': url,
-                    'host': host,
-                    'port': port,
+                    'host': phalanx_base_url,
+                    'port': phalanx_port,
                     'response_text': response.text[:200] # Include beginning of response text
                 }
             }
@@ -390,30 +473,30 @@ def check_phalanx_db_connection():
             'error': 'Connection timed out (5s)',
             'details': {
                 'url': url,
-                'host': host,
-                'port': port
+                'host': phalanx_base_url,
+                'port': phalanx_port
             }
         }
     except requests.ConnectionError:
         return {
             'name': 'Phalanx DB',
             'connected': False,
-            'error': f'Connection refused on {host}',
+            'error': f'Connection refused on {phalanx_base_url}',
             'details': {
                 'url': url,
-                'host': host,
-                'port': port
+                'host': phalanx_base_url,
+                'port': phalanx_port
             }
         }
     except Exception as e:
          return {
             'name': 'Phalanx DB',
             'connected': False,
-            'error': f'Error connecting to {host}: {str(e)}',
+            'error': f'Error connecting to {phalanx_base_url}: {str(e)}',
             'details': {
                 'url': url,
-                'host': host,
-                'port': port
+                'host': phalanx_base_url,
+                'port': phalanx_port
             }
         }
 
@@ -1095,7 +1178,19 @@ def index():
     """Render the connections status page."""
     # Get connection statuses (these now include sample data in details)
     cli_battery_status = check_cli_battery_connection()
-    plex_status = check_plex_connection()
+
+    # Check for Jellyfin/Emby first, then fall back to Plex if not configured
+    jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
+
+    jellyfin_status = None
+    plex_status = None
+
+    if jellyfin_url and jellyfin_token:
+        jellyfin_status = check_jellyfin_connection()
+    else:
+        plex_status = check_plex_connection()
+
     mounted_files_status = check_mounted_files_connection()
     phalanx_db_status = check_phalanx_db_connection()
     scraper_statuses = check_scrapers_connections()
@@ -1107,6 +1202,8 @@ def index():
         failing_connections.append(cli_battery_status)
     if plex_status and not plex_status['connected']:
         failing_connections.append(plex_status)
+    if jellyfin_status and not jellyfin_status['connected']:
+        failing_connections.append(jellyfin_status)
     if mounted_files_status and not mounted_files_status['connected']:
         failing_connections.append(mounted_files_status)
     if phalanx_db_status and not phalanx_db_status['connected']:
@@ -1121,6 +1218,7 @@ def index():
     return render_template('connections.html', 
                          cli_battery_status=cli_battery_status,
                          plex_status=plex_status,
+                         jellyfin_status=jellyfin_status,
                          mounted_files_status=mounted_files_status,
                          phalanx_db_status=phalanx_db_status,
                          scraper_statuses=scraper_statuses,

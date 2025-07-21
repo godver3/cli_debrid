@@ -1503,6 +1503,20 @@ def main():
             logging.info("Successfully migrated content sources to include exclude_genres setting")
     # --- End exclude_genres migration ---
 
+    # --- Add migration for ignore_tags in Overseerr Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if source_id.startswith('Overseerr') and 'ignore_tags' not in source_config:
+                source_config['ignore_tags'] = ''
+                content_sources_updated = True
+                logging.info(f"Adding default ignore_tags='' to Overseerr source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated Overseerr content sources to include ignore_tags setting")
+    # --- End ignore_tags migration ---
+
     # --- MIGRATION: Standardize 'Plex Watchlist' type to 'My Plex Watchlist' with fixed key 'My Plex Watchlist_1' ---
     plex_watchlist_migration_updated = False
     if 'Content Sources' in config and isinstance(config.get('Content Sources'), dict):

@@ -107,6 +107,8 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
     for source in overseerr_sources:
         overseerr_url = source.get('url')
         overseerr_api_key = source.get('api_key')
+        ignore_tags_str = source.get('ignore_tags', '')
+        ignore_tags = {tag.strip().lower() for tag in ignore_tags_str.split(',') if tag.strip()} if ignore_tags_str else set()
         
         if not overseerr_url or not overseerr_api_key:
             logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
@@ -116,8 +118,14 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
             wanted_content_raw = fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key)
             wanted_items = []
             cache_skipped = 0
+            ignored_by_tag = 0
 
             for item in wanted_content_raw:
+                item_tags = {t.get('tag', '').lower() for t in item.get('tags', [])}
+                if ignore_tags and not item_tags.isdisjoint(ignore_tags):
+                    ignored_by_tag += 1
+                    continue
+                
                 media = item.get('media', {})
 
                 if media.get('mediaType') in ['movie', 'tv']:
@@ -162,6 +170,8 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     
                     wanted_items.append(wanted_item)
 
+            if ignored_by_tag > 0:
+                logging.info(f"Ignored {ignored_by_tag} items from Overseerr source based on tags.")
             all_wanted_items.append((wanted_items, versions))
             logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source")
         except Exception as e:
