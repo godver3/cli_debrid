@@ -40,6 +40,17 @@
         </div>
         {% endif %}
 
+        <!-- Jellyfin/Emby Connection Card (only shown if configured) -->
+        {% if jellyfin_status %}
+        <div class="connection-card" data-service="jellyfin">
+            <div class="connection-header">
+                <i class="fas fa-play-circle"></i>
+                <span class="connection-title">Jellyfin/Emby</span>
+                <div class="status-indicator {{ 'connected' if jellyfin_status.connected else 'disconnected' }}"></div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Mounted Files Connection Card (only shown if configured) -->
         {% if mounted_files_status %}
         <div class="connection-card" data-service="mounted-files">

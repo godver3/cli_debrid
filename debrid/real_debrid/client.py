@@ -66,10 +66,6 @@ class RealDebridProvider(DebridProvider):
         self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
         
-        # Store the loaded API key in a "private" attribute
-        # This avoids issues if 'api_key' is a property without a setter.
-        self._internal_api_key = self._load_api_key()
-        
     def _load_api_key(self) -> str:
         """Load API key from settings"""
         try:
@@ -81,13 +77,8 @@ class RealDebridProvider(DebridProvider):
 
     @property
     def api_key(self) -> str:
-        """Provides access to the loaded API key."""
-        if not hasattr(self, '_internal_api_key') or not self._internal_api_key:
-            # This case should ideally be handled by _load_api_key raising an error
-            # or by __init__ failing if the key isn't loaded.
-            logging.error("API key accessed before it was loaded or is missing.")
-            raise ProviderUnavailableError("API key is not available.")
-        return self._internal_api_key
+        """Provides access to the API key by fetching it from settings on each call."""
+        return self._load_api_key()
 
     async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
         """

@@ -60,10 +60,10 @@
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 step="0.1">
                     {% else %}
-                        <input type="{{ value.type }}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
+                        <input type="{% if value.sensitive or (section == 'TMDB' and key == 'api_key' and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
                                data-section="{{ section }}" data-key="{{ key }}"
-                               {% if value.sensitive %}type="password"{% endif %}
+                               {% if section == 'TMDB' and key == 'api_key' and environment_mode != 'full' %}readonly disabled{% endif %}
                                {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
@@ -708,7 +708,7 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Enable automatic subtitle downloading for media files. Requires Symlink File Management. Activate with caution as the Subtitle downloader adds roughly 20 seconds of overhead per file processed. Consider instead filtering for MULTI releases with the language of your preference.</p>
+            <p class="settings-description">Enable automatic subtitle downloading for media files. Requires Symlink File Management. Activate with caution as the Subtitle downloader adds 2-3 seconds of overhead per file processed. Consider instead filtering for MULTI releases with the language of your preference.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
@@ -716,10 +716,11 @@
 
         <div class="settings-form-group">
             <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>
-            <input type="text" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
+            <input type="{% if environment_mode != 'full' %}password{% else %}text{% endif %}" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
                    value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_username', '') }}" 
                    class="settings-input"
-                   data-section="Subtitle Settings" data-key="opensubtitles_username">
+                   data-section="Subtitle Settings" data-key="opensubtitles_username"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
             <p class="settings-description">OpenSubtitles username for subtitle downloads</p>
         </div>
 
@@ -728,7 +729,8 @@
             <input type="password" id="additional-opensubtitles_password" name="Subtitle Settings.opensubtitles_password"
                    value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_password', '') }}" 
                    class="settings-input"
-                   data-section="Subtitle Settings" data-key="opensubtitles_password">
+                   data-section="Subtitle Settings" data-key="opensubtitles_password"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
             <p class="settings-description">OpenSubtitles password for subtitle downloads</p>
         </div>
 

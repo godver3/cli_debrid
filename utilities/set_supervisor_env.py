@@ -33,10 +33,23 @@ def control_phalanx_db(enable):
     except subprocess.CalledProcessError as e:
         print(f"Failed to control phalanx_db: {e}")
 
+def control_secondary_app(enable):
+    time.sleep(2)
+    try:
+        if enable:
+            subprocess.run(['supervisorctl', 'start', 'secondary_app'], check=True)
+        else:
+            subprocess.run(['supervisorctl', 'stop', 'secondary_app'], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to control secondary_app: {e}")
+
 if __name__ == '__main__':
     enable_phalanx = load_config()
+    limited_env = is_limited_environment()
     # Still write the environment file for the program to use if needed
     with open('/tmp/supervisor_env', 'w') as f:
         f.write(f"ENABLE_PHALANX_DB={'true' if enable_phalanx else 'false'}")
     # Control the program state directly
-    control_phalanx_db(enable_phalanx) 
+    control_phalanx_db(enable_phalanx)
+    # If in limited environment, stop the secondary_app (battery)
+    control_secondary_app(not limited_env) 

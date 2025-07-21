@@ -961,15 +961,17 @@ def select_media():
         if media_id:
             try:
                 from metadata.metadata import get_imdb_id_if_missing
-                imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
+                # Convert media_type to the format expected by the function
+                api_media_type = 'show' if media_type == 'tv' else media_type
+                imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id), 'media_type': api_media_type})
                 if imdb_id:
                     session['last_selected_imdb_id'] = imdb_id
-                    logging.info(f"Stored imdb_id {imdb_id} in session for tmdb_id {media_id}.")
+                    logging.info(f"Stored imdb_id {imdb_id} in session for tmdb_id {media_id} with media_type {api_media_type}.")
                 else:
                     # Clear session key if lookup fails to prevent using a stale ID
                     if 'last_selected_imdb_id' in session:
                         del session['last_selected_imdb_id']
-                    logging.warning(f"Could not resolve imdb_id for tmdb_id {media_id}. Cache check might be affected.")
+                    logging.warning(f"Could not resolve imdb_id for tmdb_id {media_id} with media_type {api_media_type}. Cache check might be affected.")
             except (ValueError, TypeError) as e:
                 logging.error(f"Error resolving imdb_id from tmdb_id '{media_id}': {e}")
         # --- END EDIT ---

@@ -717,7 +717,7 @@ SETTINGS_SCHEMA = {
         "enable_granular_version_additions": {
             "type": "boolean",
             "description": "Enable granular version additions for Wanted items",
-            "default": False
+            "default": True
         },
         "enable_unmatched_items_check": {
             "type": "boolean",
@@ -1069,6 +1069,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "ignore_tags": {
+                    "type": "string",
+                    "description": "Comma-separated list of Overseerr/Jellyseerr tags. If an item has any of these tags, it will be ignored.",
+                    "default": ""
                 }
             },
             "My Plex Watchlist": {

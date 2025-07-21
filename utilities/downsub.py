@@ -118,8 +118,12 @@ def download_subtitles_for_video(video_path):
             logging.error("❌ No valid languages configured")
             return False
         
-        # Configure in-memory cache for faster performance
-        region.configure('dogpile.cache.memory')
+        # Configure in-memory cache for faster performance (only if not already configured)
+        try:
+            region.configure('dogpile.cache.memory')
+        except ValueError:
+            # Region already configured, which is fine
+            pass
         
         # Create video object from name only (much faster)
         logging.info(f"�� Processing: {video_path.name}")
@@ -171,6 +175,9 @@ def main(specific_file=None):
     Args:
         specific_file (str, optional): Path to a specific file to process. Required.
     """
+    # Reload configuration to pick up any changes
+    config.reload()
+    
     # Skip everything if subtitles are not enabled
     if not config.SUBTITLES_ENABLED:
         logging.info("Subtitle downloading is disabled in settings")

@@ -62,6 +62,7 @@ from scraper.functions.ptt_parser import parse_with_ptt
 from database.database_writing import add_media_item
 from routes.program_operation_routes import get_program_runner
 from utilities.plex_removal_cache import cache_plex_removal
+import subprocess
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -4594,3 +4595,58 @@ def resync_symlinks_route():
     except Exception as e:
         logging.error(f"Error during symlink resynchronization trigger: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
+
+def async_run_bulk_subs():
+    """Asynchronously run the bulk subtitle downloader script."""
+    try:
+        symlink_path = get_setting('File Management', 'symlinked_files_path')
+        if not symlink_path or not os.path.isdir(symlink_path):
+            message = f"Symlink path not found or not a directory: {symlink_path}"
+            logging.error(message)
+            return {'success': False, 'error': message}
+
+        script_path = os.path.abspath('utilities/bulk_subs.sh')
+        if not os.path.exists(script_path):
+            message = f"Bulk subtitle script not found at: {script_path}"
+            logging.error(message)
+            return {'success': False, 'error': message}
+        
+        logging.info(f"Starting bulk subtitle scan on: {symlink_path}")
+        
+        # We need to execute with shell=True if we want to use shell features like pipes
+        # but it's safer to call bash directly. The script has a shebang, so it can be run directly.
+        process = subprocess.run(
+            [script_path, symlink_path],
+            capture_output=True,
+            text=True,
+            check=False # Do not throw exception on non-zero exit codes
+        )
+
+        log_output = process.stdout.strip()
+        log_error = process.stderr.strip()
+
+        if log_output:
+            logging.info(f"Bulk subtitle scan stdout:\n{log_output}")
+        if log_error:
+            logging.error(f"Bulk subtitle scan stderr:\n{log_error}")
+
+        if process.returncode == 0:
+            message = "Bulk subtitle scan completed successfully."
+            logging.info(message)
+            return {'success': True, 'message': message}
+        else:
+            message = f"Bulk subtitle scan failed with exit code {process.returncode}."
+            logging.error(message)
+            return {'success': False, 'error': f"{message} See logs for details."}
+
+    except Exception as e:
+        logging.error(f"Exception during bulk subtitle scan: {e}", exc_info=True)
+        return {'success': False, 'error': f"An unexpected error occurred: {str(e)}"}
+
+@debug_bp.route('/run_bulk_subtitle_scan', methods=['POST'])
+@admin_required
+def run_bulk_subtitle_scan():
+    """API endpoint to trigger the bulk subtitle scan task."""
+    from routes.extensions import task_queue
+    task_id = task_queue.add_task(async_run_bulk_subs)
+    return jsonify({'task_id': task_id}), 202

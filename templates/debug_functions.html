@@ -357,6 +357,13 @@
                 <div id="rclone-scan-progress" class="progress-area" style="margin-top: 15px;"></div>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Bulk Subtitle Scan</h3>
+            <p class="description">Scan your symlinked library for missing subtitles and download them.</p>
+            <form id="bulk-subtitle-scan-form">
+                <button type="submit">Run Bulk Subtitle Scan</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -401,6 +408,48 @@
             'resync-symlinks-form'
             // Add other form IDs here if they follow the simple submitForm pattern
         ];
+
+        // --- New Bulk Subtitle Scan Form Handler ---
+        const bulkSubtitleScanForm = document.getElementById('bulk-subtitle-scan-form');
+        if (bulkSubtitleScanForm) {
+            bulkSubtitleScanForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: 'Are you sure you want to start the bulk subtitle scan? This may take a while and consume resources.',
+                    title: 'Confirmation',
+                    onConfirm: () => {
+                        Loading.show();
+                        fetch('/debug/run_bulk_subtitle_scan', {
+                            method: 'POST'
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.task_id) {
+                                pollTaskStatus(data.task_id);
+                            } else {
+                                Loading.hide();
+                                showPopup({
+                                    type: POPUP_TYPES.ERROR,
+                                    message: data.error || 'Failed to start task',
+                                    title: 'Error'
+                                });
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'An error occurred while starting the scan.',
+                                title: 'Error'
+                            });
+                        });
+                    }
+                });
+            });
+        }
+        // --- End New Bulk Subtitle Scan Form Handler ---
 
         genericFormIds.forEach(formId => {
             const form = document.getElementById(formId);

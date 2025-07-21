@@ -610,6 +610,9 @@ class ProgramRunner:
             if not is_toggled_off and task_name not in self.enabled_tasks:
                 self.enabled_tasks.add(task_name)
                 logging.info(f"Enabled '{task_name}' by default in limited environment.")
+            system_load_take_name = 'task_regulate_system_load'
+            self.enabled_tasks.add(system_load_take_name)
+            logging.info(f"Enabled '{system_load_take_name}' by default in limited environment.")
         
         if get_setting('Debug', 'enable_library_maintenance_task', False):
             task_name = 'task_run_library_maintenance'

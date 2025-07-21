@@ -160,3 +160,5 @@ phalanx_db*
 phalanx_db/
 deployment/
 backup_debridify_postgres_volume.sh
+Dockerfile.battery
+.dockerignore.battery

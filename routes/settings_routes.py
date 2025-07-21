@@ -1352,6 +1352,24 @@ def update_settings():
         save_config(config)
         logging.info("Main configuration saved successfully.")
         
+        # Clear content source cache files
+        try:
+            from routes.debug_routes import get_cache_files
+            cache_files = get_cache_files()
+            if cache_files:
+                for file_info in cache_files:
+                    file_path = file_info.get('path')
+                    if file_path and os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                            logging.info(f"Removed content source cache file: {file_path}")
+                        except Exception as e:
+                            logging.error(f"Failed to remove cache file {file_path}: {e}")
+        except ImportError:
+            logging.warning("Could not import get_cache_files from routes.debug_routes to clear cache.")
+        except Exception as e:
+            logging.error(f"An error occurred while clearing content source cache files: {e}")
+        
         # Check if program was running before reinitialization
         was_program_running = False
         try:

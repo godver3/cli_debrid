@@ -174,14 +174,14 @@ class MetadataManager:
 
         now = datetime.now(_get_local_timezone())
         
-        # Use a longer threshold for ID mappings (30 days base + variation)
+        # Use a longer threshold for ID mappings (7 days base + variation)
         # ID mappings change less frequently than metadata, so we can cache them longer
-        base_threshold = 30  # days
-        day_variation = random.choice([-7, -3, 0, 3, 7])
-        hour_variation = random.randint(-24, 24)
+        base_threshold = 7  # days - restored to reasonable value
+        day_variation = random.choice([-1, 0, 1])
+        hour_variation = random.randint(-12, 12)
         
-        adjusted_threshold = max(base_threshold + day_variation, 7)  # Minimum 7 days
-        
+        adjusted_threshold = max(base_threshold + day_variation, 1)  # Minimum 1 day
+
         stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
         age = now - last_updated
         is_stale = age > stale_threshold
@@ -1273,7 +1273,7 @@ class MetadataManager:
                         logger.debug(f"Using cached TMDB mapping for {tmdb_id}: {cached_mapping.imdb_id}")
                         return cached_mapping.imdb_id, 'battery'
 
-                logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt")
+                logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt with media_type: {media_type}")
                 trakt = TraktMetadata()
                 imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
 
@@ -1302,7 +1302,7 @@ class MetadataManager:
                             logger.debug(f"Using cached TMDB mapping for {tmdb_id}: {cached_mapping.imdb_id}")
                             return cached_mapping.imdb_id, 'battery'
 
-                    logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt")
+                    logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt with media_type: {media_type}")
                     trakt = TraktMetadata()
                     imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
 

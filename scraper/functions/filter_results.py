@@ -177,6 +177,11 @@ def filter_results(
             parsed_title_str = parsed_info.get('title', '')
             normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
 
+            # Create simplified versions by removing all punctuation and spaces (used by all similarity checks)
+            simple_query = re.sub(r'[^a-z0-9]', '', normalized_query_title)
+            simple_result = re.sub(r'[^a-z0-9]', '', normalized_result_title)
+            simple_parsed = re.sub(r'[^a-z0-9]', '', normalized_parsed_title) if normalized_parsed_title else None
+            
             # --- Main Title Similarity ---
             main_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_query_title) / 100.0
             if normalized_parsed_title:
@@ -184,6 +189,19 @@ def filter_results(
                 main_title_sim = (main_sim_set + main_sim_sort) / 2.0
             else:
                 main_title_sim = main_sim_set
+            
+            # Special handling for common acronym variations (like SHIELD)
+            if main_title_sim < 0.8:
+                # Check if this might be an acronym mismatch (like S.H.I.E.L.D. vs S H I E L D)
+                simple_sim_result = fuzz.ratio(simple_result, simple_query) / 100.0
+                if simple_parsed:
+                    simple_sim_parsed = fuzz.ratio(simple_parsed, simple_query) / 100.0
+                    simple_sim = max(simple_sim_result, simple_sim_parsed)
+                else:
+                    simple_sim = simple_sim_result
+                
+                # Use the better score, but don't let it exceed reasonable bounds
+                main_title_sim = max(main_title_sim, min(simple_sim, 0.95))
 
             # --- Alias Similarities ---
             alias_similarities = []
@@ -192,9 +210,22 @@ def filter_results(
                     alias_sim_set = fuzz.token_set_ratio(normalized_result_title, alias) / 100.0
                     if normalized_parsed_title:
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, alias) / 100.0
-                        alias_similarities.append((alias_sim_set + alias_sim_sort) / 2.0)
+                        alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
                     else:
-                        alias_similarities.append(alias_sim_set)
+                        alias_sim = alias_sim_set
+                    
+                    # Apply same acronym handling for aliases
+                    if alias_sim < 0.8:
+                        simple_alias = re.sub(r'[^a-z0-9]', '', alias)
+                        simple_sim_result = fuzz.ratio(simple_result, simple_alias) / 100.0
+                        if simple_parsed:
+                            simple_sim_parsed = fuzz.ratio(simple_parsed, simple_alias) / 100.0
+                            simple_sim = max(simple_sim_result, simple_sim_parsed)
+                        else:
+                            simple_sim = simple_sim_result
+                        alias_sim = max(alias_sim, min(simple_sim, 0.95))
+                    
+                    alias_similarities.append(alias_sim)
             best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
 
             # --- Translated Title Similarity ---
@@ -206,6 +237,17 @@ def filter_results(
                     translated_title_sim = (trans_sim_set + trans_sim_sort) / 2.0
                 else:
                     translated_title_sim = trans_sim_set
+                
+                # Apply same acronym handling for translated titles
+                if translated_title_sim < 0.8:
+                    simple_translated = re.sub(r'[^a-z0-9]', '', normalized_translated_title)
+                    simple_sim_result = fuzz.ratio(simple_result, simple_translated) / 100.0
+                    if simple_parsed:
+                        simple_sim_parsed = fuzz.ratio(simple_parsed, simple_translated) / 100.0
+                        simple_sim = max(simple_sim_result, simple_sim_parsed)
+                    else:
+                        simple_sim = simple_sim_result
+                    translated_title_sim = max(translated_title_sim, min(simple_sim, 0.95))
 
             # Compute initial best similarity score (without API aliases)
             best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
@@ -278,10 +320,21 @@ def filter_results(
                     if normalized_parsed_title:
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
                         final_alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
-                        item_alias_similarities.append(final_alias_sim)
                     else:
                         final_alias_sim = alias_sim_set
-                        item_alias_similarities.append(final_alias_sim)
+                    
+                    # Apply same acronym handling for API aliases
+                    if final_alias_sim < 0.8:
+                        simple_api_alias = re.sub(r'[^a-z0-9]', '', normalized_api_alias)
+                        simple_sim_result = fuzz.ratio(simple_result, simple_api_alias) / 100.0
+                        if simple_parsed:
+                            simple_sim_parsed = fuzz.ratio(simple_parsed, simple_api_alias) / 100.0
+                            simple_sim = max(simple_sim_result, simple_sim_parsed)
+                        else:
+                            simple_sim = simple_sim_result
+                        final_alias_sim = max(final_alias_sim, min(simple_sim, 0.95))
+                    
+                    item_alias_similarities.append(final_alias_sim)
                     
                     # Store debug info for troublesome titles
                     if "araiguma" in original_title.lower() or "calcal" in original_title.lower():
@@ -343,8 +396,12 @@ def filter_results(
                 logging.info(f"DEBUG SANITY: Skipping sanity check for '{original_title}' (best_sim={best_sim:.3f} < threshold={similarity_threshold:.3f})")
             
             # --- DEBUG: Log detailed similarity scores for troublesome titles ---
-            if "araiguma" in original_title.lower() or "calcal" in original_title.lower():
+            should_debug = ("araiguma" in original_title.lower() or "calcal" in original_title.lower() or
+                          "shield" in original_title.lower() or "s.h.i.e.l.d" in title.lower())
+            
+            if should_debug:
                 logging.info(f"DEBUG SIMILARITY: Analyzing '{original_title}'")
+                logging.info(f"  - Original query title: '{title}'")
                 logging.info(f"  - Normalized result title: '{normalized_result_title}'")
                 logging.info(f"  - Normalized query title: '{normalized_query_title}'")
                 logging.info(f"  - Main title similarity: {main_title_sim:.3f}")
@@ -352,6 +409,8 @@ def filter_results(
                 logging.info(f"  - Translated title similarity: {translated_title_sim:.3f}")
                 logging.info(f"  - Best overall similarity: {best_sim:.3f}")
                 logging.info(f"  - Similarity threshold: {similarity_threshold:.3f}")
+                if normalized_parsed_title:
+                    logging.info(f"  - Normalized parsed title: '{normalized_parsed_title}'")
                 if item_alias_similarities:
                     logging.info(f"  - API alias similarities: {[f'{s:.3f}' for s in item_alias_similarities]}")
                 if alias_debug_info:

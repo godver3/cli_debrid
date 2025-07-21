@@ -10,7 +10,7 @@ from scraper.functions.ptt_parser import parse_with_ptt
 from functools import lru_cache
 
 # Pre-compiled regex patterns for better performance
-_SHIELD_PATTERN = re.compile(r'S\.H\.I\.E\.L\.D\.?', re.IGNORECASE)
+_SHIELD_PATTERN = re.compile(r'S\.H\.I\.E\.L\.D\.?|S\s+H\s+I\s+E\s+L\s+D', re.IGNORECASE)
 _SWAT_PATTERN = re.compile(r'S\.W\.A\.T\.?|S\s+W\s+A\s+T', re.IGNORECASE)
 _PUNCTUATION_PATTERN = re.compile(r"[':()\[\]{}]")
 _SPACE_PATTERN = re.compile(r'[\s_]+')
