@@ -313,6 +313,26 @@ function toggleResultsVisibility(section) {
     }
 }
 
+// Helper function to format bitrate information
+function formatBitrate(bitrate) {
+    if (!bitrate || bitrate === 0) {
+        return 'Bitrate: N/A';
+    }
+    const bitrateKbps = parseFloat(bitrate);
+    const bitrateMbps = (bitrateKbps / 1000).toFixed(2);
+    return `Bitrate: ~${bitrateMbps} Mbps`;
+}
+
+// Helper function to format bitrate for inline display (mobile)
+function formatBitrateInline(bitrate) {
+    if (!bitrate || bitrate === 0) {
+        return 'N/A mbps';
+    }
+    const bitrateKbps = parseFloat(bitrate);
+    const bitrateMbps = (bitrateKbps / 1000).toFixed(1);
+    return `~${bitrateMbps} mbps`;
+}
+
 function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
     hideLoadingState();
     const overlay = document.getElementById('overlay');
@@ -340,11 +360,14 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 const torResDiv = document.createElement('div');
                 torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
                 
+                // Format bitrate for inline display in mobile
+                const bitrateInline = formatBitrateInline(torrent.bitrate);
+                
                 torResDiv.innerHTML = `
                     <button ${isFilteredOut ? 'disabled style="cursor:default;"' : ''}>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                        <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
+                        <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
                         <p class="torresult-item">${torrent.source || 'N/A'}</p>
                         <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                       torrent.cached === 'No' ? 'not-cached' :
@@ -411,6 +434,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 });
                 const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
+                // Create bitrate tooltip for desktop
+                const bitrateTooltip = formatBitrate(torrent.bitrate);
+
                 const row = document.createElement('tr');
                 if (isFilteredOut) {
                     row.classList.add('filtered-out-item'); 
@@ -422,7 +448,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             ${torrent.title || torrent.original_title || 'N/A'}
                         </div>
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: right;">${(torrent.size || 0).toFixed(1)} GB</td>
+                    <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
                     <td style="color: rgb(191 191 190);">${torrent.source || 'N/A'}</td>
                     <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">

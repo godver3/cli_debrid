@@ -1149,8 +1149,18 @@ class ProgramRunner:
                     data['interval'] = final_interval
 
                 task_name = f'task_{source}_wanted'
-                # Update task_intervals (this defines the task interval for scheduling)
-                self.task_intervals[task_name] = final_interval
+                
+                # Check if a custom interval was already loaded for this task (from user's saved preferences)
+                if task_name in self.task_intervals:
+                    # A custom interval exists, preserve it instead of overwriting with defaults
+                    existing_custom_interval = self.task_intervals[task_name]
+                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {final_interval}s from source defaults)")
+                    # Update final_interval so the log message below shows the preserved value
+                    final_interval = existing_custom_interval
+                else:
+                    # No custom interval exists, use the calculated default interval
+                    self.task_intervals[task_name] = final_interval
+                
                 # Update original intervals map too (used for resets)
                 if task_name not in self.original_task_intervals:
                      self.original_task_intervals[task_name] = final_interval

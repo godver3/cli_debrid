@@ -4,6 +4,7 @@ import sys
 import logging
 import time
 from pathlib import Path
+from functools import wraps
 
 # Handle both relative and absolute imports
 try:
@@ -18,6 +19,7 @@ try:
     from subliminal import download_best_subtitles, save_subtitles, region
     from subliminal.video import Video
     from babelfish import Language
+    import xml.parsers.expat
 except ImportError as e:
     logging.error(f"Required subliminal packages not installed: {e}")
     logging.error("Please install: pip install subliminal babelfish")
@@ -68,6 +70,54 @@ def setup_subliminal_credentials():
     else:
         logging.info("ℹ️ No OpenSubtitles credentials found - using anonymous access")
         return False
+
+def retry_on_xml_error(max_retries=3, delay=2):
+    """Decorator to retry function calls that might fail due to XML parsing errors"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except xml.parsers.expat.ExpatError as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        wait_time = delay * (attempt + 1)
+                        logging.warning(f"XML parsing error (attempt {attempt + 1}/{max_retries}): {e}")
+                        logging.warning(f"This usually indicates OpenSubtitles returned HTML instead of XML")
+                        logging.warning(f"Waiting {wait_time} seconds before retry...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logging.error(f"Failed after {max_retries} attempts with XML parsing error: {e}")
+                        break
+                except Exception as e:
+                    # Re-raise non-XML errors immediately
+                    raise e
+            
+            # If we get here, all retries failed
+            raise last_exception
+        return wrapper
+    return decorator
+
+@retry_on_xml_error(max_retries=3, delay=3)
+def download_subtitles_with_provider(video, languages, provider_name):
+    """Download subtitles with a specific provider with retry logic"""
+    logging.info(f"🔍 Using provider: {provider_name}")
+    
+    try:
+        subtitles = download_best_subtitles([video], set(languages), providers={provider_name})
+        return subtitles
+    except Exception as e:
+        logging.error(f"Provider {provider_name} failed: {str(e)}")
+        if "xml.parsers.expat.ExpatError" in str(e):
+            logging.error("This is likely due to OpenSubtitles returning HTML instead of XML")
+            logging.error("This can happen due to:")
+            logging.error("- Server overload or maintenance")
+            logging.error("- Rate limiting")
+            logging.error("- Network connectivity issues")
+        raise
 
 def download_subtitles_for_video(video_path):
     """
@@ -120,13 +170,13 @@ def download_subtitles_for_video(video_path):
         
         # Configure in-memory cache for faster performance (only if not already configured)
         try:
-            region.configure('dogpile.cache.memory')
-        except ValueError:
-            # Region already configured, which is fine
+            region.configure('dogpile.cache.memory', replace_existing_backend=True)
+        except Exception:
+            # Region already configured or other cache setup issue, which is fine
             pass
         
         # Create video object from name only (much faster)
-        logging.info(f"�� Processing: {video_path.name}")
+        logging.info(f"🎬 Processing: {video_path.name}")
         video = Video.fromname(video_path.name)
         video.path = original_path  # Set to original path so subtitles are saved alongside the symlink
         
@@ -135,9 +185,36 @@ def download_subtitles_for_video(video_path):
         
         # Download best subtitles for all configured languages
         logging.info(f"🔍 Searching for subtitles in languages: {[str(lang) for lang in languages]}")
-        # Try with just opensubtitles first
-        logging.info(f"🔍 Using provider: opensubtitles")
-        subtitles = download_best_subtitles([video], set(languages), providers={'opensubtitles'})
+        
+        # Try OpenSubtitles with retry logic
+        try:
+            subtitles = download_subtitles_with_provider(video, languages, 'opensubtitles')
+        except Exception as e:
+            logging.error(f"OpenSubtitles provider failed completely: {e}")
+            logging.warning("You may want to try:")
+            logging.warning("1. Checking your network connection")
+            logging.warning("2. Waiting a few minutes and trying again")
+            logging.warning("3. Using alternative subtitle providers")
+            logging.warning("4. Checking OpenSubtitles.org status")
+            
+            # Try alternative providers as fallback
+            alternative_providers = ['opensubtitlescom', 'podnapisi', 'tvsubtitles']
+            logging.info("🔄 Attempting fallback providers...")
+            
+            for alt_provider in alternative_providers:
+                try:
+                    logging.info(f"🔍 Trying alternative provider: {alt_provider}")
+                    subtitles = download_subtitles_with_provider(video, languages, alt_provider)
+                    if subtitles[video]:
+                        logging.info(f"✅ Success with alternative provider: {alt_provider}")
+                        break
+                except Exception as alt_e:
+                    logging.warning(f"⚠️  Alternative provider {alt_provider} also failed: {alt_e}")
+                    continue
+            else:
+                # If we get here, all providers failed
+                logging.error("❌ All subtitle providers failed")
+                return False
         
         # Stop timer
         elapsed_time = time.time() - start_time
@@ -166,6 +243,12 @@ def download_subtitles_for_video(video_path):
             
     except Exception as e:
         logging.error(f"❌ Error downloading subtitles: {e}")
+        if "xml.parsers.expat.ExpatError" in str(e):
+            logging.error("💡 Troubleshooting tips for XML parsing errors:")
+            logging.error("   - This usually means OpenSubtitles returned HTML instead of XML")
+            logging.error("   - Try running the command again in a few minutes")
+            logging.error("   - Check OpenSubtitles.org status in your browser")
+            logging.error("   - Consider using alternative subtitle sources")
         return False
 
 def main(specific_file=None):

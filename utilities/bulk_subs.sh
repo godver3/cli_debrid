@@ -19,7 +19,7 @@ while read -r symlink; do
     echo "➡️  Missing subtitle — downloading for: $symlink"
 
     # Run the subtitle downloader
-    docker exec -i cli_debrid python3 utilities/downsub.py "$symlink" </dev/null
+    python3 utilities/downsub.py "$symlink" </dev/null
     status=$?
 
     # Handle known errors
