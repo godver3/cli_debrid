@@ -1070,41 +1070,29 @@ def filter_results(
             result['size'] = size_gb_for_filter 
             result['total_size_gb'] = total_size_gb
             
-            # --- Bitrate Calculation Prep ---
-            # 'num_episodes_in_pack' at this point has its final value after considering pack type, API fallbacks.
-            # 'total_size_gb' is the raw size from the scraper.
-            # 'size_gb_for_filter' is the per-item or per-average-item size.
-
+            # --- Bitrate Calculation (Consistent with Size Calculation) ---
+            # Use the same per-item size that size filtering uses, with single-item runtime
+            # This ensures consistency between size and bitrate calculations across all provider types
+            
             bitrate = 0
             # runtime is the base runtime for one item (episode or movie) passed into filter_results
             
-            actual_ep_count_for_bitrate_calc = 1 # Default for movies or single episodes not identified as packs
-
-            if is_episode:
-                if is_identified_as_pack:
-                    if provides_per_item_size:
-                        # If scraper says total_size_gb is per item, then bitrate is for 1 item's runtime.
-                        actual_ep_count_for_bitrate_calc = 1
-                        # total_size_gb here is the size of ONE episode as reported by Torrentio/MediaFusion
-                    else:
-                        # If scraper total_size_gb is for the whole pack, then bitrate is for N items' runtime.
-                        # Fallback to 1 if pack count is bad.
-                        actual_ep_count_for_bitrate_calc = num_episodes_in_pack if num_episodes_in_pack > 0 else 1
-                        if num_episodes_in_pack <= 0: 
-                            logging.warning(f"Pack '{original_title}' (not provides_per_item_size): num_episodes_in_pack is {num_episodes_in_pack}. Using 1 for runtime calculation. Bitrate may be inaccurate.")
-                # else (single episode not a pack): actual_ep_count_for_bitrate_calc remains 1. This is correct.
-            # else (movie): actual_ep_count_for_bitrate_calc remains 1. This is correct.
-
-            effective_runtime_for_bitrate = runtime * actual_ep_count_for_bitrate_calc
-
-            if effective_runtime_for_bitrate > 0 and total_size_gb > 0:
-                # The total_size_gb used here should correspond to the number of episodes in actual_ep_count_for_bitrate_calc
-                # If provides_per_item_size is True and it's a pack, total_size_gb is already the per-item size.
-                # If provides_per_item_size is False and it's a pack, total_size_gb is the full pack size.
-                # This logic is correct as calculate_bitrate expects the total size for the given total runtime.
-                bitrate = calculate_bitrate(total_size_gb, effective_runtime_for_bitrate) 
+            if runtime > 0 and size_gb_for_filter > 0:
+                # Log detailed bitrate calculation inputs
+                logging.info(f"[BITRATE_CALC] '{original_title}':")
+                logging.info(f"  - total_size_gb (raw from scraper): {total_size_gb:.4f} GB")
+                logging.info(f"  - size_gb_for_filter (per-item size): {size_gb_for_filter:.4f} GB")
+                logging.info(f"  - runtime (per-item): {runtime} minutes")
+                logging.info(f"  - is_episode: {is_episode}")
+                logging.info(f"  - is_identified_as_pack: {is_identified_as_pack}")
+                logging.info(f"  - provides_per_item_size: {provides_per_item_size}")
+                logging.info(f"  - num_episodes_in_pack: {num_episodes_in_pack}")
+                
+                # Use per-item size with per-item runtime for consistent calculation
+                bitrate = calculate_bitrate(size_gb_for_filter, runtime) 
+                logging.info(f"  - calculated bitrate: {bitrate:.2f} Kbps ({bitrate/1000:.2f} Mbps)")
             else:
-                logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive effective_runtime ({effective_runtime_for_bitrate}min) or total_size_gb ({total_size_gb:.3f}GB). Bitrate set to 0.")
+                logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive runtime ({runtime}min) or size_gb_for_filter ({size_gb_for_filter:.3f}GB). Bitrate set to 0.")
                 bitrate = 0 
             
             # --- ADDED DEBUG LOGGING ---
@@ -1162,7 +1150,8 @@ def filter_results(
             # --- NEW: Pre-Normalization Filter Out Check ---
             # Check filter_out patterns against original fields BEFORE normalization
             if filter_out_patterns:
-                original_fields_to_check = [original_title, filename, binge_group]
+                # Only check content fields, exclude technical identifiers like binge_group
+                original_fields_to_check = [original_title, filename]
                 matched_pre_norm_pattern = None
                 for pattern in filter_out_patterns:
                     for field_value in original_fields_to_check:
@@ -1194,7 +1183,8 @@ def filter_results(
                             break # Stop checking fields for this pattern once matched
                 return matched
 
-            fields_to_check_patterns = [normalized_filter_title, normalized_filename, normalized_binge_group]
+            # Only check content fields, exclude technical identifiers like binge_group
+            fields_to_check_patterns = [normalized_filter_title, normalized_filename]
             
             # Filter Out Check (on normalized fields - keep this as well)
             if filter_out_patterns:

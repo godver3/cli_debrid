@@ -148,8 +148,16 @@ def _fetch_trakt_season_data_directly(imdb_id: str) -> dict | None:
             else:
                 logging.warning(f"Skipping season with null number for IMDb ID {imdb_id}")
 
+        # Convert to the expected format (list of dictionaries)
+        formatted_seasons = []
+        for season_num, episode_count in season_counts.items():
+            formatted_seasons.append({
+                'number': season_num,
+                'episode_count': episode_count
+            })
+        
         logging.debug(f"Directly fetched season counts for {imdb_id}: {season_counts}")
-        return season_counts
+        return formatted_seasons
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Error fetching season data directly from Trakt for {imdb_id}: {e}")
@@ -191,8 +199,15 @@ def get_season_data():
             seasons_data, source = DirectAPI.get_show_seasons(imdb_id)
             if seasons_data and source == 'battery':
                 logging.info(f"Successfully fetched season data from battery for IMDb ID: {imdb_id}")
+                # Convert battery format to expected list format
+                formatted_seasons = []
+                for season_num, season_data in seasons_data.items():
+                    formatted_seasons.append({
+                        'number': season_num,
+                        'episode_count': season_data.get('episode_count', 0)
+                    })
                 # Filter seasons based on allow_specials
-                filtered_seasons = [s for s in seasons_data if allow_specials or s.get('number', -1) != 0]
+                filtered_seasons = [s for s in formatted_seasons if allow_specials or s.get('number', -1) != 0]
                 return jsonify(filtered_seasons)
             else:
                 logging.info(f"Could not fetch season data from battery for {imdb_id}, trying Trakt directly.")

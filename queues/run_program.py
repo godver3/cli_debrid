@@ -288,6 +288,9 @@ class ProgramRunner:
             # --- START EDIT: Add manual Plex full scan task ---
             'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
             # --- END EDIT ---
+            # --- START EDIT: Add bulk subtitle processing task ---
+            'task_process_bulk_subtitles': 3600, # Run every hour, disabled by default  
+            # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
             'task_regulate_system_load': 30 # Check system load every 30 seconds
         }
@@ -1149,8 +1152,18 @@ class ProgramRunner:
                     data['interval'] = final_interval
 
                 task_name = f'task_{source}_wanted'
-                # Update task_intervals (this defines the task interval for scheduling)
-                self.task_intervals[task_name] = final_interval
+                
+                # Check if a custom interval was already loaded for this task (from user's saved preferences)
+                if task_name in self.task_intervals:
+                    # A custom interval exists, preserve it instead of overwriting with defaults
+                    existing_custom_interval = self.task_intervals[task_name]
+                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {final_interval}s from source defaults)")
+                    # Update final_interval so the log message below shows the preserved value
+                    final_interval = existing_custom_interval
+                else:
+                    # No custom interval exists, use the calculated default interval
+                    self.task_intervals[task_name] = final_interval
+                
                 # Update original intervals map too (used for resets)
                 if task_name not in self.original_task_intervals:
                      self.original_task_intervals[task_name] = final_interval
@@ -4727,6 +4740,60 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f"Error during scheduled media file analysis and repair: {e}", exc_info=True)
+    # --- END EDIT ---
+
+    # --- START EDIT: Add bulk subtitle processing task ---
+    def task_process_bulk_subtitles(self):
+        """Scheduled task to process bulk subtitles using the bulk_subs.sh script."""
+        import subprocess
+        import os
+        
+        logging.info("Initiating scheduled bulk subtitle processing task.")
+        
+        try:
+            # Get the collection type setting to determine the scan directory
+            from utilities.settings import get_setting
+            collection_type = get_setting('File Management', 'file_collection_management', 'Plex')
+            
+            if collection_type == 'Symlinked/Local':
+                # For symlinked/local, use the symlinks directory
+                scan_dir = get_setting('File Management', 'symlinked_files_path', '')
+                if not os.path.exists(scan_dir):
+                    logging.warning(f"Symlinks directory not found: {scan_dir}")
+                    return
+            else:
+                logging.warning(f"Unsupported collection type '{collection_type}' for bulk subtitle processing.")
+                return
+
+            # Get the script path
+            script_path = os.path.abspath('utilities/bulk_subs.sh')
+            if not os.path.exists(script_path):
+                logging.error(f"Bulk subtitle script not found: {script_path}")
+                return
+
+            # Make sure the script is executable
+            os.chmod(script_path, 0o755)
+
+            # Run the bulk subtitle processing script with a limit of 200 files
+            max_files = 200
+            logging.info(f"Running bulk subtitle processing on {scan_dir} (max {max_files} files)")
+            
+            cmd = [script_path, scan_dir, str(max_files)]
+            # Don't capture output to allow full visibility of the subtitle processing
+            result = subprocess.run(
+                cmd, 
+                timeout=3600  # 1 hour timeout
+            )
+            
+            if result.returncode == 0:
+                logging.info("Bulk subtitle processing completed successfully.")
+            else:
+                logging.warning(f"Bulk subtitle processing finished with return code: {result.returncode}")
+            
+        except subprocess.TimeoutExpired:
+            logging.error("Bulk subtitle processing timed out after 1 hour")
+        except Exception as e:
+            logging.error(f"Error during bulk subtitle processing: {e}", exc_info=True)
     # --- END EDIT ---
 
     # *** START EDIT: Add the new long-running task method ***

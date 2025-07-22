@@ -28,8 +28,24 @@ RUN pip install --no-cache-dir -r requirements-linux.txt
 # Copy the current directory contents into the container at /app
 COPY . .
 
-# Install phalanx_db_hyperswarm dependencies
-RUN cd /app/phalanx_db_hyperswarm && npm install
+# Install phalanx_db_hyperswarm dependencies with retry logic
+RUN cd /app/phalanx_db_hyperswarm && \
+    # Configure npm for better reliability
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-factor 2 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    # Attempt installation with retries, forcing engine compatibility
+    for i in 1 2 3; do \
+        echo "Attempt $i: Installing npm dependencies..." && \
+        npm install --force --prefer-offline --no-audit --no-fund --loglevel=info && break || \
+        (echo "Attempt $i failed, waiting 10 seconds..." && sleep 10); \
+    done && \
+    # Verify installation succeeded
+    if [ ! -d "node_modules" ]; then \
+        echo "ERROR: npm install failed after all attempts" && exit 1; \
+    fi && \
+    echo "Successfully installed npm dependencies"
 
 # Create necessary directories and files with proper permissions
 RUN mkdir -p /user/db_content /user/config /user/logs && \

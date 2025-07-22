@@ -529,6 +529,28 @@
         background-color: #2196F3; /* Blue */
         color: white;
     }
+
+    /* Bitrate tooltip styling */
+    td[data-bitrate]:hover::after,
+    span[data-bitrate]:hover::after {
+        content: attr(data-bitrate);
+        position: absolute;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        white-space: nowrap;
+        z-index: 1000;
+        margin-top: 25px;
+        margin-left: -50px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Ensure tooltips appear above overlay content */
+    .overlay-content td[data-bitrate] {
+        position: relative;
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
         <form id="search-form" onsubmit="return false;">

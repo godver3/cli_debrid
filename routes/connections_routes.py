@@ -415,22 +415,19 @@ def check_phalanx_db_connection():
     if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
         return None # Return None if the service is disabled
 
-    # --- Use the same env logic as PhalanxDBClassManager ---
-    environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+    # --- Use the EXACT same env logic as PhalanxDBClassManager ---
     try:
         phalanx_port = int(os.environ.get('CLI_DEBRID_PHALANX_PORT', 8888))
     except ValueError:
         phalanx_port = 8888
 
-    if environment_mode == 'limited':
-        # Always use Docker host IP (can be customized if needed)
-        phalanx_base_url = 'http://host.docker.internal'
+    # Check for the new host environment variable first (for Docker containers)
+    phalanx_host = os.environ.get('CLI_DEBRID_PHALANX_HOST')
+    if phalanx_host:
+        phalanx_base_url = f'http://{phalanx_host}'
     else:
-        phalanx_host = os.environ.get('CLI_DEBRID_PHALANX_HOST')
-        if phalanx_host:
-            phalanx_base_url = f'http://{phalanx_host}'
-        else:
-            phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
+        # Fall back to the old URL environment variable
+        phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
 
     phalanx_base_url = phalanx_base_url.rstrip('/')
     url = f'{phalanx_base_url}:{phalanx_port}'
