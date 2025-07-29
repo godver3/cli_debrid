@@ -927,6 +927,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Collected": {
@@ -967,6 +972,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Trakt Watchlist": {
@@ -993,6 +1003,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Trakt Lists": {
@@ -1020,6 +1035,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Trakt Collection": {
@@ -1046,6 +1066,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Overseerr": {
@@ -1079,6 +1104,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Comma-separated list of Overseerr/Jellyseerr tags. If an item has any of these tags, it will be ignored.",
                     "default": ""
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "My Plex Watchlist": {
@@ -1105,6 +1135,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Other Plex Watchlist": {
@@ -1133,6 +1168,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "My Plex RSS Watchlist": {
@@ -1160,6 +1200,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "My Friends Plex RSS Watchlist": {
@@ -1187,6 +1232,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Friends Trakt Watchlist": {
@@ -1261,6 +1311,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             }
         }

@@ -373,6 +373,7 @@
     let maxReconnectAttempts = 5;
     let reconnectDelay = 1000; // Start with 1 second delay
     let isReconnecting = false;
+    let isInitialRenderComplete = false;
 
     function isMobile() {
         // A simple check for mobile devices to set an appropriate default page size.
@@ -1249,18 +1250,46 @@
 
     window.copyItemToClipboard = copyItemToClipboard;
 
-    // Initial setup
+    // Wait for CSS to load before manipulating DOM
+    function waitForCSS() {
+        return new Promise(resolve => {
+            if (document.readyState === 'complete') {
+                resolve();
+            } else {
+                window.addEventListener('load', resolve);
+            }
+        });
+    }
+
+    // Use it in your setup
     document.addEventListener('DOMContentLoaded', function() {
         console.log('DOMContentLoaded event fired');
         
-        // Initialize global tooltips (fetches data, sets up static ones if any)
-        // initializeGlobalTooltips(); // Commented out to see if it's causing issues
+        // Add CSS loading guard
+        function waitForCSS() {
+            return new Promise(resolve => {
+                // Check if Font Awesome is loaded
+                const testElement = document.createElement('i');
+                testElement.className = 'fas fa-spinner';
+                document.body.appendChild(testElement);
+                
+                const isLoaded = getComputedStyle(testElement, '::before').content !== 'none';
+                document.body.removeChild(testElement);
+                
+                if (isLoaded) {
+                    resolve();
+                } else {
+                    // Wait a bit more for CSS to load
+                    setTimeout(resolve, 200);
+                }
+            });
+        }
         
-        // Add a small delay to ensure DOM is fully ready before setting up the stream
-        setTimeout(() => {
-            console.log('Setting up queue stream after DOM ready delay');
+        // Wait for CSS then setup stream
+        waitForCSS().then(() => {
+            console.log('CSS loaded, setting up queue stream');
             setupQueueStream();
-        }, 50);
+        });
     });
 
     // Handle page visibility changes (especially important for mobile)

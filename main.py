@@ -1517,6 +1517,20 @@ def main():
             logging.info("Successfully migrated Overseerr content sources to include ignore_tags setting")
     # --- End ignore_tags migration ---
 
+    # --- Add migration for list_length_limit in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'list_length_limit' not in source_config:
+                source_config['list_length_limit'] = 0  # Default to no limit
+                content_sources_updated = True
+                logging.info(f"Adding default list_length_limit=0 to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include list_length_limit setting")
+    # --- End list_length_limit migration ---
+
     # --- MIGRATION: Standardize 'Plex Watchlist' type to 'My Plex Watchlist' with fixed key 'My Plex Watchlist_1' ---
     plex_watchlist_migration_updated = False
     if 'Content Sources' in config and isinstance(config.get('Content Sources'), dict):

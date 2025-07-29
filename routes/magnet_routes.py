@@ -272,9 +272,22 @@ def assign_magnet():
                 
                 # Filter results based on content type if not 'all'
                 if content_type != 'all':
-                    # Handle 'tv' as well as 'show' from Trakt's mediaType
+                    # Handle 'tv' as well as 'show' from Trakt's media_type
                     normalized_content_type = 'show' if content_type == 'tv' else content_type
-                    search_results = [result for result in search_results if result['mediaType'] == normalized_content_type]
+                    search_results = [result for result in search_results if result.get('media_type') == normalized_content_type]
+                
+                # Convert search results to template-expected format
+                formatted_search_results = []
+                for result in search_results:
+                    formatted_result = {
+                        'id': result.get('id'),
+                        'title': result.get('title'),
+                        'year': result.get('year'),
+                        'posterPath': result.get('posterPath'),
+                        'mediaType': result.get('media_type', 'movie')  # Convert media_type to mediaType for template
+                    }
+                    formatted_search_results.append(formatted_result)
+                search_results = formatted_search_results
             
             if not search_results:
                 flash(f'No results found for "{search_term}".', 'info')

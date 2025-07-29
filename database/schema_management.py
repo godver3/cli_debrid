@@ -228,6 +228,9 @@ def migrate_schema():
         if 'location_basename' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN location_basename TEXT')
             logging.info("Successfully added location_basename column to media_items table.")
+        if 'ghostlisted' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ghostlisted BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added ghostlisted column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -606,7 +609,8 @@ def create_tables():
                 real_debrid_original_title TEXT,
                 rescrape_original_torrent_title TEXT,
                 force_priority BOOLEAN DEFAULT FALSE,
-                location_basename TEXT
+                location_basename TEXT,
+                ghostlisted BOOLEAN DEFAULT FALSE
             )
         ''')
 

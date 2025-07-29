@@ -850,6 +850,11 @@ def get_and_add_wanted_content(source_id):
     source_media_type = source_data.get('media_type', 'All')
     raw_cutoff_date = source_data.get('cutoff_date', '')
     exclude_genres = source_data.get('exclude_genres', []) # Get exclude_genres setting
+    try:
+        list_length_limit = int(source_data.get('list_length_limit', 0)) # Get list_length_limit setting and convert to int
+    except (ValueError, TypeError):
+        logging.warning(f"Invalid list_length_limit value for source {source_id}: {source_data.get('list_length_limit')}. Using default value 0.")
+        list_length_limit = 0
     parsed_cutoff_date = None
 
     if raw_cutoff_date:
@@ -942,6 +947,31 @@ def get_and_add_wanted_content(source_id):
         return {'added': 0, 'processed': 0, 'cache_skipped': 0, 'media_type_skipped': 0, 'error': f"Error fetching from {source_id}: {str(fetch_error)}"}
 
     logging.debug(f"Fetched {len(wanted_content)} raw items for {source_id}")
+
+    # Apply list length limit if set
+    if list_length_limit > 0:
+        if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+            # For tuple format, limit each batch
+            limited_wanted_content = []
+            total_items_limited = 0
+            for items, item_versions_from_source_tuple in wanted_content:
+                if total_items_limited >= list_length_limit:
+                    logging.info(f"List length limit reached for {source_id} ({list_length_limit} items), skipping remaining batches")
+                    break
+                remaining_limit = list_length_limit - total_items_limited
+                if len(items) > remaining_limit:
+                    items = items[:remaining_limit]
+                    logging.info(f"Limited batch for {source_id} to {remaining_limit} items due to list length limit")
+                limited_wanted_content.append((items, item_versions_from_source_tuple))
+                total_items_limited += len(items)
+            wanted_content = limited_wanted_content
+            logging.info(f"Applied list length limit to {source_id}: processed {total_items_limited} items (limit: {list_length_limit})")
+        else:
+            # For single list format, limit the list
+            original_length = len(wanted_content)
+            if original_length > list_length_limit:
+                wanted_content = wanted_content[:list_length_limit]
+                logging.info(f"Applied list length limit to {source_id}: limited to {list_length_limit} items from {original_length}")
 
     if wanted_content:
         try: # Add try block for processing
@@ -1223,6 +1253,7 @@ def get_and_add_wanted_content(source_id):
             if media_type_skipped > 0: stats_msg += f", Skipped {media_type_skipped} (media type)"
             if genre_skipped > 0: stats_msg += f", Skipped {genre_skipped} (excluded genres)"
             if cutoff_date_skipped > 0: stats_msg += f", Skipped {cutoff_date_skipped} (cutoff date)"
+            if list_length_limit > 0: stats_msg += f", list length limited to {list_length_limit}"
             logging.info(stats_msg)
 
         except Exception as process_error:
