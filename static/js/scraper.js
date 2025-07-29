@@ -455,17 +455,51 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                         <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        ${!isFilteredOut ? `<button class="action-button add-button" onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
-                            ...torrent, year, version: torrent.version || version, title,
-                            media_type: mediaType, season: season || null, episode: episode || null,
-                            tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title // Pass original_title
-                        }).replace(/"/g, '&quot;')})">Add</button>` : ''}
+                        <button class="action-button add-button">Add</button>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                         ${!isFilteredOut ? `<button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>` : ''}
+                         <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
                     </td>
                 `;
                 tbody.appendChild(row);
+
+                // Add event listeners to the buttons
+                const addButton = row.querySelector('.add-button');
+                const assignButton = row.querySelector('.assign-button');
+
+                if (isFilteredOut) {
+                    // Make the 'Add' button clickable for filtered items and show a confirmation
+                    addButton.onclick = function() {
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        showPopup({
+                            type: POPUP_TYPES.CONFIRM,
+                            title: 'Add Filtered Item?',
+                            message: confirmationMessage,
+                            confirmText: 'Add Anyway',
+                            onConfirm: () => {
+                                addToRealDebrid(torrent.magnet, {
+                                    ...torrent, year, version: torrent.version || version, title,
+                                    media_type: mediaType, season: season || null, episode: episode || null,
+                                    tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
+                                });
+                            }
+                        });
+                    };
+
+                } else {
+                    // Standard behavior for non-filtered items
+                    addButton.onclick = function() {
+                        addToRealDebrid(torrent.magnet, {
+                            ...torrent, year, version: torrent.version || version, title,
+                            media_type: mediaType, season: season || null, episode: episode || null,
+                            tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
+                        });
+                    };
+
+                    assignButton.onclick = function() {
+                        window.location.href = assignUrl;
+                    };
+                }
             });
             table.appendChild(tbody);
             overlayContent.appendChild(table);

@@ -277,7 +277,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
              continue
 
         converted_results.append({
-            'mediaType': media_type,
+            'media_type': 'show' if media_type == 'tv' else media_type,
             'id': tmdb_id_str, # Use tmdb_id_str which is confirmed to be string
             'title': item['title'],
             'year': item['year'],
@@ -449,9 +449,9 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
 
     detailed_results = []
     for result in search_results:
-        if result['mediaType'] != 'person':
+        if result['media_type'] != 'person':
             tmdb_id = result['id']
-            media_type = result['mediaType']
+            media_type = result['media_type']
             title_for_logging = result['title']
             logging.info(f"Processing media tmdb_id: {tmdb_id}, type: {media_type}, title: {title_for_logging}")
 
@@ -503,7 +503,7 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 "id": tmdb_id,
                 "title": result['title'],
                 "year": result['year'],
-                "media_type": media_type,
+                "media_type": 'show' if media_type == 'tv' else media_type,
                 "show_overview": media_meta[1],
                 "poster_path": poster_path,
                 "genre_ids": media_meta[2],

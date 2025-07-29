@@ -50,7 +50,7 @@ with app.app_context():
                 print(f"Password for admin user '{user.username}' has been reset to 'admin'.")
                 updated_count += 1
             db.session.commit()
-            print(f"\nSuccessfully reset passwords for {updated_count} admin user(s).")
+            print("\nSuccessfully reset passwords for all admin users.")
         else:
             print("No admin users found to reset.")
     else:

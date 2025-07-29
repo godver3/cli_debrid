@@ -295,6 +295,20 @@
             <a href="{{ url_for('debug.recover_riven_symlinks_page') }}" class="btn">Recover Riven Symlink Library</a>
         </div>
         <div class="debug_item">
+            <h3>Fix Zurg Symlinks</h3>
+            <p class="description">Fix symlinks where Zurg folder structure changed from having file extensions in directory names to not having them. This checks if the media file exists in the original path, and if not, looks for the folder without the extension and updates both the symlink and database.</p>
+            <form id="fix-zurg-symlinks-form">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="zurg_dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <button type="submit">Fix Zurg Symlinks</button>
+                <div id="fix-zurg-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+        <div class="debug_item">
             <h3>Modify Symlink Base Paths</h3>
             <p class="description">Update the base paths for symlinks and original file locations in the database. Use carefully!</p>
             <form id="modify-symlink-paths-form">
@@ -362,6 +376,20 @@
             <p class="description">Scan your symlinked library for missing subtitles and download them.</p>
             <form id="bulk-subtitle-scan-form">
                 <button type="submit">Run Bulk Subtitle Scan</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Remove Duplicate Database Items</h3>
+            <p class="description">Find and remove duplicate database items based on the filled_by_file field. This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.</p>
+            <form id="remove-duplicates-form" action="/debug/api/remove_duplicate_items" method="POST">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="dry_run_duplicates" name="dry_run" checked>
+                        Dry Run (Preview duplicates without deleting)
+                    </label>
+                </div>
+                <button type="submit">Find and Remove Duplicates</button>
+                <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
         </div>
     </div>
@@ -2014,6 +2042,100 @@
         }
         // --- End Rclone Mount to Symlinks Logic ---
 
+        // --- Fix Zurg Symlinks Logic ---
+        const fixZurgForm = document.getElementById('fix-zurg-symlinks-form');
+        const fixZurgResultsDiv = document.getElementById('fix-zurg-results');
+
+        if (fixZurgForm) {
+            fixZurgForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                fixZurgResultsDiv.innerHTML = ''; // Clear previous results
+                
+                const isDryRun = document.getElementById('zurg_dry_run').checked;
+                const confirmMessage = isDryRun
+                    ? 'Start Zurg symlink analysis (Dry Run)? This will check for issues but make no changes.'
+                    : 'Fix Zurg symlinks? This will update database entries and recreate symlinks where folder extensions have changed.';
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: confirmMessage,
+                    title: 'Confirm Zurg Symlink Fix',
+                    onConfirm: () => {
+                        Loading.show();
+                        const formData = new FormData(fixZurgForm);
+
+                        fetch('/debug/api/fix_zurg_symlinks', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            if (data.success) {
+                                showPopup({
+                                    type: data.dry_run ? POPUP_TYPES.INFO : POPUP_TYPES.SUCCESS,
+                                    message: data.message,
+                                    title: data.dry_run ? 'Dry Run Results' : 'Fix Complete',
+                                    autoClose: false
+                                });
+
+                                let resultsHtml = `<h4>Results:</h4>`;
+                                resultsHtml += `<p>Items Checked: ${data.items_checked}</p>`;
+                                resultsHtml += `<p>Items Needing Fix: ${data.items_needing_fix}</p>`;
+                                if (!data.dry_run) {
+                                    resultsHtml += `<p>Items Fixed: ${data.items_fixed}</p>`;
+                                }
+
+                                if (data.preview && data.preview.length > 0) {
+                                    resultsHtml += '<h4>Preview of Changes:</h4>';
+                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>ID</th><th>Title</th><th>Old Path</th><th>New Path</th></tr></thead><tbody>';
+                                    data.preview.forEach(item => {
+                                        resultsHtml += `<tr>
+                                            <td>${item.id}</td>
+                                            <td class="title-cell">${item.title}</td>
+                                            <td class="path-cell">${item.old_original_path}</td>
+                                            <td class="path-cell">${item.new_original_path}</td>
+                                        </tr>`;
+                                    });
+                                    resultsHtml += '</tbody></table>';
+                                    if (data.items_needing_fix > data.preview.length) {
+                                        resultsHtml += `<p><i>(Showing first ${data.preview.length} changes)</i></p>`;
+                                    }
+                                }
+
+                                if (data.errors && data.errors.length > 0) {
+                                    resultsHtml += `<h4>Errors (${data.errors.length}):</h4><ul>`;
+                                    data.errors.slice(0, 10).forEach(error => {
+                                        resultsHtml += `<li class="error">${error}</li>`;
+                                    });
+                                    if (data.errors.length > 10) {
+                                        resultsHtml += `<li><i>... and ${data.errors.length - 10} more errors</i></li>`;
+                                    }
+                                    resultsHtml += '</ul>';
+                                }
+
+                                fixZurgResultsDiv.innerHTML = resultsHtml;
+                            } else {
+                                throw new Error(data.error || 'An unknown error occurred.');
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error fixing Zurg symlinks:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message,
+                                title: 'Error',
+                                autoClose: false
+                            });
+                            fixZurgResultsDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                        });
+                    }
+                });
+            });
+        }
+        // --- End Fix Zurg Symlinks Logic ---
+
         // --- Handler for Delete Battery DB Form ---
         const deleteBatteryDbForm = document.getElementById('delete-battery-db-form');
         if (deleteBatteryDbForm) {
@@ -2055,6 +2177,91 @@
             });
         }
         // --- End Resync Symlinks with New Settings Logic ---
+
+        // --- Remove Duplicate Database Items Logic ---
+        const removeDuplicatesForm = document.getElementById('remove-duplicates-form');
+        const removeDuplicatesResultsDiv = document.getElementById('remove-duplicates-results');
+        
+        if (removeDuplicatesForm) {
+            removeDuplicatesForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                removeDuplicatesResultsDiv.innerHTML = ''; // Clear previous results
+                
+                const isDryRun = document.getElementById('dry_run_duplicates').checked;
+                const confirmMessage = isDryRun
+                    ? 'Start duplicate analysis (Dry Run)? This will identify items with the same filename but won\'t delete anything.'
+                    : 'Remove duplicate database items based on the filled_by_file field? This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.';
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: confirmMessage,
+                    title: 'Confirm Duplicate Removal',
+                    onConfirm: () => {
+                        Loading.show();
+                        const formData = new FormData(removeDuplicatesForm);
+
+                        fetch('/debug/api/remove_duplicate_items', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            if (data.success) {
+                                showPopup({
+                                    type: data.dry_run ? POPUP_TYPES.INFO : POPUP_TYPES.SUCCESS,
+                                    message: data.message,
+                                    title: data.dry_run ? 'Dry Run Results' : 'Duplicate Removal Complete',
+                                    autoClose: false
+                                });
+
+                                let resultsHtml = `<h4>Results:</h4>`;
+                                resultsHtml += `<p><strong>Duplicate Groups Found:</strong> ${data.duplicate_groups}</p>`;
+                                resultsHtml += `<p><strong>Total Duplicate Items:</strong> ${data.total_duplicates}</p>`;
+                                if (!data.dry_run) {
+                                    resultsHtml += `<p><strong>Items Deleted:</strong> ${data.items_deleted}</p>`;
+                                }
+
+                                if (data.preview && data.preview.length > 0) {
+                                    resultsHtml += '<h4>Preview of Duplicates:</h4>';
+                                    resultsHtml += '<table class="preview-results-table" style="width: 100%; border-collapse: collapse; margin-top: 10px;"><thead><tr style="background-color: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">File</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Count</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Keep Item</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Delete Items</th></tr></thead><tbody>';
+                                    data.preview.forEach(group => {
+                                        resultsHtml += `<tr>
+                                            <td style="border: 1px solid #ddd; padding: 8px; word-break: break-all; max-width: 200px;">${group.filled_by_file}</td>
+                                            <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${group.count}</td>
+                                            <td style="border: 1px solid #ddd; padding: 8px;"><strong>${group.keep_item.title}</strong><br><small>ID: ${group.keep_item.id} | State: ${group.keep_item.state}</small></td>
+                                            <td style="border: 1px solid #ddd; padding: 8px;">${group.delete_items.map(item => `<div style="margin-bottom: 5px;"><strong>${item.title}</strong><br><small>ID: ${item.id} | State: ${item.state}</small></div>`).join('')}</td>
+                                        </tr>`;
+                                    });
+                                    resultsHtml += '</tbody></table>';
+                                    if (data.duplicate_groups > data.preview.length) {
+                                        resultsHtml += `<p><em>(Showing first ${data.preview.length} duplicate groups out of ${data.duplicate_groups} total)</em></p>`;
+                                    }
+                                } else if (data.duplicate_groups === 0) {
+                                    resultsHtml += '<p><em>No duplicate items found in the database.</em></p>';
+                                }
+
+                                removeDuplicatesResultsDiv.innerHTML = resultsHtml;
+                            } else {
+                                throw new Error(data.error || 'An unknown error occurred.');
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            console.error('Error removing duplicates:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: error.message,
+                                title: 'Error',
+                                autoClose: false
+                            });
+                            removeDuplicatesResultsDiv.innerHTML = `<p class="error" style="color: #dc3545; padding: 10px; background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px;">Error: ${error.message}</p>`;
+                        });
+                    }
+                });
+            });
+        }
+        // --- End Remove Duplicate Database Items Logic ---
     });
 </script>
 

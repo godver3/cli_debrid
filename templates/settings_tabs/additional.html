@@ -559,6 +559,48 @@
             <p class="settings-description">Template for episode symlink filenames</p>
         </div>
 
+        <!-- Template Tags Reference -->
+        <div class="settings-form-group" style="margin-top: 20px; padding: 15px; background-color: #252525; border-radius: 4px; border-left: 4px solid #4CAF50;">
+            <h5 class="settings-title" style="margin-bottom: 10px; color: #4CAF50;">Supported Template Tags:</h5>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px;">
+                <div>
+                    <h6 style="color: #ddd; margin-bottom: 8px; font-size: 0.95em;">Common Tags (Movies & Episodes):</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{title}</code> - Movie/show title</li>
+                        <li><code style="color: #7fddff;">{year}</code> - Release year</li>
+                        <li><code style="color: #7fddff;">{imdb_id}</code> - IMDb ID (recommended)</li>
+                        <li><code style="color: #7fddff;">{tmdb_id}</code> - TMDb ID</li>
+                        <li><code style="color: #7fddff;">{version}</code> - Quality/version info</li>
+                        <li><code style="color: #7fddff;">{original_filename}</code> - Original filename (no ext)</li>
+                        <li><code style="color: #7fddff;">{content_source}</code> - Content source</li>
+                        <li><code style="color: #7fddff;">{resolution}</code> - Video resolution</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h6 style="color: #ddd; margin-bottom: 8px; font-size: 0.95em;">Episode-Only Tags:</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{season_number}</code> - Season number</li>
+                        <li><code style="color: #7fddff;">{episode_number}</code> - Episode number</li>
+                        <li><code style="color: #7fddff;">{episode_title}</code> - Episode title</li>
+                        <li><code style="color: #7fddff;">{season_year}</code> - Year season first aired</li>
+                    </ul>
+                    
+                    <h6 style="color: #ddd; margin: 12px 0 8px 0; font-size: 0.95em;">Number Formatting:</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{season_number:02d}</code> - Zero-padded (01, 02)</li>
+                        <li><code style="color: #7fddff;">{episode_number:02d}</code> - Zero-padded (01, 02)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <p class="settings-description" style="margin: 0; font-size: 0.85em; color: #aaa;">
+                <i class="fas fa-info-circle" style="margin-right: 5px;"></i>
+                <strong>Important:</strong> Including <code>{imdb_id}</code> in templates is highly recommended for symlink recovery and media server integration.
+            </p>
+        </div>
+
         <div class="settings-form-group">
             <label for="additional-symlink_organize_by_resolution" class="settings-title">Organize By Resolution:</label>
             <input type="checkbox" id="additional-symlink_organize_by_resolution" name="File Management.symlink_organize_by_resolution"
@@ -1356,12 +1398,12 @@ function initializeSymlinkPathExamples() {
         },
         tvEpisode: {
             title: 'Great TV Show', year: '2022', type: 'episode', imdb_id: 'tt9876543', version: 'WEB-DL', resolution: '1080p',
-            season_number: 1, episode_number: 2, episode_title: 'The Second Chapter',
+            season_number: 1, episode_number: 2, episode_title: 'The Second Chapter', season_year: '2022',
             genres: 'Drama,Sci-Fi', original_filename: 'Great.TV.Show.S01E02.WEB-DL.mkv', filled_by_file: 'dummy.mkv'
         },
         animeTvEpisode: {
             title: 'Cool Anime Series', year: '2021', type: 'episode', imdb_id: 'tt1231231', version: 'HDTV', resolution: '720p',
-            season_number: 2, episode_number: 10, episode_title: 'A New Foe Appears',
+            season_number: 2, episode_number: 10, episode_title: 'A New Foe Appears', season_year: '2022',
             genres: 'Animation,Anime,Action', original_filename: 'Cool.Anime.Series.S02E10.HDTV.mkv', filled_by_file: 'dummy.mkv'
         },
         documentaryMovie: {
@@ -1370,7 +1412,7 @@ function initializeSymlinkPathExamples() {
         },
         documentaryTvEpisode: {
             title: 'Planet Life', year: '2022', type: 'episode', imdb_id: 'tt8765432', version: 'BluRay', resolution: '2160p',
-            season_number: 1, episode_number: 3, episode_title: 'The Deep Oceans',
+            season_number: 1, episode_number: 3, episode_title: 'The Deep Oceans', season_year: '2022',
             genres: 'Documentary', original_filename: 'Planet.Life.S01E03.BluRay.mkv', filled_by_file: 'dummy.mkv'
         }
     };
@@ -1442,7 +1484,8 @@ function initializeSymlinkPathExamples() {
             resolution: item.resolution || '',
             season_number: item.season_number !== undefined ? formatNumber(item.season_number, 2) : '',
             episode_number: item.episode_number !== undefined ? formatNumber(item.episode_number, 2) : '',
-            episode_title: item.episode_title || ''
+            episode_title: item.episode_title || '',
+            season_year: item.season_year || item.year || ''
         };
         
         // Process template string: first format season/episode numbers if present in placeholders

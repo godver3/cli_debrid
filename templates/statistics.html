@@ -91,6 +91,7 @@
 
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
+        {% if not limited_env %}
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-hdd"></i> Library:</span>
             <span id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
@@ -98,9 +99,12 @@
                  <i class="fas fa-sync-alt"></i>
             </button>
         </div>
+        {% endif %}
+        {% if not limited_env %}
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
         </div>
+        {% endif %}
         <div class="toggle-item">
             <span class="toggle-label">24h</span>
             <label class="toggle-switch">
@@ -150,7 +154,7 @@
                 reattachExternalLinksListeners();
             }
 
-            // --- Library Size Refresh Button ---
+            // --- Library Size Refresh Button (only if not in limited environment) ---
             const refreshSizeButton = document.getElementById('refresh-library-size-btn');
             const sizeDisplaySpan = document.getElementById('library-size-display');
             if (refreshSizeButton && sizeDisplaySpan) {
@@ -650,6 +654,7 @@
                 <div class="stat-item">
                     <p data-label="Total Episodes">{{ stats.total_episodes }}</p>
                 </div>
+                {% if not limited_env %}
                 <div class="stat-item">
                     <p data-label="Active Downloads" class="{{ stats.active_downloads_data.status }}">
                         <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
@@ -658,6 +663,7 @@
                 <div class="stat-item">
                     <p data-label="Daily Usage"><span id="daily_usage">{{ stats.usage_stats_data.used }}</span> / <span id="daily_limit">{{ stats.usage_stats_data.limit }}</span></p>
                 </div>
+                {% endif %}
                 <div class="stat-item">
                     <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
                         stats.uptime // 86400,
@@ -838,6 +844,12 @@
         const data = {{ stats.active_downloads_data|tojson|safe }};
         const downloadsElement = document.getElementById('active_downloads');
         const limitElement = document.getElementById('download_limit');
+        
+        // Skip if elements don't exist (limited environment)
+        if (!downloadsElement || !limitElement || !data) {
+            return;
+        }
+        
         const statusElement = downloadsElement.parentElement;
         
         // Update the display values with fallbacks
@@ -858,6 +870,12 @@
         const data = {{ stats.usage_stats_data|tojson|safe }};
         const dailyUsageElement = document.getElementById('daily_usage');
         const dailyLimitElement = document.getElementById('daily_limit');
+        
+        // Skip if elements don't exist (limited environment)
+        if (!dailyUsageElement || !dailyLimitElement || !data) {
+            return;
+        }
+        
         const usageElement = dailyUsageElement.parentElement;
         
         // Update with pre-formatted values from backend
@@ -1117,7 +1135,7 @@
                                              (data.stats && data.stats.usage_stats_data) || 
                                              {};
                         
-                        // Update active downloads
+                        // Update active downloads (only if not in limited environment)
                         const activeDownloadsElement = document.getElementById('active_downloads');
                         const downloadLimitElement = document.getElementById('download_limit');
                         if (activeDownloadsElement && downloadLimitElement && activeDownloadsData) {
@@ -1136,7 +1154,7 @@
                             }
                         }
                         
-                        // Update usage stats
+                        // Update usage stats (only if not in limited environment)
                         const dailyUsageElement = document.getElementById('daily_usage');
                         const dailyLimitElement = document.getElementById('daily_limit');
                         if (dailyUsageElement && dailyLimitElement && usageStatsData) {

@@ -847,6 +847,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Skip the initial multi-provider scrape for new content (released within the past 7 days).",
             "default": False
+        },
+        "unblacklisting_cutoff_date": {
+            "type": "string",
+            "description": "Only unblacklist items with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all blacklisted items for unblacklisting.",
+            "default": ""
         }
     },
     "Scrapers": {

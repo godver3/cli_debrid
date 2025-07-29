@@ -13,6 +13,48 @@ import re
 import random
 import requests
 
+# Helper - build proxy context for limited environment
+from contextlib import contextmanager
+
+
+@contextmanager
+def _warp_proxy_context():
+    """Temporarily enable the WARP proxy (if in limited env) for the duration of the context."""
+    if os.environ.get("CLI_DEBRID_ENVIRONMENT_MODE", "full") == "full":
+        # No-op – yield immediately
+        yield
+        return
+
+    proxy_url = os.environ.get("WARP_PROXY_URL", "http://warp:1080")
+
+    # Preserve any existing proxy settings so we can restore them later
+    original_http_proxy = os.environ.get("HTTP_PROXY")
+    original_https_proxy = os.environ.get("HTTPS_PROXY")
+
+    os.environ["HTTP_PROXY"] = proxy_url
+    os.environ["HTTPS_PROXY"] = proxy_url
+
+    logging.debug(
+        "WARP proxy enabled for Nyaa request – using %s (original HTTP_PROXY=%s, HTTPS_PROXY=%s)",
+        proxy_url,
+        original_http_proxy,
+        original_https_proxy,
+    )
+
+    try:
+        yield
+    finally:
+        # Restore previous proxy settings
+        if original_http_proxy is not None:
+            os.environ["HTTP_PROXY"] = original_http_proxy
+        else:
+            os.environ.pop("HTTP_PROXY", None)
+
+        if original_https_proxy is not None:
+            os.environ["HTTPS_PROXY"] = original_https_proxy
+        else:
+            os.environ.pop("HTTPS_PROXY", None)
+
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
     size = size.lower().replace(' ', '')
@@ -159,7 +201,9 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
     for attempt in range(max_retries):
         try:
             logging.debug(f"Nyaa search attempt {attempt + 1}/{max_retries} for query: {query}")
-            results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
+            # Enable proxy only for this outbound request
+            with _warp_proxy_context():
+                results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
             return results
             
         except Exception as e:

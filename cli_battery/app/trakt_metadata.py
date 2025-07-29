@@ -33,31 +33,46 @@ class TraktMetadata:
         self.base_url = "https://api.trakt.tv"
         self.trakt_auth = TraktAuth()
         self.request_times = deque()
-        self.max_requests = 1000
-        self.time_window = 300  # 5 minutes in seconds
+        # Trakt API limits:
+        # GET requests: 1000 calls every 5 minutes
+        # POST/PUT/DELETE: 1 call per second
+        self.max_get_requests = 1000
+        self.get_time_window = 300  # 5 minutes in seconds
+        self.post_requests = deque()  # Track POST requests separately
+        self.post_time_window = 1  # 1 second for POST requests
 
-    def _check_rate_limit(self):
+    def _check_rate_limit(self, method='GET'):
         current_time = time.time()
         
-        # Remove old requests from the deque
-        while self.request_times and current_time - self.request_times[0] > self.time_window:
-            self.request_times.popleft()
+        if method.upper() == 'GET':
+            # Remove old GET requests from the deque
+            while self.request_times and current_time - self.request_times[0] > self.get_time_window:
+                self.request_times.popleft()
+            
+            # Check if we've hit the GET rate limit
+            if len(self.request_times) >= self.max_get_requests:
+                logger.warning(f"GET rate limit reached. Currently at {len(self.request_times)} requests in the last {self.get_time_window} seconds.")
+                return False
+            
+            # Add the current request time
+            self.request_times.append(current_time)
+            
+        else:  # POST, PUT, DELETE
+            # Remove old POST requests from the deque
+            while self.post_requests and current_time - self.post_requests[0] > self.post_time_window:
+                self.post_requests.popleft()
+            
+            # Check if we've hit the POST rate limit (1 per second)
+            if len(self.post_requests) >= 1:
+                logger.warning(f"POST rate limit reached. Currently at {len(self.post_requests)} requests in the last {self.post_time_window} second.")
+                return False
+            
+            # Add the current request time
+            self.post_requests.append(current_time)
         
-        # Check if we've hit the rate limit
-        #if len(self.request_times) >= self.max_requests:
-        #    logger.warning(f"Rate limit reached. Currently at {len(self.request_times)} requests in the last {self.time_window} seconds.")
-        #    return False
-        
-        # Add the current request time
-        self.request_times.append(current_time)
         return True
 
-    def _make_request(self, url):
-        if not self._check_rate_limit():
-            logger.warning("Rate limit reached. Waiting for 5 minutes before retrying.")
-            time.sleep(300)  # Wait for 5 minutes
-            return self._make_request(url)  # Retry the request
-
+    def _make_request(self, url, method='GET', max_retries=4, initial_delay=5):
         # Always get fresh auth data before making requests
         self.trakt_auth.reload_auth()
         
@@ -73,29 +88,67 @@ class TraktMetadata:
             'trakt-api-key': self.trakt_auth.client_id,
             'Authorization': f'Bearer {self.trakt_auth.access_token}'
         }
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 401:
-                logger.warning("Received 401 Unauthorized. Attempting to refresh token.")
-                # Reload auth data and try to refresh
-                self.trakt_auth.reload_auth()
-                if self.trakt_auth.refresh_access_token():
-                    # Update the header with the new token and retry the request
-                    headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
-                    response = requests.get(url, headers=headers, timeout=10)
+        
+        delay = initial_delay
+        for attempt in range(max_retries):
+            # Check internal rate limit before each attempt
+            if not self._check_rate_limit(method):
+                logger.warning(f"Internal rate limit check failed on attempt {attempt + 1}. Waiting for 5 minutes.")
+                time.sleep(300)
+                continue # Retry after waiting
+
+            try:
+                if method.upper() == 'GET':
+                    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                elif method.upper() == 'POST':
+                    response = requests.post(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                elif method.upper() == 'PUT':
+                    response = requests.put(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                elif method.upper() == 'DELETE':
+                    response = requests.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
                 else:
-                    logger.error("Failed to refresh Trakt access token after 401 error.")
+                    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+                if response.status_code == 404:
+                    logger.warning(f"Request to {url} returned 404 Not Found. Not retrying.")
+                    return response # Stop immediately for 404
+
+                if response.status_code == 401:
+                    logger.warning(f"Received 401 Unauthorized on attempt {attempt + 1}. Refreshing token.")
+                    if self.trakt_auth.refresh_access_token():
+                        headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
+                        logger.info("Token refreshed. Retrying original request immediately.")
+                        continue # Go to the next attempt immediately with the new token
+                    else:
+                        logger.error("Failed to refresh Trakt access token after 401 error. Aborting.")
+                        return None # Abort if refresh fails
+
+                # Successful request or non-retriable error
+                if response.status_code not in [429, 502, 503, 504]:
+                    response.raise_for_status() # Raise for other client/server errors
+                    return response
+
+                # Retriable error occurred
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} failed with status {response.status_code}. "
+                    f"Retrying in {delay} seconds. URL: {url}"
+                )
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"RequestException on attempt {attempt + 1}/{max_retries} for URL {url}: {e}")
+                if attempt == max_retries - 1:
+                    logger.error("Max retries reached. Aborting request.")
+                    if hasattr(e, 'response') and e.response is not None:
+                         logger.error(f"Final response status code: {e.response.status_code}")
+                         logger.error(f"Final response text: {e.response.text}")
                     return None
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to Trakt API: {e}")
-            logger.error(f"URL: {url}")
-            logger.error(f"Headers: {headers}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response status code: {e.response.status_code}")
-                logger.error(f"Response text: {e.response.text}")
-            return None
+
+            # Wait before the next retry
+            time.sleep(delay)
+            delay *= 2  # Exponential backoff
+
+        logger.error(f"Max retries reached for URL {url}. Giving up.")
+        return None
 
     def get_metadata(self, imdb_id: str) -> Dict[str, Any]:
         logger.debug(f"Getting metadata for {imdb_id}")

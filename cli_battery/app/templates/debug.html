@@ -20,6 +20,7 @@
             <th>Title</th>
             <th>Year</th>
             <th>IMDB ID</th>
+            <th>DB Updated At</th>
             <th>Actions</th>
         </tr>
     </thead>
@@ -31,13 +32,18 @@
                 {{ item.display_year or 'N/A' }}
             </td>
             <td data-label="IMDB ID">{{ item.imdb_id }}</td>
+            <td data-label="DB Updated At">{{ item.db_updated_at or 'N/A' }}</td>
             <td data-label="Actions">
                 <button class="toggleDetails" data-imdb-id="{{ item.imdb_id }}">Show Details</button>
                 <button class="deleteItem" data-imdb-id="{{ item.imdb_id }}">Delete</button>
             </td>
         </tr>
         <tr class="details" style="display: none;">
-            <td colspan="4">
+            <td colspan="5">
+                <div class="item-info">
+                    <p><strong>Last Updated:</strong> {{ item.db_updated_at or 'N/A' }}</p>
+                </div>
+                
                 <h4>Seasons:</h4>
                 {% if item.seasons %}
                     <ul style="padding-left: 20px; margin-top: 0.5rem;">
@@ -167,6 +173,17 @@
         background: #2a2a2a;
         padding: 0.5rem;
         border-radius: 3px;
+    }
+    .item-info {
+        background: #1a1a1a;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        border-radius: 4px;
+        border-left: 4px solid #666;
+    }
+    .item-info p {
+        margin: 0.5rem 0;
+        color: #b2b2b2;
     }
     @media (max-width: 768px) {
         .controls {

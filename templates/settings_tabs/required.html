@@ -533,24 +533,27 @@ document.addEventListener('DOMContentLoaded', function() {
     const updatePlexOnDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
     const disablePlexChecks = document.getElementById('plex-disable_plex_library_checks');
 
-    // Function to handle mutual exclusivity
-    function handlePlexSettingsChange(event) {
-        if (event.target === disablePlexChecks) {
-            if (disablePlexChecks.checked) {
-                // If disable checks is enabled, disable the other one
-                updatePlexOnDiscovery.checked = false;
-            }
-        } else {
-            // If either of the first two are modified
-            if (updatePlexOnDiscovery.checked) {
-                disablePlexChecks.checked = false;
+    // Only add event listeners if the elements exist
+    if (updatePlexOnDiscovery && disablePlexChecks) {
+        // Function to handle mutual exclusivity
+        function handlePlexSettingsChange(event) {
+            if (event.target === disablePlexChecks) {
+                if (disablePlexChecks.checked) {
+                    // If disable checks is enabled, disable the other one
+                    updatePlexOnDiscovery.checked = false;
+                }
+            } else {
+                // If either of the first two are modified
+                if (updatePlexOnDiscovery.checked) {
+                    disablePlexChecks.checked = false;
+                }
             }
         }
-    }
 
-    // Add event listeners
-    updatePlexOnDiscovery.addEventListener('change', handlePlexSettingsChange);
-    disablePlexChecks.addEventListener('change', handlePlexSettingsChange);
+        // Add event listeners
+        updatePlexOnDiscovery.addEventListener('change', handlePlexSettingsChange);
+        disablePlexChecks.addEventListener('change', handlePlexSettingsChange);
+    }
 });
 </script>
 

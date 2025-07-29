@@ -1466,27 +1466,20 @@ p.torresult-title {
 /* Remove CSS tooltips - we'll use JavaScript instead */
 
 .torresult.filtered-out-item {
-    background-color: #4a3838 !important; 
-    border-color: #604040 !important;
+    background-color: transparent !important; /* Override any potential base color */
 }
 
 /* Style for filter reason in mobile view */
 .torresult.filtered-out-item .torresult-item:first-of-type {
-    color: #ff6b6b !important; /* Brighter red for filter reason */
-    font-style: italic;
-    font-size: 0.9em;
-    position: relative;
-    cursor: help;
+    /* No special styling needed here anymore */
 }
 
-/* Remove mobile CSS tooltips - we'll use JavaScript instead */
-
 tr.filtered-out-item {
-    background-color: #4a3838 !important; 
+    background-color: rgba(255, 0, 0, 0.05) !important;
 }
 
 tr.filtered-out-item:hover {
-    background-color: #503030 !important; 
+    background-color: rgba(255, 0, 0, 0.15) !important; 
 }
 
 /* Ensure normal items don't get overridden if they also match a generic 'tr' hover */

@@ -20,6 +20,9 @@ class BackgroundJobManager:
         self.settings = Settings()
         self.app = None
         self.engine = None
+        # Rate limiting for Trakt API
+        self.last_api_call = 0
+        self.min_call_interval = 1.0  # Minimum 1 second between API calls
 
     def init_app(self, app):
         """Initialize with Flask app context"""
@@ -80,9 +83,27 @@ class BackgroundJobManager:
             self.scheduler.shutdown()
             logger.info("Background job scheduler stopped")
 
+    def _enforce_rate_limit(self):
+        """Enforce minimum interval between API calls"""
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_api_call
+        
+        if time_since_last_call < self.min_call_interval:
+            sleep_time = self.min_call_interval - time_since_last_call
+            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+        
+        self.last_api_call = time.time()
+
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""
         try:
+            # Rate limiting strategy:
+            # - Trakt allows 1000 GET requests per 5 minutes (~3.33 requests/second)
+            # - We enforce 1-second minimum intervals between API calls
+            # - This ensures we stay well within the rate limits
+            # - Additional 5-second delays between batches provide extra breathing room
+            
             # Use a session ONLY for querying item IDs and timestamps
             with DbSession() as query_session:
                 query_session.autoflush = False # Still useful for query-only session
@@ -129,39 +150,26 @@ class BackgroundJobManager:
                                 if MetadataManager.is_metadata_stale(item_updated_at):
                                     stale_count += 1
                                     logger.info(f"Item {log_identifier} is stale. Attempting refresh.")
-                                    retry_count = 0
-                                    max_retries = 3
-                                    success = False
-                                    while retry_count < max_retries:
-                                        try:
-                                            # Call refresh_metadata using only the IMDb ID
-                                            result = MetadataManager.refresh_metadata(item_imdb_id)
+                                    
+                                    # Enforce rate limiting before the remote call.
+                                    self._enforce_rate_limit()
+                                    
+                                    try:
+                                        # The underlying refresh_metadata call now has its own retry logic.
+                                        # We will call it once and let it handle transient errors.
+                                        result = MetadataManager.refresh_metadata(item_imdb_id)
 
-                                            if result is not None:
-                                                success = True
-                                                refreshed_count += 1
-                                                logger.info(f"Successfully refreshed and saved metadata for {log_identifier}")
-                                                break
-                                            else:
-                                                logger.warning(f"Refresh attempt {retry_count + 1} failed for {log_identifier}. Save might have failed.")
+                                        if result is not None:
+                                            refreshed_count += 1
+                                            logger.info(f"Successfully refreshed and saved metadata for {log_identifier}")
+                                        else:
+                                            # This log now indicates that the refresh operation failed after all its internal retries.
+                                            logger.error(f"Failed to refresh metadata for {log_identifier} after multiple attempts.")
 
-                                        except requests.exceptions.HTTPError as e:
-                                            if e.response is not None and e.response.status_code == 429:
-                                                 logger.warning(f"Rate limit hit (429) while refreshing {log_identifier}. Attempt {retry_count + 1}/{max_retries}")
-                                            else:
-                                                 logger.error(f"HTTP error refreshing metadata for {log_identifier}: {e}")
-                                                 break
-                                        except Exception as e:
-                                            logger.error(f"Unexpected error during refresh attempt for {log_identifier}: {e}")
-                                            # break # Consider breaking on unexpected errors
-
-                                        retry_count += 1
-                                        if not success and retry_count < max_retries:
-                                            logger.info(f"Pausing for 30 seconds before retry attempt {retry_count + 1} for {log_identifier}...")
-                                            time.sleep(30)
-
-                                    if not success:
-                                        logger.error(f"Max retries reached or non-retriable error occurred for {log_identifier}")
+                                    except Exception as e:
+                                        logger.error(f"An unexpected error occurred during the refresh process for {log_identifier}: {e}", exc_info=True)
+                                
+                                # No rate-limiting for non-stale items.
 
                             except Exception as e:
                                 # Log error using the fetched imdb_id
@@ -174,9 +182,9 @@ class BackgroundJobManager:
                         if (offset + batch_size) % (batch_size * 5) == 0:
                              logger.info(f"Progress: {min(offset + batch_size, total_items)}/{total_items} items checked ({refreshed_count}/{stale_count} stale refreshed so far)")
 
-                        # Delay between batches
-                        logger.debug(f"Sleeping for 3 seconds after processing batch offset {offset}")
-                        time.sleep(3)
+                        # Additional delay between batches to give the API a breather
+                        logger.debug(f"Sleeping for 0.1 seconds after processing batch offset {offset}")
+                        time.sleep(0.1)
 
                     logger.info(
                         f"Metadata refresh complete: {refreshed_count}/{stale_count} stale items refreshed "

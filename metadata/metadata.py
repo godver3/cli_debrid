@@ -659,6 +659,24 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             metadata = bulk_movie_metadata[imdb_id]
         elif effective_metadata_fetch_type in ['tv', 'show'] and imdb_id in bulk_show_metadata:
             metadata = bulk_show_metadata[imdb_id]
+
+            # --- Check for staleness from bulk data ---
+            if metadata and 'item_updated_at' in metadata:
+                from cli_battery.app.metadata_manager import MetadataManager
+                if MetadataManager.is_metadata_stale(metadata['item_updated_at']):
+                    logging.info(f"Bulk metadata for {imdb_id} is stale (updated: {metadata['item_updated_at']}). Forcing a refresh.")
+                    try:
+                        refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
+                        if refreshed_metadata:
+                            logging.info(f"Successfully force-refreshed metadata for {imdb_id}.")
+                            metadata = refreshed_metadata
+                            bulk_show_metadata[imdb_id] = refreshed_metadata # Update cache
+                        else:
+                            logging.error(f"Force-refresh failed for stale item {imdb_id}. Proceeding with stale data.")
+                    except Exception as e_refresh:
+                        logging.error(f"Exception during force-refresh for stale item {imdb_id}: {e_refresh}", exc_info=True)
+            # --- End staleness check ---
+
             if metadata and not isinstance(metadata.get('seasons'), dict):
                 logging.warning(f"Bulk metadata for show {imdb_id} lacks structured seasons. Attempting re-fetch for structure...")
                 try:

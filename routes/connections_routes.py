@@ -9,6 +9,7 @@ from content_checkers.plex_watchlist import MyPlexAccount
 import logging
 import feedparser # Keep import for RSS
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure
 try:
@@ -649,19 +650,55 @@ def check_scraper_connection(scraper_id, scraper_config):
     return base_response
 
 def check_scrapers_connections():
-    """Check connections to all enabled scrapers."""
+    """Check connections to all enabled scrapers in parallel."""
     from queues.config_manager import load_config
     
     config = load_config()
     scrapers = config.get('Scrapers', {})
-    
     scraper_statuses = []
-    for scraper_id, scraper_config in scrapers.items():
-        status = check_scraper_connection(scraper_id, scraper_config)
-        if status:  # Only include if status was returned (scraper is enabled)
-            scraper_statuses.append(status)
-            
+
+    enabled_scrapers = {
+        scraper_id: scraper_config 
+        for scraper_id, scraper_config in scrapers.items() 
+        if scraper_config.get('enabled', False)
+    }
+
+    if not enabled_scrapers:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(enabled_scrapers)) as executor:
+        future_to_scraper = {
+            executor.submit(check_scraper_connection, scraper_id, scraper_config): (scraper_id, scraper_config)
+            for scraper_id, scraper_config in enabled_scrapers.items()
+        }
+        
+        # We don't use a timeout on as_completed to avoid raising an exception
+        # that would stop us from processing already completed results.
+        # Instead, future.result(timeout=...) is used inside the loop.
+        for future in as_completed(future_to_scraper):
+            scraper_id, scraper_config = future_to_scraper[future]
+            try:
+                # Use a timeout for getting the result of each future
+                status = future.result(timeout=10) # 10-second timeout per scraper
+                if status:
+                    scraper_statuses.append(status)
+            except TimeoutError:
+                log.warning(f'Scraper check for {scraper_id} timed out.')
+                scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+            except Exception as exc:
+                log.error(f'Scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
+                scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+                
     return scraper_statuses
+
+def create_timeout_status(scraper_type: str, scraper_id: str) -> Dict[str, Any]:
+    """Generates a standardized timeout status for scraper checks."""
+    return {
+        'name': f'{scraper_type} ({scraper_id})',
+        'connected': False,
+        'error': 'Check timed out or failed with an exception.',
+        'details': {}
+    }
 
 def check_content_source_connection(source_id: str, source_config: Dict[str, Any]) -> Dict[str, Any]:
     """Check connection to a specific content source and fetch a sample."""
@@ -1135,7 +1172,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
     return base_response
 
 def check_content_sources_connections():
-    """Check connections to all enabled content sources."""
+    """Check connections to all enabled content sources in parallel."""
     from utilities.settings import get_setting
     
     content_sources = get_setting('Content Sources')
@@ -1143,15 +1180,46 @@ def check_content_sources_connections():
         return []
         
     source_statuses = []
-    for source_id, source_config in content_sources.items():
-        # Skip sources with "Collected" in their name
-        if 'Collected' in source_id:
-            continue
-            
-        status = check_content_source_connection(source_id, source_config)
-        if status:  # Only include if status was returned (source is enabled)
-            source_statuses.append(status)
-            
+    enabled_sources = {
+        source_id: source_config 
+        for source_id, source_config in content_sources.items() 
+        if 'Collected' not in source_id and source_config.get('enabled', False)
+    }
+
+    if not enabled_sources:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(enabled_sources)) as executor:
+        future_to_source = {
+            executor.submit(check_content_source_connection, source_id, source_config): (source_id, source_config)
+            for source_id, source_config in enabled_sources.items()
+        }
+        
+        for future in as_completed(future_to_source):
+            source_id, source_config = future_to_source[future]
+            try:
+                # Individual timeout per source check
+                status = future.result(timeout=10) 
+                if status:
+                    source_statuses.append(status)
+            except TimeoutError:
+                log.warning(f'Content source check for {source_id} timed out.')
+                # Create a generic timeout error status
+                source_statuses.append({
+                    'name': source_config.get('display_name', source_id),
+                    'connected': False,
+                    'error': 'Connection check timed out after 10 seconds.',
+                    'details': {'type': source_id.split('_')[0]}
+                })
+            except Exception as exc:
+                log.error(f'Content source {source_id} check generated an exception: {exc}', exc_info=True)
+                source_statuses.append({
+                    'name': source_config.get('display_name', source_id),
+                    'connected': False,
+                    'error': f'An unexpected error occurred: {str(exc)}',
+                    'details': {'type': source_id.split('_')[0]}
+                })
+                
     return source_statuses
 
 def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
@@ -1172,52 +1240,77 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
 @connections_bp.route('/')
 @user_required
 def index():
-    """Render the connections status page."""
-    # Get connection statuses (these now include sample data in details)
-    cli_battery_status = check_cli_battery_connection()
+    """Render the connections status page with a timeout."""
+    start_time = datetime.now()
+    
+    # Initialize all statuses to None
+    results = {
+        'cli_battery_status': None,
+        'plex_status': None,
+        'jellyfin_status': None,
+        'mounted_files_status': None,
+        'phalanx_db_status': None,
+        'scraper_statuses': [],
+        'content_source_statuses': [],
+    }
 
-    # Check for Jellyfin/Emby first, then fall back to Plex if not configured
+    # Determine which media server check to run
     jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
     jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
-
-    jellyfin_status = None
-    plex_status = None
-
+    
+    tasks = {
+        'cli_battery_status': check_cli_battery_connection,
+        'mounted_files_status': check_mounted_files_connection,
+        'phalanx_db_status': check_phalanx_db_connection,
+        'scraper_statuses': check_scrapers_connections,
+        'content_source_statuses': check_content_sources_connections,
+    }
+    
     if jellyfin_url and jellyfin_token:
-        jellyfin_status = check_jellyfin_connection()
+        tasks['jellyfin_status'] = check_jellyfin_connection
     else:
-        plex_status = check_plex_connection()
+        tasks['plex_status'] = check_plex_connection
 
-    mounted_files_status = check_mounted_files_connection()
-    phalanx_db_status = check_phalanx_db_connection()
-    scraper_statuses = check_scrapers_connections()
-    content_source_statuses = check_content_sources_connections()
-    
-    # Collect failing connections
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
+        
+        try:
+            # Wait for all futures to complete, with a total timeout of 5 seconds
+            for future in as_completed(future_to_task, timeout=5):
+                task_name = future_to_task[future]
+                try:
+                    results[task_name] = future.result()
+                except Exception as exc:
+                    log.error(f"Task {task_name} generated an exception: {exc}", exc_info=True)
+                    # Optionally create an error status for the failed task
+                    if task_name not in ['scraper_statuses', 'content_source_statuses']:
+                        results[task_name] = {'name': task_name, 'connected': False, 'error': str(exc), 'details': {}}
+
+        except TimeoutError:
+            log.warning("Connections page render timed out after 5 seconds. Rendering with available data.")
+            # The loop is broken, results will contain only completed tasks.
+
+    # Collect failing connections from the results we have
     failing_connections = []
-    if not cli_battery_status['connected']:
-        failing_connections.append(cli_battery_status)
-    if plex_status and not plex_status['connected']:
-        failing_connections.append(plex_status)
-    if jellyfin_status and not jellyfin_status['connected']:
-        failing_connections.append(jellyfin_status)
-    if mounted_files_status and not mounted_files_status['connected']:
-        failing_connections.append(mounted_files_status)
-    if phalanx_db_status and not phalanx_db_status['connected']:
-        failing_connections.append(phalanx_db_status)
-    
-    # Add any failing scraper connections
-    failing_connections.extend([s for s in scraper_statuses if not s['connected']])
-    
-    # Add any failing content source connections (excluding Collected sources)
-    failing_connections.extend([s for s in content_source_statuses if not s['connected'] and not s['name'].startswith('Collected')])
-    
+    for key, status in results.items():
+        if not status: # Skip if status is None or empty list
+            continue
+            
+        if key in ['scraper_statuses', 'content_source_statuses']:
+            failing_connections.extend([s for s in status if not s.get('connected')])
+        elif isinstance(status, dict) and not status.get('connected'):
+            failing_connections.append(status)
+
+    # Add a flash message if the page timed out
+    if (datetime.now() - start_time).total_seconds() >= 5:
+        flash("Some connection checks timed out and may not be displayed. The page was loaded with available data.", "warning")
+
     return render_template('connections.html', 
-                         cli_battery_status=cli_battery_status,
-                         plex_status=plex_status,
-                         jellyfin_status=jellyfin_status,
-                         mounted_files_status=mounted_files_status,
-                         phalanx_db_status=phalanx_db_status,
-                         scraper_statuses=scraper_statuses,
-                         content_source_statuses=content_source_statuses,
+                         cli_battery_status=results['cli_battery_status'],
+                         plex_status=results['plex_status'],
+                         jellyfin_status=results['jellyfin_status'],
+                         mounted_files_status=results['mounted_files_status'],
+                         phalanx_db_status=results['phalanx_db_status'],
+                         scraper_statuses=results['scraper_statuses'],
+                         content_source_statuses=results['content_source_statuses'],
                          failing_connections=failing_connections)

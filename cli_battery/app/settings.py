@@ -85,6 +85,14 @@ class Settings:
             except (json.JSONDecodeError, Exception) as e:
                 logger.warning(f"Error loading settings for Trakt update: {e}")
         
+        # Get current Trakt settings, if they exist
+        current_trakt_settings = config.get('Trakt', {})
+        
+        # Check if the new data is different from the current settings
+        if current_trakt_settings == trakt_data:
+            logger.debug("Trakt settings are already up-to-date. No changes made.")
+            return
+
         # Update Trakt section
         if 'Trakt' not in config:
             config['Trakt'] = {}

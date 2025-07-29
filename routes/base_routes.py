@@ -184,6 +184,13 @@ def get_version_with_branch():
         logging.error(f"Error reading version: {str(e)}")
         return f"0.0.0{get_branch_suffix()}"
 
+# Register limited environment detection for templates
+@base_bp.app_template_global()
+def is_limited_environment():
+    """Check if we're running in limited environment mode"""
+    from utilities.set_supervisor_env import is_limited_environment
+    return is_limited_environment()
+
 @base_bp.route('/api/release-notes', methods=['GET'])
 def get_release_notes():
     try:

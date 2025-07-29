@@ -44,6 +44,8 @@ def debug():
             # Find the year from metadata
             year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
             item.display_year = year_metadata or item.year
+            # Add the actual database updated_at timestamp
+            item.db_updated_at = item.updated_at.isoformat() if item.updated_at else None
             
             # Search in basic info
             basic_info = f"{item.title} {item.imdb_id} {item.display_year}".lower()
@@ -59,10 +61,12 @@ def debug():
                     break
         items = filtered_items
     else:
-        # If no search query, just set display_year for all items
+        # If no search query, just set display_year and db_updated_at for all items
         for item in items:
             year_metadata = next((m.value for m in item.item_metadata if m.key == 'year'), None)
             item.display_year = year_metadata or item.year
+            # Add the actual database updated_at timestamp
+            item.db_updated_at = item.updated_at.isoformat() if item.updated_at else None
     
     return render_template('debug.html', items=items)
 
@@ -106,7 +110,9 @@ def debug_item(imdb_id):
                 "imdb_id": item.imdb_id,
                 "title": item.title,
                 "type": item.type,
-                "year": item.year
+                "year": item.year,
+                "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+                "created_at": item.created_at.isoformat() if item.created_at else None
             },
             "metadata": metadata,
             "seasons": seasons

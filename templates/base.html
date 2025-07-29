@@ -1307,8 +1307,8 @@
                         ('settings.index', 'Settings'),
                         ('database.index', 'Database'),
                         ('database.phalanxdb_status', 'Phalanx DB'),
-                        ('performance.performance_dashboard', 'Performance Dashboard'),
-                        ('torrent_status.torrent_status', 'Torrent Status'),
+                        ('performance.performance_dashboard', 'Performance Dashboard')] + 
+                        ([] if is_limited_environment() else [('torrent_status.torrent_status', 'Torrent Status')]) + [
                         ('connections.index', 'Connections'),
                         ('api_summary.index', 'API Summary'),
                         ('real_time_api.index', 'Real Time API'),

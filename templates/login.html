@@ -159,6 +159,30 @@
     .flash-message.show {
         opacity: 1;
     }
+
+    .reset-reminder {
+        max-width: 300px;
+        margin: 10px auto;
+        padding: 15px;
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+        border-radius: 3px;
+        text-align: center;
+        font-size: 0.9em;
+    }
+
+    .reset-reminder p {
+        margin: 5px 0;
+    }
+
+    .reset-reminder code {
+        background-color: #f8f9fa;
+        padding: 2px 4px;
+        border-radius: 3px;
+        font-family: monospace;
+        color: #e83e8c;
+    }
 </style>
 <div class="auth-form">
     <h2>Login</h2>
@@ -182,6 +206,18 @@
             <div class="flash-message {{ category }}">{{ message }}</div>
         {% endfor %}
         </div>
+        {% set has_error = false %}
+        {% for category, message in messages %}
+            {% if category == 'error' and not has_error %}
+                {% if 'login' in message.lower() or 'check' in message.lower() or 'invalid' in message.lower() %}
+                    {% set has_error = true %}
+                    <div class="reset-reminder">
+                        <p><strong>Need to reset admin account?</strong></p>
+                        <p>Run <code>./reset_admin.sh</code> to reset credentials to admin/admin</p>
+                    </div>
+                {% endif %}
+            {% endif %}
+        {% endfor %}
     {% endif %}
 {% endwith %}
 <script>
@@ -193,9 +229,13 @@
                     flashMessage.classList.add('show');
                 }, 100);
 
-                setTimeout(function() {
-                    flashMessage.classList.remove('show');
-                }, 5000);
+                // Don't auto-hide login failure messages
+                var messageText = flashMessage.textContent.toLowerCase();
+                if (!messageText.includes('please check your login details')) {
+                    setTimeout(function() {
+                        flashMessage.classList.remove('show');
+                    }, 5000);
+                }
             });
         }
 

@@ -121,7 +121,7 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
             ignored_by_tag = 0
 
             for item in wanted_content_raw:
-                item_tags = {t.get('tag', '').lower() for t in item.get('tags', [])}
+                item_tags = {t.get('tag', '').lower() for t in (item.get('tags') or [])}
                 if ignore_tags and not item_tags.isdisjoint(ignore_tags):
                     ignored_by_tag += 1
                     continue
@@ -139,7 +139,7 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     # Handle season information for TV shows when partial requests are allowed
                     if allow_partial and media.get('mediaType') == 'tv' and 'seasons' in item:
                         requested_seasons_os = []
-                        for season_os in item.get('seasons', []):
+                        for season_os in (item.get('seasons') or []):
                             if season_os.get('seasonNumber') is not None:
                                 requested_seasons_os.append(season_os.get('seasonNumber'))
                         if requested_seasons_os:

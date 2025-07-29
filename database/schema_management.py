@@ -345,6 +345,7 @@ def migrate_schema():
                     verification_attempts INTEGER DEFAULT 0,
                     last_attempt TIMESTAMP,
                     permanently_failed BOOLEAN DEFAULT FALSE,
+                    failure_reason TEXT,
                     FOREIGN KEY (media_item_id) REFERENCES media_items (id)
                 )
             ''')
@@ -356,6 +357,9 @@ def migrate_schema():
             if 'permanently_failed' not in columns:
                 conn.execute('ALTER TABLE symlinked_files_verification ADD COLUMN permanently_failed BOOLEAN DEFAULT FALSE')
                 logging.info("Successfully added permanently_failed column to symlinked_files_verification table.")
+            if 'failure_reason' not in columns:
+                conn.execute('ALTER TABLE symlinked_files_verification ADD COLUMN failure_reason TEXT')
+                logging.info("Successfully added failure_reason column to symlinked_files_verification table.")
 
         # Fix future timestamps in statistics_summary table
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
@@ -631,6 +635,7 @@ def create_tables():
                 verification_attempts INTEGER DEFAULT 0,
                 last_attempt TIMESTAMP,
                 permanently_failed BOOLEAN DEFAULT FALSE,
+                failure_reason TEXT,
                 FOREIGN KEY (media_item_id) REFERENCES media_items (id)
             )
         ''')

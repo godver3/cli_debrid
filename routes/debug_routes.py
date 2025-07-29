@@ -4650,3 +4650,263 @@ def run_bulk_subtitle_scan():
     from routes.extensions import task_queue
     task_id = task_queue.add_task(async_run_bulk_subs)
     return jsonify({'task_id': task_id}), 202
+
+@debug_bp.route('/api/fix_zurg_symlinks', methods=['POST'])
+@admin_required
+def fix_zurg_symlinks():
+    """Fix Zurg symlinks where folder structure changed from having file extensions to not having them."""
+    import os
+    from pathlib import Path
+    from database import get_db_connection
+    
+    dry_run = request.form.get('dry_run') == 'on'
+    
+    logging.info(f"Zurg symlink fix requested. Dry run: {dry_run}")
+    
+    conn = None
+    items_checked = 0
+    items_needing_fix = 0
+    items_fixed = 0
+    errors = []
+    preview_items = []
+    MAX_PREVIEW = 20
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all collected items with both location_on_disk and original_path_for_symlink
+        cursor.execute("""
+            SELECT 
+                id,
+                title,
+                location_on_disk,
+                original_path_for_symlink,
+                filled_by_file
+            FROM media_items 
+            WHERE state IN ('Collected', 'Upgrading')
+            AND location_on_disk IS NOT NULL
+            AND original_path_for_symlink IS NOT NULL
+        """)
+        items = cursor.fetchall()
+        
+        logging.info(f"Found {len(items)} items to check for Zurg symlink issues")
+        
+        for item in items:
+            items_checked += 1
+            item_id = item['id']
+            title = item['title'] or f"Item {item_id}"
+            location_on_disk = item['location_on_disk']
+            original_path = item['original_path_for_symlink']
+            filled_by_file = item['filled_by_file']
+            
+            # Check if the original file exists at the stored path
+            if os.path.exists(original_path):
+                continue  # File exists, no fix needed
+            
+            # File doesn't exist - check if we have a Zurg extension folder issue
+            original_path_obj = Path(original_path)
+            parent_dir = original_path_obj.parent
+            filename = original_path_obj.name
+            
+            # Check if parent directory name has file extension that shouldn't be there
+            parent_name = parent_dir.name
+            
+            # Look for common video extensions in the parent directory name
+            video_extensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg']
+            
+            fixed_parent_name = None
+            for ext in video_extensions:
+                if parent_name.endswith(ext):
+                    # Remove the extension from the folder name
+                    fixed_parent_name = parent_name[:-len(ext)]
+                    break
+            
+            if not fixed_parent_name:
+                # No extension found in parent name, skip this item
+                continue
+            
+            # Construct the new path without the extension in folder name
+            new_parent_dir = parent_dir.parent / fixed_parent_name
+            new_original_path = new_parent_dir / filename
+            
+            # Check if file exists at the new path
+            if not os.path.exists(new_original_path):
+                errors.append(f"Item {item_id} ({title}): Neither original path nor fixed path exists")
+                continue
+            
+            items_needing_fix += 1
+            
+            if dry_run:
+                if len(preview_items) < MAX_PREVIEW:
+                    preview_items.append({
+                        'id': item_id,
+                        'title': title,
+                        'old_original_path': original_path,
+                        'new_original_path': str(new_original_path),
+                        'symlink_path': location_on_disk
+                    })
+                continue
+            
+            # Update the original_path_for_symlink in database
+            cursor.execute("""
+                UPDATE media_items 
+                SET original_path_for_symlink = ?
+                WHERE id = ?
+            """, (str(new_original_path), item_id))
+            
+            # Update the symlink to point to the new location
+            if os.path.islink(location_on_disk):
+                try:
+                    # Remove old symlink
+                    os.unlink(location_on_disk)
+                    
+                    # Create new symlink pointing to correct location
+                    os.symlink(str(new_original_path), location_on_disk)
+                    
+                    items_fixed += 1
+                    logging.info(f"Fixed symlink for item {item_id} ({title}): {original_path} -> {new_original_path}")
+                    
+                except Exception as e:
+                    errors.append(f"Item {item_id} ({title}): Updated DB but failed to recreate symlink: {str(e)}")
+            else:
+                errors.append(f"Item {item_id} ({title}): Updated DB but location_on_disk is not a symlink: {location_on_disk}")
+        
+        if not dry_run:
+            conn.commit()
+        
+        if dry_run:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'message': f'Dry run complete. Found {items_needing_fix} items that need fixing out of {items_checked} checked.',
+                'items_checked': items_checked,
+                'items_needing_fix': items_needing_fix,
+                'preview': preview_items,
+                'errors': errors
+            })
+        else:
+            message = f"Fixed {items_fixed} items out of {items_checked} checked. Found {items_needing_fix} items needing fixes."
+            if errors:
+                message += f" {len(errors)} errors encountered."
+            
+            return jsonify({
+                'success': True,
+                'dry_run': False,
+                'message': message,
+                'items_checked': items_checked,
+                'items_needing_fix': items_needing_fix,
+                'items_fixed': items_fixed,
+                'errors': errors
+            })
+    
+    except Exception as e:
+        logging.error(f"Error fixing Zurg symlinks: {e}", exc_info=True)
+        if conn and not dry_run:
+            try:
+                conn.rollback()
+            except Exception as rb_err:
+                logging.error(f"Rollback failed: {rb_err}")
+        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@debug_bp.route('/api/remove_duplicate_items', methods=['POST'])
+@admin_required
+def remove_duplicate_items():
+    try:
+        dry_run = request.form.get('dry_run') == 'on'
+        
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Find all items with filled_by_file that have duplicates
+        cursor.execute("""
+            SELECT filled_by_file, COUNT(*) as count, GROUP_CONCAT(id) as ids
+            FROM media_items 
+            WHERE filled_by_file IS NOT NULL 
+            AND filled_by_file != ''
+            GROUP BY filled_by_file 
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC
+        """)
+        duplicate_groups = cursor.fetchall()
+        
+        total_duplicates = 0
+        items_to_delete = []
+        preview = []
+        
+        for group in duplicate_groups:
+            filled_by_file = group['filled_by_file']
+            count = group['count']
+            ids = [int(id_str) for id_str in group['ids'].split(',')]
+            
+            # Get details for all items with this filled_by_file
+            cursor.execute("""
+                SELECT id, title, type, state, collected_at, version, imdb_id, tmdb_id
+                FROM media_items 
+                WHERE id IN ({})
+                ORDER BY collected_at ASC, id ASC
+            """.format(','.join(['?'] * len(ids))), ids)
+            
+            items = cursor.fetchall()
+            
+            # Keep the first item (oldest collected_at, then lowest ID)
+            keep_item = items[0]
+            delete_items = items[1:]
+            
+            total_duplicates += len(delete_items)
+            items_to_delete.extend([item['id'] for item in delete_items])
+            
+            if len(preview) < 10:  # Limit preview to 10 groups
+                preview.append({
+                    'filled_by_file': filled_by_file,
+                    'count': count,
+                    'keep_item': {
+                        'id': keep_item['id'],
+                        'title': keep_item['title'],
+                        'type': keep_item['type'],
+                        'state': keep_item['state']
+                    },
+                    'delete_items': [
+                        {
+                            'id': item['id'],
+                            'title': item['title'],
+                            'type': item['type'],
+                            'state': item['state']
+                        } for item in delete_items
+                    ]
+                })
+        
+        if not dry_run and items_to_delete:
+            # Delete the duplicate items
+            placeholders = ','.join(['?'] * len(items_to_delete))
+            cursor.execute(f"DELETE FROM media_items WHERE id IN ({placeholders})", items_to_delete)
+            conn.commit()
+        
+        conn.close()
+        
+        message = f"Found {len(duplicate_groups)} files with duplicates, totaling {total_duplicates} duplicate items."
+        if not dry_run and items_to_delete:
+            message += f" Deleted {len(items_to_delete)} duplicate items."
+        elif dry_run:
+            message += " (Dry run - no items deleted)"
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'dry_run': dry_run,
+            'duplicate_groups': len(duplicate_groups),
+            'total_duplicates': total_duplicates,
+            'items_deleted': len(items_to_delete) if not dry_run else 0,
+            'preview': preview
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in remove_duplicate_items: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'An error occurred: {str(e)}'
+        })
