@@ -160,47 +160,41 @@ class MetadataManager:
     def is_tmdb_mapping_stale(last_updated):
         """
         Check if a TMDB to IMDB mapping is stale and should be refreshed.
-        Uses a longer threshold than regular metadata since ID mappings change less frequently.
+        Uses a 3-day base period with ±1/3/5 hours variation for TMDB conversions.
         """
-        # MODIFIED: Always return True to bypass staleness threshold and force fresh conversions
-        logger.debug("TMDB mapping staleness check: Always considered stale (staleness threshold disabled)")
-        return True
+        from metadata.metadata import _get_local_timezone
+        import random
         
-        # ORIGINAL IMPLEMENTATION (COMMENTED OUT):
-        # from metadata.metadata import _get_local_timezone
-        # 
-        # if last_updated is None:
-        #     logger.debug("TMDB mapping has no last_updated timestamp, considering stale")
-        #     return True
-        # 
-        # # Convert last_updated to UTC if it's not already
-        # if last_updated.tzinfo is None or last_updated.tzinfo.utcoffset(last_updated) is None:
-        #     last_updated = last_updated.replace(tzinfo=_get_local_timezone())
-        # 
-        # now = datetime.now(_get_local_timezone())
-        # 
-        # # Use a longer threshold for ID mappings (7 days base + variation)
-        # # ID mappings change less frequently than metadata, so we can cache them longer
-        # base_threshold = 7  # days - restored to reasonable value
-        # day_variation = random.choice([-1, 0, 1])
-        # hour_variation = random.randint(-12, 12)
-        # 
-        # adjusted_threshold = max(base_threshold + day_variation, 1)  # Minimum 1 day
-        # 
-        # stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
-        # age = now - last_updated
-        # is_stale = age > stale_threshold
-        # 
-        # if is_stale:
-        #     logger.debug(
-        #         f"TMDB mapping staleness check: last_updated={last_updated.isoformat()}, "
-        #         f"age={age.days}d {age.seconds//3600}h, "
-        #         f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
-        #         f"(base={base_threshold}d, variation={day_variation}d {hour_variation}h) "
-        #         f"-> stale"
-        #     )
-        #             
-        # return is_stale
+        if last_updated is None:
+            logger.debug("TMDB mapping has no last_updated timestamp, considering stale")
+            return True
+        
+        # Convert last_updated to UTC if it's not already
+        if last_updated.tzinfo is None or last_updated.tzinfo.utcoffset(last_updated) is None:
+            last_updated = last_updated.replace(tzinfo=_get_local_timezone())
+
+        now = datetime.now(_get_local_timezone())
+        
+        # Use 3-day base period with ±1/3/5 hours variation for TMDB conversions
+        base_threshold = 3  # days
+        hour_variation = random.choice([-5, -3, -1, 1, 3, 5])  # ±1/3/5 hours
+        
+        adjusted_threshold = max(base_threshold, 1)  # Minimum 1 day
+        
+        stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
+        age = now - last_updated
+        is_stale = age > stale_threshold
+
+        if is_stale:
+            logger.debug(
+                f"TMDB mapping staleness check: last_updated={last_updated.isoformat()}, "
+                f"age={age.days}d {age.seconds//3600}h, "
+                f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
+                f"(base={base_threshold}d, variation={hour_variation}h) "
+                f"-> stale"
+            )
+                
+        return is_stale
 
     @staticmethod
     def debug_find_item(imdb_id):
