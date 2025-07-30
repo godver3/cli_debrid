@@ -26,7 +26,7 @@
                     <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
                             data-section="Debug" data-key="{{ key }}">
                         {% for option in value.choices %}
-                            <option value="{{ option }}" {% if str(settings.get('Debug', {}).get(key, value.default)) == str(option) %}selected{% endif %}>{{ option }}</option>
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
                         {% endfor %}
                     </select>
                 {% else %}

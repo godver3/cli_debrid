@@ -40,10 +40,14 @@ LANGUAGE_MAP = {
     'ara': Language('ara'),
     'eng': Language('eng'), 
     'fre': Language('fra'),
+    'fra': Language('fra'),  # Add fra mapping for consistency
     'ger': Language('deu'),
     'spa': Language('spa'),
     'ita': Language('ita'),
-    'por': Language('por'),
+    'por': Language('por'),         # generic (keep if you want EU-PT too)
+    'pt-BR': Language.fromietf('pt-BR'),
+    'pob': Language('por', 'BR'),   # OpenSubtitles legacy code
+    'pb': Language('por', 'BR'),    # common alias
     'dut': Language('nld'),
     'rus': Language('rus'),
     'chi': Language('zho'),
@@ -51,6 +55,47 @@ LANGUAGE_MAP = {
     'jpn': Language('jpn'),
     'kor': Language('kor'),
 }
+
+def expand_languages(codes):
+    """Turn config codes into babelfish Languages, expanding 'por' to BR/PT."""
+    out = []
+    for code in codes:
+        c = code.strip()
+        # support IETF like 'pt-BR'
+        try:
+            if '-' in c:
+                out.append(Language.fromietf(c))
+                continue
+        except Exception:
+            pass
+        if c in ('por', 'pt'):
+            out.extend([Language('por'), Language('por','BR'), Language('por','PT')])
+            continue
+        if c in LANGUAGE_MAP:
+            out.append(LANGUAGE_MAP[c])
+            continue
+        # last resort: try direct
+        try:
+            out.append(Language(c))
+        except Exception as e:
+            logging.warning(f"⚠️ Unknown language code: {c} - {e}")
+    return out
+
+def build_provider_configs():
+    pc = {}
+    if config.OPENSUBTITLES_USERNAME and config.OPENSUBTITLES_PASSWORD:
+        pc['opensubtitles'] = {
+            'username': config.OPENSUBTITLES_USERNAME,
+            'password': config.OPENSUBTITLES_PASSWORD
+        }
+    # If you also have OpenSubtitles.com (new API) creds/apikey:
+    if getattr(config, 'OSCOM_USERNAME', None) and getattr(config, 'OSCOM_PASSWORD', None):
+        pc['opensubtitlescom'] = {
+            'username': config.OSCOM_USERNAME,
+            'password': config.OSCOM_PASSWORD,
+            'apikey':   getattr(config, 'OSCOM_APIKEY', None)
+        }
+    return pc
 
 def setup_subliminal_credentials():
     """
@@ -102,12 +147,12 @@ def retry_on_xml_error(max_retries=3, delay=2):
     return decorator
 
 @retry_on_xml_error(max_retries=3, delay=3)
-def download_subtitles_with_provider(video, languages, provider_name):
+def download_subtitles_with_provider(video, languages, provider_name, provider_configs=None):
     """Download subtitles with a specific provider with retry logic"""
     logging.info(f"🔍 Using provider: {provider_name}")
     
     try:
-        subtitles = download_best_subtitles([video], set(languages), providers={provider_name})
+        subtitles = download_best_subtitles([video], set(languages), providers={provider_name}, provider_configs=provider_configs)
         return subtitles
     except Exception as e:
         logging.error(f"Provider {provider_name} failed: {str(e)}")
@@ -151,18 +196,8 @@ def download_subtitles_for_video(video_path):
         else:
             original_path = video_path
         
-        # Convert language codes to Language objects
-        languages = []
-        for lang_code in config.SUBTITLE_LANGUAGES:
-            if lang_code in LANGUAGE_MAP:
-                languages.append(LANGUAGE_MAP[lang_code])
-            else:
-                # Try to create Language object directly
-                try:
-                    languages.append(Language(lang_code))
-                    logging.info(f"✅ Using language code: {lang_code}")
-                except Exception as e:
-                    logging.warning(f"⚠️ Unknown language code: {lang_code} - {e}")
+        # Convert language codes to Language objects using expand_languages
+        languages = expand_languages(config.SUBTITLE_LANGUAGES)
         
         if not languages:
             logging.error("❌ No valid languages configured")
@@ -175,20 +210,24 @@ def download_subtitles_for_video(video_path):
             # Region already configured or other cache setup issue, which is fine
             pass
         
-        # Create video object from name only (much faster)
-        logging.info(f"🎬 Processing: {video_path.name}")
-        video = Video.fromname(video_path.name)
+        # Create video object from symlink name (more information for parsing)
+        symlink_name = original_path.name
+        logging.info(f"🎬 Processing: {symlink_name}")
+        video = Video.fromname(symlink_name)
         video.path = original_path  # Set to original path so subtitles are saved alongside the symlink
+        
+        # Build provider configurations
+        provider_configs = build_provider_configs()
         
         # Start timer
         start_time = time.time()
         
         # Download best subtitles for all configured languages
-        logging.info(f"🔍 Searching for subtitles in languages: {[str(lang) for lang in languages]}")
+        logging.info(f"🔍 Searching for subtitles in languages: {[getattr(lang, 'ietf', None) or str(lang) for lang in languages]}")
         
         # Try OpenSubtitles with retry logic
         try:
-            subtitles = download_subtitles_with_provider(video, languages, 'opensubtitles')
+            subtitles = download_subtitles_with_provider(video, languages, 'opensubtitles', provider_configs)
         except Exception as e:
             logging.error(f"OpenSubtitles provider failed completely: {e}")
             logging.warning("You may want to try:")
@@ -204,7 +243,7 @@ def download_subtitles_for_video(video_path):
             for alt_provider in alternative_providers:
                 try:
                     logging.info(f"🔍 Trying alternative provider: {alt_provider}")
-                    subtitles = download_subtitles_with_provider(video, languages, alt_provider)
+                    subtitles = download_subtitles_with_provider(video, languages, alt_provider, provider_configs)
                     if subtitles[video]:
                         logging.info(f"✅ Success with alternative provider: {alt_provider}")
                         break
@@ -215,6 +254,40 @@ def download_subtitles_for_video(video_path):
                 # If we get here, all providers failed
                 logging.error("❌ All subtitle providers failed")
                 return False
+        
+        # If we didn't get subtitles for all requested languages, try searching each language individually
+        if subtitles[video]:
+            found_languages = {str(sub.language) for sub in subtitles[video]}
+            requested_languages = {str(lang) for lang in languages}
+            missing_languages = requested_languages - found_languages
+            
+            if missing_languages:
+                logging.info(f"⚠️  Missing subtitles for languages: {missing_languages}")
+                logging.info("🔄 Trying individual language searches to ensure all requested languages are found...")
+                
+                # Try to find missing languages individually
+                for missing_lang in missing_languages:
+                    try:
+                        # Find the Language object for the missing language
+                        missing_lang_obj = None
+                        for lang in languages:
+                            if str(lang) == missing_lang:
+                                missing_lang_obj = lang
+                                break
+                        
+                        if missing_lang_obj:
+                            logging.info(f"🔍 Searching individually for: {missing_lang}")
+                            individual_subtitles = download_subtitles_with_provider(video, {missing_lang_obj}, 'opensubtitles', provider_configs)
+                            
+                            if individual_subtitles[video]:
+                                # Add the found subtitles to our main results
+                                subtitles[video].extend(individual_subtitles[video])
+                                logging.info(f"✅ Found {len(individual_subtitles[video])} subtitle(s) for {missing_lang}")
+                            else:
+                                logging.warning(f"❌ Still no subtitles found for {missing_lang}")
+                    except Exception as e:
+                        logging.warning(f"⚠️  Failed to search individually for {missing_lang}: {e}")
+                        continue
         
         # Stop timer
         elapsed_time = time.time() - start_time
@@ -227,7 +300,7 @@ def download_subtitles_for_video(video_path):
             symlink_dir = original_path.parent
             base_name = original_path.stem
             for sub in subtitles[video]:
-                lang = str(sub.language)
+                lang = getattr(sub.language, 'ietf', None) or str(sub.language)
                 symlink_srt = symlink_dir / f"{base_name}.{lang}.srt"
                 try:
                     with open(symlink_srt, 'wb') as f:

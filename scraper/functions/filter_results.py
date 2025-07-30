@@ -12,6 +12,43 @@ from scraper.functions.common import *
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
 
+def detect_language_codes(text: str) -> List[str]:
+    """
+    Fallback function to detect language/country codes in a title or alias.
+    This is used as a fallback when PTT parsing fails.
+    Returns a list of detected codes (e.g., ['UK', 'US', 'AU']).
+    """
+    if not text:
+        return []
+    
+    # Common language/country codes that appear in titles
+    language_codes = {
+        'UK', 'US', 'AU', 'CA', 'NZ', 'DE', 'FR', 'ES', 'IT', 'NL', 'SE', 'NO', 'DK', 'FI',
+        'PL', 'CZ', 'HU', 'RO', 'BG', 'HR', 'RS', 'SI', 'SK', 'EE', 'LV', 'LT', 'PT', 'GR',
+        'JP', 'KR', 'CN', 'IN', 'BR', 'MX', 'AR', 'CL', 'PE', 'CO', 'VE', 'EC', 'BO', 'PY',
+        'UY', 'GY', 'SR', 'GF', 'FK', 'GS', 'IO', 'PN', 'TC', 'VG', 'AI', 'BM', 'KY', 'MS',
+        'KN', 'LC', 'VC', 'AG', 'DM', 'GD', 'TT', 'BB', 'JM', 'HT', 'DO', 'PR', 'CU', 'JM',
+        'BS', 'TC', 'AW', 'CW', 'SX', 'BQ', 'BL', 'MF', 'GP', 'MQ', 'RE', 'YT', 'NC', 'PF',
+        'WF', 'TF', 'PM', 'ST', 'CV', 'GM', 'GN', 'GW', 'SL', 'LR', 'CI', 'BF', 'ML', 'NE',
+        'TD', 'SD', 'ER', 'DJ', 'SO', 'KE', 'TZ', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ',
+        'ST', 'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'YT', 'RE',
+        'MZ', 'MW', 'ZW', 'ZM', 'TZ', 'KE', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ', 'ST',
+        'AO', 'ZM', 'ZW', 'BW', 'NA', 'SZ', 'LS', 'MG', 'MU', 'SC', 'KM', 'YT', 'RE', 'MZ',
+        'MW', 'ZW', 'ZM', 'TZ', 'KE', 'UG', 'RW', 'BI', 'CD', 'CG', 'GA', 'GQ', 'ST', 'AO'
+    }
+    
+    # Split text into words and check for language codes
+    words = text.upper().split()
+    detected_codes = []
+    
+    for word in words:
+        # Remove common punctuation that might be attached to codes
+        clean_word = re.sub(r'[^\w]', '', word)
+        if clean_word in language_codes:
+            detected_codes.append(clean_word)
+    
+    return detected_codes
+
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
     season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
@@ -61,6 +98,13 @@ def filter_results(
     normalized_query_title = normalize_title(title).lower()
     normalized_aliases = [normalize_title(alias).lower() for alias in (matching_aliases or [])]
     normalized_translated_title = normalize_title(translated_title).lower() if translated_title else None
+    
+    # --- Language Code Filtering Setup ---
+    # We'll check for language codes after API aliases are fetched for each result
+    should_filter_language = False
+    expected_language_code = None
+    detected_codes_in_original = []
+    # --- End Language Code Filtering Setup ---
     
     # Determine base similarity threshold
     # Override anime similarity threshold to be more restrictive to prevent false matches
@@ -138,6 +182,8 @@ def filter_results(
                 result['filter_reason'] = "Marked as trash by parser"
                 logging.info(f"Rejected: Marked as trash by parser for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
+            
+            # Language code filtering will be done after API aliases are fetched
             
             # Store original title in parsed_info
             parsed_info['original_title'] = original_title
@@ -300,6 +346,44 @@ def filter_results(
             if item_aliases:
                 logging.info(f"DEBUG: API aliases for '{title}' (IMDb: {imdb_id}): {item_aliases}")
 
+            # --- Language Code Detection (after API aliases are fetched) ---
+            # Check for language codes in original title, matching_aliases, and API aliases
+            all_titles_to_check = [title]
+            if matching_aliases:
+                all_titles_to_check.extend(matching_aliases)
+            
+            # Add API aliases to the check
+            for alias_list in item_aliases.values():
+                all_titles_to_check.extend(alias_list)
+            
+            detected_codes_in_original = []
+            for check_title in all_titles_to_check:
+                # Use PTT parser to detect country codes in titles/aliases
+                try:
+                    from scraper.functions.ptt_parser import parse_with_ptt
+                    parsed_alias = parse_with_ptt(check_title)
+                    if parsed_alias.get('country'):
+                        country_code_mapping = {'gb': 'UK', 'us': 'US', 'au': 'AU', 'ca': 'CA', 'nz': 'NZ'}
+                        detected_code = country_code_mapping.get(parsed_alias['country'].lower(), parsed_alias['country'].upper())
+                        detected_codes_in_original.append(detected_code)
+                except Exception as e:
+                    # Fallback to our custom detection if PTT parsing fails
+                    codes = detect_language_codes(check_title)
+                    detected_codes_in_original.extend(codes)
+            
+            # Remove duplicates while preserving order
+            detected_codes_in_original = list(dict.fromkeys(detected_codes_in_original))
+            
+            if detected_codes_in_original:
+                should_filter_language = True
+                expected_language_code = detected_codes_in_original[0]  # Use first detected code
+                logging.info(f"Language code filtering enabled. Expected code: {expected_language_code}, detected in original/aliases: {detected_codes_in_original}")
+            else:
+                should_filter_language = False
+                expected_language_code = None
+                logging.info(f"No language codes detected in original title or aliases. Language code filtering disabled.")
+            # --- End Language Code Detection ---
+
             # -------------------------------------------------------------
             # Re-evaluate alias similarities with the newly fetched aliases
             # -------------------------------------------------------------
@@ -438,6 +522,50 @@ def filter_results(
                 #     logging.debug(f"✓ Passed title similarity via translated title ({translated_title_sim:.2f})")
                     
             #logging.debug("✓ Passed title similarity check")
+            
+            # --- Language Code Filtering (after similarity check passes) ---
+            if should_filter_language:
+                # Original/alias HAS language code - filter out different codes, derank missing codes
+                result_country = parsed_info.get('country')
+                
+                # Convert PTT country codes to our expected format
+                country_code_mapping = {'gb': 'UK', 'us': 'US', 'au': 'AU', 'ca': 'CA', 'nz': 'NZ'}
+                result_language_code = None
+                if result_country:
+                    result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
+                
+                if result_language_code:
+                    # Result has language codes - check if they match expected
+                    if expected_language_code != result_language_code:
+                        # Filter out results with different language codes
+                        result['filter_reason'] = f"Language code mismatch: expected {expected_language_code}, found {result_language_code}"
+                        logging.info(f"Rejected: Language code mismatch for '{original_title}' - expected {expected_language_code}, found {result_language_code} (Size: {result['size']:.2f}GB)")
+                        continue
+                    else:
+                        logging.info(f"Language code match for '{original_title}': {result_language_code} matches expected {expected_language_code}")
+                else:
+                    # Result has no language codes but original does - apply significant ranking penalty
+                    result['language_code_missing_penalty'] = -500
+                    result['language_code_expected'] = expected_language_code
+                    logging.info(f"Missing language code penalty applied for '{original_title}' - expected {expected_language_code}, found none")
+            else:
+                # Original/alias has NO language code - prefer items without language codes, but accept all
+                result_country = parsed_info.get('country')
+                country_code_mapping = {'gb': 'UK', 'us': 'US', 'au': 'AU', 'ca': 'CA', 'nz': 'NZ'}
+                result_language_code = None
+                if result_country:
+                    result_language_code = country_code_mapping.get(result_country.lower(), result_country.upper())
+                
+                if result_language_code:
+                    # Result has language codes but original doesn't - apply small ranking penalty
+                    result['has_language_codes'] = True
+                    result['detected_language_codes'] = [result_language_code]
+                    result['language_code_unexpected_penalty'] = -100  # Smaller penalty for unexpected language codes
+                    logging.info(f"Result has language codes but original doesn't - will be ranked lower: '{original_title}' - codes: {result_language_code}")
+                else:
+                    # Mark this result as not having language codes for ranking preference
+                    result['has_language_codes'] = False
+            # --- End Language Code Filtering ---
             
             # Resolution check
             detected_resolution = parsed_info.get('resolution', 'Unknown')

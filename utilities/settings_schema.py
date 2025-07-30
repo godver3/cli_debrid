@@ -525,6 +525,12 @@ SETTINGS_SCHEMA = {
     },
     "Debug": {
         "tab": "Debug Settings",
+        "logging_level": {
+            "type": "string",
+            "description": "Logging level for console output and file logging",
+            "default": "DEBUG",
+            "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
         "skip_initial_plex_update": {
             "type": "boolean",
             "description": "Skip Plex initial collection scan",

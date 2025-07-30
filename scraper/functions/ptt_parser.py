@@ -32,7 +32,8 @@ def parse_with_ptt(title: str) -> Dict[str, Any]:
             'seasons': result.get('seasons', []),
             'episodes': result.get('episodes', []),
             'site': result.get('site'),  # Store the site separately
-            'trash': result.get('trash', False)  # Include trash flag
+            'trash': result.get('trash', False),  # Include trash flag
+            'country': result.get('country')  # Include country code from PTT
         }
 
         

@@ -85,13 +85,7 @@ def rank_result_key(
 
     media_country = result.get('media_country_code')
     result_country = parsed_info.get('country')
-    if not result_country:
-        country_codes = {'AU': 'au', 'NZ': 'nz', 'UK': 'gb', 'US': 'us', 'CA': 'ca'}
-        title_parts = torrent_title.split()
-        for i, part in enumerate(title_parts):
-            if part.upper() in country_codes and (i > 0 and not part.lower() in title_parts[i-1].lower()):
-                result_country = country_codes[part.upper()]
-                break
+    # PTT parser already provides country codes, no need for fallback detection
     country_score = 0
     country_reason = "No country code matching applied"
     
@@ -338,6 +332,24 @@ def rank_result_key(
             language_score = -25 
             language_reason = f"Low similarity to translated title ({title_lang_sim:.2f} < {similarity_threshold_lang})"
 
+    # --- Language Code Ranking Logic ---
+    # Check if this result has language codes and adjust score accordingly
+    has_language_codes = result.get('has_language_codes', False)
+    detected_language_codes = result.get('detected_language_codes', [])
+    
+    # If the original title/aliases don't have language codes, prefer items without language codes
+    if not has_language_codes:
+        # Original doesn't have language codes - prefer items without language codes
+        language_score += 50  # Bonus for items without language codes
+        language_reason += f" + Bonus for no language codes (original has none)"
+    else:
+        # Original has language codes - this was already handled in filtering
+        # But we can still give a small bonus for having the expected language codes
+        if detected_language_codes:
+            language_score += 25  # Small bonus for having language codes when expected
+            language_reason += f" + Bonus for having language codes: {detected_language_codes}"
+    # --- End Language Code Ranking Logic ---
+
     normalized_language = language_score # Use the raw score
 
     # Apply weights
@@ -414,6 +426,19 @@ def rank_result_key(
     preferred_filter_score += out_score # Remember out_score is already negative if matched
     preferred_filter_out_breakdown = out_breakdown
 
+    # --- Language Code Penalties ---
+    language_code_penalty = 0
+    if result.get('language_code_mismatch_penalty'):
+        language_code_penalty += result['language_code_mismatch_penalty']
+        logging.info(f"Applied language code mismatch penalty: {result['language_code_mismatch_penalty']} for '{torrent_title}'")
+    if result.get('language_code_missing_penalty'):
+        language_code_penalty += result['language_code_missing_penalty']
+        logging.info(f"Applied language code missing penalty: {result['language_code_missing_penalty']} for '{torrent_title}'")
+    if result.get('language_code_unexpected_penalty'):
+        language_code_penalty += result['language_code_unexpected_penalty']
+        logging.info(f"Applied language code unexpected penalty: {result['language_code_unexpected_penalty']} for '{torrent_title}'")
+    # --- End Language Code Penalties ---
+
     # Combine scores
     total_score = (
         weighted_similarity +
@@ -428,7 +453,8 @@ def rank_result_key(
         (episode_match_score * 5) +
         multi_pack_score +
         single_episode_score +
-        preferred_filter_score
+        preferred_filter_score +
+        language_code_penalty
     )
 
     # Add points based on num_items
@@ -567,7 +593,8 @@ def rank_result_key(
                      f"{weighted_language:.2f} (lang) + {weighted_year_match:.2f} (year) + " +
                      f"{season_match_score * 5:.2f} (season) + {episode_match_score * 5:.2f} (ep) + " +
                      f"{multi_pack_score:.2f} (pack_bonus) + {single_episode_score:.2f} (single_ep_penalty) + " +
-                     f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type)")
+                     f"{preferred_filter_score:.2f} (pref_filter) + {content_type_score:.2f} (content_type) + " +
+                     f"{language_code_penalty:.2f} (lang_code_penalty)")
         logging.info(f"  Calculated Total Score (before rounding for breakdown): {total_score}")
         logging.info(f"--- End Detailed Score Debug for: {target_debug_title} ---")
     # --- END DEBUG LOGGING FOR SPECIFIC TITLE ---
@@ -590,6 +617,7 @@ def rank_result_key(
         'preferred_filter_in_breakdown': preferred_filter_in_breakdown, # Contains original patterns that matched
         'preferred_filter_out_breakdown': preferred_filter_out_breakdown, # Contains original patterns that matched
         'content_type_score': content_type_score,
+        'language_code_penalty': language_code_penalty, # Add language code penalties
         'total_score': round(total_score, 2)
     }
     # Add multi-pack information to the score breakdown

@@ -523,8 +523,9 @@
     }
 
     function generateQueueContent(queueName, items) {
+        // For count-only queues, return empty content since we only show the count
         if (queueName === 'Blacklisted' || queueName === 'Unreleased') {
-            return generateConsolidatedItems(items, queueName);
+            return ''; // Return empty string for count-only queues
         } else {
             return generateRegularItems(queueName, items);
         }
@@ -856,10 +857,14 @@
     
     function updateQueueContentsImmediate(data) {
         const perfStart = performance.now();
+        console.log('[PERF] updateQueueContentsImmediate started');
+        
         const queueContents = document.getElementById('queue-contents');
         const initializationStatus = document.getElementById('initialization-status');
         
         if (data.program_status === "Running") {
+            console.log('[PERF] Program status: Running');
+            
             if (initializationStatus) {
                 initializationStatus.style.display = 'none';
             }
@@ -904,17 +909,36 @@
             }
 
             // Check for changes to queue content
+            const hashStart = performance.now();
             const currentDataHash = JSON.stringify(data.contents);
+            console.log('[PERF] Hash calculation took:', (performance.now() - hashStart).toFixed(2) + 'ms');
+            
             if (lastProcessedData.hash === currentDataHash) {
+                console.log('[PERF] No changes detected, skipping DOM operations');
                 return; // No changes, skip expensive DOM operations
             }
             lastProcessedData.hash = currentDataHash;
             
+            const domClearStart = performance.now();
             queueContents.innerHTML = ''; // Clear previous content
+            console.log('[PERF] DOM clear took:', (performance.now() - domClearStart).toFixed(2) + 'ms');
             
-            queueOrder.forEach(backendQueueName => {
-                if (data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0) {
+            const queueProcessingStart = performance.now();
+            let queueCount = 0;
+            
+            queueOrder.forEach((backendQueueName, index) => {
+                const queueStart = performance.now();
+                
+                // Check if queue has items OR if it's a count-only queue with a count > 0
+                const hasItems = data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0;
+                const hasCount = data.queue_counts && data.queue_counts[backendQueueName] && data.queue_counts[backendQueueName] > 0;
+                const isCountOnlyQueue = backendQueueName === 'Blacklisted' || backendQueueName === 'Unreleased';
+                
+                if (hasItems || (isCountOnlyQueue && hasCount)) {
+                    queueCount++;
                     hasContent = true;
+                    
+                    const elementCreateStart = performance.now();
                     let queueDiv = document.createElement('div');
                     queueDiv.className = 'queue';
                     const displayQueueName = queueDisplayMapping[backendQueueName] || backendQueueName;
@@ -923,19 +947,29 @@
                     queueDiv.setAttribute('data-queue-name', backendQueueName);
                     queueDiv.id = queueDivId;
                     queueDiv.setAttribute('data-tooltip', `queues.${queueDivId}`);
+                    console.log('[PERF] Element creation for queue', backendQueueName, 'took:', (performance.now() - elementCreateStart).toFixed(2) + 'ms');
                     
-                    let isExpanded = localStorage.getItem('queue_' + backendQueueName) === 'expanded';
+                    // For count-only queues, always show as collapsed and disable expansion
+                    let isExpanded = false;
+                    if (!isCountOnlyQueue) {
+                        isExpanded = localStorage.getItem('queue_' + backendQueueName) === 'expanded';
+                    }
                     
                     const totalItems = data.queue_counts[backendQueueName];
                     
-                    // Cache the latest items for on-demand rendering
-                    queueDataCache[backendQueueName] = data.contents[backendQueueName];
+                    // For count-only queues, don't cache items since we don't show them
+                    if (!isCountOnlyQueue) {
+                        queueDataCache[backendQueueName] = data.contents[backendQueueName];
+                    }
 
-                    // Only generate item HTML if queue is currently expanded
-                    const queueItemsHtml = isExpanded ? generateQueueContent(backendQueueName, data.contents[backendQueueName]) : '';
+                    // Only generate item HTML if queue is currently expanded and not count-only
+                    const contentGenStart = performance.now();
+                    const queueItemsHtml = (isExpanded && !isCountOnlyQueue) ? generateQueueContent(backendQueueName, data.contents[backendQueueName]) : '';
+                    console.log('[PERF] Content generation for queue', backendQueueName, 'took:', (performance.now() - contentGenStart).toFixed(2) + 'ms');
 
+                    const innerHtmlStart = performance.now();
                     queueDiv.innerHTML = `
-                        <div class="queue-title" onclick="toggleQueue(this)">
+                        <div class="queue-title" onclick="${isCountOnlyQueue ? 'return false;' : 'toggleQueue(this);'}">
                             <span>${displayQueueName.replace(/_/g, ' ')}</span>
                             ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
                             <span class="queue-count">${totalItems} items</span>
@@ -944,10 +978,18 @@
                             ${queueItemsHtml}
                         </div>
                     `;
+                    console.log('[PERF] innerHTML assignment for queue', backendQueueName, 'took:', (performance.now() - innerHtmlStart).toFixed(2) + 'ms');
+                    
+                    const appendStart = performance.now();
                     queueContents.appendChild(queueDiv);
-                    // addTooltipEventListeners(queueDiv); // Commented out to see if it's causing issues
+                    console.log('[PERF] DOM append for queue', backendQueueName, 'took:', (performance.now() - appendStart).toFixed(2) + 'ms');
+                    
+                    console.log('[PERF] Total processing for queue', backendQueueName, 'took:', (performance.now() - queueStart).toFixed(2) + 'ms');
                 }
             });
+            
+            console.log('[PERF] All queue processing took:', (performance.now() - queueProcessingStart).toFixed(2) + 'ms');
+            console.log('[PERF] Processed', queueCount, 'queues');
 
             if (!hasContent) {
                 queueContents.innerHTML = '<p>Program is running, but no active contents in queues.</p>';
@@ -982,6 +1024,7 @@
             }
             updateFilenameVisibility();
         } else if (data.program_status === "Starting") {
+            console.log('[PERF] Program status: Starting');
             if (data.initialization_status) {
                 updateInitializationStatus(data.initialization_status);
             } else {
@@ -989,6 +1032,7 @@
             }
             queueContents.style.display = 'none';
         } else if (data.program_status === "Stopped" || data.program_status === "Stopping") {
+            console.log('[PERF] Program status:', data.program_status);
             if (initializationStatus) {
                 initializationStatus.style.display = 'none';
             }
@@ -1002,7 +1046,7 @@
             console.log("Received unhandled program status:", data.program_status);
         }
         // --- Performance logging for render ---
-        console.log('[PERF] updateQueueContentsImmediate:', (performance.now() - perfStart).toFixed(2) + 'ms');
+        console.log('[PERF] updateQueueContentsImmediate total time:', (performance.now() - perfStart).toFixed(2) + 'ms');
     }
     
     function setupQueueStream() {
@@ -1010,18 +1054,24 @@
             eventSource.close();
         }
 
+        console.log('[PERF] Setting up queue stream with limit:', currentPageSize);
         eventSource = new EventSource(`/queues/api/queue-stream?limit=${currentPageSize}`);
         const loadingIndicator = document.getElementById('loading-indicator');
         
         eventSource.onmessage = function(event) {
             const msgStart = performance.now();
+            console.log('[PERF] EventSource message received at:', new Date().toISOString());
+            
             try {
                 // Defensive: Only parse if event.data looks like JSON
                 if (typeof event.data !== 'string' || !event.data.trim().startsWith('{')) {
                     console.warn('Skipping non-JSON event data:', event.data);
                     return; // Ignore this message
                 }
+                
+                const parseStart = performance.now();
                 const data = JSON.parse(event.data);
+                console.log('[PERF] JSON parsing took:', (performance.now() - parseStart).toFixed(2) + 'ms');
                 
                 // Reset reconnection attempts on successful parse
                 reconnectAttempts = 0;
@@ -1045,7 +1095,7 @@
 
                 // Use optimized update function
                 updateQueueContents(data);
-                console.log('[PERF] eventSource.onmessage processing:', (performance.now() - msgStart).toFixed(2) + 'ms');
+                console.log('[PERF] eventSource.onmessage total processing:', (performance.now() - msgStart).toFixed(2) + 'ms');
                 
             } catch (e) {
                 console.error('Error parsing queue data:', e);
@@ -1057,7 +1107,7 @@
         };
 
         eventSource.onopen = function() {
-            console.log('EventSource connection opened');
+            console.log('[PERF] EventSource connection opened at:', new Date().toISOString());
             reconnectAttempts = 0;
             reconnectDelay = 1000;
             
@@ -1069,7 +1119,7 @@
         };
 
         eventSource.onerror = function(error) {
-            console.error('EventSource failed:', error);
+            console.error('[PERF] EventSource failed:', error);
             handleConnectionError();
         };
     }
