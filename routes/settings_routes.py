@@ -1357,9 +1357,10 @@ def update_settings():
             from routes.debug_routes import get_cache_files
             cache_files = get_cache_files()
             if cache_files:
-                for file_info in cache_files:
-                    file_path = file_info.get('path')
-                    if file_path and os.path.exists(file_path):
+                db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+                for filename in cache_files:
+                    file_path = os.path.join(db_content_dir, filename)
+                    if os.path.exists(file_path):
                         try:
                             os.remove(file_path)
                             logging.info(f"Removed content source cache file: {file_path}")
@@ -2391,17 +2392,20 @@ def get_support_modal_status():
                 # Return both seen status and page views
                 return jsonify({
                     'hasSeenSupport': status.get('seen', False),
-                    'pageViews': status.get('pageViews', 0)
+                    'pageViews': status.get('pageViews', 0),
+                    'neverShowAgain': status.get('neverShowAgain', False)
                 })
         return jsonify({
             'hasSeenSupport': False,
-            'pageViews': 0
+            'pageViews': 0,
+            'neverShowAgain': False
         })
     except Exception as e:
         logging.error(f"Error checking support modal status: {str(e)}")
         return jsonify({
             'hasSeenSupport': False,
-            'pageViews': 0
+            'pageViews': 0,
+            'neverShowAgain': False
         })
 
 @settings_bp.route('/api/support-modal-seen', methods=['POST'])
@@ -2415,11 +2419,19 @@ def mark_support_modal_seen():
         # Save the status
         status_file = os.path.join(db_content_dir, 'support_modal.json')
         
+        # Load existing status to preserve page views
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                existing_status = json.load(f)
+                current_page_views = existing_status.get('pageViews', 0)
+        else:
+            current_page_views = 0
+        
         # Create the file with proper permissions
         with open(status_file, 'w', encoding='utf-8') as f:
             json.dump({
                 'seen': True,
-                'pageViews': 0,  # Reset page views when marked as seen
+                'pageViews': current_page_views,  # Preserve page views when marked as seen
                 'timestamp': datetime.now().isoformat()
             }, f, indent=4)
         
@@ -2427,6 +2439,32 @@ def mark_support_modal_seen():
         return jsonify({'success': True})
     except Exception as e:
         logging.error(f"Error saving support modal status: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/support-modal-never-show', methods=['POST'])
+@admin_required
+def mark_support_modal_never_show():
+    try:
+        # Ensure db_content directory exists
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        os.makedirs(db_content_dir, exist_ok=True)
+        
+        # Save the status
+        status_file = os.path.join(db_content_dir, 'support_modal.json')
+        
+        # Create the file with proper permissions
+        with open(status_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'seen': True,
+                'neverShowAgain': True,
+                'pageViews': 0,  # Reset page views when marked as never show
+                'timestamp': datetime.now().isoformat()
+            }, f, indent=4)
+        
+        logging.info("Support modal marked as never show again")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error saving support modal never show status: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/api/support-modal-pageview', methods=['POST'])
@@ -2448,8 +2486,8 @@ def increment_pageview():
                 'timestamp': datetime.now().isoformat()
             }
         
-        # Only increment if not already seen
-        if not status.get('seen', False):
+        # Only increment if not marked as never show again
+        if not status.get('neverShowAgain', False):
             status['pageViews'] = status.get('pageViews', 0) + 1
             
             # Save updated status
@@ -2459,7 +2497,8 @@ def increment_pageview():
         return jsonify({
             'success': True,
             'pageViews': status['pageViews'],
-            'hasSeenSupport': status.get('seen', False)
+            'hasSeenSupport': status.get('seen', False),
+            'neverShowAgain': status.get('neverShowAgain', False)
         })
     except Exception as e:
         logging.error(f"Error incrementing page views: {str(e)}", exc_info=True)

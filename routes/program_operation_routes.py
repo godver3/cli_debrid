@@ -309,6 +309,42 @@ def check_service_connectivity():
                 services_reachable = False
                 failed_services_details.append({"service": "Plex (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
+        # Check Jellyfin/Emby connectivity for symlink updates if enabled
+        jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
+        jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
+        
+        if jellyfin_url and jellyfin_token:
+            try:
+                # Ensure URL ends with a slash
+                if not jellyfin_url.endswith('/'):
+                    jellyfin_url += '/'
+                
+                system_info_url = f"{jellyfin_url}System/Info"
+                
+                headers = {
+                    'X-Emby-Token': jellyfin_token,
+                    'Accept': 'application/json'
+                }
+                
+                response = api.get(system_info_url, headers=headers, timeout=5)
+                response.raise_for_status()
+                
+                # Verify we got a valid Jellyfin/Emby response
+                server_info = response.json()
+                if not server_info.get('ServerName') or not server_info.get('Version'):
+                    error_msg = "Invalid Jellyfin/Emby response for symlink updates - token may be incorrect"
+                    logging.error(error_msg)
+                    services_reachable = False
+                    failed_services_details.append({"service": "Jellyfin/Emby (for symlink updates)", "type": "INVALID_TOKEN", "message": error_msg})
+                else:
+                    services_reachable = True  # Set to True when Jellyfin/Emby is reachable
+                    logging.debug(f"Jellyfin/Emby connectivity check passed (Server: {server_info.get('ServerName', 'Unknown')})")
+            except (RequestException, ValueError) as e:
+                error_msg = f"Cannot connect to Jellyfin/Emby server for symlink updates. Error: {str(e)}"
+                logging.error(error_msg)
+                services_reachable = False
+                failed_services_details.append({"service": "Jellyfin/Emby (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
+
     # Check Plex connectivity and libraries
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         try:
@@ -424,15 +460,54 @@ def check_service_connectivity():
         failed_services_details.append({"service": f"Unknown debrid provider ({debrid_provider})", "type": "CONFIG_ERROR", "message": "Invalid Debrid provider configured."})
 
     # Check Metadata Battery connectivity and Trakt authorization
+    logging.info("=== METADATA BATTERY CONNECTIVITY CHECK START ===")
     try:
+        # Log the URL being used
+        logging.info(f"Metadata Battery URL from settings: {metadata_battery_url_from_settings}")
+        
         # The metadata_battery_url_from_settings should be complete (host and port)
         # No need to reconstruct it.
         if not metadata_battery_url_from_settings:
+            logging.error("Metadata Battery URL not configured in settings")
             raise RequestException("Metadata Battery URL not configured in settings.")
 
-        response = api.get(f"{metadata_battery_url_from_settings}/check_trakt_auth", timeout=5)
+        # Log the exact request being made
+        request_url = f"{metadata_battery_url_from_settings}/check_trakt_auth"
+        logging.info(f"Making request to: {request_url}")
+        logging.info(f"Using APITracker session: {type(api).__name__}")
+        logging.info(f"APITracker session headers: {dict(api.session.headers)}")
+        
+        # Log request timing
+        import time
+        request_start = time.time()
+        
+        response = api.get(request_url, timeout=5)
+        
+        request_duration = time.time() - request_start
+        logging.info(f"Request completed in {request_duration:.3f}s")
+        logging.info(f"Response status: {response.status_code}")
+        logging.info(f"Response headers: {dict(response.headers)}")
+        
+        # Log response details
+        try:
+            response_text = response.text
+            logging.info(f"Response body length: {len(response_text)} characters")
+            logging.info(f"Response body preview: {response_text[:200]}...")
+        except Exception as e:
+            logging.error(f"Error reading response body: {e}")
+        
         response.raise_for_status()
-        trakt_status = response.json().get('status')
+        
+        # Parse JSON response
+        try:
+            response_json = response.json()
+            logging.info(f"Response JSON: {response_json}")
+            trakt_status = response_json.get('status')
+            logging.info(f"Trakt status from response: {trakt_status}")
+        except Exception as e:
+            logging.error(f"Error parsing JSON response: {e}")
+            trakt_status = None
+        
         if trakt_status != 'authorized':
             logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
             
@@ -442,9 +517,17 @@ def check_service_connectivity():
                 logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
                 # Re-check the authorization status
                 try:
-                    response = api.get(f"{metadata_battery_url_from_settings}/check_trakt_auth", timeout=5)
+                    logging.info("Making re-check request after auto-reauth...")
+                    recheck_start = time.time()
+                    response = api.get(request_url, timeout=5)
+                    recheck_duration = time.time() - recheck_start
+                    logging.info(f"Re-check request completed in {recheck_duration:.3f}s")
+                    logging.info(f"Re-check response status: {response.status_code}")
+                    
                     response.raise_for_status()
                     trakt_status = response.json().get('status')
+                    logging.info(f"Re-check Trakt status: {trakt_status}")
+                    
                     if trakt_status == 'authorized':
                         logging.info("Trakt authorization restored after automatic re-authentication.")
                     else:
@@ -457,6 +540,9 @@ def check_service_connectivity():
                         })
                 except Exception as recheck_error:
                     logging.error(f"Error re-checking Trakt authorization after auto-reauth: {recheck_error}")
+                    if hasattr(recheck_error, 'response') and recheck_error.response is not None:
+                        logging.error(f"Re-check error response status: {recheck_error.response.status_code}")
+                        logging.error(f"Re-check error response text: {recheck_error.response.text}")
                     services_reachable = False
                     failed_services_details.append({
                         "service": "Trakt",
@@ -478,15 +564,46 @@ def check_service_connectivity():
                     "type": "UNAUTHORIZED",
                     "message": error_message
                 })
-    except RequestException as e:
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Failed to connect to Metadata Battery: {e.response.status_code} {e.response.reason}")
-            logging.error(f"Response content: {e.response.text}")
         else:
-            logging.error(f"Failed to connect to Metadata Battery: {str(e)}")
+            logging.info("Metadata Battery connectivity check successful - Trakt is authorized")
+            
+    except RequestException as e:
+        logging.error("=== METADATA BATTERY REQUEST EXCEPTION ===")
+        logging.error(f"Exception type: {type(e).__name__}")
+        logging.error(f"Exception message: {str(e)}")
+        
+        if hasattr(e, 'response') and e.response is not None:
+            logging.error(f"Response status code: {e.response.status_code}")
+            logging.error(f"Response reason: {e.response.reason}")
+            logging.error(f"Response URL: {e.response.url}")
+            logging.error(f"Response headers: {dict(e.response.headers)}")
+            logging.error(f"Response content: {e.response.text}")
+            
+            # Log additional response details
+            try:
+                logging.error(f"Response encoding: {e.response.encoding}")
+                logging.error(f"Response apparent encoding: {e.response.apparent_encoding}")
+            except Exception as enc_error:
+                logging.error(f"Error getting response encoding: {enc_error}")
+        else:
+            logging.error("No response object in exception")
+            logging.error(f"Exception args: {e.args}")
+        
         services_reachable = False
         status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
         failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": status_code, "message": str(e)})
+        
+    except Exception as e:
+        logging.error("=== METADATA BATTERY UNEXPECTED EXCEPTION ===")
+        logging.error(f"Unexpected exception type: {type(e).__name__}")
+        logging.error(f"Unexpected exception message: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        services_reachable = False
+        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
+    
+    logging.info("=== METADATA BATTERY CONNECTIVITY CHECK END ===")
 
     return services_reachable, failed_services_details
 

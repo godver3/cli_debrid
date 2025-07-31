@@ -315,7 +315,9 @@
         .support-icon-link {
             color: white;
             font-size: 1.5em;
-            transition: transform 0.3s ease, color 0.3s ease;
+            transition: transform 0.3s ease, color 0.8s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .support-icon-link:hover {
@@ -332,6 +334,27 @@
 
         .support-icon-link.github:hover {
             color: #fe8e86; /* GitHub Sponsors color */
+        }
+
+        .support-icon-link.discord:hover {
+            color: #7289DA; /* Discord brand color */
+        }
+
+        /* Brand color classes for fade effect */
+        .support-icon-link.fade-github {
+            color: #fe8e86 !important; /* GitHub Sponsors color */
+        }
+
+        .support-icon-link.fade-patreon {
+            color: #FF424D !important; /* Patreon brand color */
+        }
+
+        .support-icon-link.fade-kofi {
+            color: #29ABE0 !important; /* Ko-fi brand color */
+        }
+
+        .support-icon-link.fade-discord {
+            color: #7289DA !important; /* Discord brand color */
         }
 
         /* Modal adjustments */
@@ -420,6 +443,33 @@
             margin-top: 15px;
             color: #aaa;
             font-style: italic;
+        }
+
+        .support-modal-actions {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .never-show-again-btn {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .never-show-again-btn:hover {
+            background-color: #5a6268;
+        }
+
+        .never-show-again-btn i {
+            font-size: 0.9em;
         }
 
         .modal-controls {
@@ -806,13 +856,15 @@
                     const data = await response.json();
                     return {
                         hasSeenSupport: data.hasSeenSupport,
-                        pageViews: data.pageViews
+                        pageViews: data.pageViews,
+                        neverShowAgain: data.neverShowAgain
                     };
                 } catch (error) {
                     console.error('Error checking support modal status:', error);
                     return {
                         hasSeenSupport: false,
-                        pageViews: 0
+                        pageViews: 0,
+                        neverShowAgain: false
                     };
                 }
             }
@@ -830,7 +882,8 @@
                     const data = await response.json();
                     return {
                         pageViews: data.pageViews,
-                        hasSeenSupport: data.hasSeenSupport
+                        hasSeenSupport: data.hasSeenSupport,
+                        neverShowAgain: data.neverShowAgain
                     };
                 } catch (error) {
                     console.error('Error incrementing page views:', error);
@@ -853,36 +906,98 @@
                 }
             }
 
+            // Mark support modal as never show again via API
+            async function markSupportModalNeverShow() {
+                try {
+                    await fetch('/settings/api/support-modal-never-show', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                } catch (error) {
+                    console.error('Error marking support modal as never show:', error);
+                }
+            }
+
             // Show support modal if conditions are met
             async function handleSupportModal() {
-                let hasPhalanxAccepted = await checkPhalanxStatus();
-                let { hasSeenSupport, pageViews } = await checkSupportModalStatus();
+                console.log('=== Support Modal Check Started ===');
+                
+                let { hasSeenSupport, pageViews, neverShowAgain } = await checkSupportModalStatus();
+                console.log('Initial support modal status:', {
+                    hasSeenSupport,
+                    pageViews,
+                    neverShowAgain
+                });
 
-                // Increment page views if not already seen
-                if (hasPhalanxAccepted && !hasSeenSupport) {
+                // Increment page views if not never show again
+                if (!neverShowAgain) {
+                    console.log('Incrementing page views (neverShowAgain is false)');
                     const result = await incrementPageViews();
                     if (result) {
                         pageViews = result.pageViews;
                         hasSeenSupport = result.hasSeenSupport;
+                        neverShowAgain = result.neverShowAgain;
+                        console.log('Updated values after page view increment:', {
+                            pageViews,
+                            hasSeenSupport,
+                            neverShowAgain
+                        });
                     }
+                } else {
+                    console.log('Skipping page view increment (neverShowAgain is true)');
                 }
 
-                console.log('Support modal conditions:', {
-                    hasPhalanxAccepted,
+                console.log('Final support modal conditions:', {
                     hasSeenSupport,
-                    pageViews
+                    pageViews,
+                    neverShowAgain
                 });
 
-                // Temporarily disable the support modal by adding '&& false'
-                if (hasPhalanxAccepted && !hasSeenSupport && pageViews >= 100 && false) {
+                // Calculate random chance (100% for testing, can be adjusted later)
+                const baseChance = 0.01;
+                const pageViewBonus = pageViews * 0.0005; // 0.05% increase per page view
+                const totalChance = Math.min(baseChance + pageViewBonus, 1.0); // Cap at 100%
+                
+                console.log('Chance calculation:', {
+                    baseChance,
+                    pageViews,
+                    pageViewBonus,
+                    totalChance
+                });
+                
+                // Generate random number and check if we should show the modal
+                const randomValue = Math.random();
+                const shouldShow = randomValue <= totalChance;
+
+                console.log('Support modal random check:', {
+                    randomValue,
+                    totalChance,
+                    shouldShow
+                });
+
+                // Show support modal if conditions are met
+                if (!neverShowAgain && shouldShow) {
+                    console.log('✅ SUPPORT MODAL WILL SHOW - Conditions met!');
                     console.log('Showing support modal in 2 seconds...');
                     setTimeout(() => {
-                        console.log('Attempting to show support modal now');
+                        console.log('🎉 Attempting to show support modal now');
                         supportModal.style.display = 'block';
                         document.body.classList.add('modal-open'); // Add class for support modal
                         markSupportModalSeen();
                     }, 2000);
+                } else {
+                    console.log('❌ SUPPORT MODAL WILL NOT SHOW');
+                    if (neverShowAgain) {
+                        console.log('Reason: neverShowAgain is true');
+                    } else if (!shouldShow) {
+                        console.log('Reason: Random chance check failed');
+                    }
                 }
+                
+                console.log('=== Support Modal Check Completed ===');
             }
 
             // Initialize support modal handling
@@ -897,6 +1012,19 @@
                 });
             } else {
                 console.warn('Support modal close button not found');
+            }
+
+            // Never Show Again Button Handler
+            const neverShowAgainBtn = document.getElementById('neverShowAgainBtn');
+            if (neverShowAgainBtn) {
+                neverShowAgainBtn.addEventListener('click', async function() {
+                    console.log('Never show again button clicked');
+                    await markSupportModalNeverShow();
+                    supportModal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
+                });
+            } else {
+                console.warn('Never show again button not found');
             }
 
             // MDBList Popup Logic
@@ -1234,6 +1362,47 @@
                 });
             })();
             /* --- End Disable Evil Version Button Logic --- */
+
+            /* --- Support Icons Color Fade Effect --- */
+            (function() {
+                const supportIcons = document.querySelectorAll('.support-icon-link');
+                if (supportIcons.length === 0) return;
+
+                const brandColors = ['fade-github', 'fade-patreon', 'fade-kofi', 'fade-discord'];
+
+                function triggerColorFade() {
+                    // Randomly select one or two icons to fade
+                    const iconsToFade = Math.random() < 0.5 ? 1 : 2;
+                    const shuffledIcons = Array.from(supportIcons).sort(() => Math.random() - 0.5);
+                    
+                    for (let i = 0; i < Math.min(iconsToFade, supportIcons.length); i++) {
+                        const icon = shuffledIcons[i];
+                        // Randomly select a brand color
+                        const randomColor = brandColors[Math.floor(Math.random() * brandColors.length)];
+                        
+                        // Add the fade class
+                        icon.classList.add(randomColor);
+                        
+                        // Remove fade class after animation completes (1.5 seconds total)
+                        setTimeout(() => {
+                            icon.classList.remove(randomColor);
+                        }, 1500);
+                    }
+                }
+
+                // Trigger color fade every 10-20 seconds randomly
+                function scheduleNextColorFade() {
+                    const delay = Math.random() * 10000 + 10000; // 10-20 seconds
+                    setTimeout(() => {
+                        triggerColorFade();
+                        scheduleNextColorFade();
+                    }, delay);
+                }
+
+                // Start the color fade cycle after a short initial delay
+                setTimeout(scheduleNextColorFade, 4000);
+            })();
+            /* --- End Support Icons Color Fade Effect --- */
         });
     </script>
 </head>
@@ -1300,6 +1469,7 @@
                         ('root.root', 'Home'),
                         ('scraper.index', 'Add Media'),
                         ('queues.index', 'Queues'),
+                        ('program_operation.task_timings', 'Task Manager'),
                         ('statistics.calendar_view', 'Calendar'),
                         ('wiki', 'Wiki', 'https://github.com/godver3/cli_debrid/wiki')
                     ],
@@ -1319,7 +1489,6 @@
                         ('scraper.scraper_tester', 'Tester'),
                         ('debug.debug_functions', 'Debug'),
                         ('database.reverse_parser', 'R. Parser'),
-                        ('program_operation.task_timings', 'Task Manager'),
                         ('magnet.assign_magnet', 'M. Assign'),
                         ('debug.manual_blacklist', 'M. Blacklist'),
                         ('debug.torrent_tracking', 'T. Tracker'),
@@ -1567,6 +1736,7 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
@@ -1582,16 +1752,17 @@
             </div>
             <div class="modal-body">
                 <div class="support-modal-content">
-                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. To provide the best possible experience, we utilize:</p>
-                    <ul>
-                        <li>AI models for development</li>
-                        <li>Regular updates and optimizations</li>
-                    </ul>
+                    <div style="text-align: center; margin-left: 150px; margin-right: 150px; text-align: left;">
+                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. I use AI models that aren't cheap, and provide countless hours of support.</p>
                     <p>Your support helps cover these costs and enables:</p>
                     <ul>
                         <li>Faster development of new features</li>
                         <li>Continued growth of the project</li>
                     </ul>
+                    </div>
+                    <div style="text-align: right; font-style: italic; margin-right: 150px;">
+                        <p>- godver3</p>
+                    </div>
                     <div class="support-cta">
                         <a href="https://github.com/sponsors/godver3" target="_blank" class="patreon-button" style="background-color: #fe8e86;">
                             <i class="fab fa-github"></i>
@@ -1605,10 +1776,14 @@
                             <i class="fas fa-mug-hot"></i>
                             Support on Ko-fi
                         </a>
-                        <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" class="support-icon-link discord" title="Join our Discord">
-                            <i class="fab fa-discord"></i>
-                        </a>
+
                         <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
+                        <div class="support-modal-actions">
+                            <button id="neverShowAgainBtn" class="never-show-again-btn">
+                                <i class="fas fa-ban"></i>
+                                Never Show Again
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

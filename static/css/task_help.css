@@ -1,0 +1,202 @@
+/* Task Help System Styles */
+
+/* Help Icon */
+.task-help-icon {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    background-color: rgba(0, 123, 255, 0.8);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    z-index: 10;
+    font-size: 10px;
+    color: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.task-help-icon:hover {
+    background-color: rgba(0, 123, 255, 1);
+    transform: scale(1.1);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+.task-help-icon i {
+    font-size: 10px;
+}
+
+/* Disabled task tiles - dim the help icon */
+.task-tile.disabled .task-help-icon {
+    background-color: rgba(108, 117, 125, 0.6);
+    opacity: 0.7;
+}
+
+.task-tile.disabled .task-help-icon:hover {
+    background-color: rgba(108, 117, 125, 0.8);
+}
+
+/* Help Popup */
+.task-help-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(2px);
+    animation: taskHelpFadeIn 0.2s ease-out;
+}
+
+@keyframes taskHelpFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.task-help-modal {
+    background-color: #2c2c2c;
+    border: 1px solid #444;
+    border-radius: 10px;
+    max-width: 400px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    animation: taskHelpSlideIn 0.3s ease-out;
+}
+
+@keyframes taskHelpSlideIn {
+    from {
+        transform: translateY(-20px) scale(0.95);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+
+.task-help-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #444;
+    background-color: #333;
+    border-radius: 10px 10px 0 0;
+}
+
+.task-help-modal-header h3 {
+    margin: 0;
+    color: #f4f4f4;
+    font-size: 1.1em;
+    font-weight: 500;
+}
+
+.task-help-modal-close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 1.5em;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: all 0.2s ease;
+}
+
+.task-help-modal-close:hover {
+    background-color: #444;
+    color: #f4f4f4;
+}
+
+.task-help-modal-body {
+    padding: 1.5rem;
+    color: #f4f4f4;
+    line-height: 1.6;
+}
+
+.task-help-modal-body p {
+    margin: 0;
+    font-size: 0.95em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .task-help-modal {
+        width: 95%;
+        max-width: none;
+        margin: 1rem;
+    }
+    
+    .task-help-modal-header {
+        padding: 0.75rem 1rem;
+    }
+    
+    .task-help-modal-body {
+        padding: 1rem;
+    }
+    
+    .task-help-modal-header h3 {
+        font-size: 1em;
+    }
+}
+
+/* Ensure task tiles have relative positioning for absolute help icon */
+.task-tile {
+    position: relative;
+}
+
+/* Focus styles for accessibility */
+.task-help-modal-close:focus {
+    outline: 2px solid #007bff;
+    outline-offset: 2px;
+}
+
+.task-help-icon:focus {
+    outline: 2px solid #007bff;
+    outline-offset: 2px;
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .task-help-icon {
+        background-color: #000;
+        border: 2px solid #fff;
+    }
+    
+    .task-help-modal {
+        border: 2px solid #fff;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    .task-help-overlay {
+        animation: none;
+    }
+    
+    .task-help-modal {
+        animation: none;
+    }
+    
+    .task-help-icon {
+        transition: none;
+    }
+} 

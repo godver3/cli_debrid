@@ -364,7 +364,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 const bitrateInline = formatBitrateInline(torrent.bitrate);
                 
                 torResDiv.innerHTML = `
-                    <button ${isFilteredOut ? 'disabled style="cursor:default;"' : ''}>
+                    <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
                         <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
@@ -376,16 +376,33 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     </div>
                     </button>             
                 `;
-                if (!isFilteredOut) {
-                    torResDiv.onclick = function() {
-                        const torrentData = {
-                            title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
-                            genres: genre_ids, original_title: torrent.original_title // Pass original_title
-                        };
-                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                
+                // Add click handler for all items (both filtered and non-filtered)
+                torResDiv.onclick = function() {
+                    const torrentData = {
+                        title: title, year: year, version: version, media_type: mediaType,
+                        season: season || null, episode: episode || null, tmdb_id: mediaId,
+                        genres: genre_ids, original_title: torrent.original_title // Pass original_title
                     };
-                }
+                    
+                    if (isFilteredOut) {
+                        // Show confirmation dialog for filtered items
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        showPopup({
+                            type: POPUP_TYPES.CONFIRM,
+                            title: 'Add Filtered Item?',
+                            message: confirmationMessage,
+                            confirmText: 'Add Anyway',
+                            onConfirm: () => {
+                                addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                            }
+                        });
+                    } else {
+                        // Standard behavior for non-filtered items
+                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                    }
+                };
+                
                 gridContainer.appendChild(torResDiv);
             });
             overlayContent.appendChild(gridContainer);

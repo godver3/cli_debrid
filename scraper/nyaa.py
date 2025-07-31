@@ -27,33 +27,25 @@ def _warp_proxy_context():
 
     proxy_url = os.environ.get("WARP_PROXY_URL", "http://warp:1080")
 
-    # Preserve any existing proxy settings so we can restore them later
-    original_http_proxy = os.environ.get("HTTP_PROXY")
-    original_https_proxy = os.environ.get("HTTPS_PROXY")
-
-    os.environ["HTTP_PROXY"] = proxy_url
-    os.environ["HTTPS_PROXY"] = proxy_url
+    # Create a separate session with proxy configuration instead of setting global env vars
+    proxy_session = requests.Session()
+    proxy_session.proxies = {
+        'http': proxy_url,
+        'https': proxy_url
+    }
 
     logging.debug(
-        "WARP proxy enabled for Nyaa request – using %s (original HTTP_PROXY=%s, HTTPS_PROXY=%s)",
-        proxy_url,
-        original_http_proxy,
-        original_https_proxy,
+        "WARP proxy enabled for Nyaa request – using %s with separate session",
+        proxy_url
     )
 
     try:
-        yield
+        # Yield the proxy session instead of setting global environment variables
+        yield proxy_session
     finally:
-        # Restore previous proxy settings
-        if original_http_proxy is not None:
-            os.environ["HTTP_PROXY"] = original_http_proxy
-        else:
-            os.environ.pop("HTTP_PROXY", None)
-
-        if original_https_proxy is not None:
-            os.environ["HTTPS_PROXY"] = original_https_proxy
-        else:
-            os.environ.pop("HTTPS_PROXY", None)
+        # Clean up the proxy session
+        proxy_session.close()
+        logging.debug("WARP proxy session closed")
 
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
@@ -201,9 +193,11 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
     for attempt in range(max_retries):
         try:
             logging.debug(f"Nyaa search attempt {attempt + 1}/{max_retries} for query: {query}")
-            # Enable proxy only for this outbound request
-            with _warp_proxy_context():
-                results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
+            
+            # Use the proxy context to get a session with proxy configuration
+            with _warp_proxy_context() as session:
+                # Use the session for the Nyaa search
+                results = _search_nyaa_with_session(query, category, subcategory, filters, session)
             return results
             
         except Exception as e:
@@ -240,7 +234,28 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
                     logging.error(f"Nyaa request failed with non-retryable error: {str(e)}")
                 raise
     
-    return []  # Should not reach here, but just in case
+    return []
+
+def _search_nyaa_with_session(query: str, category: int, subcategory: int, filters: int, session: requests.Session) -> List[Any]:
+    """Helper function to search Nyaa using a specific session."""
+    # Use the Nyaa library but with our custom session
+    # We need to monkey patch the requests session temporarily
+    import requests
+    
+    # Store the original session
+    original_session = requests.Session()
+    
+    try:
+        # Replace the global session temporarily
+        requests.Session = lambda: session
+        
+        # Now call the Nyaa search
+        results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
+        return results
+        
+    finally:
+        # Restore the original session
+        requests.Session = lambda: original_session
 
 def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     """Scrape Nyaa using nyaapy with proper error handling."""
