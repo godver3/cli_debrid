@@ -88,6 +88,7 @@ def update_release_date_and_state(
         airtime: str | None = None, 
         early_release: bool | None = None, 
         physical_release_date: str | None = None,
+        theatrical_release_date: str | None = None,
         no_early_release: bool | None = None  # Add the new flag parameter
     ):
     """Update the release date, state, and potentially airtime, early_release, physical_release_date, and no_early_release flag for a media item."""
@@ -114,6 +115,10 @@ def update_release_date_and_state(
         if physical_release_date is not None:
             set_clauses.append('physical_release_date = ?')
             params.append(physical_release_date)
+            
+        if theatrical_release_date is not None:
+            set_clauses.append('theatrical_release_date = ?')
+            params.append(theatrical_release_date)
             
         if no_early_release is not None:
             set_clauses.append('no_early_release = ?')

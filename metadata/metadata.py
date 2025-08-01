@@ -472,6 +472,27 @@ def get_physical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
 
     return min(physical_releases).strftime("%Y-%m-%d") if physical_releases else None
 
+def get_theatrical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
+    """Get the oldest theatrical release date for a movie."""
+    if not imdb_id:
+        return None
+
+    release_dates, _ = DirectAPI.get_movie_release_dates(imdb_id)
+    if not release_dates:
+        return None
+
+    theatrical_releases = []
+    for country, country_releases in release_dates.items():
+        for release in country_releases:
+            if release.get('type', '').lower() in ['theatrical', 'theatrical (limited)', 'limited'] and release.get('date'):
+                try:
+                    release_date = datetime.strptime(release.get('date'), "%Y-%m-%d")
+                    theatrical_releases.append(release_date)
+                except ValueError:
+                    continue
+
+    return min(theatrical_releases).strftime("%Y-%m-%d") if theatrical_releases else None
+
 def get_show_status(imdb_id: str) -> str:
     """Get the status of a TV show from Trakt."""
     # Use the existing trakt_metadata_instance
@@ -716,6 +737,9 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                 if item_media_type_lower == 'movie':
                     physical_release_date = get_physical_release_date(imdb_id)
                     if physical_release_date: current_item_metadata['physical_release_date'] = physical_release_date
+                    
+                    theatrical_release_date = get_theatrical_release_date(imdb_id)
+                    if theatrical_release_date: current_item_metadata['theatrical_release_date'] = theatrical_release_date
                     
                     current_item_genres = current_item_metadata.get('genres', [])
                     is_anime_movie = 'anime' in [str(g).lower() for g in current_item_genres]
@@ -1045,6 +1069,7 @@ def refresh_release_dates():
 
             new_release_date = None
             new_physical_release_date = None
+            new_theatrical_release_date = None
             new_airtime = None
 
             if media_type == 'movie':
@@ -1057,11 +1082,14 @@ def refresh_release_dates():
                     else:
                         new_release_date = 'Unknown'
                     new_physical_release_date = None
+                    new_theatrical_release_date = None
                 else:
-                    logging.info("Getting release date and physical release date")
+                    logging.info("Getting release date, physical release date, and theatrical release date")
                     fetched_release_date = get_release_date(metadata, imdb_id)
                     new_physical_release_date = get_physical_release_date(imdb_id)
+                    new_theatrical_release_date = get_theatrical_release_date(imdb_id)
                     logging.info(f"Physical release date: {new_physical_release_date}")
+                    logging.info(f"Theatrical release date: {new_theatrical_release_date}")
 
                     if fetched_release_date == 'Unknown' and is_valid_date_str(existing_release_date):
                         new_release_date = existing_release_date
@@ -1071,6 +1099,7 @@ def refresh_release_dates():
 
                 item_dict['early_release_original'] = item_dict.get('early_release', False)
                 item_dict['physical_release_date_original'] = item_dict.get('physical_release_date')
+                item_dict['theatrical_release_date_original'] = item_dict.get('theatrical_release_date')
                 trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
                 skip_early_release_check = item_dict.get('no_early_release', False)
                 if trakt_early_releases and not skip_early_release_check:
@@ -1243,7 +1272,8 @@ def refresh_release_dates():
                 (media_type == 'episode' and new_airtime != item_dict.get('airtime')) or
                 item_dict.get('early_release', False) != item_dict.get('early_release_original', False) or
                 item_dict.get('no_early_release', False) != item_dict.get('no_early_release_original', False) or
-                (media_type == 'movie' and new_physical_release_date != item_dict.get('physical_release_date_original'))):
+                (media_type == 'movie' and new_physical_release_date != item_dict.get('physical_release_date_original')) or
+                (media_type == 'movie' and new_theatrical_release_date != item_dict.get('theatrical_release_date_original'))):
 
                 logging.info(f"Changes detected for {title} (DB ID: {db_item_id}). Current state: {item_dict['state']}, New state: {new_state}. Updating database.")
                 item_dict['no_early_release_original'] = item_dict.get('no_early_release', False)
@@ -1251,10 +1281,13 @@ def refresh_release_dates():
                     db_item_id, new_release_date, new_state, airtime=new_airtime,
                     early_release=item_dict.get('early_release', False),
                     physical_release_date=new_physical_release_date if media_type == 'movie' else None,
+                    theatrical_release_date=new_theatrical_release_date if media_type == 'movie' else None,
                     no_early_release=item_dict.get('no_early_release', False)
                 )
                 log_msg = f"Updated DB for ID {db_item_id}: State={new_state}, ReleaseDate={new_release_date}"
-                if media_type == 'movie': log_msg += f" and physical release date of: {new_physical_release_date}"
+                if media_type == 'movie': 
+                    log_msg += f" and physical release date of: {new_physical_release_date}"
+                    log_msg += f" and theatrical release date of: {new_theatrical_release_date}"
                 if media_type == 'episode': log_msg += f" and airtime of: {new_airtime}"
                 logging.info(log_msg)
             else:

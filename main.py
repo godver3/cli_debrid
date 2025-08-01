@@ -1013,6 +1013,83 @@ def migrate_content_source_versions():
     except Exception as e:
         logging.error(f"Unexpected error during content source version migration: {e}", exc_info=True)
 
+def migrate_theatrical_release_dates():
+    """
+    Migrates theatrical release dates for all movie items using the direct API.
+    Runs synchronously to ensure completion before app startup.
+    """
+    try:
+        from database.core import get_db_connection
+        from cli_battery.app.direct_api import DirectAPI
+        from metadata.metadata import get_theatrical_release_date
+        import time
+        
+        logging.info("Starting theatrical release date migration for movies...")
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all movie items that don't have theatrical_release_date set
+        cursor.execute("""
+            SELECT id, imdb_id, title, year 
+            FROM media_items 
+            WHERE type = 'movie' 
+            AND theatrical_release_date IS NULL
+            AND imdb_id IS NOT NULL
+        """)
+        
+        movies_to_update = cursor.fetchall()
+        total_movies = len(movies_to_update)
+        
+        if total_movies == 0:
+            logging.info("No movies found needing theatrical release date migration.")
+            return
+        
+        logging.info(f"Found {total_movies} movies to update with theatrical release dates.")
+        
+        updated_count = 0
+        error_count = 0
+        
+        for i, (item_id, imdb_id, title, year) in enumerate(movies_to_update):
+            try:
+                # Get movie metadata from direct API
+                metadata, source = DirectAPI.get_movie_metadata(imdb_id)
+                
+                if not metadata:
+                    logging.warning(f"No metadata found for {title} ({imdb_id})")
+                    error_count += 1
+                    continue
+                
+                # Use our new function to get theatrical release date
+                theatrical_date = get_theatrical_release_date(imdb_id)
+                
+                # Update the database if we found a theatrical date
+                if theatrical_date:
+                    cursor.execute("""
+                        UPDATE media_items 
+                        SET theatrical_release_date = ? 
+                        WHERE id = ?
+                    """, (theatrical_date, item_id))
+                    updated_count += 1
+                    
+                    if (i + 1) % 10 == 0:  # Log progress every 10 items
+                        logging.info(f"Theatrical release migration progress: {i + 1}/{total_movies} (updated: {updated_count}, errors: {error_count})")
+                
+            except Exception as e:
+                logging.error(f"Error processing movie {title} ({imdb_id}): {str(e)}")
+                error_count += 1
+        
+        # Commit all changes
+        conn.commit()
+        
+        logging.info(f"Theatrical release date migration completed. Updated: {updated_count}, Errors: {error_count}, Total processed: {total_movies}")
+        
+    except Exception as e:
+        logging.error(f"Error during theatrical release date migration: {str(e)}", exc_info=True)
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
 def main():
     # Remove global program_runner from here as well
     global metadata_process 
@@ -1082,6 +1159,9 @@ def main():
 
     # Run content source version migration after main schema is ready
     migrate_content_source_versions()
+
+    # Run theatrical release date migration for movies
+    migrate_theatrical_release_dates()
 
     # Initialize statistics tables/indexes AFTER main schema is verified
     try:

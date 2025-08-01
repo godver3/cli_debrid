@@ -1499,14 +1499,22 @@ def add_version():
         'similarity_weight': 3,
         'size_weight': 3,
         'bitrate_weight': 3,
+        'min_size_gb': 0.01,
+        'max_size_gb': '',
+        'min_bitrate_mbps': 0.01,
+        'max_bitrate_mbps': '',
+        'similarity_threshold': 0.85,
+        'similarity_threshold_anime': 0.80,
+        'year_match_weight': 3,
+        'wake_count': None,
+        'fallback_version': 'None',
+        'anime_filter_mode': 'None',
         'preferred_filter_in': [],
         'preferred_filter_out': [],
         'filter_in': [],
         'filter_out': [],
-        'min_size_gb': 0.01,
-        'max_size_gb': '',
-        'wake_count': None,
-        'require_physical_release': False  # Add default require_physical_release setting
+        'require_physical_release': False,
+        'language_code': 'en'
     }
 
     save_config(config)
@@ -1744,9 +1752,13 @@ def duplicate_version():
     original_settings = config['Scraping']['versions'][version_id]
     new_settings = original_settings.copy()
     
-    # Ensure require_physical_release is included in the copy
-    if 'require_physical_release' not in new_settings:
-        new_settings['require_physical_release'] = False
+    # Get the version schema to ensure all required fields are present
+    version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+    
+    # Ensure all required fields are included in the copy
+    for field_name, field_schema in version_schema.items():
+        if field_name not in new_settings:
+            new_settings[field_name] = field_schema['default']
 
     config['Scraping']['versions'][new_version_id] = new_settings
     config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
@@ -2007,6 +2019,7 @@ def add_default_version():
             'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
             'size_weight': version_schema['size_weight']['default'],
             'bitrate_weight': version_schema['bitrate_weight']['default'],
+            'year_match_weight': version_schema['year_match_weight']['default'],
             'preferred_filter_in': version_schema['preferred_filter_in']['default'],
             'preferred_filter_out': version_schema['preferred_filter_out']['default'],
             'filter_in': version_schema['filter_in']['default'],
@@ -2016,7 +2029,10 @@ def add_default_version():
             'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
             'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
             'wake_count': version_schema['wake_count']['default'],
-            'require_physical_release': version_schema['require_physical_release']['default']
+            'fallback_version': version_schema['fallback_version']['default'],
+            'anime_filter_mode': version_schema['anime_filter_mode']['default'],
+            'require_physical_release': version_schema['require_physical_release']['default'],
+            'language_code': version_schema['language_code']['default']
         }
 
         # Add the default version while preserving existing versions
@@ -2056,6 +2072,7 @@ def add_separate_versions():
             'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
             'size_weight': version_schema['size_weight']['default'],
             'bitrate_weight': version_schema['bitrate_weight']['default'],
+            'year_match_weight': version_schema['year_match_weight']['default'],
             'preferred_filter_in': [],
             'preferred_filter_out': [],
             'filter_in': [],
@@ -2065,7 +2082,10 @@ def add_separate_versions():
             'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
             'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
             'wake_count': version_schema['wake_count']['default'],
-            'require_physical_release': version_schema['require_physical_release']['default']
+            'fallback_version': version_schema['fallback_version']['default'],
+            'anime_filter_mode': version_schema['anime_filter_mode']['default'],
+            'require_physical_release': version_schema['require_physical_release']['default'],
+            'language_code': version_schema['language_code']['default']
         }
 
         # Create 1080p version
@@ -2690,14 +2710,22 @@ def add_default_mdblists():
                 'similarity_weight': 3,
                 'size_weight': 3,
                 'bitrate_weight': 3,
+                'min_size_gb': 0.01,
+                'max_size_gb': '',
+                'min_bitrate_mbps': 0.01,
+                'max_bitrate_mbps': '',
+                'similarity_threshold': 0.85,
+                'similarity_threshold_anime': 0.80,
+                'year_match_weight': 3,
+                'wake_count': None,
+                'fallback_version': 'None',
+                'anime_filter_mode': 'None',
                 'preferred_filter_in': [],
                 'preferred_filter_out': [],
                 'filter_in': [],
                 'filter_out': [],
-                'min_size_gb': 0.01,
-                'max_size_gb': None,
-                'wake_count': None,
-                'require_physical_release': False
+                'require_physical_release': False,
+                'language_code': 'en'
             }
             available_versions = ['1080p']
             logging.info("Created default 1080p version for MDBLists")

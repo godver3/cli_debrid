@@ -999,13 +999,16 @@
                     let hiddenSummary = document.createElement('div');
                     hiddenSummary.className = 'hidden-items-summary';
                     let summaryText = '<h5>Additional Items Not Shown:</h5><ul>';
+                    let hasHiddenItems = false;
                     for (const [queueName, count] of Object.entries(hiddenCounts)) {
-                        if (count > 0) {
+                        // Skip Checking queue from hidden counts display
+                        if (count > 0 && queueName !== 'Checking') {
                             summaryText += `<li>${queueName.replace(/_/g, ' ')}: ${count} items</li>`;
+                            hasHiddenItems = true;
                         }
                     }
                     summaryText += '</ul>';
-                    if (Object.values(hiddenCounts).some(c => c > 0)) {
+                    if (hasHiddenItems) {
                         hiddenSummary.innerHTML = summaryText;
                         
                         // Add "Show More" button

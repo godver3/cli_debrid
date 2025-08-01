@@ -487,6 +487,8 @@ def queue_stream():
 
     # Apply a hard maximum limit to prevent abuse.
     ITEMS_LIMIT = min(limit, 500)
+    # Special limit for Checking queue to improve performance
+    CHECKING_QUEUE_LIMIT = 20
     DB_FETCH_QUEUES = {"Wanted", "Final_Check"}  # Removed Blacklisted and Unreleased
     COUNT_ONLY_QUEUES = {"Blacklisted", "Unreleased"}  # New set for count-only queues
     
@@ -563,11 +565,20 @@ def queue_stream():
                             queue_process_start = time.time()
                             total_count = len(items)
                             queue_counts[queue_name] = total_count
-                            hidden_count = max(0, total_count - ITEMS_LIMIT)
-                            if hidden_count > 0:
-                                hidden_counts[queue_name] = hidden_count
+                            
+                            # Use special limit for Checking queue to improve performance
+                            # Checking queue is limited to 20 items regardless of general page size
+                            if queue_name == 'Checking':
+                                limit_for_queue = CHECKING_QUEUE_LIMIT
+                                # Don't show hidden counts for Checking queue
+                                hidden_count = 0
+                            else:
+                                limit_for_queue = ITEMS_LIMIT
+                                hidden_count = max(0, total_count - ITEMS_LIMIT)
+                                if hidden_count > 0:
+                                    hidden_counts[queue_name] = hidden_count
 
-                            limited_items = items[:ITEMS_LIMIT]
+                            limited_items = items[:limit_for_queue]
 
                             # Process items in batches for better performance
                             processed_items = []

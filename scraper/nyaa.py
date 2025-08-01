@@ -22,10 +22,17 @@ def _warp_proxy_context():
     """Temporarily enable the WARP proxy (if in limited env) for the duration of the context."""
     if os.environ.get("CLI_DEBRID_ENVIRONMENT_MODE", "full") == "full":
         # No-op – yield immediately
-        yield
+        logging.info("WARP proxy not needed - running in full environment mode")
+        # Return a plain session for consistency
+        plain_session = requests.Session()
+        try:
+            yield plain_session
+        finally:
+            plain_session.close()
         return
 
     proxy_url = os.environ.get("WARP_PROXY_URL", "http://warp:1080")
+    logging.info("WARP proxy required - running in limited environment mode")
 
     # Create a separate session with proxy configuration instead of setting global env vars
     proxy_session = requests.Session()
@@ -34,7 +41,7 @@ def _warp_proxy_context():
         'https': proxy_url
     }
 
-    logging.debug(
+    logging.info(
         "WARP proxy enabled for Nyaa request – using %s with separate session",
         proxy_url
     )
@@ -45,7 +52,7 @@ def _warp_proxy_context():
     finally:
         # Clean up the proxy session
         proxy_session.close()
-        logging.debug("WARP proxy session closed")
+        logging.info("WARP proxy session closed")
 
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
@@ -195,6 +202,8 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
             logging.debug(f"Nyaa search attempt {attempt + 1}/{max_retries} for query: {query}")
             
             # Use the proxy context to get a session with proxy configuration
+            # Note: Each retry creates a new session. For high-frequency retries,
+            # consider implementing a session pool or keep-alive cache per thread.
             with _warp_proxy_context() as session:
                 # Use the session for the Nyaa search
                 results = _search_nyaa_with_session(query, category, subcategory, filters, session)
@@ -238,24 +247,73 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
 
 def _search_nyaa_with_session(query: str, category: int, subcategory: int, filters: int, session: requests.Session) -> List[Any]:
     """Helper function to search Nyaa using a specific session."""
-    # Use the Nyaa library but with our custom session
-    # We need to monkey patch the requests session temporarily
+    # Since the Nyaa library uses requests.get() directly and we can't easily modify it,
+    # we'll reimplement the search logic ourselves using our session
+    # This ensures complete isolation from the global requests library
+    
     import requests
+    from nyaapy.nyaasi.nyaa import Nyaa
+    from nyaapy.parser import parse_nyaa, parse_nyaa_rss
+    from nyaapy.torrent import json_to_class
     
-    # Store the original session
-    original_session = requests.Session()
+    # Reconstruct the search URL (same logic as Nyaa.search)
+    base_url = Nyaa.URL
+    user = None  # We don't use user searches
+    page = 0
+    sorting = "id"  # Sorting by id = sorting by date
+    order = "desc"
     
-    try:
-        # Replace the global session temporarily
-        requests.Session = lambda: session
-        
-        # Now call the Nyaa search
-        results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
-        return results
-        
-    finally:
-        # Restore the original session
-        requests.Session = lambda: original_session
+    user_uri = f"user/{user}" if user else ""
+    
+    if page > 0:
+        search_uri = "{}/{}?f={}&c={}_{}&q={}&p={}&s={}&o={}".format(
+            base_url,
+            user_uri,
+            filters,
+            category,
+            subcategory,
+            query,
+            page,
+            sorting,
+            order,
+        )
+    else:
+        search_uri = "{}/{}?f={}&c={}_{}&q={}&s={}&o={}".format(
+            base_url,
+            user_uri,
+            filters,
+            category,
+            subcategory,
+            query,
+            sorting,
+            order,
+        )
+    
+    if not user:
+        search_uri += "&page=rss"
+    
+    # Log proxy usage
+    if hasattr(session, 'proxies') and session.proxies:
+        logging.info(f"Nyaa using proxy: {session.proxies}")
+    else:
+        logging.info("Nyaa using direct connection (no proxy)")
+    
+    # Use our session to make the request
+    http_response = session.get(search_uri)
+    http_response.raise_for_status()
+    
+    # Parse the response using the same logic as Nyaa
+    if user:
+        json_data = parse_nyaa(
+            request_text=http_response.content, limit=None, site=Nyaa.SITE
+        )
+    else:
+        json_data = parse_nyaa_rss(
+            request_text=http_response.content, limit=None, site=Nyaa.SITE
+        )
+    
+    # Convert JSON data to Torrent objects (same as Nyaa)
+    return json_to_class(json_data)
 
 def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     """Scrape Nyaa using nyaapy with proper error handling."""

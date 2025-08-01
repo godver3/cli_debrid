@@ -901,8 +901,8 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                     base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
             # --- End MDBList Sample Fetch ---
 
-        # --- Trakt Sources (Watchlist, Lists, Friends, Collection) ---
-        elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist', 'Trakt Collection']:
+        # --- Trakt Sources (Watchlist, Lists, Friends, Collection, Special Lists) ---
+        elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist', 'Trakt Collection', 'Special Trakt Lists']:
             access_token = ensure_trakt_auth()
             if not access_token:
                 base_response['error'] = 'Failed to authenticate with Trakt'
@@ -1019,6 +1019,72 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                                       title = show.get('title', 'Unknown Title')
                                       year = show.get('year')
                                       sample_items.append(f"[Show] {title} ({year})" if year else f"[Show] {title}")
+
+                    # --- Special Trakt Lists Sample ---
+                    elif source_type == 'Special Trakt Lists':
+                        selected_list_types = source_config.get('special_list_type', [])
+                        media_type_filter = source_config.get('media_type', 'All').lower()
+                        
+                        if not selected_list_types:
+                            base_response['details']['sample_error'] = "No special list types configured"
+                        else:
+                            # Sample from the first configured list type
+                            first_list_type = selected_list_types[0]
+                            sample_items = []
+                            
+                            # Define API endpoints for special lists
+                            special_list_api_details = {
+                                "Trending": {"movies": "/movies/trending", "shows": "/shows/trending"},
+                                "Popular": {"movies": "/movies/popular", "shows": "/shows/popular"},
+                                "Anticipated": {"movies": "/movies/anticipated", "shows": "/shows/anticipated"},
+                                "Box Office": {"movies": "/movies/boxoffice", "shows": None},
+                                "Played": {"movies": "/movies/played/weekly", "shows": "/shows/played/weekly"},
+                                "Watched": {"movies": "/movies/watched/weekly", "shows": "/shows/watched/weekly"},
+                                "Collected": {"movies": "/movies/collected/weekly", "shows": "/shows/collected/weekly"},
+                                "Favorited": {"movies": "/movies/favorited/weekly", "shows": "/shows/favorited/weekly"}
+                            }
+                            
+                            if first_list_type in special_list_api_details:
+                                api_paths = special_list_api_details[first_list_type]
+                                endpoints_to_call = []
+                                
+                                if media_type_filter in ['movies', 'all'] and api_paths.get("movies"):
+                                    endpoints_to_call.append(api_paths["movies"])
+                                if media_type_filter in ['shows', 'all'] and api_paths.get("shows"):
+                                    endpoints_to_call.append(api_paths["shows"])
+                                
+                                for endpoint in endpoints_to_call[:2]:  # Limit to 2 endpoints for sample
+                                    if endpoint:
+                                        sample_response = make_trakt_request('get', f"{endpoint}?limit=2")
+                                        if sample_response and sample_response.status_code == 200:
+                                            try:
+                                                data = sample_response.json()
+                                                for item in data:
+                                                    # Handle different response structures
+                                                    item_data = None
+                                                    display_type = "Unknown"
+                                                    
+                                                    if 'movie' in item:
+                                                        item_data = item.get('movie')
+                                                        display_type = "Movie"
+                                                    elif 'show' in item:
+                                                        item_data = item.get('show')
+                                                        display_type = "Show"
+                                                    
+                                                    if item_data:
+                                                        title = item_data.get('title', 'Unknown Title')
+                                                        year = item_data.get('year')
+                                                        display_text = f"{title} ({year})" if year else title
+                                                        sample_items.append(f"[{display_type}] {display_text}")
+                                            except Exception as e:
+                                                log.warning(f"Failed to parse sample data from {endpoint}: {e}")
+                            else:
+                                base_response['details']['sample_error'] = f"Unknown special list type: {first_list_type}"
+                            
+                            if sample_items:
+                                base_response['details']['sample_data'] = sample_items
+                            else:
+                                base_response['details']['sample_data'] = [f"No items found in {first_list_type} list"]
 
                     # Add Friends Trakt Watchlist sample fetch if needed later
 

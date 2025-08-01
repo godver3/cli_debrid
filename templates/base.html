@@ -472,6 +472,141 @@
             font-size: 0.9em;
         }
 
+        /* Mobile responsive styles for support modal */
+        @media (max-width: 768px) {
+            .support-modal {
+                margin: 5vh auto;
+                width: 95%;
+                max-width: 400px;
+            }
+
+            .support-modal-content {
+                padding: 15px;
+            }
+
+            .support-modal-content div[style*="text-align: center"] {
+                text-align: left !important;
+                margin-left: 0px !important;
+                margin-right: 0px !important;
+            }
+
+            .support-modal-content div[style*="text-align: right"] {
+                text-align: right !important;
+                margin-right: 0px !important;
+            }
+
+            .support-modal-content h3 {
+                font-size: 1.2em;
+                margin-bottom: 15px;
+            }
+
+            .support-modal-content p {
+                margin: 10px 0;
+                line-height: 1.5;
+                font-size: 0.95em;
+            }
+
+            .support-modal-content ul {
+                margin: 10px 0;
+                padding-left: 15px;
+            }
+
+            .support-modal-content li {
+                margin: 8px 0;
+                font-size: 0.9em;
+            }
+
+            .support-cta {
+                margin-top: 20px;
+            }
+
+            .patreon-button {
+                padding: 10px 16px;
+                font-size: 0.9em;
+                margin: 5px;
+                flex-direction: column;
+                gap: 5px;
+                min-width: 120px;
+            }
+
+            .patreon-button i {
+                font-size: 1.1em;
+            }
+
+            .support-note {
+                margin-top: 10px;
+                font-size: 0.85em;
+            }
+
+            .support-modal-actions {
+                margin-top: 15px;
+            }
+
+            .never-show-again-btn {
+                padding: 6px 12px;
+                font-size: 0.8em;
+                gap: 6px;
+            }
+
+            .never-show-again-btn i {
+                font-size: 0.8em;
+            }
+        }
+
+        /* Extra small mobile devices */
+        @media (max-width: 480px) {
+            .support-modal {
+                margin: 2vh auto;
+                width: 98%;
+                max-width: 350px;
+            }
+
+            .support-modal-content {
+                padding: 12px;
+            }
+
+            .support-modal-content h3 {
+                font-size: 1.1em;
+                margin-bottom: 12px;
+            }
+
+            .support-modal-content p {
+                font-size: 0.9em;
+                margin: 8px 0;
+            }
+
+            .support-modal-content li {
+                font-size: 0.85em;
+                margin: 6px 0;
+            }
+
+            .patreon-button {
+                padding: 8px 12px;
+                font-size: 0.8em;
+                margin: 3px;
+                min-width: 100px;
+            }
+
+            .patreon-button i {
+                font-size: 1em;
+            }
+
+            .support-note {
+                font-size: 0.8em;
+                margin-top: 8px;
+            }
+
+            .never-show-again-btn {
+                padding: 5px 10px;
+                font-size: 0.75em;
+                gap: 4px;
+            }
+
+            .never-show-again-btn i {
+                font-size: 0.75em;
+            }
+        }
+
         .modal-controls {
             display: flex;
             align-items: center;
@@ -924,6 +1059,14 @@
             // Show support modal if conditions are met
             async function handleSupportModal() {
                 console.log('=== Support Modal Check Started ===');
+                
+                // Check if we're in a limited environment - if so, don't show support modal
+                const isLimitedEnvironment = document.body.getAttribute('data-limited-environment') === 'true';
+                if (isLimitedEnvironment) {
+                    console.log('❌ SUPPORT MODAL WILL NOT SHOW - Limited environment detected');
+                    console.log('=== Support Modal Check Completed ===');
+                    return;
+                }
                 
                 let { hasSeenSupport, pageViews, neverShowAgain } = await checkSupportModalStatus();
                 console.log('Initial support modal status:', {
@@ -1411,6 +1554,7 @@
       data-program-status="{{ get_program_status() }}" 
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
       data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"
+      data-limited-environment="{{ 'true' if is_limited_environment() else 'false' }}"
       data-notifications-disabled="false">
     
     <header>
@@ -1753,12 +1897,13 @@
             <div class="modal-body">
                 <div class="support-modal-content">
                     <div style="text-align: center; margin-left: 150px; margin-right: 150px; text-align: left;">
-                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. I use AI models that aren't cheap, and provide countless hours of support.</p>
+                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. I love supporting this project and have committed countless hours to it. Any support is appreciated!</p>
                     <p>Your support helps cover these costs and enables:</p>
                     <ul>
                         <li>Faster development of new features</li>
                         <li>Continued growth of the project</li>
                     </ul>
+                    <p>If I've made your life easier consider supporting!</p>
                     </div>
                     <div style="text-align: right; font-style: italic; margin-right: 150px;">
                         <p>- godver3</p>
@@ -1777,7 +1922,6 @@
                             Support on Ko-fi
                         </a>
 
-                        <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
                         <div class="support-modal-actions">
                             <button id="neverShowAgainBtn" class="never-show-again-btn">
                                 <i class="fas fa-ban"></i>

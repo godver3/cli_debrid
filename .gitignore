@@ -162,3 +162,4 @@ deployment/
 backup_debridify_postgres_volume.sh
 Dockerfile.battery
 .dockerignore.battery
+curl_command

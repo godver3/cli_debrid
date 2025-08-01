@@ -1759,7 +1759,12 @@ class ProgramRunner:
                                 if cutoff_date:
                                     items_filtered_date = []
                                     for item in all_items:
-                                        release_date = item.get('release_date')
+                                        # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                        if item.get('media_type') == 'movie':
+                                            release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                        else:
+                                            release_date = item.get('release_date')
+                                        
                                         if not release_date or release_date.lower() == 'unknown':
                                             # Skip items with unknown release dates when cutoff date is set
                                             cutoff_date_skipped += 1
@@ -1879,7 +1884,12 @@ class ProgramRunner:
                             if cutoff_date:
                                 items_filtered_date = []
                                 for item in all_items:
-                                    release_date = item.get('release_date')
+                                    # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                    if item.get('media_type') == 'movie':
+                                        release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                    else:
+                                        release_date = item.get('release_date')
+                                    
                                     if not release_date or release_date.lower() == 'unknown':
                                         # Skip items with unknown release dates when cutoff date is set
                                         cutoff_date_skipped += 1

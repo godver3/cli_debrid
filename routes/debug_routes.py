@@ -1065,7 +1065,12 @@ def get_and_add_wanted_content(source_id):
                                 current_batch_cutoff_skipped = 0 # Local counter for this batch iteration's date skips
                                 if cutoff_date:
                                     for item in all_items_meta_processed_batch:
-                                        release_date = item.get('release_date')
+                                        # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                        if item.get('media_type') == 'movie':
+                                            release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                        else:
+                                            release_date = item.get('release_date')
+                                        
                                         if not release_date or release_date.lower() == 'unknown':
                                             final_items_for_db_batch.append(item)
                                             continue
@@ -1195,7 +1200,12 @@ def get_and_add_wanted_content(source_id):
                         current_non_batch_cutoff_skipped = 0 # Local counter for this section's date skips
                         if cutoff_date:
                             for item in all_items_meta_processed_non_batch:
-                                release_date = item.get('release_date')
+                                # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                if item.get('media_type') == 'movie':
+                                    release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                else:
+                                    release_date = item.get('release_date')
+                                
                                 if not release_date or release_date.lower() == 'unknown':
                                     final_items_for_db_non_batch.append(item)
                                     continue
@@ -2572,13 +2582,20 @@ def parse_symlink(symlink_path: Path):
         'is_anime': False # Populated by get_metadata
     }
 
-    # 1. Extract IMDb ID (tt#######)
+    # 1. Extract IMDb ID (tt#######) - try filename first, then full path
     imdb_match = re.search(r'(tt\d{7,})', filename, re.IGNORECASE)
     if imdb_match:
         parsed_data['imdb_id'] = imdb_match.group(1)
     else:
-        logging.warning(f"Could not extract IMDb ID from filename: {filename}")
-        return None # Cannot proceed without IMDb ID
+        # Try searching in the full path as fallback
+        full_path_str = str(symlink_path)
+        imdb_match = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+        if imdb_match:
+            parsed_data['imdb_id'] = imdb_match.group(1)
+            logging.info(f"Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+        else:
+            logging.warning(f"Could not extract IMDb ID from filename or full path: {filename}")
+            return None # Cannot proceed without IMDb ID
 
     # 2. Extract Season and Episode Numbers (S##E## or similar)
     # More robust regex to handle variations like S01E01, S1E1, Season 1 Episode 1, 1x01 etc.
@@ -2701,6 +2718,7 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                 component_map['version'].append("Default")
 
 
+        # Build paths based on current settings
         paths_to_scan_tuples = [(symlink_root_path, symlink_root_path.name)] # (Path, description_for_logging)
 
         for component_key in folder_order_components:
@@ -2721,6 +2739,12 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                             )
                 if current_level_new_paths: 
                     paths_to_scan_tuples = current_level_new_paths
+
+        # Add comprehensive fallback scanning - scan the entire symlink root recursively
+        # This ensures we don't miss items that don't match the current settings
+        comprehensive_scan_path = (symlink_root_path, f"{symlink_root_path.name} (comprehensive)")
+        if comprehensive_scan_path not in paths_to_scan_tuples:
+            paths_to_scan_tuples.append(comprehensive_scan_path)
         
         total_items_scanned = 0
         total_symlinks_processed = 0
@@ -2731,6 +2755,10 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         recoverable_items_preview = []
 
         update_progress(status='scanning', message='Starting directory scan...')
+        
+        # Log what paths we're going to scan
+        scan_paths_info = [f"{desc}: {path}" for path, desc in paths_to_scan_tuples]
+        logging.info(f"Analysis will scan the following paths: {scan_paths_info}")
 
         for current_search_path, scan_target_name in paths_to_scan_tuples:
             if current_search_path.is_dir():
@@ -2754,6 +2782,9 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                             continue
 
                         if item_path.is_file() or item_path.is_symlink():
+                            # Log some items for debugging (but not too many)
+                            if total_items_scanned % 1000 == 0:
+                                logging.debug(f"Scanning item: {item_path}")
                             if item_path.is_symlink():
                                 total_symlinks_processed += 1
                             else:
@@ -2828,6 +2859,10 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                                         
                                         items_found += 1
                                         
+                                        # Log successful item found
+                                        if items_found % 100 == 0:  # Log every 100th item to avoid spam
+                                            logging.info(f"Found item #{items_found}: {parsed_data.get('title', 'Unknown')} ({parsed_data.get('imdb_id', 'No IMDb')})")
+                                        
                                         # --- Write item to recovery file ---
                                         try:
                                             recovery_file.write(json.dumps(parsed_data) + '\n')
@@ -2850,7 +2885,9 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                                     metadata_errors += 1
                         else: # No IMDb ID was parsed
                             parser_errors += 1 # This case should be caught by parse_symlink returning None now
-                            logging.warning(f"Skipping {item_path.name} as no IMDb ID was parsed (should have been caught earlier).")
+                            # Log parser errors but limit frequency to avoid spam
+                            if parser_errors % 50 == 0:  # Log every 50th parser error
+                                logging.warning(f"Parser error #{parser_errors}: Skipping {item_path.name} as no IMDb ID was parsed")
 
                 except Exception as e_rglob:
                     logging.error(f"Error during rglob scan of {current_search_path}: {e_rglob}", exc_info=True)
@@ -4044,8 +4081,15 @@ def parse_riven_symlink(symlink_path: Path):
         if imdb_match:
             parsed_data['imdb_id'] = imdb_match.group(1)
         else:
-            logging.warning(f"RIVEN (EPISODE): IMDb ID not found in grandfather directory '{grandfather_dir_name}' for episode file '{symlink_path}'.")
-            return None
+            # Try searching in the full path as fallback for episodes
+            full_path_str = str(symlink_path)
+            imdb_match_full = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+            if imdb_match_full:
+                parsed_data['imdb_id'] = imdb_match_full.group(1)
+                logging.info(f"RIVEN (EPISODE): Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+            else:
+                logging.warning(f"RIVEN (EPISODE): IMDb ID not found in grandfather directory '{grandfather_dir_name}' or full path for episode file '{symlink_path}'.")
+                return None
         
         # Final check for S/E numbers for episodes
         if parsed_data.get('season_number') is None or parsed_data.get('episode_number') is None:
@@ -4063,11 +4107,25 @@ def parse_riven_symlink(symlink_path: Path):
             if imdb_match_parent:
                 parsed_data['imdb_id'] = imdb_match_parent.group(1)
             else:
-                logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' or parent directory '{parent_dir_name}' for movie file '{symlink_path}'.")
-                return None
+                # Try searching in the full path as final fallback
+                full_path_str = str(symlink_path)
+                imdb_match_full = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+                if imdb_match_full:
+                    parsed_data['imdb_id'] = imdb_match_full.group(1)
+                    logging.info(f"RIVEN (MOVIE): Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+                else:
+                    logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}', parent directory '{parent_dir_name}', or full path for movie file '{symlink_path}'.")
+                    return None
         else: # No parent, and not in filename
-            logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' and no parent directory for movie file '{symlink_path}'.")
-            return None
+            # Try searching in the full path as final fallback
+            full_path_str = str(symlink_path)
+            imdb_match_full = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+            if imdb_match_full:
+                parsed_data['imdb_id'] = imdb_match_full.group(1)
+                logging.info(f"RIVEN (MOVIE): Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+            else:
+                logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' or full path for movie file '{symlink_path}'.")
+                return None
     else: # Should not happen if media_type is always set
         logging.error(f"RIVEN: media_type not determined for {symlink_path}")
         return None
