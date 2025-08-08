@@ -24,6 +24,35 @@ import sys
 
 settings_bp = Blueprint('settings', __name__)
 
+# Helper to reload components and restart if program was running
+def _reload_components_after_settings_change():
+    try:
+        from routes.program_operation_routes import get_program_runner
+        runner = get_program_runner()
+        was_running = bool(runner and runner.is_running())
+    except Exception as e:
+        logging.warning(f"Could not check program status before reinitialization: {e}")
+        was_running = False
+
+    try:
+        from debrid import reset_provider
+        reset_provider()
+        from queues.queue_manager import QueueManager
+        QueueManager().reinitialize()
+        from queues.run_program import ProgramRunner
+        ProgramRunner().reinitialize()
+        logging.info("Relevant components reinitialized after settings change.")
+    except Exception as reinit_e:
+        logging.error(f"Error during component reinitialization after settings change: {reinit_e}", exc_info=True)
+
+    if was_running:
+        try:
+            from routes.program_operation_routes import _execute_start_program
+            _execute_start_program(skip_connectivity_check=True, is_restart=True)
+            logging.info("Program restarted successfully after settings change.")
+        except Exception as restart_e:
+            logging.error(f"Error restarting program after settings change: {restart_e}", exc_info=True)
+
 # --- BEGIN Hardcoded Default Versions ---
 HARDCODED_DEFAULT_VERSIONS = {
   "versions": {
@@ -709,6 +738,9 @@ def add_content_source_route():
         
         new_source_id = add_content_source(source_type, source_config)
         
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
+        
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
@@ -731,6 +763,9 @@ def delete_content_source_route():
         if 'Content Sources' in config and source_id in config['Content Sources']:
             del config['Content Sources'][source_id]
             save_config(config)
+        
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
         
         logging.info(f"Content source {source_id} deleted successfully")
         return jsonify({'success': True})
@@ -763,6 +798,9 @@ def add_scraper_route():
         # Log the updated config after adding the scraper
         updated_config = load_config()
         logging.info(f"Updated config after adding scraper: {updated_config}")
+        
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
         
         return jsonify({'success': True, 'scraper_id': new_scraper_id})
     except Exception as e:
@@ -809,6 +847,10 @@ def delete_scraper():
         del scrapers[scraper_id]
         config['Scrapers'] = scrapers
         save_config(config)
+        
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
+        
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Scraper not found'}), 404
@@ -825,6 +867,10 @@ def delete_notification():
         if 'Notifications' in config and notification_id in config['Notifications']:
             del config['Notifications'][notification_id]
             save_config(config)
+            
+            # Reload components so the change takes effect mid-run
+            _reload_components_after_settings_change()
+            
             logging.info(f"Notification {notification_id} deleted successfully")
             return jsonify({'success': True})
         else:
@@ -907,6 +953,9 @@ def add_notification():
             })
 
         save_config(config)
+
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
 
         logging.info(f"Notification {notification_id} added successfully")
         return jsonify({'success': True, 'notification_id': notification_id})
@@ -1518,6 +1567,10 @@ def add_version():
     }
 
     save_config(config)
+    
+    # Reload components so the change takes effect mid-run
+    _reload_components_after_settings_change()
+    
     return jsonify({'success': True, 'version_id': version_name})
 
 @settings_bp.route('/versions/delete', methods=['POST'])
@@ -1578,6 +1631,9 @@ def delete_version():
             # Delete the actual version
             del versions[version_id]
             save_config(config) # Save config with updated fallbacks and deleted version
+            
+            # Reload components so the change takes effect mid-run
+            _reload_components_after_settings_change()
             
             message = f"Version '{version_id}' deleted."
             if updated_count > 0:
@@ -1722,6 +1778,9 @@ def rename_version():
             # Save config with all updates (version rename, fallbacks, content sources)
             save_config(config)
 
+            # Reload components so the change takes effect mid-run
+            _reload_components_after_settings_change()
+
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Version not found'}), 404
@@ -1764,6 +1823,10 @@ def duplicate_version():
     config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
 
     save_config(config)
+    
+    # Reload components so the change takes effect mid-run
+    _reload_components_after_settings_change()
+    
     return jsonify({'success': True, 'new_version_id': new_version_id})
 
 @settings_bp.route('/scraping/content')

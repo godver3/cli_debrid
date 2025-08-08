@@ -163,9 +163,9 @@ export function initializeProgramControls() {
             scrapersEnabled = Object.values(currentSettings.Scrapers).some(scraper => scraper.enabled);
         }
 
-        // Check if at least one content source is enabled
+        // Consider presence of any content source as enabled; runtime toggles control actual task execution
         if (currentSettings['Content Sources']) {
-            contentSourcesEnabled = Object.values(currentSettings['Content Sources']).some(source => source.enabled);
+            contentSourcesEnabled = Object.values(currentSettings['Content Sources']).length > 0;
         }
 
         // Check required settings

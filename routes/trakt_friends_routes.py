@@ -175,22 +175,44 @@ def check_auth_status(auth_id):
                 'username': state.get('username')
             })
         
-        # If pending, return pending status
-        elif response.status_code == 400 and 'pending' in response.text.lower():
-            return jsonify({
-                'success': True,
-                'status': 'pending',
-                'user_code': state.get('user_code'),
-                'verification_url': state.get('verification_url')
-            })
-        
-        # If expired or other error, return error
+        # Handle non-200 responses with better diagnostics
         else:
+            error_message = None
+            error_code = None
+            error_body_text = None
             try:
                 error_data = response.json()
-                error_message = error_data.get('error_description', 'Unknown error')
+                error_code = error_data.get('error')
+                error_message = error_data.get('error_description')
             except json.JSONDecodeError:
-                error_message = f"Error response from Trakt: {response.text}"
+                error_body_text = response.text or ''
+            
+            # Treat authorization pending and slow down as pending
+            if response.status_code in (400, 401) and (
+                (error_code in ('authorization_pending', 'slow_down')) or
+                (response.text and 'pending' in response.text.lower())
+            ):
+                return jsonify({
+                    'success': True,
+                    'status': 'pending',
+                    'user_code': state.get('user_code'),
+                    'verification_url': state.get('verification_url')
+                })
+            
+            # Build a meaningful error message
+            if not error_message:
+                if error_code:
+                    error_message = error_code.replace('_', ' ').title()
+                elif error_body_text:
+                    error_message = f"Error response from Trakt: {error_body_text}"
+                else:
+                    error_message = f"Unknown error from Trakt (HTTP {response.status_code})"
+            
+            # Log full context for diagnostics
+            logging.error(
+                f"Trakt device token error. HTTP {response.status_code}. "
+                f"Code: {error_code}. Message: {error_message}. Body: {error_body_text!r}"
+            )
             
             return jsonify({
                 'success': False,

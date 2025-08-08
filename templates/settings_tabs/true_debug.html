@@ -246,7 +246,7 @@
                 <p class="settings-description">Skip the initial multi-provider scrape for new content (released within the past 7 days).</p>
             </div>
 
-            <!-- Disable Unblacklisting -->
+            <!--
             <div class="settings-form-group">
                 <label for="debug-disable_unblacklisting" class="settings-title">Disable Unblacklisting:</label>
                 <input type="checkbox" id="debug-disable_unblacklisting" name="Debug.disable_unblacklisting"
@@ -255,7 +255,6 @@
                 <p class="settings-description">Disable automatic unblacklisting of items from the blacklisted queue</p>
             </div>
 
-            <!-- Unblacklisting Cutoff Date -->
             <div class="settings-form-group">
                 <label for="debug-unblacklisting_cutoff_date" class="settings-title">Unblacklisting Cutoff Date:</label>
                 <input type="text" id="debug-unblacklisting_cutoff_date" name="Debug.unblacklisting_cutoff_date"
@@ -264,7 +263,7 @@
                 <p class="settings-description">Only unblacklist items with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all blacklisted items for unblacklisting.</p>
             </div>
 
-            <!-- Auto Run Program -->
+            
             <div class="settings-form-group">
                 <label for="debug-auto_run_program" class="settings-title">Auto Run Program:</label>
                 <input type="checkbox" id="debug-auto_run_program" name="Debug.auto_run_program"
@@ -272,6 +271,7 @@
                        {% if settings.get('Debug', {}).get('auto_run_program', False) %}checked{% endif %}>
                 <p class="settings-description">Automatically run the program when it starts</p>
             </div>
+            -->
 
             <script>
                 document.addEventListener('DOMContentLoaded', function() {

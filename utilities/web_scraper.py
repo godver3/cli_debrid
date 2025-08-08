@@ -42,6 +42,13 @@ async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, 
         details_response = await asyncio.to_thread(api.get, details_url)
         details_response.raise_for_status()
         details_data = details_response.json()
+    except api.exceptions.HTTPError as e:
+        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+        if status_code == 404:
+            logging.warning(f"TMDB details not found (404) for {media_type} {tmdb_id}: {e}")
+        else:
+            logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
+        return None 
     except Exception as e:
         logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
         return None 
@@ -96,6 +103,28 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     while attempt < max_retries:
         try:
             response = api.get(search_url, headers=headers, timeout=30)
+            # Detect unexpected HTML (e.g., Cloudflare or gateway page) and honor Retry-After if present
+            content_type = response.headers.get('Content-Type', '')
+            if 'html' in content_type.lower():
+                attempt += 1
+                retry_after_header = response.headers.get('Retry-After')
+                wait_time = None
+                if retry_after_header:
+                    try:
+                        wait_time = int(retry_after_header)
+                    except (ValueError, TypeError):
+                        wait_time = None
+                if wait_time is None:
+                    wait_time = max(1, retry_delay * (2 ** (attempt - 1)))
+                if attempt < max_retries:
+                    logging.warning(f"Received HTML response from Trakt. Waiting {wait_time} seconds before retry {attempt}/{max_retries}")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logging.error("Received HTML response from Trakt after maximum retries")
+                    logging.error(f"Response Headers: {response.headers}")
+                    return []
+
             response.raise_for_status()
             
             if 'X-RateLimit-Remaining' in response.headers:
@@ -122,6 +151,24 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
 
         except api.exceptions.RequestException as e:
             attempt += 1
+            status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+            error_headers = getattr(getattr(e, 'response', None), 'headers', {}) or {}
+            retry_after_header = error_headers.get('Retry-After')
+
+            if status_code == 429 and attempt <= max_retries:
+                wait_time = None
+                if retry_after_header:
+                    try:
+                        wait_time = int(retry_after_header)
+                    except (ValueError, TypeError):
+                        wait_time = None
+                if wait_time is None:
+                    wait_time = max(1, retry_delay * (2 ** (attempt - 1)))
+                if attempt < max_retries:
+                    logging.warning(f"Rate limit hit (429). Waiting {wait_time} seconds before retry {attempt}/{max_retries}")
+                    time.sleep(wait_time)
+                    continue
+
             if attempt < max_retries:
                 wait_time = retry_delay * (2 ** (attempt - 1)) 
                 logging.warning(f"Attempt {attempt} failed. Retrying in {wait_time} seconds. Error: {str(e)}")
@@ -129,7 +176,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 continue
             else:
                 logging.error(f"Error searching Trakt after {max_retries} attempts: {str(e)}")
-                if isinstance(e, api.exceptions.HTTPError):
+                if isinstance(e, api.exceptions.HTTPError) and getattr(e, 'response', None) is not None:
                     logging.error(f"HTTP Status Code: {e.response.status_code}")
                     logging.error(f"Response Headers: {e.response.headers}")
                 return [] 
@@ -358,6 +405,13 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         logging.info(f"Cached metadata for {media_type} {tmdb_id}")
 
         return media_meta
+    except api.exceptions.HTTPError as e:
+        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+        if status_code == 404:
+            logging.warning(f"TMDb details not found (404) for {media_type} {tmdb_id}: {e}")
+        else:
+            logging.error(f"Error fetching media meta from TMDb: {e}")
+        return None
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching media meta from TMDb: {e}")
         return None

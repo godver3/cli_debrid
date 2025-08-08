@@ -25,6 +25,11 @@ class Settings:
         self._staleness_threshold = None  # Initialize as None
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
+        # New: cursors for Trakt updates endpoints
+        self.trakt_updates = {
+            'shows_last_updated_at': None,
+            'movies_last_updated_at': None,
+        }
         self.load()
 
     @property
@@ -141,7 +146,9 @@ class Settings:
             'staleness_threshold': self._staleness_threshold if self._staleness_threshold is not None else self.staleness_threshold,
             'max_entries': self.max_entries,
             'log_level': self.log_level,
-            'Trakt': self.Trakt # Saves the cached Trakt details
+            'Trakt': self.Trakt, # Saves the cached Trakt details
+            # New: persist Trakt updates cursors
+            'TraktUpdates': self.trakt_updates,
         }
         try:
             # Ensure the directory exists
@@ -201,6 +208,8 @@ class Settings:
         self._staleness_threshold = config.get('staleness_threshold', None)
         self.max_entries = config.get('max_entries', 1000)
         self.log_level = config.get('log_level', 'INFO')
+        # New: load Trakt updates cursors
+        self.trakt_updates = config.get('TraktUpdates', self.trakt_updates)
 
     def get_all(self):
         return {
@@ -209,7 +218,9 @@ class Settings:
             "max_entries": self.max_entries,
             "providers": self.providers,
             "log_level": self.log_level,
-            "Trakt": self.Trakt # Use the property getter
+            "Trakt": self.Trakt, # Use the property getter
+            # Expose Trakt updates cursors
+            "TraktUpdates": self.trakt_updates,
         }
 
     def update(self, new_settings):
@@ -275,6 +286,14 @@ class Settings:
             # Clean up the temporary file if replace failed
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def update_trakt_updates(self, **kwargs):
+        """Update Trakt updates cursors and persist."""
+        # Merge provided keys into the dict
+        for key, value in kwargs.items():
+            if key in self.trakt_updates:
+                self.trakt_updates[key] = value
+        self.save()
 
     def toggle_provider(self, provider_name, enable):
         for provider in self.providers:

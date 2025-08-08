@@ -13,6 +13,7 @@ from .metadata_manager import MetadataManager
 from .settings import Settings
 from metadata.metadata import _get_local_timezone
 from .trakt_auth import TraktAuth
+from .trakt_metadata import TraktMetadata
 
 class BackgroundJobManager:
     def __init__(self):
@@ -22,7 +23,7 @@ class BackgroundJobManager:
         self.engine = None
         # Rate limiting for Trakt API
         self.last_api_call = 0
-        self.min_call_interval = 1.0  # Minimum 1 second between API calls
+        self.min_call_interval = 3.0  # Minimum 1 second between API calls
 
     def init_app(self, app):
         """Initialize with Flask app context"""
@@ -52,10 +53,10 @@ class BackgroundJobManager:
 
         # Add jobs here
         self.scheduler.add_job(
-            func=self.refresh_stale_metadata,
+            func=self.refresh_trakt_updates,
             trigger=IntervalTrigger(hours=6),
-            id='refresh_stale_metadata',
-            name='Refresh Stale Metadata',
+            id='refresh_trakt_updates',
+            name='Refresh Metadata via Trakt Updates',
             replace_existing=True
         )
         
@@ -66,13 +67,13 @@ class BackgroundJobManager:
             # Schedule initial refresh to run after a delay
             local_tz = _get_local_timezone()
             self.scheduler.add_job(
-                func=self.refresh_stale_metadata,
+                func=self.refresh_trakt_updates,
                 trigger='date',  # Run once
                 run_date=datetime.now(local_tz) + timedelta(seconds=5),
                 id='initial_refresh',
-                name='Initial Metadata Refresh'
+                name='Initial Trakt Updates Refresh'
             )
-            logger.info("Initial metadata refresh scheduled in 5 seconds")
+            logger.info("Initial Trakt updates refresh scheduled in 5 seconds")
             
         except Exception as e:
             logger.error(f"Failed to start background job scheduler: {e}")
@@ -94,6 +95,85 @@ class BackgroundJobManager:
             time.sleep(sleep_time)
         
         self.last_api_call = time.time()
+
+    def refresh_trakt_updates(self):
+        """Fetch Trakt updated shows/movies since last cursor and refresh only those items."""
+        try:
+            trakt = TraktMetadata()
+            cursors = self.settings.trakt_updates or {}
+            # Bootstrap: if no cursors, do a single 3-month backfill, then continue incrementally
+            now_iso = datetime.now(_get_local_timezone()).isoformat()
+            default_since = (datetime.now(_get_local_timezone()) - timedelta(days=90)).isoformat()
+            shows_since = cursors.get('shows_last_updated_at') or default_since
+            movies_since = cursors.get('movies_last_updated_at') or default_since
+
+            logger.info(f"Fetching Trakt updated shows since {shows_since} and movies since {movies_since}")
+
+            # Fetch updates
+            updated_shows = trakt.get_updated_shows(shows_since) or []
+            updated_movies = trakt.get_updated_movies(movies_since) or []
+
+            # Process updates; collect max updated_at to advance cursors
+            max_show_updated = shows_since
+            max_movie_updated = movies_since
+
+            # Refresh shows
+            for entry in updated_shows:
+                imdb_id = entry.get('imdb_id')
+                if not imdb_id:
+                    continue
+                self._enforce_rate_limit()
+                try:
+                    result = MetadataManager.refresh_metadata(imdb_id)
+                    if result is not None:
+                        logger.info(f"Updated show metadata via Trakt updates for {imdb_id}")
+                    else:
+                        logger.warning(f"Refresh returned no data for updated show {imdb_id}")
+                except Exception as e:
+                    logger.error(f"Error refreshing updated show {imdb_id}: {e}", exc_info=True)
+                # Track cursor
+                updated_at = entry.get('updated_at')
+                if updated_at and updated_at > (max_show_updated or ''):
+                    max_show_updated = updated_at
+
+            # Refresh movies
+            for entry in updated_movies:
+                imdb_id = entry.get('imdb_id')
+                if not imdb_id:
+                    continue
+                self._enforce_rate_limit()
+                try:
+                    result = MetadataManager.refresh_metadata(imdb_id)
+                    if result is not None:
+                        logger.info(f"Updated movie metadata via Trakt updates for {imdb_id}")
+                    else:
+                        logger.warning(f"Refresh returned no data for updated movie {imdb_id}")
+                except Exception as e:
+                    logger.error(f"Error refreshing updated movie {imdb_id}: {e}", exc_info=True)
+                # Track cursor
+                updated_at = entry.get('updated_at')
+                if updated_at and updated_at > (max_movie_updated or ''):
+                    max_movie_updated = updated_at
+
+            # Advance cursors if we processed anything
+            if updated_shows or updated_movies:
+                # Fallback to now if max not set properly
+                if not max_show_updated:
+                    max_show_updated = now_iso
+                if not max_movie_updated:
+                    max_movie_updated = now_iso
+                self.settings.update_trakt_updates(
+                    shows_last_updated_at=max_show_updated,
+                    movies_last_updated_at=max_movie_updated,
+                )
+                logger.info(
+                    f"Advanced Trakt update cursors to shows={max_show_updated}, movies={max_movie_updated}"
+                )
+            else:
+                logger.info("No Trakt updates to process")
+
+        except Exception as e:
+            logger.error(f"Error in refresh_trakt_updates: {e}", exc_info=True)
 
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""

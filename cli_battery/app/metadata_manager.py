@@ -135,13 +135,13 @@ class MetadataManager:
 
         now = datetime.now(_get_local_timezone())
         
-        # Add random variation to the staleness threshold
-        day_variation = random.choice([-5, -3, -1, 1, 3, 5])
-        hour_variation = random.randint(-12, 12)
+        # Override to much longer periods: enforce a higher minimum base and wider variation
+        min_base_days = 90
+        base_days = max(settings.staleness_threshold, min_base_days)
+        day_variation = random.choice([0, 7, 14, 21, 30])
+        hour_variation = random.randint(-24, 24)
         
-        adjusted_threshold = max(settings.staleness_threshold + day_variation, 1)
-        
-        stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
+        stale_threshold = timedelta(days=base_days + day_variation, hours=hour_variation)
         age = now - last_updated
         is_stale = age > stale_threshold
 
@@ -150,7 +150,7 @@ class MetadataManager:
                 f"Staleness check: last_updated={last_updated.isoformat()}, "
                 f"age={age.days}d {age.seconds//3600}h, "
                 f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
-                f"(base={settings.staleness_threshold}d, variation={day_variation}d {hour_variation}h) "
+                f"(effective_base={base_days}d, variation={day_variation}d {hour_variation}h) "
                 f"-> stale"
             )
                 
@@ -160,7 +160,7 @@ class MetadataManager:
     def is_tmdb_mapping_stale(last_updated):
         """
         Check if a TMDB to IMDB mapping is stale and should be refreshed.
-        Uses a 3-day base period with ±1/3/5 hours variation for TMDB conversions.
+        Uses a longer base period with wider hour variation for TMDB conversions.
         """
         from metadata.metadata import _get_local_timezone
         import random
@@ -175,9 +175,10 @@ class MetadataManager:
 
         now = datetime.now(_get_local_timezone())
         
-        # Use 3-day base period with ±1/3/5 hours variation for TMDB conversions
-        base_threshold = 3  # days
-        hour_variation = random.choice([-5, -3, -1, 1, 3, 5])  # ±1/3/5 hours
+        # Use longer base period for TMDB conversions as a fallback safety net
+        base_threshold_variation = random.choice([-10, -5, 0, 5, 10])
+        base_threshold = 21 + base_threshold_variation  # days
+        hour_variation = random.choice([-24, -12, 0, 12, 24])  # up to ±12 hours
         
         adjusted_threshold = max(base_threshold, 1)  # Minimum 1 day
         

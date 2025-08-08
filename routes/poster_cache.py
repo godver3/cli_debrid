@@ -2,6 +2,8 @@ import os
 import pickle
 from datetime import datetime, timedelta
 import logging
+import time
+import uuid
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -22,6 +24,10 @@ def is_cache_healthy():
             # Try to read and unpickle the first few bytes
             pickle.load(f)
         return True
+    except PermissionError as e:
+        # Transient access issues (e.g., AV scanning or another process replacing the file)
+        logging.warning(f"Cache file temporarily unavailable due to permission error: {e}")
+        return False
     except (EOFError, pickle.UnpicklingError, UnicodeDecodeError, FileNotFoundError) as e:
         logging.error(f"Cache file is corrupted: {e}")
         try:
@@ -51,39 +57,83 @@ def save_cache(cache):
         logging.error("Invalid cache format: cache must be a dictionary")
         return False
         
-    # Create a temporary file to write to first
-    temp_file = f"{CACHE_FILE}.tmp"
+    cache_dir = os.path.dirname(CACHE_FILE)
     try:
-        os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-        
-        # Write to temporary file first
-        with open(temp_file, 'wb') as f:
-            pickle.dump(cache, f)
-            
-        # Validate the temporary file can be read back
-        try:
-            with open(temp_file, 'rb') as f:
-                pickle.load(f)
-        except Exception as e:
-            logging.error(f"Validation of temporary cache file failed: {e}")
-            os.remove(temp_file)
-            return False
-            
-        # If validation passed, move the temporary file to the real location
-        if os.path.exists(CACHE_FILE):
-            os.replace(temp_file, CACHE_FILE)  # atomic on most systems
-        else:
-            os.rename(temp_file, CACHE_FILE)
-            
-        return True
+        os.makedirs(cache_dir, exist_ok=True)
     except Exception as e:
-        logging.error(f"Error saving cache: {e}")
-        if os.path.exists(temp_file):
-            try:
-                os.remove(temp_file)
-            except:
-                pass
+        logging.error(f"Failed to create cache directory '{cache_dir}': {e}")
         return False
+
+    # Retry loop to mitigate transient PermissionError on Windows (e.g., AV/defender locking)
+    max_attempts = 5
+    backoff_seconds = 0.1
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        # Unique temp file to avoid collisions between concurrent writers
+        temp_file = os.path.join(
+            cache_dir,
+            f"{os.path.basename(CACHE_FILE)}.{os.getpid()}.{int(time.time()*1000)}.{uuid.uuid4().hex}.tmp"
+        )
+        try:
+            # Write to temporary file first
+            with open(temp_file, 'wb') as f:
+                pickle.dump(cache, f)
+
+            # Validate the temporary file can be read back
+            try:
+                with open(temp_file, 'rb') as f:
+                    pickle.load(f)
+            except Exception as e:
+                logging.error(f"Validation of temporary cache file failed: {e}")
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+                last_error = e
+                time.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2, 2.0)
+                continue
+
+            # Atomically replace the real cache file
+            try:
+                os.replace(temp_file, CACHE_FILE)
+            except PermissionError as e:
+                last_error = e
+                logging.warning(f"Permission error replacing cache file (attempt {attempt}/{max_attempts}): {e}")
+                try:
+                    os.remove(temp_file)
+                except Exception:
+                    pass
+                time.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2, 2.0)
+                continue
+
+            return True
+
+        except PermissionError as e:
+            last_error = e
+            logging.warning(f"Permission error writing temp cache file '{temp_file}' (attempt {attempt}/{max_attempts}): {e}")
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception:
+                pass
+            time.sleep(backoff_seconds)
+            backoff_seconds = min(backoff_seconds * 2, 2.0)
+        except Exception as e:
+            last_error = e
+            logging.error(f"Error saving cache (attempt {attempt}/{max_attempts}): {e}")
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception:
+                pass
+            time.sleep(backoff_seconds)
+            backoff_seconds = min(backoff_seconds * 2, 2.0)
+
+    logging.error(f"Failed to save cache after {max_attempts} attempts: {last_error}")
+    return False
 
 def normalize_media_type(media_type):
     """Normalize media type to either 'tv' or 'movie'"""

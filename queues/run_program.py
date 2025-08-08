@@ -1153,35 +1153,35 @@ class ProgramRunner:
 
                 task_name = f'task_{source}_wanted'
                 
+                # Store the calculated default interval (before any custom overrides)
+                calculated_default_interval = final_interval
+                
                 # Check if a custom interval was already loaded for this task (from user's saved preferences)
                 if task_name in self.task_intervals:
                     # A custom interval exists, preserve it instead of overwriting with defaults
                     existing_custom_interval = self.task_intervals[task_name]
-                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {final_interval}s from source defaults)")
+                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {calculated_default_interval}s from source defaults)")
                     # Update final_interval so the log message below shows the preserved value
                     final_interval = existing_custom_interval
                 else:
                     # No custom interval exists, use the calculated default interval
                     self.task_intervals[task_name] = final_interval
                 
-                # Update original intervals map too (used for resets)
+                # Add to original_task_intervals with the calculated default (not the custom value)
+                # This ensures that resets will go back to the true calculated default
                 if task_name not in self.original_task_intervals:
-                     self.original_task_intervals[task_name] = final_interval
+                    self.original_task_intervals[task_name] = calculated_default_interval
 
                 log_intervals_message.append(f"  {task_name}: {final_interval} seconds")
                 
                 if isinstance(data.get('enabled'), str):
                     data['enabled'] = data['enabled'].lower() == 'true'
                 
-                # Add to enabled tasks if enabled (this happens *after* toggle loading in the new flow)
-                is_enabled = data.get('enabled', False)
-                if is_enabled and task_name not in self.enabled_tasks:
+                # Add content source tasks by default; toggles will disable later if set to False
+                if task_name not in self.enabled_tasks:
                     self.enabled_tasks.add(task_name)
-                    logging.info(f"Enabled content source task based on its settings: {task_name}")
-                # Ensure it's removed if disabled (respecting if it was already removed by toggle)
-                elif not is_enabled and task_name in self.enabled_tasks:
-                     self.enabled_tasks.remove(task_name)
-                     logging.info(f"Disabled content source task based on its settings: {task_name}")
+                    logging.info(f"Enabled content source task by default (ignoring config flag): {task_name}")
+                # Do not remove here based on config; rely solely on saved toggles applied later
 
             # Log the intervals once after processing all sources
             logging.info("\n".join(log_intervals_message))
@@ -1620,7 +1620,7 @@ class ProgramRunner:
                 # Use self.content_sources which should be populated
                 all_sources = self.get_content_sources() if hasattr(self, 'get_content_sources') else {}
                 for source_id, source_data in all_sources.items():
-                    if source_id.startswith('Other Plex Watchlist_') and source_data.get('enabled', False):
+                    if source_id.startswith('Other Plex Watchlist_'):
                         # Fetch versions specific to this 'Other' source config
                         other_source_versions = source_data.get('versions', []) # Default list
                         other_watchlists.append({
@@ -2153,9 +2153,15 @@ class ProgramRunner:
             # Pass the is_restart parameter to run_initialization
             self.run_initialization(is_restart=getattr(self, '_is_restart', False))
 
-            # *** START EDIT: Simplified run loop ***
+            # *** START EDIT: Simplified run loop with CPU monitoring ***
             # The main loop now just keeps the script alive while the scheduler runs.
             # We can add checks here if needed (e.g., monitoring scheduler health).
+            
+            # CPU monitoring variables
+            cpu_monitor_start = time.time()
+            cpu_monitor_interval = 300.0  # Log CPU usage every 5 minutes
+            loop_count = 0
+            
             while self._running:
                 try:
                     # Check scheduler status periodically
@@ -2204,7 +2210,54 @@ class ProgramRunner:
                         self.resume_queue()
                     # ... (sleep) ...
 
-                    # --- START EDIT: Fetch and use main loop sleep setting ---
+                    # --- START EDIT: CPU monitoring and main loop sleep ---
+                    loop_count += 1
+                    current_time = time.time()
+                    
+                    # Log CPU usage every 5 seconds
+                    if current_time - cpu_monitor_start >= cpu_monitor_interval:
+                        try:
+                            import psutil
+                            cpu_percent = psutil.cpu_percent(interval=0.1)
+                            memory_percent = psutil.virtual_memory().percent
+                            process = psutil.Process()
+                            process_cpu_percent = process.cpu_percent()
+                            process_memory_mb = process.memory_info().rss / 1024 / 1024
+                            
+                            logging.info(f"CPU MONITORING - Loop #{loop_count}: "
+                                        f"System CPU: {cpu_percent:.1f}%, "
+                                        f"Process CPU: {process_cpu_percent:.1f}%, "
+                                        f"Memory: {memory_percent:.1f}% ({process_memory_mb:.1f}MB), "
+                                        f"Loop rate: {loop_count / (current_time - cpu_monitor_start + cpu_monitor_interval):.1f} loops/sec")
+                            
+                            # If system CPU is high but our process isn't using much, log top processes
+                            if cpu_percent > 50 and process_cpu_percent < 5:
+                                try:
+                                    top_processes = []
+                                    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                                        try:
+                                            if proc.info['cpu_percent'] > 5:  # Only show processes using >5% CPU
+                                                top_processes.append(proc.info)
+                                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                            pass
+                                    
+                                    # Sort by CPU usage and show top 5
+                                    top_processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
+                                    if top_processes:
+                                        logging.info("TOP CPU PROCESSES (system high, app low):")
+                                        for proc in top_processes[:5]:
+                                            logging.info(f"  PID {proc['pid']}: {proc['name']} - CPU: {proc['cpu_percent']:.1f}%, Memory: {proc['memory_percent']:.1f}%")
+                                except Exception as e:
+                                    logging.error(f"Error getting top processes: {e}")
+                        except ImportError:
+                            logging.info(f"CPU MONITORING - Loop #{loop_count}: psutil not available")
+                        except Exception as e:
+                            logging.error(f"CPU MONITORING - Error getting CPU stats: {e}")
+                        
+                        # Reset monitoring
+                        cpu_monitor_start = current_time
+                        loop_count = 0
+                    
                     # Main loop sleep
                     try:
                         main_loop_sleep_seconds = float(get_setting('Queue', 'main_loop_sleep_seconds', 5.0))
@@ -2421,7 +2474,7 @@ class ProgramRunner:
 
 
         # --- Determine idle state based on Scraping/Adding queues ---
-        # ... (existing idle check logic) ...
+        # ... (rest of the code remains unchanged) ...
 
         with self.scheduler_lock:
             # Get the *currently configured* intervals (could be default or custom)

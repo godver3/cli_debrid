@@ -148,6 +148,14 @@ def rank_result_key(
 
     scraper = result.get('scraper', '').lower()
 
+    scraper_instance = result.get('scraper_instance', '').lower()
+
+    indexer_bonus = 0
+    
+    if any(name in scraper_instance for name in ['apachetorrent', 'redetorrent']):
+        indexer_bonus = 10000
+        logging.info(f"Indexer bonus applied: {scraper_instance} -> +{indexer_bonus}")
+
     # Normalize base scores
     normalized_similarity = title_similarity * 10
     normalized_resolution = resolution_score * 50 
@@ -454,7 +462,8 @@ def rank_result_key(
         multi_pack_score +
         single_episode_score +
         preferred_filter_score +
-        language_code_penalty
+        language_code_penalty +
+        indexer_bonus
     )
 
     # Add points based on num_items

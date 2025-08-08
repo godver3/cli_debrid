@@ -551,8 +551,48 @@
     .overlay-content td[data-bitrate] {
         position: relative;
     }
+
+    /* Back Button Styles */
+    .back-button-container {
+        display: none; /* Hidden by default, shown via JavaScript */
+    }
+
+    .back-button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .back-button:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .back-button svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    /* Hide back button on mobile */
+    @media (max-width: 768px) {
+        .back-button-container {
+            display: none !important;
+        }
+    }
 </style>
     <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
+
+        
         <form id="search-form" onsubmit="return false;">
             <input type="hidden" id="tmdb_api_key_set" value="{{ 'True' if tmdb_api_key_set else 'False' }}">
             <input type="hidden" id="is_requester" value="{{ 'True' if is_requester else 'False' }}">
@@ -572,6 +612,15 @@
                 <label for="skip-cache-check" style="color: #ccc; font-size: 0.9em;">Skip Cache Check</label>
             </div>
             <button id="searchformButton" type="submit">Search</button>
+            <!-- Back Button (Desktop Only) -->
+            <div id="back-button-container" class="back-button-container" style="display: none;">
+                <button id="back-button" class="back-button" aria-label="Go back to trending">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="15 18 9 12 15 6"></polyline>
+                    </svg>
+                    <span>Back to Trending</span>
+                </button>
+            </div>
         </form>
         {% if not compact_view and not tmdb_api_key_set %}
         <div class="tmdb-info">

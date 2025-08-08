@@ -5,6 +5,13 @@
 </div>
 <button id="add-source-btn" class="add-source-link">Add New Source</button>
 
+<div class="info-banner" style="background-color: #2c2c2c; border-radius: 10px; padding: 1rem; margin-bottom: 1.5rem; border: 1px solid #444;">
+    <p style="margin: 0; color: #f4f4f4;">
+        <strong>Note:</strong> To enable or disable content sources, please use the <a href="/program_operation/task_timings" style="color: #007bff; text-decoration: underline;">Task Manager page</a>. 
+        The Task Manager allows you to control which content sources are active and their processing intervals.
+    </p>
+</div>
+
 <script>
     let contentSourceSettingsLoaded = false;
     let scrapingVersionsLoaded = false;
@@ -51,6 +58,14 @@
 
         // Initialize version checkbox monitoring for warning indicators
         initializeVersionWarningUpdates();
+        
+        // Initialize version warnings for all sources on page load
+        document.querySelectorAll('.settings-section[data-source-id]').forEach(section => {
+            const sourceId = section.getAttribute('data-source-id');
+            if (sourceId) {
+                updateVersionWarning(sourceId);
+            }
+        });
     }
 
     function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
@@ -120,7 +135,6 @@
                             addContentSource({
                                 type: 'Trakt Lists',
                                 url: '',
-                                enabled: true,
                                 versions: {},
                                 media_type: 'All'
                             });
@@ -128,7 +142,6 @@
                             addContentSource({
                                 type: selectedType,
                                 display_name: selectedType,
-                                enabled: true,
                                 versions: {}
                             });
                         }
@@ -235,8 +248,7 @@
                                 auth_id: friend.auth_id,
                                 username: friend.username,
                                 media_type: formData.media_type,
-                                versions: versions,
-                                enabled: true
+                                versions: versions
                             });
                         }
                     });
@@ -292,8 +304,7 @@
                     auth_id: friend.auth_id,
                     username: friend.username,
                     media_type: formData.media_type,
-                    versions: versions,
-                    enabled: true
+                    versions: versions
                 });
             }
         });
@@ -564,14 +575,15 @@
     }
 
     function initializeVersionWarningUpdates() {
-        // Listen for changes to version checkboxes and enabled checkboxes
+        // Listen for changes to version checkboxes
         document.addEventListener('change', function(event) {
             if (event.target.type === 'checkbox' && 
                 event.target.name && 
-                event.target.name.includes('Content Sources')) {
+                event.target.name.includes('Content Sources') &&
+                event.target.name.includes('versions')) {
                 
                 // Extract source ID from the checkbox name
-                // Format: "Content Sources.SourceID.versions" or "Content Sources.SourceID.enabled"
+                // Format: "Content Sources.SourceID.versions"
                 const nameparts = event.target.name.split('.');
                 if (nameparts.length >= 2) {
                     const sourceId = nameparts[1];
@@ -582,9 +594,8 @@
     }
 
     function updateVersionWarning(sourceId) {
-        // Find the enabled checkbox for this source
-        const enabledCheckbox = document.querySelector(`input[type="checkbox"][name="Content Sources.${sourceId}.enabled"]`);
-        const sourceIsEnabled = enabledCheckbox ? enabledCheckbox.checked : false;
+        // Since enabled checkbox is removed, we'll always show the warning if no versions are enabled
+        // This provides a helpful reminder to users
         
         // Find all version checkboxes for this source
         const versionCheckboxes = document.querySelectorAll(`input[type="checkbox"][name*="Content Sources.${sourceId}.versions"]`);
@@ -602,8 +613,8 @@
         if (sourceSection) {
             const warningElement = sourceSection.querySelector('.no-versions-warning');
             
-            // Only show warning if source is enabled BUT no versions are enabled
-            if (sourceIsEnabled && !hasEnabledVersions) {
+            // Show warning if no versions are enabled (regardless of source enabled state)
+            if (!hasEnabledVersions) {
                 // Show warning
                 if (warningElement) {
                     warningElement.style.display = 'inline-flex';
@@ -618,7 +629,7 @@
                     }
                 }
             } else {
-                // Hide warning if source is disabled OR versions are enabled
+                // Hide warning if versions are enabled
                 if (warningElement) {
                     warningElement.style.display = 'none';
                 }
@@ -681,7 +692,6 @@
             {# Check if this source has any versions enabled #}
             {% set source_versions = config.get('versions', {}) %}
             {% set has_enabled_versions = false %}
-            {% set source_is_enabled = config.get('enabled', false) %}
             {% if source_versions %}
                 {% if source_versions is mapping %}
                     {# Dictionary format: check for any true values #}
@@ -711,7 +721,7 @@
                                 {{ source_id }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
                             {% endif %}
                         {% endif %}
-                        {% if source_is_enabled and not has_enabled_versions %}
+                        {% if not has_enabled_versions %}
                             <span class="no-versions-warning">
                                 <span class="no-versions-warning-icon">⚠️</span>
                                 No versions enabled
@@ -728,26 +738,7 @@
                     {% if config.type == 'Other Plex Watchlist' %}
                         {# --- Render fields in SPECIFIC order for Other Plex Watchlist --- #}
 
-                        {# 1. Enabled #}
-                        {% set key = 'enabled' %}
-                        {% set value = config.get(key, False) %}
-                        <div class="settings-form-group">
-                             <label class="settings-title">
-                                 <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
-                                        name="Content Sources.{{ source_id }}.{{ key }}"
-                                        data-section="Content Sources"
-                                        data-key="{{ source_id }}.{{ key }}"
-                                        {% if value %}checked{% endif %}>
-                                 {{ key|replace('_', ' ')|title }}
-                             </label>
-                             {# Add description if available in schema #}
-                             {% if settings_schema['Content Sources'].schema is defined and
-                                   config.type in settings_schema['Content Sources'].schema and
-                                   key in settings_schema['Content Sources'].schema[config.type] and
-                                   settings_schema['Content Sources'].schema[config.type][key].description is defined %}
-                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
-                             {% endif %}
-                         </div>
+
 
                         {# 2. Versions #}
                         {% set key = 'versions' %}
@@ -972,16 +963,7 @@
                                              </label>
                                              {% endfor %}
                                          </div>
-                                    {% elif key == 'enabled' %}
-                                         {# ... enabled rendering ... #}
-                                         <label class="settings-title">
-                                             <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
-                                                    name="Content Sources.{{ source_id }}.{{ key }}"
-                                                    data-section="Content Sources"
-                                                    data-key="{{ source_id }}.{{ key }}"
-                                                    {% if value %}checked{% endif %}>
-                                             {{ key|replace('_', ' ')|title }}
-                                         </label>
+
                                     {% elif key == 'media_type' %}
                                          {# ... media_type rendering ... #}
                                          <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Media Type:</label>
@@ -1010,6 +992,8 @@
                                                  style="margin-top: 5px;">
                                              Import Liked Lists to this Source
                                          </button>
+                                    {% elif key == 'enabled' %}
+                                        {# Skip enabled field - it's handled in Task Manager #}
                                     {% elif key == 'allow_specials' %}
                                         {# This key is handled by a dedicated block later (around lines 735-751) for non-'Other Plex Watchlist' types. #}
                                         {# Doing nothing here prevents it from being rendered as a text input by the 'else' block below. #}
