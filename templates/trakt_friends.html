@@ -286,10 +286,13 @@
                         }
                     }, 60000);
                 } else {
+                    const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                        ? data.error
+                        : 'Trakt returned an error without details. Please try again or check server logs.';
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         title: 'Authorization Error',
-                        message: data.error || 'An error occurred during authorization.'
+                        message: fallbackMessage
                     });
                 }
             })
@@ -366,7 +369,7 @@
                         });
                     }
                 } else {
-                    console.error('Error loading friends:', data.error);
+                    console.error('Error loading friends:', data.error || 'Unknown error');
                 }
             })
             .catch(error => {
@@ -431,10 +434,13 @@
                     });
                     loadAuthorizedFriends();
                 } else {
+                    const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                        ? data.error
+                        : 'Trakt returned an error without details while refreshing. Please try again or check server logs.';
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         title: 'Error Refreshing Token',
-                        message: data.error || 'An error occurred while refreshing the token.'
+                        message: fallbackMessage
                     });
                 }
             })
@@ -467,10 +473,13 @@
                             });
                             loadAuthorizedFriends();
                         } else {
+                            const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                                ? data.error
+                                : 'Trakt returned an error without details while deleting. Please try again or check server logs.';
                             showPopup({
                                 type: POPUP_TYPES.ERROR,
                                 title: 'Error Deleting Friend',
-                                message: data.error || 'An error occurred while deleting the friend.'
+                                message: fallbackMessage
                             });
                         }
                     })

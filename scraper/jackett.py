@@ -113,6 +113,12 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
     for query in search_queries:
         query = rename_special_characters(query)
 
+        # Strip year if ApacheTorrent or RedeTorrent is in enabled_indexers
+        if enabled_indexers:
+            indexer_list = [indexer.strip().lower() for indexer in enabled_indexers.split(',')]
+            if 'apachetorrent' in indexer_list or 'redetorrent' in indexer_list:
+                query = re.sub(r'\b(19|20)\d{2}\b', '', query).strip()
+
         search_endpoint = f"{jackett_url}/api/v2.0/indexers/all/results?apikey={jackett_api}"
         query_params = {'Query': query}
 
@@ -123,7 +129,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
 
         try:
             response = api.get(full_url, headers={'accept': 'application/json'})
-            
+
             if response.status_code == 200:
                 data = response.json()
                 # Pass the global setting to the parser
@@ -133,6 +139,7 @@ def scrape_jackett_instance(instance: str, settings: Dict[str, Any], imdb_id: st
                 logging.error(f"Jackett API error for {instance}: Status code {response.status_code}")
         except Exception as e:
             logging.error(f"Error querying Jackett API for {instance}: {str(e)}")
+
 
     # Remove duplicates based on magnet links
     seen_magnets = set()

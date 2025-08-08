@@ -234,6 +234,9 @@ def migrate_schema():
         if 'theatrical_release_date' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN theatrical_release_date DATE')
             logging.info("Successfully added theatrical_release_date column to media_items table.")
+        if 'theatrical_release_date_checked' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN theatrical_release_date_checked BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added theatrical_release_date_checked column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -512,6 +515,17 @@ def verify_database():
     create_tables()
     migrate_schema()
     create_torrent_tracking_table()
+
+    # Ensure plex_removal_queue table exists (handles post-delete without restart)
+    try:
+        from .symlink_verification import (
+            create_plex_removal_queue_table,
+            migrate_plex_removal_database,
+        )
+        create_plex_removal_queue_table()
+        migrate_plex_removal_database()
+    except Exception as e:
+        logging.error(f"Error ensuring plex_removal_queue table: {e}")
     
     # Add statistics indexes
     from .migrations import add_statistics_indexes
@@ -614,7 +628,8 @@ def create_tables():
                 force_priority BOOLEAN DEFAULT FALSE,
                 location_basename TEXT,
                 ghostlisted BOOLEAN DEFAULT FALSE,
-                theatrical_release_date DATE
+                theatrical_release_date DATE,
+                theatrical_release_date_checked BOOLEAN DEFAULT FALSE
             )
         ''')
 

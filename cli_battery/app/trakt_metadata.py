@@ -22,6 +22,8 @@ from collections import defaultdict
 from .trakt_auth import TraktAuth
 import traceback
 from collections import deque
+from datetime import datetime as dt
+import iso8601 as iso8601_pkg
 
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
@@ -71,6 +73,83 @@ class TraktMetadata:
             self.post_requests.append(current_time)
         
         return True
+
+    def _format_updates_start_date(self, since_iso: str) -> str:
+        """Convert ISO datetime string to YYYY-MM-DD as required by updates endpoints."""
+        try:
+            parsed = iso8601_pkg.parse_date(since_iso)
+            return parsed.date().isoformat()
+        except Exception:
+            try:
+                # Fallback if already a date string
+                return dt.fromisoformat(since_iso).date().isoformat()
+            except Exception:
+                # As last resort, use today-1
+                return (dt.utcnow().date()).isoformat()
+
+    def _fetch_updates_paginated(self, url_base: str) -> list:
+        """Fetch all pages for a Trakt updates endpoint, returning aggregated JSON list."""
+        page = 1
+        limit = 100
+        aggregated = []
+        while True:
+            url = f"{url_base}?page={page}&limit={limit}"
+            response = self._make_request(url)
+            if not response:
+                break
+            if response.status_code != 200:
+                logger.warning(f"Updates fetch failed for {url} with status {response.status_code}")
+                break
+            data = response.json() or []
+            if not isinstance(data, list):
+                logger.warning(f"Unexpected updates payload type for {url}: {type(data)}")
+                break
+            aggregated.extend(data)
+            # Pagination headers
+            try:
+                page_count = int(response.headers.get('X-Pagination-Page-Count', '1'))
+            except ValueError:
+                page_count = 1
+            if page >= page_count or not data:
+                break
+            page += 1
+        return aggregated
+
+    def get_updated_shows(self, since_iso: str) -> list[dict]:
+        """Return list of dicts with keys: imdb_id, updated_at for shows updated since given ISO time."""
+        start_date = self._format_updates_start_date(since_iso)
+        url_base = f"{self.base_url}/shows/updates/{start_date}"
+        items = self._fetch_updates_paginated(url_base)
+        results = []
+        for entry in items:
+            show_obj = entry.get('show') if isinstance(entry, dict) else None
+            if not show_obj:
+                continue
+            ids = show_obj.get('ids', {})
+            imdb_id = ids.get('imdb')
+            updated_at = entry.get('updated_at') or show_obj.get('updated_at')
+            if imdb_id:
+                results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+        logger.info(f"Fetched {len(results)} updated shows since {start_date}")
+        return results
+
+    def get_updated_movies(self, since_iso: str) -> list[dict]:
+        """Return list of dicts with keys: imdb_id, updated_at for movies updated since given ISO time."""
+        start_date = self._format_updates_start_date(since_iso)
+        url_base = f"{self.base_url}/movies/updates/{start_date}"
+        items = self._fetch_updates_paginated(url_base)
+        results = []
+        for entry in items:
+            movie_obj = entry.get('movie') if isinstance(entry, dict) else None
+            if not movie_obj:
+                continue
+            ids = movie_obj.get('ids', {})
+            imdb_id = ids.get('imdb')
+            updated_at = entry.get('updated_at') or movie_obj.get('updated_at')
+            if imdb_id:
+                results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+        logger.info(f"Fetched {len(results)} updated movies since {start_date}")
+        return results
 
     def _make_request(self, url, method='GET', max_retries=4, initial_delay=5):
         # Always get fresh auth data before making requests

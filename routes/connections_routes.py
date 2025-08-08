@@ -1335,19 +1335,20 @@ def check_content_sources_connections():
         return []
         
     source_statuses = []
-    enabled_sources = {
+    # Ignore per-source enabled flags; check connections for all configured (non-Collected) sources
+    selected_sources = {
         source_id: source_config 
         for source_id, source_config in content_sources.items() 
-        if 'Collected' not in source_id and source_config.get('enabled', False)
+        if 'Collected' not in source_id
     }
 
-    if not enabled_sources:
+    if not selected_sources:
         return []
 
-    with ThreadPoolExecutor(max_workers=len(enabled_sources)) as executor:
+    with ThreadPoolExecutor(max_workers=len(selected_sources)) as executor:
         future_to_source = {
             executor.submit(check_content_source_connection, source_id, source_config): (source_id, source_config)
-            for source_id, source_config in enabled_sources.items()
+            for source_id, source_config in selected_sources.items()
         }
         
         for future in as_completed(future_to_source):

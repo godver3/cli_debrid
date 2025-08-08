@@ -599,24 +599,23 @@ def trim_trailing_slashes(config):
     return config
 
 def get_enabled_content_sources():
-    """Get a list of enabled content sources from the config."""
+    """Get a list of configured content sources (ignoring per-source enabled flags)."""
     config = load_config()
-    enabled_sources = []
+    sources = []
     
     for source_id, source_config in config.get('Content Sources', {}).items():
-        if source_config.get('enabled', False):
-            # Get the display name, falling back to source_id if not present or empty
-            display_name = source_config.get('display_name')
-            if not display_name or display_name.strip() == '':
-                display_name = source_id
-            
-            enabled_sources.append({
-                'id': source_id,
-                'type': source_config.get('type', source_id.split('_')[0]),
-                'display_name': display_name
-            })
+        # Get the display name, falling back to source_id if not present or empty
+        display_name = source_config.get('display_name')
+        if not display_name or display_name.strip() == '':
+            display_name = source_id
+        
+        sources.append({
+            'id': source_id,
+            'type': source_config.get('type', source_id.split('_')[0]),
+            'display_name': display_name
+        })
     
-    return enabled_sources
+    return sources
 
 def get_overseerr_instances():
     """

@@ -12,13 +12,13 @@
     "Wanted": "Items that will be released within the next 24 hours. Additionally staging queue for Scraping queue if too many items in Scraping queue. <br><br> <b>ACTION</b>: Process any items in Wanted Queue.",
     "Analyze Media Files": "Analyze 200 media files per run to verify playability. <br><br> <b>ACTION</b>: Process 200 media files in rclone mount using ffprobe. If found to be unplayable check if item is the last of its version, and if so move back to Wanted, otherwise move to Blacklisted.",
     "Check Database Health": "Check if media_items.db is healthy. <br><br> <b>ACTION</b>: Check if media_items.db is healthy.",
-    "Check Plex Files": "If Plex File Discovery is enabled, check if files have appeared in the rclone mount, and if so call an update in Plex for those files. [Plex Library Only] <br><br> <b>ACTION</b>: Check if files have appeared in the rclone mount, and if so call an update in Plex for those files.",
+    "Check Plex Files Plex library only": "If Plex File Discovery is enabled, check if files have appeared in the rclone mount, and if so call an update in Plex for those files. [Plex Library Only] <br><br> <b>ACTION</b>: Check if files have appeared in the rclone mount, and if so call an update in Plex for those files.",
     "Check Service Connectivity": "Check if Plex/Jellyfin, Trakt, and Real Debrid are reachable. If not pause the queue until they are reachable again. <br><br> <b>ACTION</b>: Perform connectivity check for Plex/Jellyfin, Trakt, and Real Debrid.",
     "Check Trakt Early Releases": "Check if any items have been flagged for early release in Trakt based on popular lists. <br><br> <b>ACTION</b>: Check if any items have been flagged for early release and if so flag them in the database. This flag is used to bypass the Wanted/Unreleased queues.",
     "Get Plex Watch History": "Get watch history from Plex. Used to prevent addition of items that have been watched. <br><br> <b>ACTION</b>: Get watch history from Plex.",
     "Heartbeat": "Check if the service is running. You probably don't need to click this. <br><br> <b>ACTION</b>: Check if the service is running.",
     "Manual Plex Full Scan": "Performs a full scan of the Plex library and marks all items as Collected in the database. Used for those with a hybrid symlink/Plex library. <br><br> <b>ACTION</b>: Perform a full scan of the Plex library and mark all items as Collected in the database.",
-    "Plex Full Scan": "Performs a full scan of the Plex library and marks all items as Collected in the database. Part of regular Plex library operations. [Plex Library Only] <br><br> <b>ACTION</b>: Perform a full scan of the Plex library and mark all items as Collected in the database.",
+    "Plex Full Scan Plex library only": "Performs a full scan of the Plex library and marks all items as Collected in the database. Part of regular Plex library operations. [Plex Library Only] <br><br> <b>ACTION</b>: Perform a full scan of the Plex library and mark all items as Collected in the database.",
     "Precompute Airing Shows": "Checks airing times for upcoming shows and ensures that move from Wanted to Scraping happens on time. <br><br> <b>ACTION</b>: Check airing times for upcoming shows.",
     "Process Bulk Subtitles": "Processes 200 media items at a time. Tries to find subtitles for items that don't currently have an associated SRT file and have not yet been processed. <br><br> <b>ACTION</b>: Process 200 media items at a time.",
     "Process Standalone Plex Removals": "If enabled, removes items that have been queued for removal from Plex. <br><br> <b>ACTION</b>: Process any items in Standalone Plex Removals Queue.",
@@ -37,7 +37,7 @@
     "Update Show Titles": "Update show titles for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update show titles for all items in the database.",
     "Update TV Show Status": "Update TV show status for all items in the database. Not generally recommended or needed. <br><br> <b>ACTION</b>: Update TV show status for all items in the database.",
     "Verify Plex Removals": "If enabled, verifies that items have been removed from Plex. <br><br> <b>ACTION</b>: Verify that items have been removed from Plex.",
-    "Verify Symlinked Files": "Verifies that symlinks have been successfully added to Plex library. Makes 10 attempts before assuming success. <br><br> <b>ACTION</b>: Process verification queue.",
+    "Verify Symlinked Files Symlink library only": "Verifies that symlinks have been successfully added to Plex library. Makes 10 attempts before assuming success. <br><br> <b>ACTION</b>: Process verification queue.",
     "default": "Processes any items from this Content Source. Content source items metadata are cached for 6 hours on addition and can be cleared on the Debug page. Items are added to the Wanted queue for processing. <br><br> <b>ACTION</b>: Process any items from this Content Source."
   }
 } 

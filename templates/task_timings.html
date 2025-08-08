@@ -82,11 +82,15 @@
         background-color: #2c2c2c;
         padding: 1rem;
         cursor: pointer;
+        /* Prevent hover from being disrupted by content updates */
+        will-change: box-shadow, border-color;
     }
 
     .task-tile:hover {
         box-shadow: 0 0 20px rgba(0, 123, 255, 0.6);
         border-color: #007bff;
+        /* Prevent hover from being disrupted by content updates */
+        transition: box-shadow 0.3s ease, border-color 0.3s ease;
     }
 
     .task-tile.disabled {
@@ -356,7 +360,7 @@
 <div id="taskTimingsContainer">
 
     <div class="info-banner">
-        <p><i class="fas fa-info-circle"></i> Task timings and intervals are displayed based on the running program. Customize intervals using the input fields (in seconds) and save your preferences. Saved intervals apply on program restart unless live updates are successful.</p>
+        <p><i class="fas fa-info-circle"></i> Task timings and intervals are displayed based on the running program. Customize intervals using the input fields (in seconds) and save your preferences. The "Default" value never changes - it's the original program default. "Custom" shows any saved custom interval. "Configured" shows the currently active interval (custom or default). Saved intervals apply on program restart unless live updates are successful.</p>
         
         <div class="media-flow-container" style="margin-top: 15px; padding: 15px; background-color: #1a1a1a; border-radius: 8px;">
             <div class="media-flow-header" style="cursor: pointer; display: flex; align-items: center; justify-content: space-between;">
@@ -470,6 +474,7 @@ let programStatusPollIntervalId = null;
 let isProgramConsideredRunning = false; // Tracks the page's belief of the program state
 const FAST_POLL_INTERVAL = 5000; // 5 seconds for checking program status when believed to be down
 const REGULAR_UPDATE_INTERVAL = 1000; // 1 second for regular task updates
+let isUpdatingTasks = false; // Flag to track when task updates are happening
 // --- END NEW VARS ---
 
 // Track any in-flight toggle enable/disable requests so Save can wait for them.
@@ -763,15 +768,15 @@ function createTaskTile(taskName, taskData) {
                 ${libraryLabel ? `<span class="library-label">${libraryLabel}</span>` : ''}
             </div>
             <span class="interval-badge" title="Default: ${defaultIntervalFormatted}">
-                Current: ${currentIntervalFormatted}
+                Configured: ${currentIntervalFormatted}
             </span>
         </div>
         <div class="interval-details">
             Default: ${defaultIntervalFormatted} (${defaultIntervalSec}s)
-            ${customIntervalSec !== null && customIntervalSec !== undefined ? `| Saved: ${customIntervalSec}s` : ''}
+            ${customIntervalSec !== null && customIntervalSec !== undefined ? `| Custom: ${customIntervalSec}s` : ''}
         </div>
         <div class="interval-input-container">
-            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Default (${defaultIntervalSec}s)" value="${intervalInputValue}" min="1" step="1" ${enabled ? '' : 'disabled'} data-default-interval-seconds="${defaultIntervalSec}">
+            <input type="number" class="interval-input ${enabled ? '' : 'disabled'} ${customIntervalSec !== null && customIntervalSec !== undefined ? 'custom' : 'default'}" placeholder="Enter seconds (default: ${defaultIntervalSec}s)" value="${intervalInputValue}" min="1" step="1" ${enabled ? '' : 'disabled'} data-default-interval-seconds="${defaultIntervalSec}">
             <span class="interval-input-label">seconds</span>
         </div>
         <div class="countdown" data-task="${taskName}">
@@ -821,11 +826,25 @@ function createTaskTile(taskName, taskData) {
             }
             // console.log(`[TaskTimings] Interval input changed for ${taskName}: ${currentValue}, default: ${defaultIntervalSec}s, matchesDefault: ${matchesDefault}`);
         });
+        
+        // Preserve focus state during updates
+        intervalInput.addEventListener('focus', function() {
+            this.dataset.wasFocused = 'true';
+        });
+        
+        intervalInput.addEventListener('blur', function() {
+            delete this.dataset.wasFocused;
+        });
     }
     return tile;
 }
 
 function updateTimers() {
+    // Skip timer updates if we're in the middle of a targeted update
+    if (isUpdatingTasks) {
+        return;
+    }
+    
     for (let taskName in timers) {
         let seconds = timers[taskName];
         if (seconds > 0) {
@@ -836,7 +855,11 @@ function updateTimers() {
             const remainingSeconds = seconds % 60;
             const element = document.querySelector(`[data-task="${taskName}"]`);
             if (element) {
-                element.textContent = formatTime(hours, minutes, remainingSeconds);
+                // Only update if the element is not being hovered over to preserve hover state
+                const tile = element.closest('.task-tile');
+                if (tile && !tile.matches(':hover')) {
+                    element.textContent = formatTime(hours, minutes, remainingSeconds);
+                }
             }
         }
     }
@@ -875,60 +898,22 @@ function fetchAndUpdateTasks() {
                 const tasks = data.tasks;
                 console.log("[TaskTimings] Fetched task data for UI update:", tasks); 
 
-                const currentIntervalValues = {};
-                document.querySelectorAll('.task-tile .interval-input').forEach(input => {
-                    const tile = input.closest('.task-tile');
-                    if (tile) currentIntervalValues[tile.dataset.taskName] = input.value;
-                });
-                console.log("[TaskTimings] Preserved current interval input values:", currentIntervalValues);
-
-                document.querySelector('#queues .task-grid').innerHTML = '';
-                document.querySelector('#sources .task-grid').innerHTML = '';
-                document.querySelector('#system .task-grid').innerHTML = '';
-                console.log("[TaskTimings] Cleared existing task tiles.");
-
-                Object.entries(tasks.queues || {}).forEach(([name, info]) => {
-                    document.querySelector('#queues .task-grid').appendChild(createTaskTile(name, info));
-                });
-
-                if (Object.keys(tasks.content_sources || {}).length === 0) {
-                    const noSourcesMsg = document.createElement('div');
-                    noSourcesMsg.className = 'info-banner'; noSourcesMsg.style.margin = '1rem 0';
-                    noSourcesMsg.innerHTML = '<p><i class="fas fa-info-circle"></i> No content sources found. Content sources will appear here when they are configured and the program is running.</p>';
-                    document.querySelector('#sources .task-grid').appendChild(noSourcesMsg);
-                    console.log("[TaskTimings] No content sources found, displayed message.");
+                // Check if we need to do a full refresh (first load or major changes)
+                const existingTiles = document.querySelectorAll('.task-tile');
+                const newTaskCount = Object.keys(tasks.queues || {}).length + 
+                                   Object.keys(tasks.content_sources || {}).length + 
+                                   Object.keys(tasks.system_tasks || {}).length;
+                
+                const needsFullRefresh = existingTiles.length === 0 || existingTiles.length !== newTaskCount;
+                
+                if (needsFullRefresh) {
+                    console.log("[TaskTimings] Performing full refresh - creating new tiles.");
+                    performFullRefresh(tasks);
                 } else {
-                    Object.entries(tasks.content_sources || {}).forEach(([name, info]) => {
-                        document.querySelector('#sources .task-grid').appendChild(createTaskTile(name, info));
-                    });
+                    console.log("[TaskTimings] Performing targeted update - preserving hover states and input focus.");
+                    // Small delay to prevent interference with user interactions
+                    setTimeout(() => performTargetedUpdate(tasks), 50);
                 }
-
-                Object.entries(tasks.system_tasks || {}).forEach(([name, info]) => {
-                    document.querySelector('#system .task-grid').appendChild(createTaskTile(name, info));
-                });
-                console.log("[TaskTimings] Populated task tiles.");
-
-                Object.entries(currentIntervalValues).forEach(([taskName, value]) => {
-                    const input = document.querySelector(`.task-tile[data-task-name="${taskName}"] .interval-input`);
-                    if (input) { input.value = value; input.dispatchEvent(new Event('input')); }
-                });
-                console.log("[TaskTimings] Restored interval input values.");
-
-                updateBadgeCounts(tasks);
-
-                timers = {};
-                ['queues', 'content_sources', 'system_tasks'].forEach(category => {
-                    Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
-                        if(info.enabled) {
-                             timers[taskName] = Math.max(0, Math.floor(info.next_run_in.total_seconds));
-                        } else {
-                             delete timers[taskName];
-                             const element = document.querySelector(`[data-task="${taskName}"]`);
-                             if (element) element.textContent = '--:--:--';
-                        }
-                    });
-                });
-                console.log("[TaskTimings] Timers updated:", timers);
 
             } else {
                  if (isProgramConsideredRunning) {
@@ -964,6 +949,165 @@ function fetchAndUpdateTasks() {
             loadSavedToggleStates();
             loadSavedIntervalStates();
         });
+}
+
+function performFullRefresh(tasks) {
+    // Preserve current interval input values and focus states
+    const currentIntervalValues = {};
+    const focusedInput = document.querySelector('.task-tile .interval-input:focus');
+    const focusedTaskName = focusedInput ? focusedInput.closest('.task-tile').dataset.taskName : null;
+    
+    document.querySelectorAll('.task-tile .interval-input').forEach(input => {
+        const tile = input.closest('.task-tile');
+        if (tile) currentIntervalValues[tile.dataset.taskName] = input.value;
+    });
+    console.log("[TaskTimings] Preserved current interval input values:", currentIntervalValues);
+
+    // Clear and recreate tiles
+    document.querySelector('#queues .task-grid').innerHTML = '';
+    document.querySelector('#sources .task-grid').innerHTML = '';
+    document.querySelector('#system .task-grid').innerHTML = '';
+    console.log("[TaskTimings] Cleared existing task tiles.");
+
+    Object.entries(tasks.queues || {}).forEach(([name, info]) => {
+        document.querySelector('#queues .task-grid').appendChild(createTaskTile(name, info));
+    });
+
+    if (Object.keys(tasks.content_sources || {}).length === 0) {
+        const noSourcesMsg = document.createElement('div');
+        noSourcesMsg.className = 'info-banner'; noSourcesMsg.style.margin = '1rem 0';
+        noSourcesMsg.innerHTML = '<p><i class="fas fa-info-circle"></i> No content sources found. Content sources will appear here when they are configured and the program is running.</p>';
+        document.querySelector('#sources .task-grid').appendChild(noSourcesMsg);
+        console.log("[TaskTimings] No content sources found, displayed message.");
+    } else {
+        Object.entries(tasks.content_sources || {}).forEach(([name, info]) => {
+            document.querySelector('#sources .task-grid').appendChild(createTaskTile(name, info));
+        });
+    }
+
+    Object.entries(tasks.system_tasks || {}).forEach(([name, info]) => {
+        document.querySelector('#system .task-grid').appendChild(createTaskTile(name, info));
+    });
+    console.log("[TaskTimings] Populated task tiles.");
+
+    // Restore interval values and focus
+    Object.entries(currentIntervalValues).forEach(([taskName, value]) => {
+        const input = document.querySelector(`.task-tile[data-task-name="${taskName}"] .interval-input`);
+        if (input) { 
+            input.value = value; 
+            input.dispatchEvent(new Event('input'));
+            // Restore focus if this was the previously focused input
+            if (taskName === focusedTaskName) {
+                setTimeout(() => input.focus(), 0);
+            }
+        }
+    });
+    console.log("[TaskTimings] Restored interval input values and focus.");
+
+    updateBadgeCounts(tasks);
+    updateTimersFromData(tasks);
+}
+
+function performTargetedUpdate(tasks) {
+    // Only update dynamic content without recreating tiles
+    console.log("[TaskTimings] Performing targeted update of dynamic content.");
+    isUpdatingTasks = true;
+    
+    // Track which input was focused before update
+    const focusedInput = document.querySelector('.task-tile .interval-input:focus');
+    const focusedTaskName = focusedInput ? focusedInput.closest('.task-tile').dataset.taskName : null;
+    
+    // Update countdown timers and interval badges
+    ['queues', 'content_sources', 'system_tasks'].forEach(category => {
+        Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
+            const tile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
+            if (tile) {
+                // Update countdown timer
+                const countdownElement = tile.querySelector('.countdown');
+                if (countdownElement && info.enabled) {
+                    countdownElement.textContent = formatTime(info.next_run_in.hours, info.next_run_in.minutes, info.next_run_in.seconds);
+                } else if (countdownElement && !info.enabled) {
+                    countdownElement.textContent = '--:--:--';
+                }
+                
+                // Update interval badge
+                const intervalBadge = tile.querySelector('.interval-badge');
+                if (intervalBadge) {
+                    const currentIntervalFormatted = formatInterval(info.current_interval_seconds || 0);
+                    const defaultIntervalFormatted = formatInterval(info.default_interval_seconds || 0);
+                    intervalBadge.textContent = `Configured: ${currentIntervalFormatted}`;
+                    intervalBadge.title = `Default: ${defaultIntervalFormatted}`;
+                }
+                
+                // Update interval details
+                const intervalDetails = tile.querySelector('.interval-details');
+                if (intervalDetails) {
+                    const defaultIntervalFormatted = formatInterval(info.default_interval_seconds || 0);
+                    const defaultIntervalSec = info.default_interval_seconds || 0;
+                    const customIntervalSec = info.custom_interval_seconds;
+                    intervalDetails.innerHTML = `Default: ${defaultIntervalFormatted} (${defaultIntervalSec}s)${customIntervalSec !== null && customIntervalSec !== undefined ? ` | Custom: ${customIntervalSec}s` : ''}`;
+                }
+                
+                // Update status indicator and toggle state
+                const statusIndicator = tile.querySelector('.status-indicator');
+                const toggleInput = tile.querySelector('input[type="checkbox"]');
+                const toggleLabel = tile.querySelector('.toggle-label');
+                
+                if (statusIndicator) {
+                    statusIndicator.className = `status-indicator ${info.enabled ? 'enabled' : 'disabled'}`;
+                }
+                
+                if (toggleInput && toggleInput.checked !== info.enabled) {
+                    toggleInput.checked = info.enabled;
+                }
+                
+                if (toggleLabel) {
+                    toggleLabel.textContent = info.enabled ? 'Enabled' : 'Disabled';
+                }
+                
+                // Update tile disabled state
+                if (info.enabled) {
+                    tile.classList.remove('disabled');
+                } else {
+                    tile.classList.add('disabled');
+                }
+            }
+        });
+    });
+    
+    updateBadgeCounts(tasks);
+    updateTimersFromData(tasks);
+    
+    // Restore focus if an input was focused before the update
+    if (focusedTaskName) {
+        setTimeout(() => {
+            const input = document.querySelector(`.task-tile[data-task-name="${focusedTaskName}"] .interval-input`);
+            if (input) {
+                input.focus();
+                // Restore cursor position if possible
+                const length = input.value.length;
+                input.setSelectionRange(length, length);
+            }
+        }, 0);
+    }
+    
+    isUpdatingTasks = false;
+}
+
+function updateTimersFromData(tasks) {
+    timers = {};
+    ['queues', 'content_sources', 'system_tasks'].forEach(category => {
+        Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
+            if(info.enabled) {
+                 timers[taskName] = Math.max(0, Math.floor(info.next_run_in.total_seconds));
+            } else {
+                 delete timers[taskName];
+                 const element = document.querySelector(`[data-task="${taskName}"]`);
+                 if (element) element.textContent = '--:--:--';
+            }
+        });
+    });
+    console.log("[TaskTimings] Timers updated:", timers);
 }
 
 window.triggerTask = function triggerTask(taskName) {

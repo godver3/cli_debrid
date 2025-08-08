@@ -274,6 +274,35 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
     episodeResultsDiv.appendChild(gridContainer);
 }
 
+// Back button functionality
+function showBackButton() {
+    const backButtonContainer = document.getElementById('back-button-container');
+    if (backButtonContainer) {
+        backButtonContainer.style.display = 'block';
+    }
+}
+
+function hideBackButton() {
+    const backButtonContainer = document.getElementById('back-button-container');
+    if (backButtonContainer) {
+        backButtonContainer.style.display = 'none';
+    }
+}
+
+function goBackToTrending() {
+    // Hide back button
+    hideBackButton();
+    
+    // Show trending container and hide other sections
+    toggleResultsVisibility('get_trendingMovies');
+    
+    // Clear search form
+    const searchForm = document.querySelector('#search-form input[name="search_term"]');
+    if (searchForm) {
+        searchForm.value = '';
+    }
+}
+
 function toggleResultsVisibility(section) {
     const trendingContainer = document.getElementById('trendingContainer');
     const searchResult = document.getElementById('searchResult');
@@ -296,6 +325,8 @@ function toggleResultsVisibility(section) {
         // Only show season pack button for non-requester users
         seasonPackButton.style.display = isRequester ? 'none' : 'block';
         episodeResultsDiv.style.display = 'block';
+        // Show back button for episode results
+        showBackButton();
     }
     if (section === 'displaySearchResults') {
         trendingContainer.style.display = 'none';
@@ -303,6 +334,8 @@ function toggleResultsVisibility(section) {
         searchResults.style.display = 'block';
         seasonResults.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
+        // Show back button for search results
+        showBackButton();
     }
     if (section === 'get_trendingMovies') {
         trendingContainer.style.display = 'block';
@@ -310,6 +343,8 @@ function toggleResultsVisibility(section) {
         searchResults.style.display = 'none';
         seasonResults.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
+        // Hide back button when showing trending
+        hideBackButton();
     }
 }
 
@@ -528,6 +563,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
     document.body.classList.add('modal-open');
     overlay.style.display = 'flex';
     
+    // Hide back button when overlay is shown
+    hideBackButton();
+    
     const closeButton = overlay.querySelector('.close-btn');
     if (closeButton) {
         // Ensure only one listener is attached - simple re-assignment might be enough if this is the only place it's set.
@@ -686,6 +724,13 @@ function closeOverlay() {
     if (overlayElement) {
         overlayElement.style.display = 'none';
         document.body.classList.remove('modal-open');
+        
+        // Show back button when overlay is closed (since overlay shows torrent results)
+        // Check if we're not on the trending page
+        const trendingContainer = document.getElementById('trendingContainer');
+        if (trendingContainer && trendingContainer.style.display === 'none') {
+            showBackButton();
+        }
     }
 }
 
@@ -727,6 +772,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     const cancelScrapeButton = document.getElementById('cancelScrapeVersion');
     if (cancelScrapeButton) {
         cancelScrapeButton.addEventListener('click', closeScrapeVersionModal);
+    }
+    
+    // Set up back button
+    const backButton = document.getElementById('back-button');
+    if (backButton) {
+        backButton.addEventListener('click', goBackToTrending);
     }
     
     // Close modals when clicking outside
@@ -2625,6 +2676,9 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
 
             // Show results
             resultsDiv.style.display = 'block';
+
+            // Show back button for season results
+            showBackButton();
 
             // Trigger initial selection
             if (dropdown.options.length > 0) {

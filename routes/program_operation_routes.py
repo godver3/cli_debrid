@@ -933,7 +933,8 @@ def get_program_status():
 def check_program_conditions():
     config = load_config()
     scrapers_enabled = any(scraper.get('enabled', False) for scraper in config.get('Scrapers', {}).values())
-    content_sources_enabled = any(source.get('enabled', False) for source in config.get('Content Sources', {}).values())
+    # Consider content sources present (ignoring per-source enabled flags); UI toggles control runtime
+    content_sources_enabled = bool(config.get('Content Sources', {}))
     
     required_settings = [
         ('Plex', 'url'),
@@ -1017,9 +1018,8 @@ def get_task_timings():
         task_default_interval = original_intervals.get(normalized_name, 0)
         task_custom_saved_interval = saved_intervals_seconds.get(normalized_name) # Raw value from JSON (number or None)
 
-        configured_interval = task_default_interval # Start with default
-        if task_custom_saved_interval is not None: # If a custom value (a number, not None) is saved
-            configured_interval = task_custom_saved_interval
+        # The configured interval is the custom value if set, otherwise the default
+        configured_interval = task_custom_saved_interval if task_custom_saved_interval is not None else task_default_interval
         
         task_info = {
             'enabled': job is not None and job.next_run_time is not None,
@@ -1027,9 +1027,9 @@ def get_task_timings():
             'next_run_in': {'hours': 0, 'minutes': 0, 'seconds': 0, 'total_seconds': 0},
             'display_name': _format_task_display_name(normalized_name, queue_map, content_sources_map),
             'current_interval_seconds': 0, # Actual live interval or configured if disabled
-            'default_interval_seconds': task_default_interval,
+            'default_interval_seconds': task_default_interval, # Original default (never changes)
             'custom_interval_seconds': task_custom_saved_interval, # Raw saved value (number or null)
-            'configured_interval_seconds': configured_interval # For the input box
+            'configured_interval_seconds': configured_interval # Current effective interval (custom or default)
         }
 
         if job:
