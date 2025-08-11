@@ -15,7 +15,7 @@ from flask import request, url_for
 from urllib.parse import urlparse
 from debrid.base import DebridProvider
 from debrid import get_debrid_provider
-from debrid.real_debrid.client import RealDebridProvider
+# Provider-agnostic: avoid direct Real-Debrid import
 import time
 
 # NEW ASYNC HELPER FUNCTION
@@ -1104,8 +1104,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     supports_cache_check = debrid_provider.supports_direct_cache_check
     supports_bulk_check = debrid_provider.supports_bulk_cache_checking
     
-    # Check if this is a RealDebridProvider
-    is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+    # Determine behavior from provider capability flags
+    is_real_debrid = getattr(debrid_provider, 'supports_direct_cache_check', False)
     
     logging.info(f"Debrid provider: supports_cache_check={supports_cache_check}, supports_bulk_check={supports_bulk_check}, is_real_debrid={is_real_debrid}")
 
@@ -1200,7 +1200,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         else:
             # If provider doesn't support direct checking but is RealDebrid, check first 5 results
             if is_real_debrid:
-                logging.info("Using RealDebridProvider's is_cached method for exactly 5 results")
+                logging.info("Using provider's is_cached method for exactly 5 results based on capability flags")
                 torrent_ids_to_remove = []  # Track torrent IDs for removal
                 
                 # Only check first 5 results

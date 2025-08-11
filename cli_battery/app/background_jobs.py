@@ -96,6 +96,18 @@ class BackgroundJobManager:
         
         self.last_api_call = time.time()
 
+    def _round_timestamp_to_hour(self, timestamp_str):
+        """Round timestamp to the hour as required by Trakt API"""
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            # Round down to the hour
+            rounded = dt.replace(minute=0, second=0, microsecond=0)
+            return rounded.isoformat().replace('+00:00', 'Z')
+        except Exception as e:
+            logger.warning(f"Failed to round timestamp {timestamp_str}: {e}")
+            return timestamp_str
+
     def refresh_trakt_updates(self):
         """Fetch Trakt updated shows/movies since last cursor and refresh only those items."""
         try:
@@ -107,18 +119,38 @@ class BackgroundJobManager:
             shows_since = cursors.get('shows_last_updated_at') or default_since
             movies_since = cursors.get('movies_last_updated_at') or default_since
 
-            logger.info(f"Fetching Trakt updated shows since {shows_since} and movies since {movies_since}")
+            # Round current cursors to the hour as required by Trakt API
+            rounded_shows_since = self._round_timestamp_to_hour(shows_since)
+            rounded_movies_since = self._round_timestamp_to_hour(movies_since)
+
+            logger.info(f"Fetching Trakt updated shows since {rounded_shows_since} and movies since {rounded_movies_since}")
 
             # Fetch updates
-            updated_shows = trakt.get_updated_shows(shows_since) or []
-            updated_movies = trakt.get_updated_movies(movies_since) or []
+            updated_shows = trakt.get_updated_shows(rounded_shows_since) or []
+            updated_movies = trakt.get_updated_movies(rounded_movies_since) or []
+
+            logger.info(f"Received {len(updated_shows)} show updates and {len(updated_movies)} movie updates from Trakt")
+
+            # Filter for items that exist in our database
+            with DbSession() as session:
+                # Get all existing imdb_ids from our database
+                existing_items = session.query(Item.imdb_id).all()
+                existing_imdb_ids = {item[0] for item in existing_items}
+                logger.info(f"Found {len(existing_imdb_ids)} existing items in database")
+
+            # Filter updates to only include items we're monitoring
+            relevant_shows = [entry for entry in updated_shows if entry.get('imdb_id') in existing_imdb_ids]
+            relevant_movies = [entry for entry in updated_movies if entry.get('imdb_id') in existing_imdb_ids]
+            
+            logger.info(f"Filtered to {len(relevant_shows)} relevant show updates and {len(relevant_movies)} relevant movie updates")
 
             # Process updates; collect max updated_at to advance cursors
             max_show_updated = shows_since
             max_movie_updated = movies_since
 
             # Refresh shows
-            for entry in updated_shows:
+            processed_shows = 0
+            for entry in relevant_shows:
                 imdb_id = entry.get('imdb_id')
                 if not imdb_id:
                     continue
@@ -135,9 +167,13 @@ class BackgroundJobManager:
                 updated_at = entry.get('updated_at')
                 if updated_at and updated_at > (max_show_updated or ''):
                     max_show_updated = updated_at
+                processed_shows += 1
+
+            logger.info(f"Processed {processed_shows}/{len(relevant_shows)} relevant show updates")
 
             # Refresh movies
-            for entry in updated_movies:
+            processed_movies = 0
+            for entry in relevant_movies:
                 imdb_id = entry.get('imdb_id')
                 if not imdb_id:
                     continue
@@ -154,23 +190,31 @@ class BackgroundJobManager:
                 updated_at = entry.get('updated_at')
                 if updated_at and updated_at > (max_movie_updated or ''):
                     max_movie_updated = updated_at
+                processed_movies += 1
+
+            logger.info(f"Processed {processed_movies}/{len(relevant_movies)} relevant movie updates")
 
             # Advance cursors if we processed anything
-            if updated_shows or updated_movies:
+            if relevant_shows or relevant_movies:
                 # Fallback to now if max not set properly
                 if not max_show_updated:
                     max_show_updated = now_iso
                 if not max_movie_updated:
                     max_movie_updated = now_iso
+                
+                # Round timestamps to the hour as required by Trakt API
+                rounded_show_cursor = self._round_timestamp_to_hour(max_show_updated)
+                rounded_movie_cursor = self._round_timestamp_to_hour(max_movie_updated)
+                
                 self.settings.update_trakt_updates(
-                    shows_last_updated_at=max_show_updated,
-                    movies_last_updated_at=max_movie_updated,
+                    shows_last_updated_at=rounded_show_cursor,
+                    movies_last_updated_at=rounded_movie_cursor,
                 )
                 logger.info(
-                    f"Advanced Trakt update cursors to shows={max_show_updated}, movies={max_movie_updated}"
+                    f"Advanced Trakt update cursors to shows={rounded_show_cursor}, movies={rounded_movie_cursor}"
                 )
             else:
-                logger.info("No Trakt updates to process")
+                logger.info(f"No relevant Trakt updates to process (received {len(updated_shows)} shows, {len(updated_movies)} movies, {len(relevant_shows)} relevant shows, {len(relevant_movies)} relevant movies)")
 
         except Exception as e:
             logger.error(f"Error in refresh_trakt_updates: {e}", exc_info=True)

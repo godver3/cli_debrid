@@ -1,7 +1,7 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import logging
 from debrid import get_debrid_provider
-from debrid.real_debrid.client import RealDebridProvider
+# Provider-agnostic: avoid direct Real-Debrid import
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from utilities.settings import get_setting, get_all_settings, load_config, save_config
 from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall
@@ -357,15 +357,25 @@ def add_torrent_to_debrid():
                     logging.warning(f"Failed to delete temp file {temp_file}: {e}")
 
         # Get torrent info for processing
-        if isinstance(debrid_provider, RealDebridProvider):
-            # For Real Debrid, use the torrent ID directly
+        # Initialize defaults to avoid UnboundLocalError in any branch
+        torrent_info = None
+        is_cached = False
+
+        # Prefer capability flags, but always fall back to fetching by ID
+        if getattr(debrid_provider, 'supports_direct_cache_check', False):
+            # For providers like Real-Debrid, use the torrent ID directly
             torrent_info = debrid_provider.get_torrent_info(torrent_id)
-            
-            # Check if the torrent is cached or not
-            is_cached = False
-            if torrent_info:
-                status = torrent_info.get('status', '')
-                is_cached = status == 'downloaded'
+        else:
+            # Fallback: still attempt to retrieve info by torrent ID
+            try:
+                torrent_info = debrid_provider.get_torrent_info(torrent_id)
+            except Exception as _:
+                torrent_info = None
+
+        # Derive cached status if info is available
+        if torrent_info:
+            status = torrent_info.get('status', '')
+            is_cached = (status == 'downloaded')
         '''
         #tb
         else:
@@ -1275,7 +1285,7 @@ def run_scrape():
         if not skip_cache_check:
             try:
                 debrid_provider = get_debrid_provider()
-                if isinstance(debrid_provider, RealDebridProvider):
+                if getattr(debrid_provider, 'supports_direct_cache_check', False):
                     # Process original results
                     for i, result in enumerate(original_results[:5]):
                         if 'magnet' in result:
@@ -1622,7 +1632,8 @@ def check_cache_status():
             debrid_provider = get_debrid_provider()
             supports_cache_check = debrid_provider.supports_direct_cache_check
             supports_bulk_check = debrid_provider.supports_bulk_cache_checking
-            is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+            # Derive behavior from capabilities instead of concrete type
+            is_real_debrid = getattr(debrid_provider, 'supports_direct_cache_check', False)
             
             if supports_cache_check:
                 try:
@@ -1679,7 +1690,7 @@ def check_cache_status():
                     for hash_value in hashes_to_check:
                         cache_status[hash_value] = 'N/A'
             elif is_real_debrid:
-                logging.info("Using RealDebridProvider's is_cached method")
+                logging.info("Using provider's is_cached method based on capability flags")
                 torrent_ids_to_remove = []
                 
                 for i, hash_value in enumerate(hashes_to_check):

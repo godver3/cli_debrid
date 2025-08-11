@@ -75,26 +75,47 @@ class TraktMetadata:
         return True
 
     def _format_updates_start_date(self, since_iso: str) -> str:
-        """Convert ISO datetime string to YYYY-MM-DD as required by updates endpoints."""
+        """Convert ISO datetime string to YYYY-MM-DDTHH:MM:SSZ as required by updates endpoints."""
         try:
             parsed = iso8601_pkg.parse_date(since_iso)
-            return parsed.date().isoformat()
+            # Return full ISO format with time, rounded to the hour
+            rounded = parsed.replace(minute=0, second=0, microsecond=0)
+            return rounded.strftime('%Y-%m-%dT%H:%M:%SZ')
         except Exception:
             try:
                 # Fallback if already a date string
-                return dt.fromisoformat(since_iso).date().isoformat()
+                dt_obj = dt.fromisoformat(since_iso)
+                rounded = dt_obj.replace(minute=0, second=0, microsecond=0)
+                return rounded.strftime('%Y-%m-%dT%H:%M:%SZ')
             except Exception:
                 # As last resort, use today-1
-                return (dt.utcnow().date()).isoformat()
+                fallback = dt.utcnow() - timedelta(days=1)
+                rounded = fallback.replace(minute=0, second=0, microsecond=0)
+                return rounded.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    def _fetch_updates_paginated(self, url_base: str) -> list:
+    def _fetch_updates_paginated(self, url_base: str, since_iso: str = None) -> list:
         """Fetch all pages for a Trakt updates endpoint, returning aggregated JSON list."""
         page = 1
         limit = 100
         aggregated = []
+        
+        # Add X-Start-Date header for precise filtering if since_iso is provided
+        headers = {}
+        if since_iso:
+            try:
+                # Format the timestamp to the hour as required by Trakt
+                from datetime import datetime
+                dt = datetime.fromisoformat(since_iso.replace('Z', '+00:00'))
+                rounded_time = dt.replace(minute=0, second=0, microsecond=0)
+                start_date_header = rounded_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+                headers['X-Start-Date'] = start_date_header
+                logger.info(f"Using X-Start-Date header: {start_date_header} for URL: {url_base}")
+            except Exception as e:
+                logger.warning(f"Failed to format X-Start-Date header: {e}")
+        
         while True:
             url = f"{url_base}?page={page}&limit={limit}"
-            response = self._make_request(url)
+            response = self._make_request(url, headers=headers)
             if not response:
                 break
             if response.status_code != 200:
@@ -119,8 +140,16 @@ class TraktMetadata:
         """Return list of dicts with keys: imdb_id, updated_at for shows updated since given ISO time."""
         start_date = self._format_updates_start_date(since_iso)
         url_base = f"{self.base_url}/shows/updates/{start_date}"
-        items = self._fetch_updates_paginated(url_base)
+        items = self._fetch_updates_paginated(url_base, since_iso)
         results = []
+        
+        # Comment out local filtering - let Trakt API handle it
+        # since_dt = None
+        # try:
+        #     since_dt = iso8601_pkg.parse_date(since_iso)
+        # except Exception as e:
+        #     logger.warning(f"Failed to parse since_iso {since_iso}: {e}")
+        
         for entry in items:
             show_obj = entry.get('show') if isinstance(entry, dict) else None
             if not show_obj:
@@ -128,8 +157,22 @@ class TraktMetadata:
             ids = show_obj.get('ids', {})
             imdb_id = ids.get('imdb')
             updated_at = entry.get('updated_at') or show_obj.get('updated_at')
-            if imdb_id:
+            
+            if imdb_id and updated_at:
+                # Include all results - let Trakt API handle filtering
                 results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                # # Only include items updated after our since timestamp
+                # if since_dt:
+                #     try:
+                #         entry_dt = iso8601_pkg.parse_date(updated_at)
+                #         if entry_dt > since_dt:
+                #             results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                #     except Exception as e:
+                #         logger.warning(f"Failed to parse updated_at {updated_at}: {e}")
+                # else:
+                #     # If we can't parse since_iso, include all results
+                #     results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+        
         logger.info(f"Fetched {len(results)} updated shows since {start_date}")
         return results
 
@@ -137,8 +180,16 @@ class TraktMetadata:
         """Return list of dicts with keys: imdb_id, updated_at for movies updated since given ISO time."""
         start_date = self._format_updates_start_date(since_iso)
         url_base = f"{self.base_url}/movies/updates/{start_date}"
-        items = self._fetch_updates_paginated(url_base)
+        items = self._fetch_updates_paginated(url_base, since_iso)
         results = []
+        
+        # Comment out local filtering - let Trakt API handle it
+        # since_dt = None
+        # try:
+        #     since_dt = iso8601_pkg.parse_date(since_iso)
+        # except Exception as e:
+        #     logger.warning(f"Failed to parse since_iso {since_iso}: {e}")
+        
         for entry in items:
             movie_obj = entry.get('movie') if isinstance(entry, dict) else None
             if not movie_obj:
@@ -146,27 +197,43 @@ class TraktMetadata:
             ids = movie_obj.get('ids', {})
             imdb_id = ids.get('imdb')
             updated_at = entry.get('updated_at') or movie_obj.get('updated_at')
-            if imdb_id:
+            
+            if imdb_id and updated_at:
+                # Include all results - let Trakt API handle filtering
                 results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                # # Only include items updated after our since timestamp
+                # if since_dt:
+                #     try:
+                #         entry_dt = iso8601_pkg.parse_date(updated_at)
+                #         if entry_dt > since_dt:
+                #             results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                #     except Exception as e:
+                #         logger.warning(f"Failed to parse updated_at {updated_at}: {e}")
+                # else:
+                #     # If we can't parse since_iso, include all results
+                #     results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+        
         logger.info(f"Fetched {len(results)} updated movies since {start_date}")
         return results
 
-    def _make_request(self, url, method='GET', max_retries=4, initial_delay=5):
-        # Always get fresh auth data before making requests
-        self.trakt_auth.reload_auth()
-        
+    def _make_request(self, url, method='GET', max_retries=4, initial_delay=5, headers=None):
+        # Check authentication status (this will load auth data if needed)
         if not self.trakt_auth.is_authenticated():
             logger.info("Not authenticated. Attempting to refresh token.")
             if not self.trakt_auth.refresh_access_token():
                 logger.error("Failed to refresh Trakt access token.")
                 return None
 
-        headers = {
+        request_headers = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',
             'trakt-api-key': self.trakt_auth.client_id,
             'Authorization': f'Bearer {self.trakt_auth.access_token}'
         }
+        
+        # Add any additional headers
+        if headers:
+            request_headers.update(headers)
         
         delay = initial_delay
         for attempt in range(max_retries):
@@ -178,15 +245,15 @@ class TraktMetadata:
 
             try:
                 if method.upper() == 'GET':
-                    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                    response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
                 elif method.upper() == 'POST':
-                    response = requests.post(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                    response = requests.post(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
                 elif method.upper() == 'PUT':
-                    response = requests.put(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                    response = requests.put(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
                 elif method.upper() == 'DELETE':
-                    response = requests.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                    response = requests.delete(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
                 else:
-                    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+                    response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
 
                 if response.status_code == 404:
                     logger.warning(f"Request to {url} returned 404 Not Found. Not retrying.")
@@ -195,7 +262,7 @@ class TraktMetadata:
                 if response.status_code == 401:
                     logger.warning(f"Received 401 Unauthorized on attempt {attempt + 1}. Refreshing token.")
                     if self.trakt_auth.refresh_access_token():
-                        headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
+                        request_headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
                         logger.info("Token refreshed. Retrying original request immediately.")
                         continue # Go to the next attempt immediately with the new token
                     else:

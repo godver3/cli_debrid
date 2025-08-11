@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple, Any
 from datetime import datetime, timedelta
 import tempfile
 import os
@@ -26,6 +26,7 @@ from .api import make_request, get_all_torrents, get_all_downloads
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
+from .exceptions import RealDebridAuthError, RealDebridAPIError
 
 # Import the new types and function from the .torrent module
 from .torrent import (
@@ -66,6 +67,34 @@ class RealDebridProvider(DebridProvider):
         self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
         
+    def check_connectivity(self) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """Check provider connectivity and return a tuple of (ok, error_detail)."""
+        try:
+            # Simple auth-protected endpoint to validate API key and connectivity
+            _ = make_request('GET', '/user', self.api_key)
+            return True, None
+        except RealDebridAuthError as e:
+            return False, {
+                "service": "Debrid Provider API",
+                "type": "AUTH_ERROR",
+                "status_code": None,
+                "message": str(e)
+            }
+        except (ProviderUnavailableError, RealDebridAPIError) as e:
+            return False, {
+                "service": "Debrid Provider API",
+                "type": "CONNECTION_ERROR",
+                "status_code": None,
+                "message": str(e)
+            }
+        except Exception as e:
+            return False, {
+                "service": "Debrid Provider API",
+                "type": "CONNECTION_ERROR",
+                "status_code": None,
+                "message": str(e)
+            }
+
     def _load_api_key(self) -> str:
         """Load API key from settings"""
         try:

@@ -95,7 +95,6 @@ from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
 import json # Added for loading intervals
 # --- START EDIT: Add Debrid imports for library size task ---
 from debrid import get_debrid_provider, ProviderUnavailableError
-from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
@@ -4790,7 +4789,8 @@ class ProgramRunner:
         logging.info("Initiating scheduled library size cache refresh task.")
         try:
             provider = get_debrid_provider()
-            if isinstance(provider, RealDebridProvider):
+            # Use provider capability or method presence instead of concrete type
+            if hasattr(provider, 'get_total_library_size'):
                 logging.info("Background task: Refreshing library size cache via Debrid provider...")
                 # The provider's get_total_library_size is async, so we run it in a new event loop.
                 # This call is expected to fetch the size and update the cache file itself.
@@ -4800,7 +4800,7 @@ class ProgramRunner:
                 else:
                     logging.warning(f"Background task: Library size cache refresh via provider failed or returned error. Result: {calculated_size}")
             else:
-                logging.info("Background task: Library size cache refresh skipped (provider is not RealDebrid or not configured).")
+                logging.info("Background task: Library size cache refresh skipped (provider does not implement total size API or not configured).")
         except ProviderUnavailableError:
             logging.warning("Background task: Debrid provider unavailable during library size cache refresh.")
         except RuntimeError as e_runtime:

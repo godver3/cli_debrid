@@ -71,14 +71,27 @@ class TraktAuth:
                     logger.warning(f"Could not decode .pytrakt.json file at {self.pytrakt_file}. It might be empty or malformed.")
                     pytrakt_data = {}
 
-            self.access_token = pytrakt_data.get('OAUTH_TOKEN')
-            self.refresh_token = pytrakt_data.get('OAUTH_REFRESH')
-            self.expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
-            self.last_refresh = pytrakt_data.get('LAST_REFRESH')
+            new_access_token = pytrakt_data.get('OAUTH_TOKEN')
+            new_refresh_token = pytrakt_data.get('OAUTH_REFRESH')
+            new_expires_at = pytrakt_data.get('OAUTH_EXPIRES_AT')
+            new_last_refresh = pytrakt_data.get('LAST_REFRESH')
             
-            # Update battery's settings.json with the loaded data for consistency
-            # Only update if we actually have valid data
-            if self.access_token and self.refresh_token:
+            # Check if data has actually changed before updating
+            data_changed = (
+                new_access_token != self.access_token or
+                new_refresh_token != self.refresh_token or
+                new_expires_at != self.expires_at or
+                new_last_refresh != self.last_refresh
+            )
+            
+            # Update instance variables
+            self.access_token = new_access_token
+            self.refresh_token = new_refresh_token
+            self.expires_at = new_expires_at
+            self.last_refresh = new_last_refresh
+            
+            # Only update battery's settings.json if data has changed and we have valid data
+            if data_changed and self.access_token and self.refresh_token:
                 trakt_settings = {
                     'client_id': self.client_id,
                     'client_secret': self.client_secret,

@@ -435,29 +435,21 @@ def check_service_connectivity():
             services_reachable = False
             failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
-    # Check Debrid Provider connectivity
-    if debrid_provider.lower() == 'realdebrid':
-        try:
-            response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {debrid_api_key}"}, timeout=5)
-            response.raise_for_status()
-        except RequestException as e:
-            logging.error(f"Failed to connect to Real-Debrid API: {str(e)}")
-            services_reachable = False
-            error_detail = {"service": "Real-Debrid API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)}
-            if hasattr(e, 'response') and e.response is not None:
-                error_detail["status_code"] = e.response.status_code
-                if e.response.status_code == 401:
-                    error_detail["type"] = "UNAUTHORIZED"
-                    error_detail["message"] = "Real-Debrid API Key is invalid or unauthorized."
-                elif e.response.status_code == 403: # Forbidden, could also be an API key issue or IP block
-                    error_detail["type"] = "FORBIDDEN"
-                    error_detail["message"] = "Real-Debrid API access forbidden. Check API key, IP, or account status."
-                # Add other specific status code checks if needed
-            failed_services_details.append(error_detail)
-    else:
-        logging.error(f"Unknown debrid provider: {debrid_provider}")
+    # Check Debrid Provider connectivity using provider interface
+    try:
+        from debrid import get_debrid_provider
+        provider = get_debrid_provider()
+        if hasattr(provider, 'check_connectivity'):
+            ok, error_detail = provider.check_connectivity()
+            if not ok:
+                services_reachable = False
+                failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
+        else:
+            logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
+    except Exception as e:
+        logging.error(f"Failed to perform provider connectivity check: {e}")
         services_reachable = False
-        failed_services_details.append({"service": f"Unknown debrid provider ({debrid_provider})", "type": "CONFIG_ERROR", "message": "Invalid Debrid provider configured."})
+        failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
 
     # Check Metadata Battery connectivity and Trakt authorization
     logging.info("=== METADATA BATTERY CONNECTIVITY CHECK START ===")

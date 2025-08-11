@@ -15,7 +15,7 @@ from .program_operation_routes import get_program_status
 import json
 import math
 from functools import wraps
-from debrid.real_debrid.client import RealDebridProvider
+# Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
 import calendar
 
@@ -1265,7 +1265,8 @@ def get_library_size_api():
 
     try:
         provider = get_debrid_provider()
-        if isinstance(provider, RealDebridProvider):
+        # Gate behavior using capability flags rather than concrete type
+        if hasattr(provider, 'get_total_library_size'):
             logging.info("Fetching library size via API request...")
             try:
                 # Run the async function which now writes cache on success
