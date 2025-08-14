@@ -9,6 +9,7 @@ from scraper.functions.file_processing import compare_resolutions, parse_size, c
 from scraper.functions.other_functions import smart_search
 from scraper.functions.adult_terms import adult_terms
 from scraper.functions.common import *
+from datetime import datetime, timezone
 # --- Import DirectAPI if type hinting is desired, ensure it's available in the execution path ---
 # from cli_battery.app.direct_api import DirectAPI # Or adjust path as needed
 
@@ -49,6 +50,27 @@ def detect_language_codes(text: str) -> List[str]:
     
     return detected_codes
 
+def extract_year_from_title(title: str) -> Optional[int]:
+    """
+    Simple year extraction from title when PTT fails to parse it.
+    Looks for 4-digit years and returns the earliest one found.
+    """
+    if not title:
+        return None
+    
+    # Find all 4-digit numbers that could be years (1900-2099)
+    year_pattern = r'\b(19[0-9]{2}|20[0-9]{2})\b'
+    years = re.findall(year_pattern, title)
+    
+    if years:
+        # Convert to integers and return the earliest year
+        year_ints = [int(year) for year in years]
+        earliest_year = min(year_ints)
+        logging.debug(f"Extracted year {earliest_year} from title: '{title}' (found years: {year_ints})")
+        return earliest_year
+    
+    return None
+
 def filter_results(
     results: List[Dict[str, Any]], tmdb_id: str, title: str, year: int, content_type: str,
     season: int, episode: int, multi: bool, version_settings: Dict[str, Any],
@@ -67,6 +89,11 @@ def filter_results(
     # --- START Logging for season_episode_counts ---
     #logging.debug(f"filter_results called for '{title}' S{season}E{episode if episode else ''}. Received season_episode_counts: {season_episode_counts}")
     # --- END Logging ---
+
+    # Initialize caches for this filter_results call
+    _season_year_cache = {}  # Cache for season year lookups: {(imdb_id, season): year}
+    _show_metadata_cache = {}  # Cache for show metadata: {imdb_id: metadata}
+    _aliases_cache = {}  # Cache for aliases: {imdb_id: aliases}
 
     filtered_results = []
     pre_size_filtered_results = []  # Track results before size filtering
@@ -175,6 +202,14 @@ def filter_results(
                 result['filter_reason'] = "Missing parsed info"
                 logging.info(f"Rejected: Missing parsed info for '{original_title}' (Size: {result['size']:.2f}GB)")
                 continue
+            
+            # DEBUG: Add detailed logging for Frasier-like cases to see what PTT parsed
+            if "frasier" in original_title.lower() or "1993" in original_title or "2004" in original_title:
+                logging.info(f"DEBUG FRASIER PTT: '{original_title}'")
+                logging.info(f"  - parsed_info: {parsed_info}")
+                logging.info(f"  - parsed year: {parsed_info.get('year')}")
+                logging.info(f"  - parsed seasons: {parsed_info.get('season_episode_info', {}).get('seasons')}")
+                logging.info(f"  - parsed episodes: {parsed_info.get('season_episode_info', {}).get('episodes')}")
             
             # Check if it's marked as trash by PTT and filter_trash_releases is enabled
             filter_trash_releases = get_setting('Scraping', 'filter_trash_releases', True)
@@ -300,15 +335,24 @@ def filter_results(
 
             # --- Fetch additional aliases via DirectAPI ---
             item_aliases = {}
-            try:
-                if direct_api:
-                    if content_type.lower() == 'movie':
-                        item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
-                    else:
-                        item_aliases, _ = direct_api.get_show_aliases(imdb_id)
-            except Exception as alias_err:
-                logging.warning(f"Failed to fetch aliases for {imdb_id}: {alias_err}")
-                item_aliases = {}
+            
+            # Check cache first for aliases
+            if imdb_id in _aliases_cache:
+                item_aliases = _aliases_cache[imdb_id]
+                logging.debug(f"Using cached aliases for {imdb_id}")
+            else:
+                try:
+                    if direct_api:
+                        if content_type.lower() == 'movie':
+                            item_aliases, _ = direct_api.get_movie_aliases(imdb_id)
+                        else:
+                            item_aliases, _ = direct_api.get_show_aliases(imdb_id)
+                except Exception as alias_err:
+                    logging.warning(f"Failed to fetch aliases for {imdb_id}: {alias_err}")
+                    item_aliases = {}
+
+                # Cache the result (even if empty or failed)
+                _aliases_cache[imdb_id] = item_aliases
 
             # Ensure item_aliases is a dictionary even if the API returned None or an unexpected value
             if not isinstance(item_aliases, dict):
@@ -319,10 +363,17 @@ def filter_results(
             # -------------------------------------------------------------
             try:
                 if imdb_id and direct_api:
-                    if content_type.lower() == 'movie':
-                        meta_data, _ = direct_api.get_movie_metadata(imdb_id)
+                    # Check metadata cache first
+                    if imdb_id in _show_metadata_cache:
+                        meta_data = _show_metadata_cache[imdb_id]
+                        logging.debug(f"Using cached metadata for original_title lookup for {imdb_id}")
                     else:
-                        meta_data, _ = direct_api.get_show_metadata(imdb_id)
+                        if content_type.lower() == 'movie':
+                            meta_data, _ = direct_api.get_movie_metadata(imdb_id)
+                        else:
+                            meta_data, _ = direct_api.get_show_metadata(imdb_id)
+                        # Cache the result
+                        _show_metadata_cache[imdb_id] = meta_data
 
                     if meta_data and isinstance(meta_data, dict):
                         orig_title_val = meta_data.get('original_title') or meta_data.get('originalTitle')
@@ -633,13 +684,112 @@ def filter_results(
 
                 if not is_formula_1: # Only perform year check if not Formula 1
                     parsed_year = parsed_info.get('year')
+                    
+                    # If PTT didn't parse a year, try our own simple extraction
+                    if parsed_year is None:
+                        extracted_year = extract_year_from_title(original_title)
+                        if extracted_year:
+                            parsed_year = extracted_year
+                            logging.info(f"PTT didn't parse year, extracted {extracted_year} from title: '{original_title}'")
+                    
                     if parsed_year:
+                        # For TV shows, we should compare against the season's air date, not the original show premiere
+                        # Get the season-specific year if available, otherwise fall back to the original year
+                        target_year = year  # Default to original year
+                        
+                        # Try to get the season-specific year from the database
+                        if imdb_id and season is not None:
+                            # Check cache first
+                            cache_key = (imdb_id, season)
+                            if cache_key in _season_year_cache:
+                                target_year = _season_year_cache[cache_key]
+                                logging.debug(f"Using cached season year for {imdb_id} S{season}: {target_year}")
+                            else:
+                                try:
+                                    from database.database_reading import get_season_year
+                                    season_year = get_season_year(imdb_id=imdb_id, season_number=season)
+                                    if season_year:
+                                        target_year = season_year
+                                        _season_year_cache[cache_key] = season_year  # Cache the result
+                                        logging.info(f"Using season {season} air date year ({season_year}) instead of original show year ({year}) for '{original_title}'")
+                                    else:
+                                        # Fallback: Try to get season year from metadata API
+                                        logging.debug(f"No season year in database for {imdb_id} S{season}, trying metadata API fallback")
+                                        if direct_api:
+                                            # Check metadata cache first
+                                            if imdb_id in _show_metadata_cache:
+                                                show_metadata = _show_metadata_cache[imdb_id]
+                                                logging.debug(f"Using cached show metadata for {imdb_id}")
+                                            else:
+                                                try:
+                                                    show_metadata, _ = direct_api.get_show_metadata(imdb_id)
+                                                    _show_metadata_cache[imdb_id] = show_metadata  # Cache the result
+                                                except Exception as api_err:
+                                                    logging.warning(f"Error getting show metadata for {imdb_id}: {api_err}")
+                                                    show_metadata = None
+                                                    _show_metadata_cache[imdb_id] = None  # Cache the failure
+                                            
+                                            if show_metadata and isinstance(show_metadata, dict):
+                                                trakt_seasons_data = show_metadata.get('seasons')
+                                                if isinstance(trakt_seasons_data, dict) and season in trakt_seasons_data:
+                                                    current_season_trakt_data = trakt_seasons_data[season]
+                                                    if isinstance(current_season_trakt_data, dict) and 'episodes' in current_season_trakt_data:
+                                                        episodes_dict_for_season = current_season_trakt_data['episodes']
+                                                        if episodes_dict_for_season:
+                                                            # Get the first episode's air date to determine season year
+                                                            first_episode_key = min(episodes_dict_for_season.keys(), key=lambda x: int(x) if str(x).isdigit() else float('inf'))
+                                                            first_episode_data = episodes_dict_for_season[first_episode_key]
+                                                            if isinstance(first_episode_data, dict) and 'first_aired' in first_episode_data:
+                                                                air_date_full_utc_str = first_episode_data['first_aired']
+                                                                if isinstance(air_date_full_utc_str, str) and air_date_full_utc_str:
+                                                                    try:
+                                                                        # Parse the UTC timestamp string
+                                                                        if air_date_full_utc_str.endswith('Z'):
+                                                                            air_date_full_utc_str = air_date_full_utc_str[:-1] + '+00:00'
+                                                                        utc_dt = datetime.fromisoformat(air_date_full_utc_str)
+                                                                        if utc_dt.tzinfo is None:
+                                                                            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+                                                                        season_year = utc_dt.year
+                                                                        target_year = season_year
+                                                                        _season_year_cache[cache_key] = season_year  # Cache the result
+                                                                        logging.info(f"Using season {season} air date year ({season_year}) from metadata API instead of original show year ({year}) for '{original_title}'")
+                                                                    except Exception as date_parse_err:
+                                                                        logging.warning(f"Failed to parse season {season} air date from metadata API: {date_parse_err}")
+                                    
+                                    if target_year == year:  # If we still haven't found a season year
+                                        _season_year_cache[cache_key] = year  # Cache the fallback
+                                        logging.debug(f"No season-specific year found for {imdb_id} S{season}, using original show year ({year})")
+                                except Exception as season_year_err:
+                                    logging.warning(f"Error getting season year for {imdb_id} S{season}: {season_year_err}, using original show year ({year})")
+                                    _season_year_cache[cache_key] = year  # Cache the fallback
+                        
                         if isinstance(parsed_year, list):
                             # Ensure all elements in parsed_year are convertible to int before comparison
                             try:
-                                if not any(abs(int(py) - year) <= 1 for py in parsed_year if str(py).isdigit()):
-                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                                    logging.info(f"Rejected: TV year list {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                # For TV shows, be more lenient with year matching
+                                # Check if any year in the list matches with appropriate tolerance
+                                year_matches = []
+                                for py in parsed_year:
+                                    if str(py).isdigit():
+                                        py_int = int(py)
+                                        year_difference = abs(py_int - target_year)
+                                        
+                                        # If the torrent year matches the original show year exactly, be more lenient
+                                        if py_int == year and target_year != year:
+                                            # Torrent uses original show year, but we have a different season year
+                                            # Allow if the season year is within a reasonable range (e.g., ±5 years)
+                                            max_year_difference = 5  # More lenient for TV shows
+                                            if year_difference <= max_year_difference:
+                                                year_matches.append(py_int)
+                                                logging.info(f"Accepting torrent with original show year ({py_int}) for season {season} (air date: {target_year}) - within {max_year_difference} year tolerance for '{original_title}'")
+                                        else:
+                                            # Standard ±1 year tolerance for other cases
+                                            if year_difference <= 1:
+                                                year_matches.append(py_int)
+                                
+                                if not year_matches:
+                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
+                                    logging.info(f"Rejected: TV year list {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
                                     continue
                             except ValueError:
                                 # Handle cases where a year in the list is not a valid integer
@@ -648,10 +798,39 @@ def filter_results(
                                 continue
 
                         elif isinstance(parsed_year, (int, str)) and str(parsed_year).isdigit():
-                            if abs(int(parsed_year) - year) > 1:
-                                result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
-                                logging.info(f"Rejected: TV year {parsed_year} doesn't match {year} for '{original_title}' (Size: {result['size']:.2f}GB)")
-                                continue
+                            parsed_year_int = int(parsed_year)
+                            
+                            # For TV shows, be more lenient with year matching
+                            # Many torrents incorrectly use the original show year instead of the season air date
+                            year_difference = abs(parsed_year_int - target_year)
+                            
+                            # DEBUG: Add detailed logging for Frasier-like cases
+                            if "frasier" in original_title.lower() or "1993" in original_title or "2004" in original_title:
+                                logging.info(f"DEBUG FRASIER: '{original_title}'")
+                                logging.info(f"  - parsed_year: {parsed_year} (int: {parsed_year_int})")
+                                logging.info(f"  - original show year: {year}")
+                                logging.info(f"  - target_year (season/fallback): {target_year}")
+                                logging.info(f"  - year_difference: {year_difference}")
+                                logging.info(f"  - parsed_year_int == year: {parsed_year_int == year}")
+                                logging.info(f"  - target_year != year: {target_year != year}")
+                            
+                            # If the torrent year matches the original show year exactly, be more lenient
+                            if parsed_year_int == year and target_year != year:
+                                # Torrent uses original show year, but we have a different season year
+                                # Allow if the season year is within a reasonable range (e.g., ±5 years)
+                                max_year_difference = 5  # More lenient for TV shows
+                                if year_difference <= max_year_difference:
+                                    logging.info(f"Accepting torrent with original show year ({parsed_year_int}) for season {season} (air date: {target_year}) - within {max_year_difference} year tolerance for '{original_title}'")
+                                else:
+                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year}) - torrent uses original show year but season air date is too far"
+                                    logging.info(f"Rejected: TV year {parsed_year} (original show year) too far from season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                    continue
+                            else:
+                                # Standard ±1 year tolerance for other cases
+                                if year_difference > 1:
+                                    result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {target_year}, original show: {year})"
+                                    logging.info(f"Rejected: TV year {parsed_year} doesn't match season year {target_year} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                    continue
                         else:
                             # Handle cases where parsed_year is not a list or a valid int/str digit
                             logging.warning(f"Skipping year check due to invalid year format for '{original_title}': {parsed_year}")
@@ -814,9 +993,39 @@ def filter_results(
                                 #logging.debug(f"Anime result ({original_title}) parsed as S1/None has conflicting season info when target is S{season}. Not applying leniency.")
                         elif not result_seasons:
                              # Allow titles with NO season info at all (might be absolute)
-                             season_match = True
-                             lenient_season_pass = True # Mark as lenient pass
-                             #logging.debug(f"Allowing result ({original_title}) with no season info to pass season check")
+                             # BUT: For anime with XEM mapping, be more restrictive
+                             # If we're searching for a specific season (not S1) and the torrent has no season info,
+                             # we should be more cautious to avoid grabbing episodes from wrong seasons
+                             if is_anime and season > 1:
+                                 # For anime S2+, if no season info, be more restrictive
+                                 # This prevents grabbing "Episode 07" from any season when we want S02E07
+                                 # Only allow if we have absolute episode numbers or other strong indicators
+                                 has_absolute_episode = result.get('target_abs_episode') is not None
+                                 has_episode_in_title = bool(re.search(rf'\b{episode}\b', original_title))
+                                 
+                                 # Additional check: if the title only contains episode number without season,
+                                 # and we're searching for a specific season (not S1), be more restrictive
+                                 # This catches cases like "Dandadan - 07" when we want S02E07
+                                 title_has_only_episode = (
+                                     has_episode_in_title and 
+                                     not re.search(r'[Ss]\d+', original_title) and  # No season info in title
+                                     not has_absolute_episode  # No absolute episode number
+                                 )
+                                 
+                                 if title_has_only_episode:
+                                     season_match = False
+                                     logging.info(f"Rejecting anime result with only episode number (no season/absolute) when searching for S{season}E{episode}: '{original_title}'")
+                                 elif not has_absolute_episode and not has_episode_in_title:
+                                     season_match = False
+                                     logging.info(f"Rejecting anime result with no season info when searching for S{season}E{episode}: '{original_title}' (no absolute episode or strong episode indicator)")
+                                 else:
+                                     season_match = True
+                                     lenient_season_pass = True
+                                     logging.info(f"Allowing anime result with no season info but with episode indicator for S{season}E{episode}: '{original_title}'")
+                             else:
+                                 season_match = True
+                                 lenient_season_pass = True # Mark as lenient pass
+                                 #logging.debug(f"Allowing result ({original_title}) with no season info to pass season check")
 
                     if not season_match:
                         # Reject if we didn't find an explicit match OR a lenient pass
@@ -911,8 +1120,26 @@ def filter_results(
                         # causing valid Season/Episode releases such as S03E11 to be rejected.
                         # Accept the direct S/E match here; absolute-number logic below still
                         # provides an additional matching path when torrents use absolute numbers.
-                        episode_match = True
-                        logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}'")
+                        
+                        # Additional safety check for anime with XEM mapping: if we're searching for a specific season
+                        # and the torrent has no season info, be more restrictive
+                        if is_anime and season > 1 and not result_seasons and lenient_season_pass:
+                            # This is the problematic case: anime S2+, no season info, but episode matches
+                            # Check if this looks like a standalone episode without proper season context
+                            title_has_only_episode = (
+                                not re.search(r'[Ss]\d+', original_title) and  # No season info in title
+                                result.get('target_abs_episode') is None  # No absolute episode number
+                            )
+                            
+                            if title_has_only_episode:
+                                logging.info(f"Rejecting anime episode match due to insufficient season context for S{season}E{episode}: '{original_title}'")
+                                episode_match = False
+                            else:
+                                episode_match = True
+                                logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}' (with season context validation)")
+                        else:
+                            episode_match = True
+                            logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}'")
                     # --- Anime absolute-number fall-back -----------------------
                     elif is_anime:
                         try:
@@ -1356,6 +1583,11 @@ def filter_results(
             continue
     
     #logging.debug(f"\nFiltering complete: {len(filtered_results)}/{len(results)} results passed")
+    
+    # Log cache performance statistics
+    if _season_year_cache or _show_metadata_cache or _aliases_cache:
+        logging.info(f"Cache performance - Season year cache hits: {len(_season_year_cache)}, Show metadata cache hits: {len(_show_metadata_cache)}, Aliases cache hits: {len(_aliases_cache)}")
+    
     return filtered_results, pre_size_filtered_results
 
 def get_resolution_value(resolution: str) -> int:

@@ -440,8 +440,8 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
             
             # Check if these results contain the target episode
             if results and contains_target_episode(results, episode, season):
-                logging.info(f"Found target episode S{season}E{episode} in results from format {format_type}, stopping search")
-                break
+                logging.info(f"Found target episode S{season}E{episode} in results from format {format_type}, continuing search for more results")
+                # break  # Temporarily disabled early return to get more comprehensive results
             elif len(results) >= 10:
                 # If we found many results but none contain the target episode, 
                 # continue searching other formats to find the actual episode

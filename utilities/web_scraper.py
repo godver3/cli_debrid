@@ -18,6 +18,55 @@ from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 import time
 
+# Special case handling for tt9615014 (Lego Masters US)
+# Season 5 is a special holiday season, so we ignore it and renumber subsequent seasons
+LEGO_MASTERS_US_IMDB_ID = "tt9615014"
+
+def _apply_lego_masters_us_season_fix_to_trakt_data(trakt_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply special season renumbering for Lego Masters US (tt9615014) to Trakt API response data.
+    Removes season 5 (holiday special) and renumbers subsequent seasons.
+    """
+    if not trakt_data or not isinstance(trakt_data, list):
+        return trakt_data
+    
+    # Remove season 5 if it exists
+    filtered_data = [item for item in trakt_data if item.get('number') != 5]
+    if len(filtered_data) != len(trakt_data):
+        logging.info(f"Removed season 5 (holiday special) from {LEGO_MASTERS_US_IMDB_ID}")
+    
+    # Renumber seasons 6+ to 5+
+    renumbered_data = []
+    for item in filtered_data:
+        season_num = item.get('number')
+        if season_num and season_num >= 6:
+            new_season_num = season_num - 1
+            item['number'] = new_season_num
+            logging.info(f"Renumbered season {season_num} to {new_season_num} for {LEGO_MASTERS_US_IMDB_ID}")
+        renumbered_data.append(item)
+    
+    return renumbered_data
+
+def _apply_lego_masters_us_episode_fix_to_trakt_data(trakt_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply special season renumbering for Lego Masters US (tt9615014) to Trakt episode data.
+    Renumbers episodes from season 6+ to season 5+.
+    """
+    if not trakt_data or not isinstance(trakt_data, list):
+        return trakt_data
+    
+    # Renumber episodes from season 6+ to season 5+
+    renumbered_data = []
+    for item in trakt_data:
+        season_num = item.get('season')
+        if season_num and season_num >= 6:
+            new_season_num = season_num - 1
+            item['season'] = new_season_num
+            logging.info(f"Renumbered episode from season {season_num} to {new_season_num} for {LEGO_MASTERS_US_IMDB_ID}")
+        renumbered_data.append(item)
+    
+    return renumbered_data
+
 # NEW ASYNC HELPER FUNCTION
 async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, media_type: str, tmdb_api_key: Optional[str]) -> Optional[Tuple[Optional[str], str, list, float, str]]:
     """
@@ -609,7 +658,7 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
 
 def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None, allow_specials: bool = False) -> Dict[str, Any]:
     from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
-    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, allow_specials: {allow_specials}")
+    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, season: {season}, allow_specials: {allow_specials}")
     
     trakt_client_id = get_setting('Trakt', 'client_id')
     
@@ -623,7 +672,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
         'trakt-api-key': trakt_client_id
     }
 
-    # First, convert TMDB ID to Trakt ID
+    # First, convert TMDB ID to Trakt ID and get IMDb ID
     tmdb_to_trakt_url = f"https://api.trakt.tv/search/tmdb/{media_id}?type=show"
     
     try:
@@ -636,13 +685,27 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             return {"error": "Show not found on Trakt"}
         
         trakt_id = search_data[0]['show']['ids']['trakt']
+        imdb_id = search_data[0]['show']['ids'].get('imdb')
+        
+        if not imdb_id:
+            logging.warning(f"No IMDb ID found for TMDB ID {media_id}, cannot apply season renumbering")
     except api.exceptions.RequestException as e:
         logging.error(f"Error converting TMDB ID to Trakt ID: {e}")
         return {"error": f"Error converting TMDB ID to Trakt ID: {str(e)}"}
 
+    # Handle season renumbering for Lego Masters US - redirect seasons 5+ to seasons 6+
+    adjusted_season = season
+    # Convert season to int for comparison if it's a string
+    season_int = int(season) if season is not None else None
+    if imdb_id == LEGO_MASTERS_US_IMDB_ID and season_int is not None and season_int >= 5:
+        adjusted_season = season_int + 1
+        logging.info(f"Redirecting season {season_int} request to season {adjusted_season} for {LEGO_MASTERS_US_IMDB_ID}")
+    
+    logging.info(f"Season adjustment: original={season} (type: {type(season)}), adjusted={adjusted_season}, imdb_id={imdb_id}")
+    
     # Now use the Trakt ID for further requests
-    if season is not None:
-        search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons/{season}?extended=full"
+    if adjusted_season is not None:
+        search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons/{adjusted_season}?extended=full"
     else:
         search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons?extended=full"
 
@@ -655,31 +718,69 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             logging.warning(f"No results found for show: {title}")
             return {"error": "No results found"}
 
+        # Apply season renumbering for Lego Masters US
+        if imdb_id == LEGO_MASTERS_US_IMDB_ID:
+            original_count = len(trakt_data)
+            if season is not None:
+                # For episode data, apply episode fix
+                trakt_data = _apply_lego_masters_us_episode_fix_to_trakt_data(trakt_data)
+                # Additional filtering for Lego Masters US - remove holiday special episodes
+                if season_int == 5:  # User requested season 5, which we redirected to season 6 (original season 6 content)
+                    # Filter out episodes that are clearly holiday specials
+                    filtered_trakt_data = []
+                    logging.info(f"Starting holiday episode filtering for season 5. Original episodes: {len(trakt_data)}")
+                    for episode in trakt_data:
+                        episode_title = episode.get('title', '').lower()
+                        logging.info(f"Checking episode: '{episode.get('title')}' (lowercase: '{episode_title}')")
+                        # Skip episodes that are clearly holiday specials
+                        if any(holiday_term in episode_title for holiday_term in ['holiday', 'christmas', 'winter', 'snow']):
+                            logging.info(f"Filtering out holiday special episode: {episode.get('title')}")
+                            continue
+                        logging.info(f"Keeping episode: {episode.get('title')}")
+                        filtered_trakt_data.append(episode)
+                    trakt_data = filtered_trakt_data
+                    logging.info(f"After holiday filtering: {len(trakt_data)} episodes remaining")
+            else:
+                # For season data, apply season fix
+                trakt_data = _apply_lego_masters_us_season_fix_to_trakt_data(trakt_data)
+            new_count = len(trakt_data)
+            logging.info(f"Applied season renumbering for {LEGO_MASTERS_US_IMDB_ID}: {original_count} -> {new_count} items")
+
         # Fetch TMDB data
-        tmdb_data = get_tmdb_data(media_id, 'tv', season)
+        tmdb_data = get_tmdb_data(media_id, 'tv', adjusted_season)
 
         if season is not None:
             # Fetch episode details
+            episode_results = []
+            for episode in trakt_data:
+                # Use adjusted_season for TMDB API calls, but keep original season for display
+                tmdb_season_for_api = adjusted_season if adjusted_season != season else episode['season']
+                
+                episode_result = {
+                    "id": media_id,
+                    "title": title,
+                    "episode_title": episode.get('title', ''),
+                    "season_id": episode['ids']['trakt'],
+                    "season_num": episode['season'],  # Keep original for display
+                    "episode_num": episode['number'],
+                    "year": year,
+                    "media_type": 'tv',
+                    "still_path": get_tmdb_data(media_id, 'tv', tmdb_season_for_api, episode['number']).get('still_path'),
+                    "air_date": episode.get('first_aired'),
+                    "vote_average": episode.get('rating', 0),
+                    "multi": False
+                }
+                
+                # Only add if not a special episode (unless allow_specials is True)
+                if allow_specials or episode['number'] != 0:
+                    episode_results.append(episode_result)
+            
+            logging.info(f"Returning {len(episode_results)} episodes to frontend:")
+            for ep in episode_results:
+                logging.info(f"  - Episode {ep['episode_num']}: {ep['episode_title']} (Season {ep['season_num']})")
+            
             return {
-                "episode_results": [
-                    {
-                        "id": media_id,
-                        "title": title,
-                        "episode_title": episode.get('title', ''),
-                        "season_id": episode['ids']['trakt'],
-                        "season_num": episode['season'],
-                        "episode_num": episode['number'],
-                        "year": year,
-                        "media_type": 'tv',
-                        "still_path": get_tmdb_data(media_id, 'tv', episode['season'], episode['number']).get('still_path'),
-                        "air_date": episode.get('first_aired'),
-                        "vote_average": episode.get('rating', 0),
-                        "multi": False
-                    }
-                    for episode in trakt_data
-                    # Conditionally filter out special episodes (number 0) based on allow_specials flag
-                    if allow_specials or episode['number'] != 0 
-                ]
+                "episode_results": episode_results
             }
         else:
             # Fetch season details

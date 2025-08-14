@@ -179,7 +179,7 @@ def get_versions():
 @magnet_bp.route('/get_season_data')
 def get_season_data():
     tmdb_id = request.args.get('tmdb_id')
-    allow_specials_str = request.args.get('allow_specials', 'false').lower()
+    allow_specials_str = request.args.get('allow_specials', 'true').lower()
     allow_specials = allow_specials_str == 'true'
 
     if not tmdb_id:
@@ -199,24 +199,27 @@ def get_season_data():
             seasons_data, source = DirectAPI.get_show_seasons(imdb_id)
             if seasons_data and source == 'battery':
                 logging.info(f"Successfully fetched season data from battery for IMDb ID: {imdb_id}")
-                # Convert battery format to expected list format
-                formatted_seasons = []
+                # Convert battery format to expected object format for frontend
+                formatted_seasons = {}
                 for season_num, season_data in seasons_data.items():
-                    formatted_seasons.append({
-                        'number': season_num,
-                        'episode_count': season_data.get('episode_count', 0)
-                    })
-                # Filter seasons based on allow_specials
-                filtered_seasons = [s for s in formatted_seasons if allow_specials or s.get('number', -1) != 0]
-                return jsonify(filtered_seasons)
+                    # Filter based on allow_specials
+                    if allow_specials or season_num != 0:
+                        formatted_seasons[str(season_num)] = season_data.get('episode_count', 0)
+                logging.info(f"Returning {len(formatted_seasons)} seasons from battery for IMDb ID {imdb_id} (Allow Specials: {allow_specials}). Original count: {len(seasons_data)}")
+                return jsonify(formatted_seasons)
             else:
                 logging.info(f"Could not fetch season data from battery for {imdb_id}, trying Trakt directly.")
                 season_data = _fetch_trakt_season_data_directly(imdb_id)
                 if season_data:
-                    # Filter seasons based on allow_specials
-                    filtered_seasons = [s for s in season_data if allow_specials or s.get('number', -1) != 0]
-                    logging.info(f"Returning {len(filtered_seasons)} seasons for IMDb ID {imdb_id} (Allow Specials: {allow_specials}).")
-                    return jsonify(filtered_seasons)
+                    # Convert to expected object format for frontend
+                    formatted_seasons = {}
+                    for season in season_data:
+                        season_num = season.get('number')
+                        # Filter based on allow_specials
+                        if allow_specials or season_num != 0:
+                            formatted_seasons[str(season_num)] = season.get('episode_count', 0)
+                    logging.info(f"Returning {len(formatted_seasons)} seasons from Trakt for IMDb ID {imdb_id} (Allow Specials: {allow_specials}). Original count: {len(season_data)}")
+                    return jsonify(formatted_seasons)
                 else:
                     logging.error(f"Could not fetch season data directly from Trakt for IMDb ID: {imdb_id}")
                     return jsonify({"error": f"Could not fetch season data from Trakt for IMDb ID: {imdb_id}"}), 404

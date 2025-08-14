@@ -14,6 +14,40 @@ from typing import Tuple as _Tup, Optional as _Opt, Dict as _Dict, Any as _Any
 _MOVIE_ALIAS_CACHE: _Dict[str, _Tup[_Opt[_Dict[str, _Any]], _Opt[str]]] = {}
 _SHOW_ALIAS_CACHE: _Dict[str, _Tup[_Opt[_Dict[str, _Any]], _Opt[str]]] = {}
 
+# Special case handling for tt9615014 (Lego Masters US)
+# Season 5 is a special holiday season, so we ignore it and renumber subsequent seasons
+LEGO_MASTERS_US_IMDB_ID = "tt9615014"
+
+def _apply_lego_masters_us_season_fix(seasons_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply special season renumbering for Lego Masters US (tt9615014).
+    Removes season 5 (holiday special) and renumbers subsequent seasons.
+    """
+    if not seasons_data or not isinstance(seasons_data, dict):
+        return seasons_data
+    
+    # Remove season 5 if it exists
+    if '5' in seasons_data:
+        del seasons_data['5']
+        logger.info(f"Removed season 5 (holiday special) from {LEGO_MASTERS_US_IMDB_ID}")
+    
+    # Renumber seasons 6+ to 5+
+    renumbered_seasons = {}
+    for season_num_str, season_data in seasons_data.items():
+        try:
+            season_num = int(season_num_str)
+            if season_num >= 6:
+                new_season_num = season_num - 1
+                renumbered_seasons[str(new_season_num)] = season_data
+                logger.info(f"Renumbered season {season_num} to {new_season_num} for {LEGO_MASTERS_US_IMDB_ID}")
+            else:
+                renumbered_seasons[season_num_str] = season_data
+        except ValueError:
+            # Keep non-numeric season keys as-is (like '0' for specials)
+            renumbered_seasons[season_num_str] = season_data
+    
+    return renumbered_seasons
+
 @contextmanager
 def managed_session():
     """Provide a transactional scope around a series of operations."""
@@ -73,6 +107,13 @@ class DirectAPI:
                 if metadata and 'seasons' in metadata:
                     season_count = len(metadata['seasons'])
                     logging.info(f"DirectAPI got {season_count} seasons (within managed session scope)")
+                    
+                    # Apply special season fix for Lego Masters US
+                    if imdb_id == LEGO_MASTERS_US_IMDB_ID:
+                        original_seasons = metadata['seasons'].copy()
+                        metadata['seasons'] = _apply_lego_masters_us_season_fix(metadata['seasons'])
+                        new_season_count = len(metadata['seasons'])
+                        logging.info(f"Applied Lego Masters US season fix: {len(original_seasons)} -> {new_season_count} seasons")
                 else:
                     status = "No metadata" if not metadata else "No seasons dictionary" if 'seasons' not in metadata else f"{len(metadata.get('seasons', {}))} seasons"
                     logging.info(f"DirectAPI: Status for {imdb_id}: {status} (within managed session scope)")
@@ -86,6 +127,13 @@ class DirectAPI:
         try:
             with managed_session() as session:
                 seasons, source = MetadataManager.get_seasons(imdb_id, session=session)
+                
+                # Apply special season fix for Lego Masters US
+                if imdb_id == LEGO_MASTERS_US_IMDB_ID and seasons:
+                    original_seasons = seasons.copy()
+                    seasons = _apply_lego_masters_us_season_fix(seasons)
+                    logging.info(f"Applied Lego Masters US season fix in get_show_seasons: {len(original_seasons)} -> {len(seasons)} seasons")
+                
                 return seasons, source
         except Exception as e:
             logging.error(f"Error during DirectAPI.get_show_seasons for {imdb_id}: {e}", exc_info=True)
@@ -370,6 +418,15 @@ class DirectAPI:
         try:
             with managed_session() as session:
                 result = MetadataManager.get_bulk_show_metadata(imdb_ids, session=session)
+                
+                # Apply special season fix for Lego Masters US if present in results
+                if LEGO_MASTERS_US_IMDB_ID in result and result[LEGO_MASTERS_US_IMDB_ID]:
+                    metadata = result[LEGO_MASTERS_US_IMDB_ID]
+                    if 'seasons' in metadata:
+                        original_seasons = metadata['seasons'].copy()
+                        metadata['seasons'] = _apply_lego_masters_us_season_fix(metadata['seasons'])
+                        logging.info(f"Applied Lego Masters US season fix in bulk metadata: {len(original_seasons)} -> {len(metadata['seasons'])} seasons")
+                
                 found_count = sum(1 for data in result.values() if data is not None)
                 logger.info(f"DirectAPI.get_bulk_show_metadata returning data for {found_count} of {len(imdb_ids)} requested IDs.")
                 return result

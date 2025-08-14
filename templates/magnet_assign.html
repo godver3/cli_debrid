@@ -55,7 +55,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Load season data when TV show card is loaded
         async function loadSeasonData() {
             try {
-                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}`);
+                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}&allow_specials=true`);
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
@@ -261,6 +261,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+
+
         loadSeasonData();
     });
 
@@ -453,6 +455,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 <option value="episode">Single Episode</option>
                             </select>
                         </div>
+
                         <div class="season-selection" style="display: none;">
                             <label for="seasons_{{ result.id }}">Select Seasons:</label>
                             <select class="form-control seasons-select" id="seasons_{{ result.id }}" multiple>

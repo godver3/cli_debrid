@@ -320,7 +320,7 @@ class MetadataManager:
     @staticmethod
     def refresh_seasons(imdb_id, session: SqlAlchemySession): # Expects a session now
         trakt = TraktMetadata()
-        seasons_data, source = trakt.get_show_seasons_and_episodes(imdb_id)
+        seasons_data, source = trakt.get_show_seasons_and_episodes(imdb_id, include_specials=True)
         if seasons_data:
             # Pass session down - assumes add_or_update handles commit/rollback based on session presence
             MetadataManager.add_or_update_seasons_and_episodes(imdb_id, seasons_data, session=session)
@@ -568,7 +568,7 @@ class MetadataManager:
         if item_type == 'show':
             logger.info(f"Fetching detailed season/episode data for show {imdb_id}")
             # Use the main TraktMetadata instance to potentially reuse cached data
-            seasons_data, seasons_source = trakt.get_show_seasons_and_episodes(imdb_id)
+            seasons_data, seasons_source = trakt.get_show_seasons_and_episodes(imdb_id, include_specials=True)
             if seasons_data and isinstance(seasons_data, dict):
                  logger.info(f"Successfully fetched detailed seasons data for {imdb_id}")
                  data_to_save['seasons'] = seasons_data

@@ -89,6 +89,7 @@ class BlacklistedQueue:
                 WHERE state = 'Blacklisted'
                   AND blacklisted_date IS NOT NULL
                   AND blacklisted_date <= ?
+                  AND (ghostlisted = FALSE OR ghostlisted IS NULL)
             """
             params = [cutoff_date.isoformat()]
 

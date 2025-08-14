@@ -907,6 +907,8 @@ def select_episode():
         # Get allow_specials flag from form data
         allow_specials = request.form.get('allow_specials', 'false').lower() == 'true'
         
+        logging.info(f"select_episode route received: media_id={media_id}, season={season}, title={title}, year={year}, allow_specials={allow_specials}")
+        
         if media_id:
             try:
                 # Allow episode data to be retrieved for both requesters and regular users

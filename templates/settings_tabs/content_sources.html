@@ -997,6 +997,8 @@
                                     {% elif key == 'allow_specials' %}
                                         {# This key is handled by a dedicated block later (around lines 735-751) for non-'Other Plex Watchlist' types. #}
                                         {# Doing nothing here prevents it from being rendered as a text input by the 'else' block below. #}
+                                    {% elif key == 'ignore_tags' and config.type == 'Overseerr' %}
+                                        {# Skip ignore_tags field for Overseerr sources - hidden as requested #}
                                     {% elif key == 'exclude_genres' %}
                                         {# Handle exclude_genres as a text input for comma-separated values #}
                                         <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>

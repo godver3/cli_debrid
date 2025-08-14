@@ -548,7 +548,7 @@ class TraktMetadata:
                 logger.debug(f"Added aliases for {imdb_id}")
             
             logger.debug(f"Fetching seasons data for {imdb_id}")
-            seasons_data, source = self.get_show_seasons_and_episodes(imdb_id)
+            seasons_data, source = self.get_show_seasons_and_episodes(imdb_id, include_specials=True)
             logger.debug(f"Received seasons data for {imdb_id}: {seasons_data is not None}")
             if seasons_data:
                 logger.debug(f"Season numbers received: {list(seasons_data.keys())}")
@@ -581,7 +581,7 @@ class TraktMetadata:
                 show_imdb_id = show_data['ids']['imdb']
 
                 # Fetch all episodes for this show
-                all_episodes, _ = self.get_show_seasons_and_episodes(show_imdb_id)
+                all_episodes, _ = self.get_show_seasons_and_episodes(show_imdb_id, include_specials=True)
                 
                 # Cache all episodes
                 self.cached_episodes = all_episodes

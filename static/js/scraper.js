@@ -2613,6 +2613,28 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
 
             dropdown.addEventListener('change', function() {
                 const selectedItem = JSON.parse(this.value);
+                
+                // Extract the displayed season number from the option text for Lego Masters US
+                const optionText = this.options[this.selectedIndex].textContent;
+                let displayedSeasonNum = selectedItem.season_num;
+                
+                console.log('Season selection debug:', {
+                    optionText: optionText,
+                    originalSeasonNum: selectedItem.season_num,
+                    selectedItem: selectedItem
+                });
+                
+                // For Lego Masters US, extract season number from display text
+                if (optionText.startsWith('Season: ')) {
+                    const extractedSeason = parseInt(optionText.replace('Season: ', ''));
+                    if (!isNaN(extractedSeason)) {
+                        displayedSeasonNum = extractedSeason;
+                        console.log('Extracted season number from display text:', extractedSeason);
+                    }
+                }
+                
+                console.log('Final season number to be passed to selectEpisode:', displayedSeasonNum);
+                
                 if (tmdb_api_key_set) {
                     // Use the backdrop_path from the selected item or from the parent scope backdrop_path parameter
                     // Same for show_overview
@@ -2621,7 +2643,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                     
                     displaySeasonInfo(
                         selectedItem.title, 
-                        selectedItem.season_num, 
+                        displayedSeasonNum, // Use displayed season number
                         selectedItem.air_date, 
                         selectedItem.season_overview, 
                         selectedItem.poster_path, 
@@ -2631,9 +2653,9 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                         itemShowOverview
                     );
                 } else {
-                    displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
+                    displaySeasonInfoTextOnly(selectedItem.title, displayedSeasonNum); // Use displayed season number
                 }
-                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
+                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, displayedSeasonNum, null, selectedItem.multi, genre_ids); // Use displayed season number
             });
 
             seasonPackButton.onclick = function() {
@@ -2770,6 +2792,17 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
 
     // Get Allow Specials preference
     const allowSpecials = localStorage.getItem('allowSpecials') === 'true';
+
+    console.log('selectEpisode called with:', {
+        mediaId: mediaId,
+        title: title,
+        year: year,
+        mediaType: mediaType,
+        season: season,
+        episode: episode,
+        multi: multi,
+        genre_ids: genre_ids
+    });
 
     showLoadingState();
     const version = document.getElementById('version-select').value;
