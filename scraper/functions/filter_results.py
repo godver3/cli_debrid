@@ -1019,9 +1019,15 @@ def filter_results(
                                      season_match = False
                                      logging.info(f"Rejecting anime result with no season info when searching for S{season}E{episode}: '{original_title}' (no absolute episode or strong episode indicator)")
                                  else:
-                                     season_match = True
-                                     lenient_season_pass = True
-                                     logging.info(f"Allowing anime result with no season info but with episode indicator for S{season}E{episode}: '{original_title}'")
+                                     # Even if we have episode indicator, be more restrictive for S2+
+                                     # Only allow if we have absolute episode numbers that provide proper context
+                                     if has_absolute_episode:
+                                         season_match = True
+                                         lenient_season_pass = True
+                                         logging.info(f"Allowing anime result with no season info but with absolute episode evidence for S{season}E{episode}: '{original_title}'")
+                                     else:
+                                         season_match = False
+                                         logging.info(f"Rejecting anime result with episode indicator but no absolute episode evidence for S{season}E{episode}: '{original_title}'")
                              else:
                                  season_match = True
                                  lenient_season_pass = True # Mark as lenient pass
@@ -1121,25 +1127,40 @@ def filter_results(
                         # Accept the direct S/E match here; absolute-number logic below still
                         # provides an additional matching path when torrents use absolute numbers.
                         
-                        # Additional safety check for anime with XEM mapping: if we're searching for a specific season
-                        # and the torrent has no season info, be more restrictive
-                        if is_anime and season > 1 and not result_seasons and lenient_season_pass:
-                            # This is the problematic case: anime S2+, no season info, but episode matches
-                            # Check if this looks like a standalone episode without proper season context
-                            title_has_only_episode = (
-                                not re.search(r'[Ss]\d+', original_title) and  # No season info in title
-                                result.get('target_abs_episode') is None  # No absolute episode number
-                            )
-                            
-                            if title_has_only_episode:
-                                logging.info(f"Rejecting anime episode match due to insufficient season context for S{season}E{episode}: '{original_title}'")
-                                episode_match = False
-                            else:
-                                episode_match = True
-                                logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}' (with season context validation)")
-                        else:
-                            episode_match = True
-                            logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}'")
+                                                 # Additional safety check for anime with XEM mapping: if we're searching for a specific season
+                         # and the torrent has no season info, be more restrictive
+                         # Debug logging to understand the condition
+                         debug_condition = f"is_anime={is_anime}, season={season}, not result_seasons={not result_seasons}, lenient_season_pass={lenient_season_pass}"
+                         logging.debug(f"Episode match safety check condition: {debug_condition} for '{original_title}'")
+                         logging.debug(f"PTT parsed info for '{original_title}': result_seasons={result_seasons}, result_episodes={result_episodes}")
+                         
+                         # More comprehensive check: if we're searching for anime S2+ and the torrent has no season info
+                         # but only episode numbers, be very restrictive
+                         # Also check if the parsed season doesn't match what we're looking for
+                         season_mismatch = result_seasons and season not in result_seasons
+                         if is_anime and season > 1 and (not result_seasons or season_mismatch):
+                             # This is the problematic case: anime S2+, no season info, but episode matches
+                             # Check if this looks like a standalone episode without proper season context
+                             title_has_only_episode = (
+                                 not re.search(r'[Ss]\d+', original_title) and  # No season info in title
+                                 result.get('target_abs_episode') is None  # No absolute episode number
+                             )
+                             
+                             # For anime S2+ with no season info or season mismatch, require absolute episode numbers for proper context
+                             has_absolute_episode = result.get('target_abs_episode') is not None
+                             
+                             if has_absolute_episode:
+                                 episode_match = True
+                                 logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}' (with absolute episode validation)")
+                             else:
+                                 if season_mismatch:
+                                     logging.info(f"Rejecting anime episode match due to season mismatch (expected S{season}, parsed {result_seasons}) and no absolute episode evidence for '{original_title}'")
+                                 else:
+                                     logging.info(f"Rejecting anime episode match due to insufficient absolute episode evidence for S{season}E{episode}: '{original_title}'")
+                                 episode_match = False
+                         else:
+                             episode_match = True
+                             logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}'")
                     # --- Anime absolute-number fall-back -----------------------
                     elif is_anime:
                         try:
