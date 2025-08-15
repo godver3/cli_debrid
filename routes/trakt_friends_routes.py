@@ -83,7 +83,8 @@ def authorize_friend():
             'verification_url': device_data['verification_url'],
             'friend_name': request.form.get('friend_name', 'Friend'),
             'client_id': client_id,
-            'client_secret': client_secret
+            'client_secret': client_secret,
+            'expires_at': int((datetime.now() + timedelta(seconds=device_data['expires_in'])).timestamp())
         }
         
         state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
@@ -123,7 +124,16 @@ def check_auth_status(auth_id):
                 'friend_name': state.get('friend_name')
             })
         
+        # Check if device code has expired
+        if state.get('expires_at') and datetime.now().timestamp() > state['expires_at']:
+            return jsonify({
+                'success': False,
+                'status': 'expired',
+                'error': 'Authorization code has expired. Please start a new authorization.'
+            }), 400
+        
         # Check with Trakt API
+        logging.info(f"Checking Trakt device token for auth_id: {auth_id}")
         response = requests.post(
             f"{TRAKT_API_URL}/oauth/device/token",
             json={
@@ -188,9 +198,11 @@ def check_auth_status(auth_id):
                 error_body_text = response.text or ''
             
             # Treat authorization pending and slow down as pending
+            # Also treat empty body 400 errors as pending (common when user hasn't authorized yet)
             if response.status_code in (400, 401) and (
                 (error_code in ('authorization_pending', 'slow_down')) or
-                (response.text and 'pending' in response.text.lower())
+                (response.text and 'pending' in response.text.lower()) or
+                (response.status_code == 400 and not error_body_text)  # Empty body 400 error
             ):
                 return jsonify({
                     'success': True,
