@@ -360,12 +360,13 @@ class ScraperManager:
                     executor.shutdown(wait=False, cancel_futures=True)
                 
                 # Only return early if we found results from anime scrapers AND they contain the target episode
+                # TEMPORARILY DISABLED: Early return to get more comprehensive results
                 if all_results:
                     # Check if any results contain the target episode
                     if contains_target_episode(all_results, episode, season):
-                        logging.info("Returning early with results from Nyaa/OldNyaa that contain target episode.")
-                        self._log_scraper_report(title, year, instance_summary)
-                        return all_results
+                        logging.info("Found results from Nyaa/OldNyaa that contain target episode, but continuing to search other scrapers (early return disabled).")
+                        # self._log_scraper_report(title, year, instance_summary)
+                        # return all_results  # TEMPORARILY DISABLED
                     else:
                         logging.info("Found results from Nyaa/OldNyaa but none contain target episode, falling back to other scrapers")
                 else:
