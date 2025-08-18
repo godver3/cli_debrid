@@ -1053,21 +1053,26 @@ def filter_results(
                     
                     # --- Pack Checks (Reject packs in single mode) ---
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
-                    # Check for multi-season packs (e.g., "Complete", "S01,S02")
-                    if (season_pack == 'Complete' or (season_pack not in ['N/A', 'Unknown'] and ',' in season_pack)):
-                        result['filter_reason'] = "Multi-season pack when searching for single episode"
-                        logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
-                        continue
+                    is_potential_single_season_pack = False # Default to false
 
-                    # Check for single season packs (parsed season/pack, but no parsed episodes matching target)
-                    # This needs to be robust against the loose episode check later
-                    is_potential_single_season_pack = season_pack not in ['N/A', 'Unknown'] and not result_episodes
+                    if not multi:
+                        # Check for multi-season packs (e.g., "Complete", "S01,S02")
+                        if (season_pack == 'Complete' or (season_pack not in ['N/A', 'Unknown'] and ',' in season_pack)):
+                            result['filter_reason'] = "Multi-season pack when searching for single episode"
+                            logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
+
+                        # Also check if multiple distinct episodes are detected explicitly
+                        if len(result_episodes) > 1:
+                            result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
+                            logging.info(f"Rejected: Multiple episodes {result_episodes} in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
+                        
+                        # This check is for single season packs and should apply only in single mode.
+                        # It identifies torrents that are packs of the correct season but don't list episodes,
+                        # which are then rejected if the specific episode isn't found later.
+                        is_potential_single_season_pack = season_pack not in ['N/A', 'Unknown'] and not result_episodes
                     
-                    # Also check if multiple distinct episodes are detected explicitly
-                    if len(result_episodes) > 1:
-                        result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
-                        logging.info(f"Rejected: Multiple episodes {result_episodes} in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
-                        continue
                     # --- End Pack Checks ---
 
                     # --- Episode Check --- 

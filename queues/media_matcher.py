@@ -37,30 +37,28 @@ class MediaMatcher:
         if 'specials' in file_basename.lower(): # Check basename for 'specials'
              return None
         
-        # Filter out anime openings and endings
+        # --- Anime Special Content Detection ---
+        # Instead of filtering here, we'll tag it and decide later
+        is_anime_special_content = False
         basename_lower = file_basename.lower()
         anime_special_patterns = [
             'ncop', 'nced',  # No Credit Opening/Ending
             'opening', 'ending',
-            'intro', 'outro',
-            'promo', 'trailer',
-            'ova', 'oad',    # Original Video Animation, Original Animation DVD
-            'special', 'extra',
-            'bonus', 'interview',
-            'making of', 'behind the scenes',
-            'deleted scene', 'deleted scenes',
-            'featurette'
+            'ova'
         ]
         
         for pattern in anime_special_patterns:
             if pattern in basename_lower:
-                logging.debug(f"Filtered out anime special content: '{file_basename}' (matched pattern: {pattern})")
-                return None
+                is_anime_special_content = True
+                logging.debug(f"Tagged as potential anime special content: '{file_basename}' (matched pattern: {pattern})")
+                break # Found a match, no need to check others
 
         ptt_result = parse_title(file_basename) # Parse only the basename
         
         # Ensure ptt_result is a dict, even if parse_title returns None or an unexpected type
         parsed_info = ptt_result if isinstance(ptt_result, dict) else {}
+
+        parsed_info['is_anime_special_content'] = is_anime_special_content
 
         parsed_info['original_filename'] = file_basename # Store basename
 
@@ -517,6 +515,11 @@ class MediaMatcher:
             logging.debug(f"Episode matching mode: {'Relaxed' if use_relaxed_matching else 'Strict'}")
 
             for parsed_file_info in parsed_files:
+                # If the item is anime, skip files that are tagged as anime special content
+                if is_anime and parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
+                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' because item is anime.")
+                    continue
+
                 # Pass xem_mapping down to _check_match
                 if self._check_match(parsed_file_info, item, use_relaxed_matching, xem_mapping=xem_mapping):
                     # Return the first match found
@@ -740,6 +743,12 @@ class MediaMatcher:
                 item_season = item.get('season') or item.get('season_number')
                 if item_season != pack_season:
                     continue
+            
+            # Check if this specific candidate item is anime
+            candidate_genres = item.get('genres', [])
+            if isinstance(candidate_genres, str):
+                candidate_genres = [candidate_genres]
+            candidate_is_anime = any('anime' in g.lower() for g in candidate_genres)
 
             # --- Build per-candidate XEM mapping (season-offset only) ---
             candidate_xem_mapping = None
@@ -780,6 +789,11 @@ class MediaMatcher:
             # --- Find Match in Parsed Files ---
             found_match_for_this_item = False
             for parsed_file_info in parsed_torrent_files:
+                # If the candidate item is anime, skip files tagged as anime special content
+                if candidate_is_anime and parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
+                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' for related anime item ID {item_id}.")
+                    continue
+                
                 # Pass per-candidate mapping (if available) so scene numbering is considered correctly
                 if self._check_match(
                     parsed_file_info,
