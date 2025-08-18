@@ -1453,7 +1453,7 @@ def filter_results(
             bitrate = 0
             # runtime is the base runtime for one item (episode or movie) passed into filter_results
             
-            if runtime > 0 and size_gb_for_filter > 0:
+            if runtime is not None and runtime > 0 and size_gb_for_filter > 0:
                 # Log detailed bitrate calculation inputs
                 logging.info(f"[BITRATE_CALC] '{original_title}':")
                 logging.info(f"  - total_size_gb (raw from scraper): {total_size_gb:.4f} GB")
@@ -1468,7 +1468,8 @@ def filter_results(
                 bitrate = calculate_bitrate(size_gb_for_filter, runtime) 
                 logging.info(f"  - calculated bitrate: {bitrate:.2f} Kbps ({bitrate/1000:.2f} Mbps)")
             else:
-                logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive runtime ({runtime}min) or size_gb_for_filter ({size_gb_for_filter:.3f}GB). Bitrate set to 0.")
+                runtime_str = f"{runtime}min" if runtime is not None else "None"
+                logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive runtime ({runtime_str}) or size_gb_for_filter ({size_gb_for_filter:.3f}GB). Bitrate set to 0.")
                 bitrate = 0 
             
             # --- ADDED DEBUG LOGGING ---

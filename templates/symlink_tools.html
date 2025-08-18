@@ -1,0 +1,747 @@
+{% extends "base.html" %}
+
+{% block title %}Symlink Tools{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>Symlink Tools</h1>
+    <p class="description">
+        Manually create symlinks for media files when metadata is incorrect or missing. 
+        This tool allows you to select a media file and create a symlink following your configured naming templates.
+    </p>
+
+    <div class="settings-info">
+        <h3>Current Settings</h3>
+        <div class="settings-grid">
+            <div class="setting-item">
+                <label>Symlinked Files Path:</label>
+                <span>{{ symlinked_files_path or 'Not configured' }}</span>
+            </div>
+            <div class="setting-item">
+                <label>Original Files Path:</label>
+                <span>{{ original_files_path or 'Not configured' }}</span>
+            </div>
+        </div>
+    </div>
+
+    <form id="symlinkForm" method="POST" class="symlink-form">
+        <div class="form-section">
+            <h3>File Selection</h3>
+            <div class="form-group">
+                <label for="source_file">Source File Path *</label>
+                <div class="file-input-group">
+                    <input type="text" id="source_file" name="source_file" required 
+                           placeholder="/path/to/your/media/file.mkv">
+                    <button type="button" id="browseFilesBtn" class="btn-secondary">Browse Files</button>
+                    <button type="button" id="validateFileBtn" class="btn-secondary">Validate File</button>
+                </div>
+                <div id="fileValidation" class="validation-message"></div>
+            </div>
+        </div>
+
+        <!-- File Browser Modal -->
+        <div id="fileBrowserModal" class="modal" style="display: none;">
+            <div class="modal-content file-browser-modal">
+                <div class="modal-header">
+                    <h3>File Browser</h3>
+                    <span class="close" id="closeFileBrowser">&times;</span>
+                </div>
+                <div class="modal-body">
+                    <div class="file-browser-nav">
+                        <button id="goUpBtn" class="btn-secondary" disabled>↑ Up</button>
+                        <button id="goHomeBtn" class="btn-secondary">🏠 Home</button>
+                        <span id="currentPath" class="current-path"></span>
+                    </div>
+                    <div class="file-browser-content">
+                        <div id="fileList" class="file-list">
+                            <div class="loading">Loading...</div>
+                        </div>
+                    </div>
+                    <div class="file-browser-actions">
+                        <button id="selectFileBtn" class="btn-primary" disabled>Select File</button>
+                        <button id="cancelFileBtn" class="btn-secondary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>Media Information</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="title">Title *</label>
+                    <input type="text" id="title" name="title" required placeholder="Movie/Show Title">
+                </div>
+                <div class="form-group">
+                    <label for="year">Year *</label>
+                    <input type="number" id="year" name="year" required min="1900" max="2030" placeholder="2024">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="media_type">Media Type</label>
+                    <select id="media_type" name="media_type">
+                        <option value="movie">Movie</option>
+                        <option value="episode">TV Episode</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="version">Version</label>
+                    <select id="version" name="version">
+                        {% for version in version_choices %}
+                        <option value="{{ version }}">{{ version }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="imdb_id">IMDb ID</label>
+                    <input type="text" id="imdb_id" name="imdb_id" placeholder="tt1234567">
+                </div>
+                <div class="form-group">
+                    <label for="tmdb_id">TMDB ID</label>
+                    <input type="text" id="tmdb_id" name="tmdb_id" placeholder="12345">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="content_source">Content Source</label>
+                <select id="content_source" name="content_source">
+                    <option value="">None</option>
+                    {% for source in content_source_choices %}
+                    <option value="{{ source }}">{{ source }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div class="form-section" id="episodeFields" style="display: none;">
+            <h3>Episode Information</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="season_number">Season Number *</label>
+                    <input type="number" id="season_number" name="season_number" min="0" placeholder="1">
+                </div>
+                <div class="form-group">
+                    <label for="episode_number">Episode Number *</label>
+                    <input type="number" id="episode_number" name="episode_number" min="1" placeholder="1">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="episode_title">Episode Title</label>
+                <input type="text" id="episode_title" name="episode_title" placeholder="Episode Title">
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3>Preview</h3>
+            <button type="button" id="previewPathBtn" class="btn-secondary">Preview Symlink Path</button>
+            <div id="pathPreview" class="preview-box">
+                <p>Click "Preview Symlink Path" to see the generated symlink path based on your settings.</p>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn-primary">Create Symlink</button>
+            <button type="reset" class="btn-secondary">Reset Form</button>
+        </div>
+    </form>
+</div>
+
+<style>
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.description {
+    color: #666;
+    margin-bottom: 30px;
+    line-height: 1.5;
+}
+
+.settings-info {
+    background: #2a2a2a;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 30px;
+    border-left: 4px solid #007bff;
+}
+
+.settings-info h3 {
+    margin-top: 0;
+    color: #007bff;
+}
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.setting-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.setting-item label {
+    font-weight: bold;
+    color: #ccc;
+    margin-bottom: 5px;
+}
+
+.setting-item span {
+    color: #fff;
+    word-break: break-all;
+}
+
+.symlink-form {
+    background: #2a2a2a;
+    border-radius: 8px;
+    padding: 30px;
+}
+
+.form-section {
+    margin-bottom: 30px;
+}
+
+.form-section h3 {
+    color: #007bff;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #444;
+    padding-bottom: 10px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: bold;
+    color: #ccc;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #444;
+    border-radius: 4px;
+    background: #1a1a1a;
+    color: #fff;
+    font-size: 14px;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.form-group input[type="number"] {
+    width: 100%;
+}
+
+.file-input-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.file-input-group input {
+    flex: 1;
+}
+
+/* File Browser Modal Styles */
+.file-browser-modal {
+    width: 80%;
+    max-width: 800px;
+    height: 70vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.file-browser-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-bottom: 1px solid #444;
+    background: #1a1a1a;
+}
+
+.current-path {
+    flex: 1;
+    color: #ccc;
+    font-family: monospace;
+    word-break: break-all;
+    margin-left: 10px;
+}
+
+.file-browser-content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.file-list {
+    flex: 1;
+    overflow-y: auto;
+    background: #1a1a1a;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid #333;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.file-item:hover {
+    background: #2a2a2a;
+}
+
+.file-item.selected {
+    background: #007bff;
+    color: white;
+}
+
+.file-item-icon {
+    margin-right: 10px;
+    font-size: 16px;
+    width: 20px;
+    text-align: center;
+}
+
+.file-item-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.file-item-name {
+    font-weight: bold;
+    margin-bottom: 2px;
+}
+
+.file-item-details {
+    font-size: 12px;
+    color: #888;
+}
+
+.file-item.selected .file-item-details {
+    color: #ccc;
+}
+
+.file-browser-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 15px;
+    border-top: 1px solid #444;
+    background: #1a1a1a;
+}
+
+.loading {
+    text-align: center;
+    padding: 20px;
+    color: #888;
+}
+
+.error-message {
+    color: #dc3545;
+    padding: 10px;
+    text-align: center;
+}
+
+/* Media file extensions */
+.media-extensions {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.btn-primary,
+.btn-secondary {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #0056b3;
+}
+
+.btn-secondary {
+    background: #6c757d;
+    color: white;
+    margin-left: 10px;
+}
+
+.btn-secondary:hover {
+    background: #545b62;
+}
+
+.validation-message {
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.validation-message.valid {
+    background: rgba(40, 167, 69, 0.2);
+    color: #28a745;
+    border: 1px solid #28a745;
+}
+
+.validation-message.invalid {
+    background: rgba(220, 53, 69, 0.2);
+    color: #dc3545;
+    border: 1px solid #dc3545;
+}
+
+.preview-box {
+    background: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 15px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.preview-box p {
+    margin: 0;
+    color: #ccc;
+}
+
+.preview-box .path {
+    color: #28a745;
+    font-weight: bold;
+}
+
+.preview-box .exists {
+    color: #ffc107;
+    font-style: italic;
+}
+
+.form-actions {
+    text-align: center;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #444;
+}
+
+@media (max-width: 768px) {
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .settings-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .container {
+        padding: 10px;
+    }
+    
+    .symlink-form {
+        padding: 20px;
+    }
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const mediaTypeSelect = document.getElementById('media_type');
+    const episodeFields = document.getElementById('episodeFields');
+    const seasonNumberInput = document.getElementById('season_number');
+    const episodeNumberInput = document.getElementById('episode_number');
+    const validateFileBtn = document.getElementById('validateFileBtn');
+    const previewPathBtn = document.getElementById('previewPathBtn');
+    const sourceFileInput = document.getElementById('source_file');
+    const fileValidation = document.getElementById('fileValidation');
+    const pathPreview = document.getElementById('pathPreview');
+    
+    // File browser elements
+    const browseFilesBtn = document.getElementById('browseFilesBtn');
+    const fileBrowserModal = document.getElementById('fileBrowserModal');
+    const closeFileBrowser = document.getElementById('closeFileBrowser');
+    const goUpBtn = document.getElementById('goUpBtn');
+    const goHomeBtn = document.getElementById('goHomeBtn');
+    const currentPath = document.getElementById('currentPath');
+    const fileList = document.getElementById('fileList');
+    const selectFileBtn = document.getElementById('selectFileBtn');
+    const cancelFileBtn = document.getElementById('cancelFileBtn');
+    
+    // File browser state
+    let currentDirectory = '/';
+    let selectedFile = null;
+    const mediaExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts', '.m2ts'];
+
+    // Toggle episode fields based on media type
+    mediaTypeSelect.addEventListener('change', function() {
+        if (this.value === 'episode') {
+            episodeFields.style.display = 'block';
+            seasonNumberInput.required = true;
+            episodeNumberInput.required = true;
+        } else {
+            episodeFields.style.display = 'none';
+            seasonNumberInput.required = false;
+            episodeNumberInput.required = false;
+        }
+    });
+
+    // Validate file button
+    validateFileBtn.addEventListener('click', function() {
+        const filePath = sourceFileInput.value.trim();
+        if (!filePath) {
+            showValidation('Please enter a file path', false);
+            return;
+        }
+
+        fetch('/symlink_tools/api/validate-file', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ file_path: filePath })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showValidation(data.message, data.valid);
+        })
+        .catch(error => {
+            showValidation('Error validating file: ' + error.message, false);
+        });
+    });
+
+    // Preview path button
+    previewPathBtn.addEventListener('click', function() {
+        const formData = {
+            title: document.getElementById('title').value,
+            year: document.getElementById('year').value,
+            media_type: document.getElementById('media_type').value,
+            version: document.getElementById('version').value,
+            content_source: document.getElementById('content_source').value,
+            imdb_id: document.getElementById('imdb_id').value,
+            tmdb_id: document.getElementById('tmdb_id').value,
+            filename: document.getElementById('source_file').value ? 
+                     document.getElementById('source_file').value.split('/').pop() : '',
+            season_number: document.getElementById('season_number').value,
+            episode_number: document.getElementById('episode_number').value,
+            episode_title: document.getElementById('episode_title').value
+        };
+
+        fetch('/symlink_tools/api/preview-path', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(formData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                pathPreview.innerHTML = `<div class="path">${data.path}</div>`;
+                if (data.exists) {
+                    pathPreview.innerHTML += `<div class="exists">⚠️ This symlink already exists</div>`;
+                }
+            } else {
+                pathPreview.innerHTML = `<div style="color: #dc3545;">${data.message}</div>`;
+            }
+        })
+        .catch(error => {
+            pathPreview.innerHTML = `<div style="color: #dc3545;">Error previewing path: ${error.message}</div>`;
+        });
+    });
+
+    function showValidation(message, isValid) {
+        fileValidation.textContent = message;
+        fileValidation.className = 'validation-message ' + (isValid ? 'valid' : 'invalid');
+    }
+
+    // Auto-validate file when input changes
+    let validationTimeout;
+    sourceFileInput.addEventListener('input', function() {
+        clearTimeout(validationTimeout);
+        validationTimeout = setTimeout(() => {
+            if (this.value.trim()) {
+                validateFileBtn.click();
+            } else {
+                fileValidation.textContent = '';
+                fileValidation.className = 'validation-message';
+            }
+        }, 500);
+    });
+
+    // File Browser Event Handlers
+    browseFilesBtn.addEventListener('click', function() {
+        fileBrowserModal.style.display = 'block';
+        loadDirectory('/');
+    });
+
+    closeFileBrowser.addEventListener('click', function() {
+        fileBrowserModal.style.display = 'none';
+    });
+
+    cancelFileBtn.addEventListener('click', function() {
+        fileBrowserModal.style.display = 'none';
+    });
+
+    goUpBtn.addEventListener('click', function() {
+        if (currentDirectory !== '/') {
+            const parentDir = currentDirectory.split('/').slice(0, -1).join('/') || '/';
+            loadDirectory(parentDir);
+        }
+    });
+
+    goHomeBtn.addEventListener('click', function() {
+        loadDirectory('/');
+    });
+
+    selectFileBtn.addEventListener('click', function() {
+        if (selectedFile) {
+            sourceFileInput.value = selectedFile;
+            fileBrowserModal.style.display = 'none';
+            // Auto-validate the selected file
+            validateFileBtn.click();
+        }
+    });
+
+    // Close modal when clicking outside
+    window.addEventListener('click', function(event) {
+        if (event.target === fileBrowserModal) {
+            fileBrowserModal.style.display = 'none';
+        }
+    });
+
+    function loadDirectory(path) {
+        currentDirectory = path;
+        currentPath.textContent = path;
+        goUpBtn.disabled = path === '/';
+        
+        fileList.innerHTML = '<div class="loading">Loading...</div>';
+        
+        fetch('/symlink_tools/api/browse-files', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ path: path })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayFiles(data.items);
+            } else {
+                fileList.innerHTML = `<div class="error-message">${data.message}</div>`;
+            }
+        })
+        .catch(error => {
+            fileList.innerHTML = `<div class="error-message">Error loading directory: ${error.message}</div>`;
+        });
+    }
+
+    function displayFiles(items) {
+        if (items.length === 0) {
+            fileList.innerHTML = '<div class="loading">Directory is empty</div>';
+            return;
+        }
+
+        fileList.innerHTML = '';
+        
+        items.forEach(item => {
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.dataset.path = item.path;
+            
+            const icon = document.createElement('div');
+            icon.className = 'file-item-icon';
+            icon.textContent = item.is_dir ? '📁' : '📄';
+            
+            const info = document.createElement('div');
+            info.className = 'file-item-info';
+            
+            const name = document.createElement('div');
+            name.className = 'file-item-name';
+            name.textContent = item.name;
+            
+            // Highlight media files
+            if (!item.is_dir) {
+                const ext = item.name.toLowerCase().substring(item.name.lastIndexOf('.'));
+                if (mediaExtensions.includes(ext)) {
+                    name.classList.add('media-extensions');
+                }
+            }
+            
+            const details = document.createElement('div');
+            details.className = 'file-item-details';
+            
+            if (item.is_dir) {
+                details.textContent = 'Directory';
+            } else {
+                const size = formatFileSize(item.size);
+                const modified = new Date(item.modified).toLocaleDateString();
+                details.textContent = `${size} • Modified: ${modified}`;
+            }
+            
+            info.appendChild(name);
+            info.appendChild(details);
+            fileItem.appendChild(icon);
+            fileItem.appendChild(info);
+            
+            fileItem.addEventListener('click', function() {
+                if (item.is_dir) {
+                    loadDirectory(item.path);
+                } else {
+                    // Select file
+                    document.querySelectorAll('.file-item').forEach(fi => fi.classList.remove('selected'));
+                    fileItem.classList.add('selected');
+                    selectedFile = item.path;
+                    selectFileBtn.disabled = false;
+                }
+            });
+            
+            fileList.appendChild(fileItem);
+        });
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes === null || bytes === undefined) return 'Unknown size';
+        
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        if (bytes === 0) return '0 B';
+        
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+    }
+});
+</script>
+{% endblock %}

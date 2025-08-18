@@ -309,12 +309,15 @@ class RealDebridProvider(DebridProvider):
                     logging.info(f"Comparing {torrent_filenames} to DB for IMDb ID {imdb_id}")
                     if is_any_file_in_db_for_item(imdb_id, torrent_filenames):
                         is_in_db = True
-                        logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id}. Disabling removal.")
+                        if is_cached:
+                            logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id} and is cached. Disabling removal.")
+                        else:
+                            logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id} but is not cached. Allowing removal.")
 
-                # Override removal flags if item is in DB
+                # Override removal flags if item is in DB AND cached
                 local_remove_uncached = remove_uncached
                 local_remove_cached = remove_cached
-                if is_in_db:
+                if is_in_db and is_cached:
                     local_remove_uncached = False
                     local_remove_cached = False
                 # --- END EDIT ---

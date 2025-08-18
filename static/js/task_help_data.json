@@ -10,6 +10,7 @@
     "Unreleased": "Staging queue for items that are not yet released. <br><br> <b>ACTION</b>: Process any items in Unreleased Queue.",
     "Upgrading": "Items with a release date within 7 days are marked for upgrading. Hourly re-scrapes over 24 hours to find a better version if enabled. <br><br> <b>ACTION</b>: Process any items in Upgrading Queue.",
     "Wanted": "Items that will be released within the next 24 hours. Additionally staging queue for Scraping queue if too many items in Scraping queue. <br><br> <b>ACTION</b>: Process any items in Wanted Queue.",
+    "Pre-Release": "Items that are within the pre-release period. <br><br> <b>ACTION</b>: Process any items in Pre-Release Queue.",
     "Analyze Media Files": "Analyze 200 media files per run to verify playability. <br><br> <b>ACTION</b>: Process 200 media files in rclone mount using ffprobe. If found to be unplayable check if item is the last of its version, and if so move back to Wanted, otherwise move to Blacklisted.",
     "Check Database Health": "Check if media_items.db is healthy. <br><br> <b>ACTION</b>: Check if media_items.db is healthy.",
     "Check Plex Files Plex library only": "If Plex File Discovery is enabled, check if files have appeared in the rclone mount, and if so call an update in Plex for those files. [Plex Library Only] <br><br> <b>ACTION</b>: Check if files have appeared in the rclone mount, and if so call an update in Plex for those files.",

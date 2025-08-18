@@ -65,6 +65,8 @@ def get_trakt_headers() -> Dict[str, str]:
 def get_trakt_friend_headers(auth_id: str) -> Dict[str, str]:
     """Get the Trakt API headers for a friend's account"""
     try:
+        logging.debug(f"Getting Trakt headers for friend's account: {auth_id}")
+        
         # Load the friend's auth state
         state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
         if not os.path.exists(state_file):
@@ -73,6 +75,8 @@ def get_trakt_friend_headers(auth_id: str) -> Dict[str, str]:
         
         with open(state_file, 'r') as file:
             state = json.load(file)
+        
+        logging.debug(f"Loaded friend's auth state: {state.get('status', 'unknown')}")
         
         # Check if the token is expired or nearing expiration (within 1 hour)
         if state.get('expires_at'):
@@ -86,7 +90,9 @@ def get_trakt_friend_headers(auth_id: str) -> Dict[str, str]:
                 else:
                     logging.info(f"Friend's Trakt token for {auth_id} is nearing expiration (within 1 hour). Attempting refresh.")
                 
+                logging.debug(f"Attempting to refresh friend's Trakt token for {auth_id}")
                 if refresh_friend_token(auth_id):
+                    logging.debug(f"Successfully refreshed friend's Trakt token for {auth_id}")
                     # Reload the state after successful refresh
                     with open(state_file, 'r') as file:
                         state = json.load(file)
@@ -116,6 +122,8 @@ def get_trakt_friend_headers(auth_id: str) -> Dict[str, str]:
 def refresh_friend_token(auth_id: str) -> bool:
     """Refresh the access token for a friend's Trakt account"""
     try:
+        logging.debug(f"Refreshing token for friend's Trakt account: {auth_id}")
+        
         # Load the state
         state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
         if not os.path.exists(state_file):
@@ -124,6 +132,8 @@ def refresh_friend_token(auth_id: str) -> bool:
         
         with open(state_file, 'r') as file:
             state = json.load(file)
+        
+        logging.debug(f"Current token expires at: {state.get('expires_at')}")
         
         # Check if we have a refresh token
         if not state.get('refresh_token'):
@@ -139,6 +149,7 @@ def refresh_friend_token(auth_id: str) -> bool:
             return False
         
         # Refresh the token
+        logging.debug(f"Making token refresh request to Trakt API for auth_id: {auth_id}")
         response = requests.post(
             f"{TRAKT_API_URL}/oauth/token",
             json={
@@ -149,6 +160,7 @@ def refresh_friend_token(auth_id: str) -> bool:
             },
             timeout=REQUEST_TIMEOUT
         )
+        logging.debug(f"Token refresh response status: {response.status_code}")
         
         if response.status_code == 200:
             token_data = response.json()
@@ -169,8 +181,15 @@ def refresh_friend_token(auth_id: str) -> bool:
             logging.info(f"Successfully refreshed token for friend's Trakt account: {auth_id}")
             return True
         else:
-            error_message = response.json().get('error_description', 'Unknown error')
-            logging.error(f"Error refreshing friend's Trakt token: {error_message}")
+            try:
+                error_data = response.json()
+                error_message = error_data.get('error_description', 'Unknown error')
+                logging.error(f"Error refreshing friend's Trakt token: {error_message}")
+                logging.error(f"Full error response: {error_data}")
+            except json.JSONDecodeError:
+                logging.error(f"Error refreshing friend's Trakt token: Non-JSON response")
+                logging.error(f"Response status: {response.status_code}")
+                logging.error(f"Response text: {response.text[:500]}...")
             return False
     
     except Exception as e:
@@ -319,6 +338,9 @@ def fetch_items_from_trakt(
             # Detect HTML responses that sometimes appear instead of JSON
             content_type = response.headers.get("content-type", "")
             if "html" in content_type.lower():
+                logging.error(f"Received HTML response instead of JSON from Trakt API. Status: {response.status_code}, Content-Type: {content_type}")
+                logging.error(f"Response headers: {dict(response.headers)}")
+                logging.error(f"Response body preview: {response.text[:500]}...")
                 raise ValueError("Received HTML response instead of JSON from Trakt API")
 
             response.raise_for_status()
@@ -824,11 +846,16 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         logging.error("No auth_id provided for friend's Trakt watchlist")
         return []
     
+    logging.debug(f"Getting wanted items from friend's Trakt watchlist for auth_id: {auth_id}")
+    
     # Get headers for the friend's account
     headers = get_trakt_friend_headers(auth_id)
     if not headers:
         logging.error(f"Could not get headers for friend's Trakt account: {auth_id}")
         return []
+    
+    logging.debug(f"Successfully got headers for friend's Trakt account: {auth_id}")
+    logging.debug(f"Headers: {headers}")
     
     # Get the friend's username from the source config or from the auth state
     username = source_config.get('username')
@@ -850,6 +877,8 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
     try:
         # Get the watchlist from Trakt
         endpoint = f"/users/{username}/watchlist"
+        logging.debug(f"Making watchlist request to endpoint: {endpoint}")
+        logging.debug(f"Using headers: {headers}")
         items = fetch_items_from_trakt(endpoint, headers)
         
         # Process the items

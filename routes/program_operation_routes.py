@@ -1451,6 +1451,8 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
         # Special-case display names for specific queue tasks
         if task_name == 'final_check_queue':
             return 'Final Scrape'
+        elif task_name == 'Pre_release':
+            return 'Pre-Release'
         # For other queues, the key itself is usually descriptive enough
         return task_name.capitalize()
 

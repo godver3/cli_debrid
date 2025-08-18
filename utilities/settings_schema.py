@@ -299,11 +299,17 @@ SETTINGS_SCHEMA = {
             "default": 0.0,
             "min": 0.0
         },
-        "item_process_delay_seconds": {
-            "type": "float",
-            "description": "Artificial delay (in seconds) after processing each item in Scraping/Adding queues to reduce peak CPU usage. Default: 0.0 (no delay).",
-            "default": 0.0,
-            "min": 0.0
+                "item_process_delay_seconds": {
+             "type": "float",
+             "description": "Artificial delay (in seconds) after processing each item in Scraping/Adding queues to reduce peak CPU usage. Default: 0.0 (no delay).",
+             "default": 0.0,
+             "min": 0.0
+         },
+        "pre_release_scrape_days": {
+            "type": "integer",
+            "description": "Number of days before release date to start scraping for movies. For example, setting to 3 will start scraping movies 3 days before their release date. Set to 0 to disable pre-release scraping.",
+            "default": 0,
+            "min": 0
         }
     },
     "Scraping": {

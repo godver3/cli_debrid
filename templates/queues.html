@@ -622,9 +622,26 @@
             }
             itemContent += ` - Time Added: ${enteredTime}`;
         }
+
+        if (queueName === 'Pre_release') {
+            let formattedTime = 'N/A';
+            if (item.time_added) {
+                formattedTime = formatDateTimeToYMD_HMS(item.time_added);
+            }
+            itemContent;
+            if (item.last_scrape && item.last_scrape !== 'Never') {
+                let lastScrapeTime = 'Unknown';
+                try {
+                    lastScrapeTime = formatDateTimeToYMD_HMS(item.last_scrape);
+                } catch (e) {
+                    lastScrapeTime = item.last_scrape;
+                }
+                itemContent += ` - Last Scrape: ${lastScrapeTime}`;
+            }
+        }
         
-        // Add Content Source inline for Wanted, Scraping, Adding
-        if (['Wanted', 'Scraping', 'Adding'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
+        // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release
+        if (['Wanted', 'Scraping', 'Adding', 'Pre_release'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
             itemContent += ` <span style="font-size: smaller; font-style: italic;">- Content Source: ${item.content_source}</span>`;
         }
 
@@ -876,10 +893,11 @@
             
             let hasContent = false;
             // Backend names; Order defines display sequence
-            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Sleeping', 'Unreleased', 'Blacklisted'];
+            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Pre_release', 'Sleeping', 'Unreleased', 'Blacklisted'];
             // Mapping for display and tooltip IDs
             const queueDisplayMapping = {
-                "Final_Check": "Final Scrape"
+                "Final_Check": "Final Scrape",
+                "Pre_release": "Pre-Release"
             };
             
             // Always update processing stats even if queue data unchanged

@@ -148,6 +148,19 @@ def index():
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_magnet'] = item.get('filled_by_magnet', 'Unknown')
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+        elif queue_name == 'Pre_release':
+            for item in items:
+                # Add pre-release specific data
+                item['time_added'] = item.get('time_added', datetime.now())
+                # Get pre-release data if available
+                pre_release_queue = queue_manager.queues.get('Pre_release')
+                if pre_release_queue and hasattr(pre_release_queue, 'pre_release_data'):
+                    pre_release_info = pre_release_queue.pre_release_data.get(item['id'], {})
+                    item['scrape_count'] = pre_release_info.get('scrape_count', 0)
+                    item['last_scrape'] = pre_release_info.get('last_scrape', 'Never')
+                else:
+                    item['scrape_count'] = 0
+                    item['last_scrape'] = 'Never'
 
     for queue_name, items in queue_contents.items():
         if queue_name == 'Unreleased':
@@ -348,6 +361,23 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
         elif queue_name == 'Final_Check':
             display_timestamp = item.get('final_check_add_timestamp') or item.get('last_updated')
             item['final_check_display_time'] = display_timestamp
+        elif queue_name == 'Pre_release':
+            # Add pre-release specific data
+            time_added = item.get('time_added', datetime.now())
+            if isinstance(time_added, datetime):
+                item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                item['time_added'] = str(time_added)
+            
+            # Get pre-release data if available
+            pre_release_queue = queue_manager.queues.get('Pre_release')
+            if pre_release_queue and hasattr(pre_release_queue, 'pre_release_data'):
+                pre_release_info = pre_release_queue.pre_release_data.get(item['id'], {})
+                item['scrape_count'] = pre_release_info.get('scrape_count', 0)
+                item['last_scrape'] = pre_release_info.get('last_scrape', 'Never')
+            else:
+                item['scrape_count'] = 0
+                item['last_scrape'] = 'Never'
         
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']

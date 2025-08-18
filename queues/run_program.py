@@ -184,7 +184,7 @@ class ProgramRunner:
         self.queue_manager = QueueManager()
         
         # Verify queue initialization
-        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'Final_Check']
+        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'Final_Check', 'Pre_release']
         missing_queues = [q for q in expected_queues if q not in self.queue_manager.queues]
         if missing_queues:
             logging.error(f"Missing queues during initialization: {missing_queues}")
@@ -209,7 +209,8 @@ class ProgramRunner:
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
             'Upgrading': 'process_upgrading',
-            'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
+            'final_check_queue': 'process_final_check', # Use lowercase key matching the task ID
+            'Pre_release': 'process_pre_release'
         }
         # --- END EDIT ---
 
@@ -246,6 +247,7 @@ class ProgramRunner:
             'Pending Uncached': 3600,
             'Upgrading': 3600,
             'final_check_queue': 900, # Use lowercase key matching the task ID
+            'Pre_release': 24 * 60 * 60, # Run every 24 hours (daily)
             # Combined/High Frequency Tasks
             'task_update_queue_views': 30,     # Update queue views every 30 seconds
             'task_send_notifications': 15,       # Run every 15 seconds
@@ -463,6 +465,7 @@ class ProgramRunner:
             'Pending Uncached',
             'Upgrading',
             'final_check_queue', # Use lowercase key matching the task ID
+            'Pre_release',
             # Combined/High Frequency Tasks
             'task_update_queue_views',
             'task_send_notifications',
@@ -685,7 +688,8 @@ class ProgramRunner:
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
             'Upgrading': 'process_upgrading',
-            'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
+            'final_check_queue': 'process_final_check', # Use lowercase key matching the task ID
+            'Pre_release': 'process_pre_release'
         }
 
         # Log the final set of enabled tasks right before starting the scheduling process
