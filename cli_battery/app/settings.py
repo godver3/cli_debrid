@@ -30,6 +30,9 @@ class Settings:
             'shows_last_updated_at': None,
             'movies_last_updated_at': None,
         }
+        # Threaded retry configuration for 500 errors
+        self.enable_threaded_retries = True
+        self.max_threaded_retry_workers = 5
         self.load()
 
     @property
@@ -149,6 +152,9 @@ class Settings:
             'Trakt': self.Trakt, # Saves the cached Trakt details
             # New: persist Trakt updates cursors
             'TraktUpdates': self.trakt_updates,
+            # Threaded retry configuration
+            'enable_threaded_retries': self.enable_threaded_retries,
+            'max_threaded_retry_workers': self.max_threaded_retry_workers,
         }
         try:
             # Ensure the directory exists
@@ -210,6 +216,9 @@ class Settings:
         self.log_level = config.get('log_level', 'INFO')
         # New: load Trakt updates cursors
         self.trakt_updates = config.get('TraktUpdates', self.trakt_updates)
+        # Load threaded retry configuration
+        self.enable_threaded_retries = config.get('enable_threaded_retries', True)
+        self.max_threaded_retry_workers = config.get('max_threaded_retry_workers', 5)
 
     def get_all(self):
         return {
@@ -221,6 +230,9 @@ class Settings:
             "Trakt": self.Trakt, # Use the property getter
             # Expose Trakt updates cursors
             "TraktUpdates": self.trakt_updates,
+            # Threaded retry configuration
+            "enable_threaded_retries": self.enable_threaded_retries,
+            "max_threaded_retry_workers": self.max_threaded_retry_workers,
         }
 
     def update(self, new_settings):
@@ -293,6 +305,14 @@ class Settings:
         for key, value in kwargs.items():
             if key in self.trakt_updates:
                 self.trakt_updates[key] = value
+        self.save()
+
+    def update_threaded_retry_settings(self, enable_threaded_retries=None, max_threaded_retry_workers=None):
+        """Update threaded retry settings and persist."""
+        if enable_threaded_retries is not None:
+            self.enable_threaded_retries = enable_threaded_retries
+        if max_threaded_retry_workers is not None:
+            self.max_threaded_retry_workers = max_threaded_retry_workers
         self.save()
 
     def toggle_provider(self, provider_name, enable):

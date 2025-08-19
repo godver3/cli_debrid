@@ -1157,6 +1157,10 @@ class MetadataManager:
 
     @staticmethod
     def get_release_dates(imdb_id, session: Optional[SqlAlchemySession] = None):
+        """
+        Get release dates for a movie. Handles 500 errors gracefully by returning None
+        when Trakt API returns 500 errors (which are now retried in background threads).
+        """
         session_context = session if session else DbSession()
         try:
             if session: # Use provided session
@@ -1196,6 +1200,11 @@ class MetadataManager:
 
     @staticmethod
     def refresh_release_dates(imdb_id, session: SqlAlchemySession): # Expects session
+        """
+        Refresh release dates for a movie. If Trakt API returns 500 errors,
+        the request will be retried in background threads and this method
+        will receive None, which it handles gracefully.
+        """
         trakt = TraktMetadata()
         
         item = session.query(Item).filter_by(imdb_id=imdb_id).first()

@@ -1098,24 +1098,10 @@ def get_and_add_wanted_content(source_id):
                                     added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config)
                                     batch_total_items_added += added_count or 0
                                     
-                                    # Update cache for items that actually made it through all filtering
-                                    # Only cache items that were successfully processed and added
+                                    # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                                    # This prevents reprocessing the same items repeatedly
                                     for item_original in items_to_process_raw:
-                                        # Find the corresponding processed item to check if it made it through
-                                        item_title = item_original.get('title', '')
-                                        item_year = item_original.get('year', '')
-                                        item_media_type = item_original.get('media_type', '')
-                                        
-                                        # Check if this item made it through all filtering by looking for it in final_items_for_db_batch
-                                        item_made_it_through = any(
-                                            processed_item.get('title') == item_title and 
-                                            processed_item.get('year') == item_year and
-                                            processed_item.get('media_type') == item_media_type
-                                            for processed_item in final_items_for_db_batch
-                                        )
-                                        
-                                        if item_made_it_through:
-                                            update_cache_for_item(item_original, source_id, source_cache)
+                                        update_cache_for_item(item_original, source_id, source_cache)
 
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
@@ -1234,24 +1220,10 @@ def get_and_add_wanted_content(source_id):
                             added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config) 
                             total_items_added += added_count or 0
                             
-                            # Update cache for items that actually made it through all filtering
-                            # Only cache items that were successfully processed and added
+                            # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                            # This prevents reprocessing the same items repeatedly
                             for item_original in items_to_process_raw:
-                                # Find the corresponding processed item to check if it made it through
-                                item_title = item_original.get('title', '')
-                                item_year = item_original.get('year', '')
-                                item_media_type = item_original.get('media_type', '')
-                                
-                                # Check if this item made it through all filtering by looking for it in final_items_for_db_non_batch
-                                item_made_it_through = any(
-                                    processed_item.get('title') == item_title and 
-                                    processed_item.get('year') == item_year and
-                                    processed_item.get('media_type') == item_media_type
-                                    for processed_item in final_items_for_db_non_batch
-                                )
-                                
-                                if item_made_it_through:
-                                    update_cache_for_item(item_original, source_id, source_cache)
+                                update_cache_for_item(item_original, source_id, source_cache)
 
             # Save the updated cache
             save_source_cache(source_id, source_cache)

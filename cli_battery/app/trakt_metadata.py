@@ -24,6 +24,9 @@ import traceback
 from collections import deque
 from datetime import datetime as dt
 import iso8601 as iso8601_pkg
+import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
@@ -42,6 +45,9 @@ class TraktMetadata:
         self.get_time_window = 300  # 5 minutes in seconds
         self.post_requests = deque()  # Track POST requests separately
         self.post_time_window = 1  # 1 second for POST requests
+        # Threaded retry configuration
+        self.enable_threaded_retries = getattr(self.settings, 'enable_threaded_retries', True)
+        self.max_threaded_retry_workers = getattr(self.settings, 'max_threaded_retry_workers', 5)
 
     def _check_rate_limit(self, method='GET'):
         current_time = time.time()
@@ -269,12 +275,26 @@ class TraktMetadata:
                         logger.error("Failed to refresh Trakt access token after 401 error. Aborting.")
                         return None # Abort if refresh fails
 
+                # Check if this is a 500 error that should be retried in a thread
+                if response.status_code == 500 and attempt < max_retries - 1 and self.enable_threaded_retries:
+                    logger.warning(
+                        f"Received 500 error on attempt {attempt + 1}/{max_retries}. "
+                        f"Retrying in background thread in {delay} seconds. URL: {url}"
+                    )
+                    # Use threaded retry for 500 errors to avoid blocking
+                    return self._retry_500_error_threaded(url, method, request_headers, attempt + 1, max_retries, delay)
+                elif response.status_code == 500 and attempt < max_retries - 1:
+                    logger.warning(
+                        f"Received 500 error on attempt {attempt + 1}/{max_retries}. "
+                        f"Threaded retries disabled, using blocking retry in {delay} seconds. URL: {url}"
+                    )
+
                 # Successful request or non-retriable error
                 if response.status_code not in [429, 502, 503, 504]:
                     response.raise_for_status() # Raise for other client/server errors
                     return response
 
-                # Retriable error occurred
+                # Retriable error occurred (non-500)
                 logger.warning(
                     f"Attempt {attempt + 1}/{max_retries} failed with status {response.status_code}. "
                     f"Retrying in {delay} seconds. URL: {url}"
@@ -289,12 +309,144 @@ class TraktMetadata:
                          logger.error(f"Final response text: {e.response.text}")
                     return None
 
-            # Wait before the next retry
+            # Wait before the next retry (only for non-500 errors)
             time.sleep(delay)
             delay *= 2  # Exponential backoff
 
         logger.error(f"Max retries reached for URL {url}. Giving up.")
         return None
+
+    def _retry_500_error_threaded(self, url, method, request_headers, current_attempt, max_retries, initial_delay):
+        """
+        Retry 500 errors in a background thread to avoid blocking the main application.
+        Returns immediately with None, and the retry happens in the background.
+        """
+        def retry_worker():
+            delay = initial_delay
+            for attempt in range(current_attempt, max_retries):
+                try:
+                    # Sleep in the background thread
+                    time.sleep(delay)
+                    
+                    # Check rate limit
+                    if not self._check_rate_limit(method):
+                        logger.warning(f"Internal rate limit check failed on threaded attempt {attempt + 1}. Waiting for 5 minutes.")
+                        time.sleep(300)
+                        continue
+                    
+                    # Make the request
+                    if method.upper() == 'GET':
+                        response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    elif method.upper() == 'POST':
+                        response = requests.post(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    elif method.upper() == 'PUT':
+                        response = requests.put(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    elif method.upper() == 'DELETE':
+                        response = requests.delete(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    else:
+                        response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    
+                    # Check if we got a successful response
+                    if response.status_code == 200:
+                        logger.info(f"Threaded retry successful for {url} on attempt {attempt + 1}")
+                        return
+                    elif response.status_code == 404:
+                        logger.warning(f"Threaded retry got 404 for {url}. Stopping retries.")
+                        return
+                    elif response.status_code == 401:
+                        logger.warning(f"Threaded retry got 401 for {url}. Attempting token refresh.")
+                        if self.trakt_auth.refresh_access_token():
+                            request_headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
+                            continue
+                        else:
+                            logger.error("Failed to refresh token in threaded retry. Stopping.")
+                            return
+                    elif response.status_code == 500:
+                        logger.warning(f"Threaded retry attempt {attempt + 1} still got 500 for {url}")
+                        if attempt == max_retries - 1:
+                            logger.error(f"Threaded retry failed after {max_retries} attempts for {url}")
+                            return
+                    else:
+                        logger.warning(f"Threaded retry got unexpected status {response.status_code} for {url}")
+                        return
+                        
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Threaded retry RequestException on attempt {attempt + 1} for {url}: {e}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"Threaded retry failed after {max_retries} attempts for {url}")
+                        return
+                
+                delay *= 2  # Exponential backoff
+        
+        # Start the retry worker in a daemon thread
+        retry_thread = threading.Thread(target=retry_worker, daemon=True)
+        retry_thread.start()
+        
+        # Return None immediately to avoid blocking the main thread
+        logger.info(f"Started threaded retry for {url}. Returning None to avoid blocking.")
+        return None
+
+    def _make_request_with_threaded_retry(self, url, method='GET', max_retries=4, initial_delay=5, headers=None):
+        """
+        Make a request with threaded retry for 500 errors.
+        This method returns immediately for 500 errors and handles retries in background threads.
+        """
+        # For non-500 errors, use the regular retry logic
+        response = self._make_request(url, method, max_retries, initial_delay, headers)
+        
+        # If we got None due to a 500 error being handled in a thread, log it
+        if response is None:
+            logger.debug(f"Request to {url} returned None (likely due to 500 error being retried in background)")
+        
+        return response
+
+    def _make_bulk_requests_with_threaded_retries(self, requests_data, max_workers=None):
+        """
+        Make multiple requests with threaded retries for 500 errors.
+        
+        Args:
+            requests_data: List of dicts with keys: url, method, headers, max_retries, initial_delay
+            max_workers: Maximum number of concurrent threads
+        
+        Returns:
+            List of responses (None for failed requests)
+        """
+        def make_single_request(req_data):
+            try:
+                return self._make_request_with_threaded_retry(
+                    req_data['url'],
+                    method=req_data.get('method', 'GET'),
+                    max_retries=req_data.get('max_retries', 4),
+                    initial_delay=req_data.get('initial_delay', 5),
+                    headers=req_data.get('headers')
+                )
+            except Exception as e:
+                logger.error(f"Error in bulk request for {req_data.get('url', 'unknown')}: {e}")
+                return None
+        
+        # Use ThreadPoolExecutor for concurrent requests
+        if max_workers is None:
+            max_workers = self.max_threaded_retry_workers
+            
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all requests
+            future_to_request = {
+                executor.submit(make_single_request, req_data): req_data 
+                for req_data in requests_data
+            }
+            
+            # Collect results as they complete
+            results = []
+            for future in as_completed(future_to_request):
+                req_data = future_to_request[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Exception in bulk request for {req_data.get('url', 'unknown')}: {e}")
+                    results.append(None)
+        
+        return results
 
     def get_metadata(self, imdb_id: str) -> Dict[str, Any]:
         logger.debug(f"Getting metadata for {imdb_id}")

@@ -1792,24 +1792,10 @@ class ProgramRunner:
                                 # Pass the CONVERTED versions dict to add_wanted_items
                                 add_wanted_items(all_items, versions_to_inject or versions_dict)
                                 
-                                # Update cache for items that actually made it through all filtering
-                                # Only cache items that were successfully processed and added
+                                # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                                # This prevents reprocessing the same items repeatedly
                                 for item_raw in items_to_process_raw:
-                                    # Find the corresponding processed item to check if it made it through
-                                    item_title = item_raw.get('title', '')
-                                    item_year = item_raw.get('year', '')
-                                    item_media_type = item_raw.get('media_type', '')
-                                    
-                                    # Check if this item made it through all filtering by looking for it in all_items
-                                    item_made_it_through = any(
-                                        processed_item.get('title') == item_title and 
-                                        processed_item.get('year') == item_year and
-                                        processed_item.get('media_type') == item_media_type
-                                        for processed_item in all_items
-                                    )
-                                    
-                                    if item_made_it_through:
-                                        update_cache_for_item(item_raw, source, source_cache)
+                                    update_cache_for_item(item_raw, source, source_cache)
                                 
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
@@ -1917,24 +1903,10 @@ class ProgramRunner:
                             # Pass the CONVERTED versions_dict to add_wanted_items
                             add_wanted_items(all_items, versions_dict)
                             
-                            # Update cache for items that actually made it through all filtering
-                            # Only cache items that were successfully processed and added
+                            # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                            # This prevents reprocessing the same items repeatedly
                             for item_raw in items_to_process_raw:
-                                # Find the corresponding processed item to check if it made it through
-                                item_title = item_raw.get('title', '')
-                                item_year = item_raw.get('year', '')
-                                item_media_type = item_raw.get('media_type', '')
-                                
-                                # Check if this item made it through all filtering by looking for it in all_items
-                                item_made_it_through = any(
-                                    processed_item.get('title') == item_title and 
-                                    processed_item.get('year') == item_year and
-                                    processed_item.get('media_type') == item_media_type
-                                    for processed_item in all_items
-                                )
-                                
-                                if item_made_it_through:
-                                    update_cache_for_item(item_raw, source, source_cache)
+                                update_cache_for_item(item_raw, source, source_cache)
                             
                             total_items += len(all_items)
                             items_processed += len(items_to_process)
