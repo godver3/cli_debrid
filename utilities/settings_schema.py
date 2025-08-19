@@ -170,6 +170,12 @@ SETTINGS_SCHEMA = {
             "description": "Plex authentication token (optional)",
             "default": "",
             "sensitive": True
+        },
+        "media_server_type": {
+            "type": "string",
+            "description": "Media server type to use for symlink updates when using Symlinked/Local file collection management",
+            "default": "plex",
+            "choices": ["plex", "jellyfin"]
         }
     },
     "Debrid Provider": {
@@ -293,11 +299,17 @@ SETTINGS_SCHEMA = {
             "default": 0.0,
             "min": 0.0
         },
-        "item_process_delay_seconds": {
-            "type": "float",
-            "description": "Artificial delay (in seconds) after processing each item in Scraping/Adding queues to reduce peak CPU usage. Default: 0.0 (no delay).",
-            "default": 0.0,
-            "min": 0.0
+                "item_process_delay_seconds": {
+             "type": "float",
+             "description": "Artificial delay (in seconds) after processing each item in Scraping/Adding queues to reduce peak CPU usage. Default: 0.0 (no delay).",
+             "default": 0.0,
+             "min": 0.0
+         },
+        "pre_release_scrape_days": {
+            "type": "integer",
+            "description": "Number of days before release date to start scraping for movies. For example, setting to 3 will start scraping movies 3 days before their release date. Set to 0 to disable pre-release scraping.",
+            "default": 0,
+            "min": 0
         }
     },
     "Scraping": {
@@ -519,6 +531,12 @@ SETTINGS_SCHEMA = {
     },
     "Debug": {
         "tab": "Debug Settings",
+        "logging_level": {
+            "type": "string",
+            "description": "Logging level for console output and file logging",
+            "default": "DEBUG",
+            "choices": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        },
         "skip_initial_plex_update": {
             "type": "boolean",
             "description": "Skip Plex initial collection scan",
@@ -711,7 +729,7 @@ SETTINGS_SCHEMA = {
         "enable_granular_version_additions": {
             "type": "boolean",
             "description": "Enable granular version additions for Wanted items",
-            "default": False
+            "default": True
         },
         "enable_unmatched_items_check": {
             "type": "boolean",
@@ -841,6 +859,11 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Skip the initial multi-provider scrape for new content (released within the past 7 days).",
             "default": False
+        },
+        "unblacklisting_cutoff_date": {
+            "type": "string",
+            "description": "Only unblacklist items with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all blacklisted items for unblacklisting.",
+            "default": ""
         }
     },
     "Scrapers": {
@@ -916,6 +939,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Collected": {
@@ -956,6 +984,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Trakt Watchlist": {
@@ -982,6 +1015,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Trakt Lists": {
@@ -1009,6 +1047,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Trakt Collection": {
@@ -1035,6 +1078,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Overseerr": {
@@ -1063,6 +1111,16 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "ignore_tags": {
+                    "type": "string",
+                    "description": "Comma-separated list of Overseerr/Jellyseerr tags. If an item has any of these tags, it will be ignored.",
+                    "default": ""
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "My Plex Watchlist": {
@@ -1089,6 +1147,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Other Plex Watchlist": {
@@ -1117,6 +1180,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "My Plex RSS Watchlist": {
@@ -1144,6 +1212,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "My Friends Plex RSS Watchlist": {
@@ -1171,6 +1244,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             },
             "Friends Trakt Watchlist": {
@@ -1245,6 +1323,11 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
                 }
             }
         }

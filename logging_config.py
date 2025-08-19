@@ -199,7 +199,11 @@ def setup_debug_logging(log_dir):
         encoding='utf-8', 
         errors='replace'
     )
-    debug_handler.setLevel(logging.DEBUG)
+    
+    # Get the configured log level and apply it to the file handler
+    console_level = get_setting("Debug", "logging_level", "INFO")
+    file_level = getattr(logging, console_level.upper())
+    debug_handler.setLevel(file_level)
     
     # Add filters to exclude unwanted messages
     debug_handler.addFilter(lambda record: not record.name.startswith(('urllib3', 'requests', 'charset_normalizer')))
@@ -248,12 +252,16 @@ def setup_performance_logging(log_dir):
         encoding='utf-8', 
         errors='replace'
     )
-    performance_handler.setLevel(logging.INFO)
+    
+    # Get the configured log level and apply it to the performance handler
+    console_level = get_setting("Debug", "logging_level", "INFO")
+    file_level = getattr(logging, console_level.upper())
+    performance_handler.setLevel(file_level)
     performance_handler.setFormatter(performance_formatter)
     
     # Create a separate logger for performance logs
     performance_logger = logging.getLogger('performance_logger')
-    performance_logger.setLevel(logging.INFO)
+    performance_logger.setLevel(file_level)
     performance_logger.addHandler(performance_handler)
     performance_logger.propagate = False  # Prevent performance logs from propagating to root logger
 
@@ -266,13 +274,17 @@ def setup_item_tracker_logging(log_dir):
         backupCount=5,
         encoding='utf-8'
     )
-    tracker_handler.setLevel(logging.INFO) # Log INFO level and above
+    
+    # Get the configured log level and apply it to the tracker handler
+    console_level = get_setting("Debug", "logging_level", "INFO")
+    file_level = getattr(logging, console_level.upper())
+    tracker_handler.setLevel(file_level) # Log at configured level and above
     
     formatter = JSONFormatter()
     tracker_handler.setFormatter(formatter)
     
     tracker_logger = logging.getLogger('item_tracker')
-    tracker_logger.setLevel(logging.INFO) # Set logger level
+    tracker_logger.setLevel(file_level) # Set logger level
     tracker_logger.addHandler(tracker_handler)
     tracker_logger.propagate = False # Prevent logs from going to root logger/console
 

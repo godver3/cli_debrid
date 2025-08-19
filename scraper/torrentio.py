@@ -5,6 +5,9 @@ from typing import List, Dict, Any, Tuple
 from urllib.parse import quote_plus
 from utilities.settings import load_config, get_setting
 from database.database_reading import get_imdb_aliases
+import time
+import random
+from http.client import RemoteDisconnected
 
 DEFAULT_OPTS = "sort=qualitysize|qualityfilter=480p,scr,cam"
 TORRENTIO_BASE_URL = "https://torrentio.strem.fun"
@@ -61,16 +64,44 @@ def construct_url(imdb_id: str, content_type: str, season: int = None, episode: 
         return ""
 
 def fetch_data(url: str) -> Dict:
+    max_retries = 4
+    base_backoff_seconds = 0.5
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        response = api.get(url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            return data
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching data: {str(e)}")
+        for attempt in range(max_retries):
+            try:
+                response = api.get(url, headers=headers)
+                if response.status_code == 200:
+                    data = response.json()
+                    return data
+                # Retry on server errors (5xx)
+                if 500 <= response.status_code < 600:
+                    if attempt < max_retries - 1:
+                        sleep_seconds = base_backoff_seconds * (2 ** attempt) + random.uniform(0, 0.25)
+                        logging.warning(
+                            f"Server error {response.status_code} while fetching {url} (attempt {attempt + 1}/{max_retries}). "
+                            f"Retrying in {sleep_seconds:.2f}s"
+                        )
+                        time.sleep(sleep_seconds)
+                        continue
+                # Non-retriable status codes
+                logging.warning(f"Non-200 status ({response.status_code}) for URL {url}")
+                return {}
+            except (api.exceptions.RequestException, RemoteDisconnected) as e:
+                if attempt < max_retries - 1:
+                    sleep_seconds = base_backoff_seconds * (2 ** attempt) + random.uniform(0, 0.25)
+                    logging.warning(
+                        f"Error fetching data: {e} (attempt {attempt + 1}/{max_retries}) for {url}. "
+                        f"Retrying in {sleep_seconds:.2f}s"
+                    )
+                    time.sleep(sleep_seconds)
+                    continue
+                logging.error(f"Error fetching data: {str(e)}")
+                return {}
+    except Exception as e:
+        logging.error(f"Unexpected error in fetch_data: {str(e)}", exc_info=True)
     return {}
 
 def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str, Any]]:

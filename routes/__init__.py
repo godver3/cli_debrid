@@ -37,6 +37,7 @@ from .settings_validation_routes import settings_validation_bp
 from .content_requestor_routes import content_requestor_bp
 from .connections_routes import connections_bp
 from .user_token_routes import user_token_bp
+from .symlink_tools_routes import symlink_tools_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -156,7 +157,8 @@ def register_blueprints(app):
         (torrent_status_bp, '/torrent_status'),
         (settings_validation_bp, '/settings_validation'),
         (connections_bp, '/connections'),
-        (user_token_bp, '/user_token')
+        (user_token_bp, '/user_token'),
+        (symlink_tools_bp, '/symlink_tools')
     ]
     
     for blueprint, url_prefix in blueprints:

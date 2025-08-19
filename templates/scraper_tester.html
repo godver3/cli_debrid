@@ -142,6 +142,37 @@
 {% endblock %}
 
 {% block scripts %}
+    <script>
+        (function() {
+            const originalFetch = window.fetch;
+            window.fetch = async function(input, init) {
+                try {
+                    const url = typeof input === 'string' ? input : (input && input.url) || '';
+                    const method = (init && init.method) ? init.method.toUpperCase() : 'GET';
+                    if (url.endsWith('/scraper/scraper_tester') && method === 'POST') {
+                        // Reroute to content search to avoid backend expecting mediaType
+                        const resp = await originalFetch('/content/search', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: init && init.body ? init.body : JSON.stringify({})
+                        });
+                        const data = await resp.json();
+                        const transformed = Array.isArray(data) ? data.map(r => {
+                            if (r && !r.mediaType) {
+                                const mt = r.media_type || r.mediaType;
+                                r.mediaType = mt === 'show' ? 'tv' : (mt || 'movie');
+                            }
+                            return r;
+                        }) : data;
+                        return new Response(JSON.stringify(transformed), { status: 200, headers: { 'Content-Type': 'application/json' }});
+                    }
+                } catch (e) {
+                    console.error('Scraper Tester fetch shim error:', e);
+                }
+                return originalFetch.apply(this, arguments);
+            };
+        })();
+    </script>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/scraper_tester.js') }}"></script>
 

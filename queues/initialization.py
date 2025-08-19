@@ -177,25 +177,35 @@ def plex_collection_update(skip_initial_plex_update):
         logging.error("Skipping collection update to prevent data loss")
         return False, False  # Plex error occurred
 
-def get_all_wanted_from_enabled_sources():
+def get_all_wanted_from_enabled_sources(runner=None):
     from routes.debug_routes import get_and_add_wanted_content
 
     content_sources = get_all_settings().get('Content Sources', {})
-    enabled_sources = [source_id for source_id, data in content_sources.items() 
-                      if data.get('enabled', False)]
+
+    # Respect task toggles: include only sources whose corresponding task is enabled in the runner
+    selected_sources = []
+    for source_id in content_sources.keys():
+        task_id = f"task_{source_id}_wanted"
+        if runner and hasattr(runner, 'enabled_tasks'):
+            normalized = runner._normalize_task_name(task_id) if hasattr(runner, '_normalize_task_name') else task_id
+            if normalized in runner.enabled_tasks or task_id in runner.enabled_tasks:
+                selected_sources.append(source_id)
+        else:
+            # Fallback: if runner not available, assume enabled by default
+            selected_sources.append(source_id)
     
     update_initialization_step("Content Sources", 
-                             f"Found {len(enabled_sources)} enabled sources",
+                             f"Found {len(selected_sources)} sources",
                              is_substep=True)
     
-    for source_id in enabled_sources:
+    for source_id in selected_sources:
         update_initialization_step("Content Sources", 
                                  f"Retrieving wanted content from {source_id}",
                                  is_substep=True)
         get_and_add_wanted_content(source_id)
 
     update_initialization_step("Content Sources", 
-                             f"Processed {len(enabled_sources)} sources",
+                             f"Processed {len(selected_sources)} sources",
                              is_substep=True)
 
 def initialize(skip_initial_plex_update=False):
@@ -259,7 +269,10 @@ def initialize(skip_initial_plex_update=False):
     if should_process_sources:
         # Content Sources Phase (2 minutes)
         start_phase('sources', 'Content Sources', 'Starting source processing')
-        get_all_wanted_from_enabled_sources()
+        # Pass ProgramRunner singleton so toggles can be respected
+        from queues.run_program import ProgramRunner
+        runner = ProgramRunner()
+        get_all_wanted_from_enabled_sources(runner)
         complete_phase('sources')
         
         # Refresh Release Dates Phase (30 seconds)

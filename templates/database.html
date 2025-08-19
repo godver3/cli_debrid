@@ -42,6 +42,7 @@
                 <option value="Unreleased">Unreleased</option>
                 <option value="Upgrading">Upgrading</option>
                 <option value="Wanted">Wanted</option>
+                <option value="ghostlist">Ghostlist</option>
             </select>
             <select id="bulk-change-version" class="bulk-action-select" disabled>
                 <option value="">Change Selected Version...</option>
@@ -484,6 +485,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     let displayVal = val;
                     if (column === 'state' && val === 'Final_Check') {
                         displayVal = 'Final Scrape';
+                    } else if (column === 'state' && val === 'ghostlisted') {
+                        displayVal = 'Ghostlisted';
                     }
                     return `<option value="${val}" ${value === val ? 'selected' : ''}>${displayVal}</option>`;
                 }).join('')}
@@ -1065,6 +1068,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     if (column === 'state' && displayContent === 'Final_Check') {
                         displayContent = 'Final Scrape';
+                    } else if (column === 'state' && displayContent === 'ghostlisted') {
+                        displayContent = 'Ghostlisted';
                     }
                 }
                 tableHTML += `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
@@ -2045,11 +2050,22 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Handle bulk delete
     bulkDeleteBtn.addEventListener('click', function() {
+        // Prevent multiple rapid clicks
+        if (this.disabled) return;
+        
         const selectedItems = Array.from(document.querySelectorAll('.item-select:checked'))
             .map(checkbox => checkbox.dataset.itemId);
         
         if (selectedItems.length === 0) return;
 
+        // Disable button temporarily to prevent multiple clicks
+        this.disabled = true;
+
+        // Helper to re-enable the button
+        function reenableBulkDeleteBtn() {
+            bulkDeleteBtn.disabled = false;
+        }
+        
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Deletion',
@@ -2063,10 +2079,13 @@ document.addEventListener('DOMContentLoaded', function() {
             `,
             confirmText: 'Delete',
             cancelText: 'Cancel',
-            onConfirm: () => { // Removed async here, executeBulkAction is async
+            onConfirm: () => {
                 const blacklistItems = document.getElementById('bulk-blacklist-checkbox').checked;
                 executeBulkAction(selectedItems, 'delete', blacklistItems.toString(), 'Deletion', 'deleted');
+                reenableBulkDeleteBtn();
             },
+            onCancel: reenableBulkDeleteBtn,
+            onHiddenClose: reenableBulkDeleteBtn
         });
     });
 
@@ -2080,15 +2099,26 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (selectedItems.length === 0) { this.value = ''; return; }
 
-
-        showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            message: `Are you sure you want to move ${selectedItems.length} item(s) to ${selectedQueue} queue?`,
-            title: 'Confirm Move',
-            onConfirm: () => { // Removed async
-                executeBulkAction(selectedItems, 'move', selectedQueue, 'Move', `moved to ${selectedQueue}`);
-            },
-        });
+        // Handle ghostlist action specially
+        if (selectedQueue === 'ghostlist') {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: `Are you sure you want to ghostlist ${selectedItems.length} item(s)? This will blacklist them and hide them from the database unless specifically filtered for.`,
+                title: 'Confirm Ghostlist',
+                onConfirm: () => {
+                    executeBulkAction(selectedItems, 'ghostlist', null, 'Ghostlist', 'ghostlisted');
+                },
+            });
+        } else {
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                message: `Are you sure you want to move ${selectedItems.length} item(s) to ${selectedQueue} queue?`,
+                title: 'Confirm Move',
+                onConfirm: () => { // Removed async
+                    executeBulkAction(selectedItems, 'move', selectedQueue, 'Move', `moved to ${selectedQueue}`);
+                },
+            });
+        }
         this.value = ''; // Reset select after confirmation
     });
 

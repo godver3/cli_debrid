@@ -55,7 +55,6 @@ function updateTaskList(taskList, data) {
         return;
     }
     // --- START EDIT: Add logging ---
-    console.log('[TaskMonitor LOG] updateTaskList received data:', JSON.parse(JSON.stringify(data)));
     // --- END EDIT ---
     if (data.success) {
         const availableTasks = data.tasks || [];
@@ -69,7 +68,6 @@ function updateTaskList(taskList, data) {
              // --- START EDIT: Use pause_info for task list pause message ---
              if (data.paused && data.pause_info && data.pause_info.reason_string) {
                  // --- START EDIT: Add logging ---
-                 console.log('[TaskMonitor LOG] updateTaskList: Queue is PAUSED.', data.pause_info.reason_string);
                  // --- END EDIT ---
                  finalHtml = `
                      <div class="task-item paused">
@@ -113,7 +111,6 @@ function updateTaskList(taskList, data) {
                  }
              });
              // --- START EDIT: Add logging ---
-             console.log('[TaskMonitor LOG] updateTaskList: Running tasks identified:', JSON.parse(JSON.stringify(runningTaskObjects.map(t => t.name))));
              // --- END EDIT ---
 
              // Populate scheduledTaskObjects (those not currently running)
@@ -192,7 +189,6 @@ function updateTaskList(taskList, data) {
 
         } else { // Program runner not active
             // --- START EDIT: Add logging ---
-            console.log('[TaskMonitor LOG] updateTaskList: Program not running.');
             // --- END EDIT ---
             taskList.innerHTML = '<div class="no-tasks">Program not running</div>';
             if (currentTaskNameElement) currentTaskNameElement.textContent = 'Program Stopped';
@@ -235,7 +231,6 @@ function setupTaskStream() {
         try {
             const data = JSON.parse(event.data);
             // --- START EDIT: Add logging ---
-            console.log('[TaskMonitor LOG] SSE onmessage data received:', JSON.parse(JSON.stringify(data)));
             // --- END EDIT ---
 
             if (data.success) {
@@ -252,23 +247,29 @@ function setupTaskStream() {
                 // --- START EDIT: Update Pause Banner with new logic ---
                 if (pauseBannerElement && pauseReasonTextElement) {
                     if (isPaused && pauseInfo && pauseInfo.reason_string) {
-                        let displayMessage = `Queue Paused: ${pauseInfo.reason_string}`; // Default detailed message
+                        // Check if banner was recently dismissed (within debounce period)
+                        const timeSinceDismissed = Date.now() - pauseBannerDismissedAt;
+                        const canShowBanner = timeSinceDismissed > PAUSE_BANNER_DEBOUNCE_MS;
+                        
+                        if (canShowBanner) {
+                            let displayMessage = `Queue Paused: ${pauseInfo.reason_string}`; // Default detailed message
 
-                        if (pauseInfo.error_type === 'UNAUTHORIZED' || pauseInfo.status_code === 401) {
-                            const serviceName = pauseInfo.service_name || 'Debrid service';
-                            displayMessage = `Queue Paused: ${serviceName} API Key is invalid or unauthorized. Please check your settings.`;
-                        } else if (pauseInfo.error_type === 'FORBIDDEN' || pauseInfo.status_code === 403) {
-                            const serviceName = pauseInfo.service_name || 'Debrid service';
-                            displayMessage = `Queue Paused: ${serviceName} API access forbidden. Check API key, IP, or account status.`;
-                        } else if (pauseInfo.error_type === 'CONNECTION_ERROR') {
-                             // Keep the detailed reason_string for general connection errors as it includes retry counts.
-                            displayMessage = `Queue Paused: ${pauseInfo.reason_string}`;
+                            if (pauseInfo.error_type === 'UNAUTHORIZED' || pauseInfo.status_code === 401) {
+                                const serviceName = pauseInfo.service_name || 'Debrid service';
+                                displayMessage = `Queue Paused: ${serviceName} API Key is invalid or unauthorized. Please check your settings.`;
+                            } else if (pauseInfo.error_type === 'FORBIDDEN' || pauseInfo.status_code === 403) {
+                                const serviceName = pauseInfo.service_name || 'Debrid service';
+                                displayMessage = `Queue Paused: ${serviceName} API access forbidden. Check API key, IP, or account status.`;
+                            } else if (pauseInfo.error_type === 'CONNECTION_ERROR') {
+                                 // Keep the detailed reason_string for general connection errors as it includes retry counts.
+                                displayMessage = `Queue Paused: ${pauseInfo.reason_string}`;
+                            }
+                            // Add more conditions for other error_types (RATE_LIMIT, DB_HEALTH, SYSTEM_SCHEDULED) if needed for banner.
+                            // For now, they will use the default pauseInfo.reason_string.
+
+                            pauseReasonTextElement.textContent = displayMessage;
+                            pauseBannerElement.classList.remove('hidden');
                         }
-                        // Add more conditions for other error_types (RATE_LIMIT, DB_HEALTH, SYSTEM_SCHEDULED) if needed for banner.
-                        // For now, they will use the default pauseInfo.reason_string.
-
-                        pauseReasonTextElement.textContent = displayMessage;
-                        pauseBannerElement.classList.remove('hidden');
                     } else {
                         pauseBannerElement.classList.add('hidden');
                     }
@@ -311,7 +312,6 @@ function setupTaskStream() {
 function toggleTaskMonitor() {
     // NEW: Prevent toggling if disabled due to connectivity failure
     if (disabledDueToConnectivityFailure) {
-        console.log('[TaskMonitor LOG] Toggle ignored: Task monitor disabled due to connectivity failure');
         return;
     }
 
@@ -530,7 +530,6 @@ export function initializeTaskMonitor() {
 // --- START EDIT: Rewrite updateTaskDisplay to handle list ---
 function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList) {
     // --- START EDIT: Add logging ---
-    console.log('[TaskMonitor LOG] updateTaskDisplay called. Paused:', isPaused, 'PauseInfo:', JSON.parse(JSON.stringify(pauseInfo)), 'RunningTasksList:', JSON.parse(JSON.stringify(runningTasksList)), 'ScheduledTasks:', JSON.parse(JSON.stringify(scheduledTasks.map(t => t.name))));
     // --- END EDIT ---
     if (!currentTaskDisplay || !currentTaskNameElement || !currentTaskTimeElement) {
         console.warn("Task display elements not found during update.");
@@ -547,7 +546,6 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
 
     // NEW: Handle connectivity failure - disable task monitor
     if (isPaused && isConnectivityFailure && !disabledDueToConnectivityFailure) {
-        console.log('[TaskMonitor LOG] Connectivity failure detected, disabling task monitor');
         disableTaskMonitor();
         disabledDueToConnectivityFailure = true;
         return;
@@ -555,7 +553,6 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
 
     // NEW: Re-enable task monitor if it was disabled due to connectivity and connectivity is restored
     if (disabledDueToConnectivityFailure && (!isPaused || !isConnectivityFailure)) {
-        console.log('[TaskMonitor LOG] Connectivity restored, re-enabling task monitor');
         enableTaskMonitor();
         disabledDueToConnectivityFailure = false;
     }
@@ -567,7 +564,6 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
 
     if (isPaused) {
         // --- START EDIT: Add logging ---
-        console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying PAUSED state.');
         // --- END EDIT ---
         currentTaskNameElement.textContent = 'Queue Paused';
         let reasonForDisplay = effectivePauseInfo.reason_string || 'Processing is currently paused.';
@@ -629,13 +625,11 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
 
         if (nextTask) {
             // --- START EDIT: Add logging ---
-            console.log('[TaskMonitor LOG] updateTaskDisplay: Displaying next scheduled task:', nextTask.name, 'Time:', formatTime(nextTask.next_run));
             // --- END EDIT ---
             currentTaskNameElement.textContent = nextTask.name;
             currentTaskTimeElement.textContent = `in ${formatTime(nextTask.next_run)}`;
         } else {
             // --- START EDIT: Add logging ---
-            console.log('[TaskMonitor LOG] updateTaskDisplay: No enabled upcoming tasks.');
             // --- END EDIT ---
             currentTaskNameElement.textContent = 'No upcoming tasks';
             currentTaskTimeElement.textContent = '';
@@ -643,7 +637,6 @@ function updateTaskDisplay(scheduledTasks, isPaused, pauseInfo, runningTasksList
         currentTaskDisplay.classList.remove('running');
     } else {
         // --- START EDIT: Add logging ---
-        console.log('[TaskMonitor LOG] updateTaskDisplay: No tasks scheduled.');
         // --- END EDIT ---
         currentTaskNameElement.textContent = 'No tasks scheduled';
         currentTaskTimeElement.textContent = '';
@@ -669,7 +662,6 @@ function displayError(message) {
 function toggleDropdownVisibility() {
     // NEW: Prevent dropdown interaction if disabled due to connectivity failure
     if (disabledDueToConnectivityFailure) {
-        console.log('[TaskMonitor LOG] Dropdown toggle ignored: Task monitor disabled due to connectivity failure');
         return;
     }
 
@@ -724,7 +716,6 @@ function disableTaskMonitor() {
     // Reset auto-hide flag since we're force-disabling
     autoHiddenDueToPause = false;
     
-    console.log('[TaskMonitor LOG] Task monitor and toggle buttons disabled due to connectivity failure');
 }
 
 function enableTaskMonitor() {
@@ -782,14 +773,18 @@ function enableTaskMonitor() {
         rateLimitsToggle.style.display = '';
     }
     
-    console.log('[TaskMonitor LOG] Task monitor and toggle buttons re-enabled after connectivity restored');
 }
 
 // Function to close the pause banner
+// Track when the pause banner was last dismissed
+let pauseBannerDismissedAt = 0;
+const PAUSE_BANNER_DEBOUNCE_MS = 15000; // 15 seconds
+
 function closePauseBanner() {
     const banner = document.getElementById('pauseStatusBanner');
     if (banner) {
         banner.classList.add('hidden');
+        pauseBannerDismissedAt = Date.now(); // Record when it was dismissed
     }
 }
 
@@ -810,7 +805,6 @@ document.addEventListener('visibilitychange', () => {
             // If the task monitor was disabled due to a connectivity failure OR
             // the SSE connection is closed, attempt to restore the UI and reconnect.
             if (disabledDueToConnectivityFailure || !eventSource || eventSource.readyState === EventSource.CLOSED) {
-                console.log('[TaskMonitor LOG] Page became visible – attempting to re-enable task monitor and reconnect SSE');
                 // Reset the failure flag *before* calling enableTaskMonitor to ensure it is not ignored.
                 disabledDueToConnectivityFailure = false;
 

@@ -12,7 +12,7 @@ from utilities.anidb_functions import format_filename_with_anidb
 from database.database_writing import update_media_item_state, update_media_item
 from utilities.post_processing import handle_state_change
 from database.symlink_verification import add_symlinked_file_for_verification, add_path_for_removal_verification, remove_verification_by_media_item_id
-from database.database_reading import get_all_media_items, get_media_item_by_id
+from database.database_reading import get_all_media_items, get_media_item_by_id, get_season_year
 from scraper.functions.ptt_parser import parse_with_ptt
 import json # Ensure json is imported
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
@@ -323,6 +323,27 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 'episode_number': int(e_num_val if e_num_val is not None else 0),
                 'episode_title': item.get('episode_title', '')
             }
+            
+            # Add season_year by querying database for earliest episode release date in the season
+            season_year = None
+            if s_num_val is not None:
+                try:
+                    season_year = get_season_year(
+                        imdb_id=item.get('imdb_id'),
+                        tmdb_id=item.get('tmdb_id'),
+                        season_number=int(s_num_val)
+                    )
+                    if season_year:
+                        episode_vars['season_year'] = season_year
+                        logging.debug(f"[SymlinkPath] Found season year for S{s_num_val}: {season_year}")
+                    else:
+                        episode_vars['season_year'] = item.get('year', '')  # Fallback to show year
+                        logging.debug(f"[SymlinkPath] No season year found for S{s_num_val}, using show year: {item.get('year', '')}")
+                except Exception as e:
+                    logging.warning(f"[SymlinkPath] Error getting season year for S{s_num_val}: {e}")
+                    episode_vars['season_year'] = item.get('year', '')  # Fallback to show year
+            else:
+                episode_vars['season_year'] = item.get('year', '')  # Fallback to show year
             
             genres_for_anime_check = item.get('genres', '') or ''
             if isinstance(genres_for_anime_check, str):

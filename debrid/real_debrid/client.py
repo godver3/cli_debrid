@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple, Any
 from datetime import datetime, timedelta
 import tempfile
 import os
@@ -26,6 +26,7 @@ from .api import make_request, get_all_torrents, get_all_downloads
 from database.not_wanted_magnets import add_to_not_wanted, add_to_not_wanted_urls
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 from utilities.settings import get_setting
+from .exceptions import RealDebridAuthError, RealDebridAPIError
 
 # Import the new types and function from the .torrent module
 from .torrent import (
@@ -66,10 +67,34 @@ class RealDebridProvider(DebridProvider):
         self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
         
-        # Store the loaded API key in a "private" attribute
-        # This avoids issues if 'api_key' is a property without a setter.
-        self._internal_api_key = self._load_api_key()
-        
+    def check_connectivity(self) -> Tuple[bool, Optional[Dict[str, Any]]]:
+        """Check provider connectivity and return a tuple of (ok, error_detail)."""
+        try:
+            # Simple auth-protected endpoint to validate API key and connectivity
+            _ = make_request('GET', '/user', self.api_key)
+            return True, None
+        except RealDebridAuthError as e:
+            return False, {
+                "service": "Debrid Provider API",
+                "type": "AUTH_ERROR",
+                "status_code": None,
+                "message": str(e)
+            }
+        except (ProviderUnavailableError, RealDebridAPIError) as e:
+            return False, {
+                "service": "Debrid Provider API",
+                "type": "CONNECTION_ERROR",
+                "status_code": None,
+                "message": str(e)
+            }
+        except Exception as e:
+            return False, {
+                "service": "Debrid Provider API",
+                "type": "CONNECTION_ERROR",
+                "status_code": None,
+                "message": str(e)
+            }
+
     def _load_api_key(self) -> str:
         """Load API key from settings"""
         try:
@@ -81,13 +106,8 @@ class RealDebridProvider(DebridProvider):
 
     @property
     def api_key(self) -> str:
-        """Provides access to the loaded API key."""
-        if not hasattr(self, '_internal_api_key') or not self._internal_api_key:
-            # This case should ideally be handled by _load_api_key raising an error
-            # or by __init__ failing if the key isn't loaded.
-            logging.error("API key accessed before it was loaded or is missing.")
-            raise ProviderUnavailableError("API key is not available.")
-        return self._internal_api_key
+        """Provides access to the API key by fetching it from settings on each call."""
+        return self._load_api_key()
 
     async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
         """
@@ -289,12 +309,15 @@ class RealDebridProvider(DebridProvider):
                     logging.info(f"Comparing {torrent_filenames} to DB for IMDb ID {imdb_id}")
                     if is_any_file_in_db_for_item(imdb_id, torrent_filenames):
                         is_in_db = True
-                        logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id}. Disabling removal.")
+                        if is_cached:
+                            logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id} and is cached. Disabling removal.")
+                        else:
+                            logging.info(f"{log_prefix} A file from this torrent matches a DB entry for IMDb ID {imdb_id} but is not cached. Allowing removal.")
 
-                # Override removal flags if item is in DB
+                # Override removal flags if item is in DB AND cached
                 local_remove_uncached = remove_uncached
                 local_remove_cached = remove_cached
-                if is_in_db:
+                if is_in_db and is_cached:
                     local_remove_uncached = False
                     local_remove_cached = False
                 # --- END EDIT ---

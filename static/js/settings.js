@@ -106,10 +106,20 @@ function togglePlexSection() {
             element.style.display = isSymlinked ? 'block' : 'none';
         });
 
-        // Handle Plex symlink settings
-        plexSymlinkSettings.forEach(element => {
-            element.style.display = isSymlinked ? 'block' : 'none';
-        });
+        // Handle Plex symlink settings - only show if media server type is plex
+        if (isSymlinked) {
+            const mediaServerType = document.getElementById('media-server-type');
+            const shouldShowPlexFields = mediaServerType && mediaServerType.value === 'plex';
+            
+            plexSymlinkSettings.forEach(element => {
+                element.style.display = shouldShowPlexFields ? 'block' : 'none';
+            });
+        } else {
+            // Hide Plex symlink settings when not in Symlinked/Local mode
+            plexSymlinkSettings.forEach(element => {
+                element.style.display = 'none';
+            });
+        }
     }
 }
 

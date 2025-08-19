@@ -14,6 +14,40 @@ from typing import Tuple as _Tup, Optional as _Opt, Dict as _Dict, Any as _Any
 _MOVIE_ALIAS_CACHE: _Dict[str, _Tup[_Opt[_Dict[str, _Any]], _Opt[str]]] = {}
 _SHOW_ALIAS_CACHE: _Dict[str, _Tup[_Opt[_Dict[str, _Any]], _Opt[str]]] = {}
 
+# Special case handling for tt9615014 (Lego Masters US)
+# Season 5 is a special holiday season, so we ignore it and renumber subsequent seasons
+LEGO_MASTERS_US_IMDB_ID = "tt9615014"
+
+def _apply_lego_masters_us_season_fix(seasons_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Apply special season renumbering for Lego Masters US (tt9615014).
+    Removes season 5 (holiday special) and renumbers subsequent seasons.
+    """
+    if not seasons_data or not isinstance(seasons_data, dict):
+        return seasons_data
+    
+    # Remove season 5 if it exists
+    if '5' in seasons_data:
+        del seasons_data['5']
+        logger.info(f"Removed season 5 (holiday special) from {LEGO_MASTERS_US_IMDB_ID}")
+    
+    # Renumber seasons 6+ to 5+
+    renumbered_seasons = {}
+    for season_num_str, season_data in seasons_data.items():
+        try:
+            season_num = int(season_num_str)
+            if season_num >= 6:
+                new_season_num = season_num - 1
+                renumbered_seasons[str(new_season_num)] = season_data
+                logger.info(f"Renumbered season {season_num} to {new_season_num} for {LEGO_MASTERS_US_IMDB_ID}")
+            else:
+                renumbered_seasons[season_num_str] = season_data
+        except ValueError:
+            # Keep non-numeric season keys as-is (like '0' for specials)
+            renumbered_seasons[season_num_str] = season_data
+    
+    return renumbered_seasons
+
 @contextmanager
 def managed_session():
     """Provide a transactional scope around a series of operations."""
@@ -73,6 +107,13 @@ class DirectAPI:
                 if metadata and 'seasons' in metadata:
                     season_count = len(metadata['seasons'])
                     logging.info(f"DirectAPI got {season_count} seasons (within managed session scope)")
+                    
+                    # Apply special season fix for Lego Masters US
+                    if imdb_id == LEGO_MASTERS_US_IMDB_ID:
+                        original_seasons = metadata['seasons'].copy()
+                        metadata['seasons'] = _apply_lego_masters_us_season_fix(metadata['seasons'])
+                        new_season_count = len(metadata['seasons'])
+                        logging.info(f"Applied Lego Masters US season fix: {len(original_seasons)} -> {new_season_count} seasons")
                 else:
                     status = "No metadata" if not metadata else "No seasons dictionary" if 'seasons' not in metadata else f"{len(metadata.get('seasons', {}))} seasons"
                     logging.info(f"DirectAPI: Status for {imdb_id}: {status} (within managed session scope)")
@@ -86,6 +127,13 @@ class DirectAPI:
         try:
             with managed_session() as session:
                 seasons, source = MetadataManager.get_seasons(imdb_id, session=session)
+                
+                # Apply special season fix for Lego Masters US
+                if imdb_id == LEGO_MASTERS_US_IMDB_ID and seasons:
+                    original_seasons = seasons.copy()
+                    seasons = _apply_lego_masters_us_season_fix(seasons)
+                    logging.info(f"Applied Lego Masters US season fix in get_show_seasons: {len(original_seasons)} -> {len(seasons)} seasons")
+                
                 return seasons, source
         except Exception as e:
             logging.error(f"Error during DirectAPI.get_show_seasons for {imdb_id}: {e}", exc_info=True)
@@ -93,12 +141,157 @@ class DirectAPI:
 
     @staticmethod
     def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Optional[str]:
+        """
+        Convert TMDB ID to IMDB ID with comprehensive fallback system.
+        
+        Fallback layers:
+        1. Primary: Trakt TMDB-to-IMDB API (via MetadataManager)
+        2. Fallback 1: TMDB External IDs API (most authoritative)
+        3. Fallback 2: Trakt title search
+        4. Fallback 3: TVDB-to-IMDB conversion (if TVDB ID available)
+        """
+        logger.info(f"DirectAPI.tmdb_to_imdb starting conversion for TMDB ID {tmdb_id} with media_type: {media_type}")
+        
         try:
+            # Primary method: Use existing MetadataManager (Trakt-based)
             with managed_session() as session:
                 imdb_id, source = MetadataManager.tmdb_to_imdb(tmdb_id, media_type=media_type, session=session)
-                return imdb_id, source
+                if imdb_id:
+                    logger.info(f"DirectAPI.tmdb_to_imdb: Primary method succeeded for {tmdb_id} -> {imdb_id}")
+                    return imdb_id, source
+                    
+            logger.warning(f"DirectAPI.tmdb_to_imdb: Primary method failed for {tmdb_id}, trying fallbacks...")
+            
+            # Fallback 1: TMDB External IDs API (most reliable since TMDB is authoritative)
+            try:
+                from utilities.settings import get_setting
+                import requests
+                
+                tmdb_api_key = get_setting('TMDB', 'api_key')
+                if tmdb_api_key:
+                    logger.info(f"DirectAPI.tmdb_to_imdb: Trying TMDB External IDs API for {tmdb_id}")
+                    
+                    # Determine endpoint based on media type
+                    if media_type == 'movie':
+                        tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
+                    else:  # Default to TV for 'show', 'tv', or None
+                        tmdb_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
+                    
+                    tmdb_response = requests.get(tmdb_url, timeout=10)
+                    if tmdb_response.status_code == 200:
+                        tmdb_data = tmdb_response.json()
+                        tmdb_imdb_id = tmdb_data.get('imdb_id')
+                        tvdb_id = tmdb_data.get('tvdb_id')  # Save for potential fallback
+                        
+                        if tmdb_imdb_id:
+                            logger.info(f"DirectAPI.tmdb_to_imdb: TMDB External IDs success for {tmdb_id} -> {tmdb_imdb_id}")
+                            
+                            # Cache the successful mapping for future use
+                            try:
+                                with managed_session() as cache_session:
+                                    from .metadata_manager import TMDBToIMDBMapping
+                                    new_mapping = TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=tmdb_imdb_id)
+                                    cache_session.add(new_mapping)
+                                    # Session will commit automatically due to managed_session context
+                                    logger.info(f"DirectAPI.tmdb_to_imdb: Cached TMDB mapping {tmdb_id} -> {tmdb_imdb_id}")
+                            except Exception as cache_error:
+                                logger.warning(f"DirectAPI.tmdb_to_imdb: Failed to cache mapping: {cache_error}")
+                            
+                            return tmdb_imdb_id, 'tmdb_external_ids'
+                    else:
+                        logger.warning(f"DirectAPI.tmdb_to_imdb: TMDB External IDs API failed with status {tmdb_response.status_code}")
+                        
+            except Exception as tmdb_error:
+                logger.warning(f"DirectAPI.tmdb_to_imdb: TMDB External IDs fallback failed: {tmdb_error}")
+            
+            # Fallback 2: Trakt Title Search
+            try:
+                logger.info(f"DirectAPI.tmdb_to_imdb: Trying Trakt title search for {tmdb_id}")
+                
+                # First get title from TMDB to search with
+                from utilities.settings import get_setting
+                import requests
+                
+                tmdb_api_key = get_setting('TMDB', 'api_key')
+                if tmdb_api_key:
+                    # Get TMDB metadata for title
+                    if media_type == 'movie':
+                        tmdb_details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+                    else:
+                        tmdb_details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+                    
+                    tmdb_details_response = requests.get(tmdb_details_url, timeout=10)
+                    if tmdb_details_response.status_code == 200:
+                        tmdb_details = tmdb_details_response.json()
+                        
+                        if media_type == 'movie':
+                            show_title = tmdb_details.get('title')
+                            release_date = tmdb_details.get('release_date')
+                            show_year = int(release_date[:4]) if release_date else None
+                        else:
+                            show_title = tmdb_details.get('name')  # TV shows use 'name' not 'title'
+                            first_air_date = tmdb_details.get('first_air_date')
+                            show_year = int(first_air_date[:4]) if first_air_date else None
+                        
+                        if show_title:
+                            logger.info(f"DirectAPI.tmdb_to_imdb: Searching Trakt for '{show_title}' ({show_year})")
+                            
+                            # Search Trakt by title
+                            trakt = TraktMetadata()
+                            search_media_type = 'show' if media_type in ['tv', 'show'] else 'movie'
+                            search_results = trakt.search_media(show_title, year=show_year, media_type=search_media_type)
+                            
+                            if search_results:
+                                # Look for exact TMDB ID match first
+                                for result in search_results:
+                                    if result.get('imdb_id') and result.get('tmdb_id') == int(tmdb_id):
+                                        logger.info(f"DirectAPI.tmdb_to_imdb: Found exact TMDB match via Trakt search: {result['imdb_id']}")
+                                        return result['imdb_id'], 'trakt_title_search'
+                                
+                                # If no exact match, try first result with IMDB ID
+                                for result in search_results:
+                                    if result.get('imdb_id'):
+                                        logger.info(f"DirectAPI.tmdb_to_imdb: Using first IMDB ID from Trakt search: {result['imdb_id']} (no exact TMDB match)")
+                                        return result['imdb_id'], 'trakt_title_search_fallback'
+                            
+                            logger.warning(f"DirectAPI.tmdb_to_imdb: Trakt title search for '{show_title}' returned no usable results")
+                        else:
+                            logger.warning(f"DirectAPI.tmdb_to_imdb: Could not get title from TMDB details for {tmdb_id}")
+                    else:
+                        logger.warning(f"DirectAPI.tmdb_to_imdb: TMDB details API failed with status {tmdb_details_response.status_code}")
+                        
+            except Exception as trakt_search_error:
+                logger.warning(f"DirectAPI.tmdb_to_imdb: Trakt title search fallback failed: {trakt_search_error}")
+            
+            # Fallback 3: TVDB-to-IMDB conversion (if we got TVDB ID from TMDB External IDs)
+            if 'tvdb_id' in locals() and tvdb_id:
+                try:
+                    logger.info(f"DirectAPI.tmdb_to_imdb: Trying TVDB-to-IMDB conversion for TVDB ID {tvdb_id}")
+                    
+                    trakt = TraktMetadata()
+                    tvdb_search_url = f"{trakt.base_url}/search/tvdb/{tvdb_id}?type=show"
+                    response = trakt._make_request(tvdb_search_url)
+                    
+                    if response and response.status_code == 200:
+                        tvdb_results = response.json()
+                        if tvdb_results:
+                            show = tvdb_results[0]['show']
+                            tvdb_imdb_id = show['ids'].get('imdb')
+                            if tvdb_imdb_id:
+                                logger.info(f"DirectAPI.tmdb_to_imdb: TVDB-to-IMDB conversion success: {tvdb_imdb_id}")
+                                return tvdb_imdb_id, 'tvdb_conversion'
+                    
+                    logger.warning(f"DirectAPI.tmdb_to_imdb: TVDB-to-IMDB conversion failed for TVDB ID {tvdb_id}")
+                    
+                except Exception as tvdb_error:
+                    logger.warning(f"DirectAPI.tmdb_to_imdb: TVDB-to-IMDB fallback failed: {tvdb_error}")
+            
+            # All fallbacks exhausted
+            logger.error(f"DirectAPI.tmdb_to_imdb: All conversion methods failed for TMDB ID {tmdb_id}")
+            return None, None
+            
         except Exception as e:
-            logging.error(f"Error during DirectAPI.tmdb_to_imdb for {tmdb_id}: {e}", exc_info=True)
+            logger.error(f"Error during DirectAPI.tmdb_to_imdb for {tmdb_id}: {e}", exc_info=True)
             return None, None
 
     # ----------------------------------------------------------------------
@@ -225,6 +418,15 @@ class DirectAPI:
         try:
             with managed_session() as session:
                 result = MetadataManager.get_bulk_show_metadata(imdb_ids, session=session)
+                
+                # Apply special season fix for Lego Masters US if present in results
+                if LEGO_MASTERS_US_IMDB_ID in result and result[LEGO_MASTERS_US_IMDB_ID]:
+                    metadata = result[LEGO_MASTERS_US_IMDB_ID]
+                    if 'seasons' in metadata:
+                        original_seasons = metadata['seasons'].copy()
+                        metadata['seasons'] = _apply_lego_masters_us_season_fix(metadata['seasons'])
+                        logging.info(f"Applied Lego Masters US season fix in bulk metadata: {len(original_seasons)} -> {len(metadata['seasons'])} seasons")
+                
                 found_count = sum(1 for data in result.values() if data is not None)
                 logger.info(f"DirectAPI.get_bulk_show_metadata returning data for {found_count} of {len(imdb_ids)} requested IDs.")
                 return result

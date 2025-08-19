@@ -24,6 +24,35 @@ import sys
 
 settings_bp = Blueprint('settings', __name__)
 
+# Helper to reload components and restart if program was running
+def _reload_components_after_settings_change():
+    try:
+        from routes.program_operation_routes import get_program_runner
+        runner = get_program_runner()
+        was_running = bool(runner and runner.is_running())
+    except Exception as e:
+        logging.warning(f"Could not check program status before reinitialization: {e}")
+        was_running = False
+
+    try:
+        from debrid import reset_provider
+        reset_provider()
+        from queues.queue_manager import QueueManager
+        QueueManager().reinitialize()
+        from queues.run_program import ProgramRunner
+        ProgramRunner().reinitialize()
+        logging.info("Relevant components reinitialized after settings change.")
+    except Exception as reinit_e:
+        logging.error(f"Error during component reinitialization after settings change: {reinit_e}", exc_info=True)
+
+    if was_running:
+        try:
+            from routes.program_operation_routes import _execute_start_program
+            _execute_start_program(skip_connectivity_check=True, is_restart=True)
+            logging.info("Program restarted successfully after settings change.")
+        except Exception as restart_e:
+            logging.error(f"Error restarting program after settings change: {restart_e}", exc_info=True)
+
 # --- BEGIN Hardcoded Default Versions ---
 HARDCODED_DEFAULT_VERSIONS = {
   "versions": {
@@ -709,6 +738,9 @@ def add_content_source_route():
         
         new_source_id = add_content_source(source_type, source_config)
         
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
+        
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
@@ -731,6 +763,9 @@ def delete_content_source_route():
         if 'Content Sources' in config and source_id in config['Content Sources']:
             del config['Content Sources'][source_id]
             save_config(config)
+        
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
         
         logging.info(f"Content source {source_id} deleted successfully")
         return jsonify({'success': True})
@@ -763,6 +798,9 @@ def add_scraper_route():
         # Log the updated config after adding the scraper
         updated_config = load_config()
         logging.info(f"Updated config after adding scraper: {updated_config}")
+        
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
         
         return jsonify({'success': True, 'scraper_id': new_scraper_id})
     except Exception as e:
@@ -809,6 +847,10 @@ def delete_scraper():
         del scrapers[scraper_id]
         config['Scrapers'] = scrapers
         save_config(config)
+        
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
+        
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Scraper not found'}), 404
@@ -825,6 +867,10 @@ def delete_notification():
         if 'Notifications' in config and notification_id in config['Notifications']:
             del config['Notifications'][notification_id]
             save_config(config)
+            
+            # Reload components so the change takes effect mid-run
+            _reload_components_after_settings_change()
+            
             logging.info(f"Notification {notification_id} deleted successfully")
             return jsonify({'success': True})
         else:
@@ -907,6 +953,9 @@ def add_notification():
             })
 
         save_config(config)
+
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change()
 
         logging.info(f"Notification {notification_id} added successfully")
         return jsonify({'success': True, 'notification_id': notification_id})
@@ -1224,6 +1273,66 @@ def update_settings():
                     "message": error_msg
                 }), 400
 
+        # Handle mutual exclusivity between Plex and Jellyfin/Emby settings
+        # Check the Media Server Type to determine which settings to keep
+        file_management_settings = new_settings.get('File Management', {})
+        media_server_type = file_management_settings.get('media_server_type', '')
+        
+        # Check if Jellyfin/Emby settings are being updated
+        debug_settings = new_settings.get('Debug', {})
+        if 'emby_jellyfin_url' in debug_settings and debug_settings['emby_jellyfin_url'].strip():
+            # Jellyfin/Emby URL is being set
+            if media_server_type == 'jellyfin':
+                # User has selected Jellyfin/Emby, clear Plex settings
+                logging.info("Jellyfin/Emby URL detected and Media Server Type is Jellyfin, clearing Plex settings")
+                
+                # Clear Plex settings in the new_settings to prevent them from being saved
+                if 'Plex' in new_settings:
+                    new_settings['Plex']['url'] = ''
+                    new_settings['Plex']['token'] = ''
+                
+                # Clear File Management Plex settings
+                if 'File Management' in new_settings:
+                    new_settings['File Management']['plex_url_for_symlink'] = ''
+                    new_settings['File Management']['plex_token_for_symlink'] = ''
+                
+                # Also clear these settings in the current config to ensure they're cleared
+                if 'Plex' not in config:
+                    config['Plex'] = {}
+                config['Plex']['url'] = ''
+                config['Plex']['token'] = ''
+                
+                if 'File Management' not in config:
+                    config['File Management'] = {}
+                config['File Management']['plex_url_for_symlink'] = ''
+                config['File Management']['plex_token_for_symlink'] = ''
+            else:
+                logging.info("Jellyfin/Emby URL detected but Media Server Type is not Jellyfin, keeping Plex settings")
+            
+        # Check if Plex settings are being updated
+        plex_settings = new_settings.get('Plex', {})
+        
+        plex_url_being_set = (plex_settings.get('url', '').strip() or 
+                             file_management_settings.get('plex_url_for_symlink', '').strip())
+        
+        if plex_url_being_set:
+            if media_server_type == 'plex':
+                # User has selected Plex, clear Jellyfin/Emby settings
+                logging.info("Plex URL detected and Media Server Type is Plex, clearing Jellyfin/Emby settings")
+                
+                # Clear Jellyfin/Emby settings in the new_settings
+                if 'Debug' in new_settings:
+                    new_settings['Debug']['emby_jellyfin_url'] = ''
+                    new_settings['Debug']['emby_jellyfin_token'] = ''
+                
+                # Also clear these settings in the current config
+                if 'Debug' not in config:
+                    config['Debug'] = {}
+                config['Debug']['emby_jellyfin_url'] = ''
+                config['Debug']['emby_jellyfin_token'] = ''
+            else:
+                logging.info("Plex URL detected but Media Server Type is not Plex, keeping Jellyfin/Emby settings")
+
         # Function to recursively update the main config dictionary
         def update_nested_dict(current, new):
             for key, value in new.items():
@@ -1291,6 +1400,25 @@ def update_settings():
         # Save the updated main config object atomically (assuming save_config does this)
         save_config(config)
         logging.info("Main configuration saved successfully.")
+        
+        # Clear content source cache files
+        try:
+            from routes.debug_routes import get_cache_files
+            cache_files = get_cache_files()
+            if cache_files:
+                db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+                for filename in cache_files:
+                    file_path = os.path.join(db_content_dir, filename)
+                    if os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                            logging.info(f"Removed content source cache file: {file_path}")
+                        except Exception as e:
+                            logging.error(f"Failed to remove cache file {file_path}: {e}")
+        except ImportError:
+            logging.warning("Could not import get_cache_files from routes.debug_routes to clear cache.")
+        except Exception as e:
+            logging.error(f"An error occurred while clearing content source cache files: {e}")
         
         # Check if program was running before reinitialization
         was_program_running = False
@@ -1420,17 +1548,29 @@ def add_version():
         'similarity_weight': 3,
         'size_weight': 3,
         'bitrate_weight': 3,
+        'min_size_gb': 0.01,
+        'max_size_gb': '',
+        'min_bitrate_mbps': 0.01,
+        'max_bitrate_mbps': '',
+        'similarity_threshold': 0.85,
+        'similarity_threshold_anime': 0.80,
+        'year_match_weight': 3,
+        'wake_count': None,
+        'fallback_version': 'None',
+        'anime_filter_mode': 'None',
         'preferred_filter_in': [],
         'preferred_filter_out': [],
         'filter_in': [],
         'filter_out': [],
-        'min_size_gb': 0.01,
-        'max_size_gb': '',
-        'wake_count': None,
-        'require_physical_release': False  # Add default require_physical_release setting
+        'require_physical_release': False,
+        'language_code': 'en'
     }
 
     save_config(config)
+    
+    # Reload components so the change takes effect mid-run
+    _reload_components_after_settings_change()
+    
     return jsonify({'success': True, 'version_id': version_name})
 
 @settings_bp.route('/versions/delete', methods=['POST'])
@@ -1491,6 +1631,9 @@ def delete_version():
             # Delete the actual version
             del versions[version_id]
             save_config(config) # Save config with updated fallbacks and deleted version
+            
+            # Reload components so the change takes effect mid-run
+            _reload_components_after_settings_change()
             
             message = f"Version '{version_id}' deleted."
             if updated_count > 0:
@@ -1635,6 +1778,9 @@ def rename_version():
             # Save config with all updates (version rename, fallbacks, content sources)
             save_config(config)
 
+            # Reload components so the change takes effect mid-run
+            _reload_components_after_settings_change()
+
             return jsonify({'success': True})
         else:
             return jsonify({'success': False, 'error': 'Version not found'}), 404
@@ -1665,14 +1811,22 @@ def duplicate_version():
     original_settings = config['Scraping']['versions'][version_id]
     new_settings = original_settings.copy()
     
-    # Ensure require_physical_release is included in the copy
-    if 'require_physical_release' not in new_settings:
-        new_settings['require_physical_release'] = False
+    # Get the version schema to ensure all required fields are present
+    version_schema = SETTINGS_SCHEMA['Scraping']['versions']['schema']
+    
+    # Ensure all required fields are included in the copy
+    for field_name, field_schema in version_schema.items():
+        if field_name not in new_settings:
+            new_settings[field_name] = field_schema['default']
 
     config['Scraping']['versions'][new_version_id] = new_settings
     config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
 
     save_config(config)
+    
+    # Reload components so the change takes effect mid-run
+    _reload_components_after_settings_change()
+    
     return jsonify({'success': True, 'new_version_id': new_version_id})
 
 @settings_bp.route('/scraping/content')
@@ -1928,6 +2082,7 @@ def add_default_version():
             'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
             'size_weight': version_schema['size_weight']['default'],
             'bitrate_weight': version_schema['bitrate_weight']['default'],
+            'year_match_weight': version_schema['year_match_weight']['default'],
             'preferred_filter_in': version_schema['preferred_filter_in']['default'],
             'preferred_filter_out': version_schema['preferred_filter_out']['default'],
             'filter_in': version_schema['filter_in']['default'],
@@ -1937,7 +2092,10 @@ def add_default_version():
             'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
             'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
             'wake_count': version_schema['wake_count']['default'],
-            'require_physical_release': version_schema['require_physical_release']['default']
+            'fallback_version': version_schema['fallback_version']['default'],
+            'anime_filter_mode': version_schema['anime_filter_mode']['default'],
+            'require_physical_release': version_schema['require_physical_release']['default'],
+            'language_code': version_schema['language_code']['default']
         }
 
         # Add the default version while preserving existing versions
@@ -1977,6 +2135,7 @@ def add_separate_versions():
             'similarity_threshold_anime': version_schema['similarity_threshold_anime']['default'],
             'size_weight': version_schema['size_weight']['default'],
             'bitrate_weight': version_schema['bitrate_weight']['default'],
+            'year_match_weight': version_schema['year_match_weight']['default'],
             'preferred_filter_in': [],
             'preferred_filter_out': [],
             'filter_in': [],
@@ -1986,7 +2145,10 @@ def add_separate_versions():
             'min_bitrate_mbps': version_schema['min_bitrate_mbps']['default'],
             'max_bitrate_mbps': version_schema['max_bitrate_mbps']['default'],
             'wake_count': version_schema['wake_count']['default'],
-            'require_physical_release': version_schema['require_physical_release']['default']
+            'fallback_version': version_schema['fallback_version']['default'],
+            'anime_filter_mode': version_schema['anime_filter_mode']['default'],
+            'require_physical_release': version_schema['require_physical_release']['default'],
+            'language_code': version_schema['language_code']['default']
         }
 
         # Create 1080p version
@@ -2313,17 +2475,20 @@ def get_support_modal_status():
                 # Return both seen status and page views
                 return jsonify({
                     'hasSeenSupport': status.get('seen', False),
-                    'pageViews': status.get('pageViews', 0)
+                    'pageViews': status.get('pageViews', 0),
+                    'neverShowAgain': status.get('neverShowAgain', False)
                 })
         return jsonify({
             'hasSeenSupport': False,
-            'pageViews': 0
+            'pageViews': 0,
+            'neverShowAgain': False
         })
     except Exception as e:
         logging.error(f"Error checking support modal status: {str(e)}")
         return jsonify({
             'hasSeenSupport': False,
-            'pageViews': 0
+            'pageViews': 0,
+            'neverShowAgain': False
         })
 
 @settings_bp.route('/api/support-modal-seen', methods=['POST'])
@@ -2337,11 +2502,19 @@ def mark_support_modal_seen():
         # Save the status
         status_file = os.path.join(db_content_dir, 'support_modal.json')
         
+        # Load existing status to preserve page views
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                existing_status = json.load(f)
+                current_page_views = existing_status.get('pageViews', 0)
+        else:
+            current_page_views = 0
+        
         # Create the file with proper permissions
         with open(status_file, 'w', encoding='utf-8') as f:
             json.dump({
                 'seen': True,
-                'pageViews': 0,  # Reset page views when marked as seen
+                'pageViews': current_page_views,  # Preserve page views when marked as seen
                 'timestamp': datetime.now().isoformat()
             }, f, indent=4)
         
@@ -2349,6 +2522,32 @@ def mark_support_modal_seen():
         return jsonify({'success': True})
     except Exception as e:
         logging.error(f"Error saving support modal status: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@settings_bp.route('/api/support-modal-never-show', methods=['POST'])
+@admin_required
+def mark_support_modal_never_show():
+    try:
+        # Ensure db_content directory exists
+        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        os.makedirs(db_content_dir, exist_ok=True)
+        
+        # Save the status
+        status_file = os.path.join(db_content_dir, 'support_modal.json')
+        
+        # Create the file with proper permissions
+        with open(status_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'seen': True,
+                'neverShowAgain': True,
+                'pageViews': 0,  # Reset page views when marked as never show
+                'timestamp': datetime.now().isoformat()
+            }, f, indent=4)
+        
+        logging.info("Support modal marked as never show again")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Error saving support modal never show status: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @settings_bp.route('/api/support-modal-pageview', methods=['POST'])
@@ -2370,8 +2569,8 @@ def increment_pageview():
                 'timestamp': datetime.now().isoformat()
             }
         
-        # Only increment if not already seen
-        if not status.get('seen', False):
+        # Only increment if not marked as never show again
+        if not status.get('neverShowAgain', False):
             status['pageViews'] = status.get('pageViews', 0) + 1
             
             # Save updated status
@@ -2381,7 +2580,8 @@ def increment_pageview():
         return jsonify({
             'success': True,
             'pageViews': status['pageViews'],
-            'hasSeenSupport': status.get('seen', False)
+            'hasSeenSupport': status.get('seen', False),
+            'neverShowAgain': status.get('neverShowAgain', False)
         })
     except Exception as e:
         logging.error(f"Error incrementing page views: {str(e)}", exc_info=True)
@@ -2573,14 +2773,22 @@ def add_default_mdblists():
                 'similarity_weight': 3,
                 'size_weight': 3,
                 'bitrate_weight': 3,
+                'min_size_gb': 0.01,
+                'max_size_gb': '',
+                'min_bitrate_mbps': 0.01,
+                'max_bitrate_mbps': '',
+                'similarity_threshold': 0.85,
+                'similarity_threshold_anime': 0.80,
+                'year_match_weight': 3,
+                'wake_count': None,
+                'fallback_version': 'None',
+                'anime_filter_mode': 'None',
                 'preferred_filter_in': [],
                 'preferred_filter_out': [],
                 'filter_in': [],
                 'filter_out': [],
-                'min_size_gb': 0.01,
-                'max_size_gb': None,
-                'wake_count': None,
-                'require_physical_release': False
+                'require_physical_release': False,
+                'language_code': 'en'
             }
             available_versions = ['1080p']
             logging.info("Created default 1080p version for MDBLists")

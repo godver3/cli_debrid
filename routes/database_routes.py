@@ -349,7 +349,12 @@ def index():
                     if clause_added_in_this_iteration: continue
                 elif value != '':
                     original_clause_count = len(filter_where_clauses)
-                    if operator == 'contains': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"%{value}%")
+                    
+                    # Special handling for ghostlisted state filter
+                    if column == 'state' and value == 'ghostlisted':
+                        filter_where_clauses.append('ghostlisted = TRUE')
+                        clause_added_in_this_iteration = True
+                    elif operator == 'contains': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"%{value}%")
                     elif operator == 'equals': filter_where_clauses.append(f'"{column}" = ?'); filter_params.append(value)
                     elif operator == 'not_equals': filter_where_clauses.append(f'"{column}" IS NOT ?'); filter_params.append(value) # Changed to IS NOT
                     elif operator == 'starts_with': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"{value}%")
@@ -366,6 +371,12 @@ def index():
         final_params = []
         effective_content_type = content_type_req if content_type_req is not None else 'movie'
         effective_current_letter = current_letter_req if current_letter_req is not None else 'A'
+
+        # Check if user is specifically filtering for ghostlisted items
+        show_ghostlisted = any(
+            f.get('column') == 'state' and f.get('value') == 'ghostlisted' 
+            for f in filters
+        )
 
         if filter_where_clauses:
             filter_combination_operator = f" {filter_logic} "
@@ -392,6 +403,14 @@ def index():
                 final_params = default_params
             content_type_for_template = effective_content_type
             current_letter_for_template = effective_current_letter
+
+        # Add ghostlisted filter unless user is specifically looking for ghostlisted items
+        if not show_ghostlisted:
+            if final_where_clause:
+                final_where_clause = final_where_clause.replace("WHERE ", "WHERE (ghostlisted = FALSE OR ghostlisted IS NULL) AND (")
+                final_where_clause = final_where_clause + ")"
+            else:
+                final_where_clause = "WHERE (ghostlisted = FALSE OR ghostlisted IS NULL)"
         
         order_clause = ""
         # SQL sorting only if not sorting by 'size' and sort_column is a real DB column
@@ -446,6 +465,9 @@ def index():
                 try:
                     cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items ORDER BY \"{column_for_distinct_fetch}\"")
                     values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
+                    # Add ghostlisted as a special state option
+                    if column_for_distinct_fetch == 'state':
+                        values.append('ghostlisted')
                     column_values[column_for_distinct_fetch] = values
                     logging.info(f"Fetched {len(values)} distinct values for '{column_for_distinct_fetch}' in {time.perf_counter() - loop_iteration_start_time:.4f}s.")
                 except Exception as e:
@@ -956,6 +978,35 @@ def bulk_queue_action():
                     logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
                 finally:
                     conn.close()
+            elif action == 'ghostlist':
+                logging.info("Entering 'ghostlist' block.")
+                conn = get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    placeholders = ','.join('?' * len(batch))
+                    cursor.execute(
+                        f'UPDATE media_items SET ghostlisted = TRUE, state = ?, last_updated = ? WHERE id IN ({placeholders})',
+                        ['Blacklisted', datetime.now()] + batch
+                    )
+                    total_processed += cursor.rowcount
+                    conn.commit()
+                except sqlite3.OperationalError as e:
+                    if "database is locked" in str(e):
+                        logging.error("Database is locked during bulk ghostlist.")
+                        conn.rollback()
+                        return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
+                    else:
+                        error_count += 1
+                        conn.rollback()
+                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                except Exception as e:
+                    error_count += 1
+                    conn.rollback()
+                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                finally:
+                    conn.close()
             elif action == 'resync':
                 logging.info("Entering 'resync' block.")
                 for item_id in batch:
@@ -1073,6 +1124,7 @@ def bulk_queue_action():
                 "early_release": "marked as early release and moved to Wanted queue",
                 "rescrape": "deleted files/Plex entries for and moved to Wanted queue", # Added rescrape message
                 "force_priority": "marked for forced priority",
+                "ghostlist": "ghostlisted and moved to Blacklisted queue",
                 "resync": "resynchronized",
                 "verify_symlinks": "added to symlink verification queue"
             }

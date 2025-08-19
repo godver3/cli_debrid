@@ -33,7 +33,11 @@ class Config:
 
         os.makedirs(self.CACHE_DIR, exist_ok=True)
 
-        # Load all settings from disk at once to cache them for the script's lifetime
+        # Load settings initially
+        self._load_settings()
+
+    def _load_settings(self):
+        """Load all dynamic settings from disk. Called during init and reload."""
         self.SUBTITLES_ENABLED = get_setting('Subtitle Settings', 'enable_subtitles', False)
         self.ONLY_CURRENT_FILE = get_setting('Subtitle Settings', 'only_current_file', False)
         self.SYMLINKED_PATH = get_setting('File Management', 'symlinked_files_path')
@@ -61,6 +65,10 @@ class Config:
         self.symlink_organize_by_version = get_setting('File Management', 'symlink_organize_by_version', False)
 
         self.VIDEO_FOLDERS = self._generate_video_folders()
+
+    def reload(self):
+        """Reload all settings from disk. Call this to pick up configuration changes."""
+        self._load_settings()
 
     def _generate_video_folders(self):
         """Generates the list of video folders based on current settings."""

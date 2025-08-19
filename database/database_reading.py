@@ -1190,6 +1190,82 @@ def get_distinct_imdb_ids(states: Optional[List[str]] = None, media_type: Option
         if conn:
             conn.close()
 
+def get_season_year(imdb_id: str = None, tmdb_id: str = None, season_number: int = None) -> Optional[int]:
+    """
+    Retrieves the year of a season based on the earliest episode's release date.
+    Prioritizes IMDb ID if both are provided. Falls back to different states if no Collected episodes.
+    
+    Args:
+        imdb_id: IMDb ID of the show (preferred)
+        tmdb_id: TMDb ID of the show (fallback)
+        season_number: Season number to get the year for
+        
+    Returns:
+        Year as integer, or None if no episodes found with valid dates
+    """
+    if not (imdb_id or tmdb_id) or season_number is None:
+        logging.warning("get_season_year requires either imdb_id or tmdb_id, and season_number")
+        return None
+    
+    conn = get_db_connection()
+    try:
+        # Determine which ID to use (prioritize IMDb)
+        id_field = 'imdb_id' if imdb_id else 'tmdb_id'
+        id_value = imdb_id if imdb_id else tmdb_id
+        
+        # Try to get earliest date from Collected episodes first
+        query = f'''
+            SELECT MIN(release_date) as earliest_date
+            FROM media_items
+            WHERE {id_field} = ?
+              AND season_number = ?
+              AND type = 'episode'
+              AND state = 'Collected'
+              AND release_date IS NOT NULL
+              AND release_date != ''
+              AND release_date != 'Unknown'
+        '''
+        cursor = conn.execute(query, (id_value, season_number))
+        result = cursor.fetchone()
+        
+        # If no Collected episodes with dates, try any state
+        if not result or not result['earliest_date']:
+            query = f'''
+                SELECT MIN(release_date) as earliest_date
+                FROM media_items
+                WHERE {id_field} = ?
+                  AND season_number = ?
+                  AND type = 'episode'
+                  AND release_date IS NOT NULL
+                  AND release_date != ''
+                  AND release_date != 'Unknown'
+            '''
+            cursor = conn.execute(query, (id_value, season_number))
+            result = cursor.fetchone()
+        
+        if result and result['earliest_date']:
+            try:
+                # Handle different date formats (YYYY-MM-DD or just YYYY)
+                date_str = result['earliest_date']
+                if '-' in date_str:
+                    year = int(date_str.split('-')[0])
+                else:
+                    year = int(date_str)
+                logging.debug(f"Found season year for {id_field}={id_value}, Season {season_number}: {year}")
+                return year
+            except (ValueError, IndexError) as e:
+                logging.warning(f"Invalid date format in season year lookup: {result['earliest_date']} - {e}")
+        
+        logging.debug(f"No valid season year found for {id_field}={id_value}, Season {season_number}")
+        return None
+        
+    except Exception as e:
+        logging.error(f"Error retrieving season year for {id_field}={id_value}, Season {season_number}: {str(e)}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'normalize_string_for_comparison',
@@ -1223,5 +1299,6 @@ __all__ = [
     'get_collected_episode_numbers',
     'get_media_item_presence_overall',
     'get_distinct_imdb_ids',
-    'is_any_file_in_db_for_item'
+    'is_any_file_in_db_for_item',
+    'get_season_year'
 ]

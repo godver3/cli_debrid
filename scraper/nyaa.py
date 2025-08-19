@@ -13,6 +13,47 @@ import re
 import random
 import requests
 
+# Helper - build proxy context for limited environment
+from contextlib import contextmanager
+
+
+@contextmanager
+def _warp_proxy_context():
+    """Temporarily enable the WARP proxy (if in limited env) for the duration of the context."""
+    if os.environ.get("CLI_DEBRID_ENVIRONMENT_MODE", "full") == "full":
+        # No-op – yield immediately
+        logging.info("WARP proxy not needed - running in full environment mode")
+        # Return a plain session for consistency
+        plain_session = requests.Session()
+        try:
+            yield plain_session
+        finally:
+            plain_session.close()
+        return
+
+    proxy_url = os.environ.get("WARP_PROXY_URL", "http://warp:1080")
+    logging.info("WARP proxy required - running in limited environment mode")
+
+    # Create a separate session with proxy configuration instead of setting global env vars
+    proxy_session = requests.Session()
+    proxy_session.proxies = {
+        'http': proxy_url,
+        'https': proxy_url
+    }
+
+    logging.info(
+        "WARP proxy enabled for Nyaa request – using %s with separate session",
+        proxy_url
+    )
+
+    try:
+        # Yield the proxy session instead of setting global environment variables
+        yield proxy_session
+    finally:
+        # Clean up the proxy session
+        proxy_session.close()
+        logging.info("WARP proxy session closed")
+
 def convert_size_to_gb(size: str) -> float:
     """Convert various size formats to GB."""
     size = size.lower().replace(' ', '')
@@ -159,7 +200,13 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
     for attempt in range(max_retries):
         try:
             logging.debug(f"Nyaa search attempt {attempt + 1}/{max_retries} for query: {query}")
-            results = Nyaa.search(keyword=query, category=category, subcategory=subcategory, filters=filters)
+            
+            # Use the proxy context to get a session with proxy configuration
+            # Note: Each retry creates a new session. For high-frequency retries,
+            # consider implementing a session pool or keep-alive cache per thread.
+            with _warp_proxy_context() as session:
+                # Use the session for the Nyaa search
+                results = _search_nyaa_with_session(query, category, subcategory, filters, session)
             return results
             
         except Exception as e:
@@ -196,7 +243,77 @@ def scrape_nyaa_with_retry(query: str, category: int, subcategory: int, filters:
                     logging.error(f"Nyaa request failed with non-retryable error: {str(e)}")
                 raise
     
-    return []  # Should not reach here, but just in case
+    return []
+
+def _search_nyaa_with_session(query: str, category: int, subcategory: int, filters: int, session: requests.Session) -> List[Any]:
+    """Helper function to search Nyaa using a specific session."""
+    # Since the Nyaa library uses requests.get() directly and we can't easily modify it,
+    # we'll reimplement the search logic ourselves using our session
+    # This ensures complete isolation from the global requests library
+    
+    import requests
+    from nyaapy.nyaasi.nyaa import Nyaa
+    from nyaapy.parser import parse_nyaa, parse_nyaa_rss
+    from nyaapy.torrent import json_to_class
+    
+    # Reconstruct the search URL (same logic as Nyaa.search)
+    base_url = Nyaa.URL
+    user = None  # We don't use user searches
+    page = 0
+    sorting = "id"  # Sorting by id = sorting by date
+    order = "desc"
+    
+    user_uri = f"user/{user}" if user else ""
+    
+    if page > 0:
+        search_uri = "{}/{}?f={}&c={}_{}&q={}&p={}&s={}&o={}".format(
+            base_url,
+            user_uri,
+            filters,
+            category,
+            subcategory,
+            query,
+            page,
+            sorting,
+            order,
+        )
+    else:
+        search_uri = "{}/{}?f={}&c={}_{}&q={}&s={}&o={}".format(
+            base_url,
+            user_uri,
+            filters,
+            category,
+            subcategory,
+            query,
+            sorting,
+            order,
+        )
+    
+    if not user:
+        search_uri += "&page=rss"
+    
+    # Log proxy usage
+    if hasattr(session, 'proxies') and session.proxies:
+        logging.info(f"Nyaa using proxy: {session.proxies}")
+    else:
+        logging.info("Nyaa using direct connection (no proxy)")
+    
+    # Use our session to make the request
+    http_response = session.get(search_uri)
+    http_response.raise_for_status()
+    
+    # Parse the response using the same logic as Nyaa
+    if user:
+        json_data = parse_nyaa(
+            request_text=http_response.content, limit=None, site=Nyaa.SITE
+        )
+    else:
+        json_data = parse_nyaa_rss(
+            request_text=http_response.content, limit=None, site=Nyaa.SITE
+        )
+    
+    # Convert JSON data to Torrent objects (same as Nyaa)
+    return json_to_class(json_data)
 
 def scrape_nyaa_instance(settings: Dict[str, Any], title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, is_translated_search: bool = False) -> List[Dict[str, Any]]:
     """Scrape Nyaa using nyaapy with proper error handling."""
@@ -323,8 +440,8 @@ def scrape_nyaa_anime_episode(title: str, year: int, season: int, episode: int, 
             
             # Check if these results contain the target episode
             if results and contains_target_episode(results, episode, season):
-                logging.info(f"Found target episode S{season}E{episode} in results from format {format_type}, stopping search")
-                break
+                logging.info(f"Found target episode S{season}E{episode} in results from format {format_type}, continuing search for more results")
+                # break  # Temporarily disabled early return to get more comprehensive results
             elif len(results) >= 10:
                 # If we found many results but none contain the target episode, 
                 # continue searching other formats to find the actual episode

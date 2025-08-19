@@ -95,7 +95,6 @@ from cli_battery.app.direct_api import DirectAPI # Import DirectAPI
 import json # Added for loading intervals
 # --- START EDIT: Add Debrid imports for library size task ---
 from debrid import get_debrid_provider, ProviderUnavailableError
-from debrid.real_debrid.client import RealDebridProvider
 # --- END EDIT ---
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
@@ -185,7 +184,7 @@ class ProgramRunner:
         self.queue_manager = QueueManager()
         
         # Verify queue initialization
-        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'Final_Check']
+        expected_queues = ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'Final_Check', 'Pre_release']
         missing_queues = [q for q in expected_queues if q not in self.queue_manager.queues]
         if missing_queues:
             logging.error(f"Missing queues during initialization: {missing_queues}")
@@ -210,7 +209,8 @@ class ProgramRunner:
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
             'Upgrading': 'process_upgrading',
-            'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
+            'final_check_queue': 'process_final_check', # Use lowercase key matching the task ID
+            'Pre_release': 'process_pre_release'
         }
         # --- END EDIT ---
 
@@ -247,6 +247,7 @@ class ProgramRunner:
             'Pending Uncached': 3600,
             'Upgrading': 3600,
             'final_check_queue': 900, # Use lowercase key matching the task ID
+            'Pre_release': 24 * 60 * 60, # Run every 24 hours (daily)
             # Combined/High Frequency Tasks
             'task_update_queue_views': 30,     # Update queue views every 30 seconds
             'task_send_notifications': 15,       # Run every 15 seconds
@@ -258,7 +259,7 @@ class ProgramRunner:
             'task_refresh_download_stats': 300,    # Run every 5 minutes
             'task_precompute_airing_shows': 600,   # Precompute airing shows every 10 minutes
             'task_verify_symlinked_files': 7200,    # Run every 120 minutes (if enabled)
-            'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled)
+            'task_verify_plex_removals': 900,      # Run every 15 minutes (if enabled) - supports both Plex and Jellyfin/Emby
             'task_reconcile_queues': 3600,         # Run every 1 hour
             'task_check_database_health': 3600,    # Run every hour
             'task_sync_time': 3600,                # Run every hour
@@ -287,6 +288,9 @@ class ProgramRunner:
             # --- END EDIT ---
             # --- START EDIT: Add manual Plex full scan task ---
             'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
+            # --- END EDIT ---
+            # --- START EDIT: Add bulk subtitle processing task ---
+            'task_process_bulk_subtitles': 3600, # Run every hour, disabled by default  
             # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
             'task_regulate_system_load': 30 # Check system load every 30 seconds
@@ -461,6 +465,7 @@ class ProgramRunner:
             'Pending Uncached',
             'Upgrading',
             'final_check_queue', # Use lowercase key matching the task ID
+            'Pre_release',
             # Combined/High Frequency Tasks
             'task_update_queue_views',
             'task_send_notifications',
@@ -567,31 +572,26 @@ class ProgramRunner:
                       logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
 
         if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-             # Enable symlink task if configured and not toggled off (Removal task handled above)
-            if get_setting('File Management', 'plex_url_for_symlink') and get_setting('File Management', 'plex_token_for_symlink'):
+             # Enable symlink task if configured (Plex OR Jellyfin/Emby) and not toggled off
+            plex_configured = (get_setting('File Management', 'plex_url_for_symlink') and 
+                              get_setting('File Management', 'plex_token_for_symlink'))
+            jellyfin_configured = (get_setting('Debug', 'emby_jellyfin_url', default='').strip() and 
+                                  get_setting('Debug', 'emby_jellyfin_token', default='').strip())
+            
+            if plex_configured or jellyfin_configured:
                 symlink_task = 'task_verify_symlinked_files'
                 is_symlink_toggled_off = saved_states.get(self._normalize_task_name(symlink_task), True) is False
-                # --- START EDIT: Removed reference to removal_task toggle check here ---
-                # is_removal_toggled_off = saved_states.get(self._normalize_task_name(removal_task), True) is False
-                # --- END EDIT ---
 
                 if not is_symlink_toggled_off and symlink_task not in self.enabled_tasks:
                     self.enabled_tasks.add(symlink_task)
-                    logging.info("Enabled symlink verification task based on settings.")
+                    media_server = "Jellyfin/Emby" if jellyfin_configured else "Plex"
+                    logging.info(f"Enabled symlink verification task based on {media_server} settings.")
             else:
-                 # Disable if settings are off and not toggled on
+                 # Disable if no media server settings are configured and not toggled on
                  is_symlink_toggled_on = saved_states.get(self._normalize_task_name('task_verify_symlinked_files'), False) is True
-                 # --- START EDIT: Removed reference to removal_task toggle check here ---
-                 # is_removal_toggled_on = saved_states.get(self._normalize_task_name('task_verify_plex_removals'), False) is True
-                 # --- END EDIT ---
                  if 'task_verify_symlinked_files' in self.enabled_tasks and not is_symlink_toggled_on:
                      self.enabled_tasks.remove('task_verify_symlinked_files')
-                     logging.info("Disabled symlink verification task as settings are off.")
-                 # --- START EDIT: Removed removal task disable logic here (handled above) ---
-                 # if 'task_verify_plex_removals' in self.enabled_tasks and not is_removal_toggled_on:
-                 #     self.enabled_tasks.remove('task_verify_plex_removals')
-                 #     logging.info("Disabled Plex removal verification task as settings are off.")
-                 # --- END EDIT ---
+                     logging.info("Disabled symlink verification task as no media server settings are configured.")
 
 
         if get_setting('Debug', 'not_add_plex_watch_history_items_to_queue', False):
@@ -607,6 +607,18 @@ class ProgramRunner:
                  self.enabled_tasks.remove(task_name)
                  logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
+        # Check for limited environment and enable library maintenance task by default
+        from utilities.set_supervisor_env import is_limited_environment
+        if is_limited_environment():
+            task_name = 'task_run_library_maintenance'
+            is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
+            if not is_toggled_off and task_name not in self.enabled_tasks:
+                self.enabled_tasks.add(task_name)
+                logging.info(f"Enabled '{task_name}' by default in limited environment.")
+            system_load_take_name = 'task_regulate_system_load'
+            self.enabled_tasks.add(system_load_take_name)
+            logging.info(f"Enabled '{system_load_take_name}' by default in limited environment.")
+        
         if get_setting('Debug', 'enable_library_maintenance_task', False):
             task_name = 'task_run_library_maintenance'
             is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
@@ -614,11 +626,13 @@ class ProgramRunner:
                 self.enabled_tasks.add(task_name)
                 logging.info(f"Enabled '{task_name}' based on Debug setting.")
         else:
-            task_name = 'task_run_library_maintenance'
-            is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
-            if task_name in self.enabled_tasks and not is_toggled_on:
-                 self.enabled_tasks.remove(task_name)
-                 logging.info(f"Disabled '{task_name}' as Debug setting is off.")
+            # Only disable if not in limited environment (limited environment takes precedence)
+            if not is_limited_environment():
+                task_name = 'task_run_library_maintenance'
+                is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
+                if task_name in self.enabled_tasks and not is_toggled_on:
+                     self.enabled_tasks.remove(task_name)
+                     logging.info(f"Disabled '{task_name}' as Debug setting is off.")
 
         # 5. Ensure legacy individual Scraping/Adding tasks are removed *after* all logic
         # --- START REVERT: Comment out or remove this block ---
@@ -674,7 +688,8 @@ class ProgramRunner:
             'Blacklisted': 'process_blacklisted',
             'Pending Uncached': 'process_pending_uncached',
             'Upgrading': 'process_upgrading',
-            'final_check_queue': 'process_final_check' # Use lowercase key matching the task ID
+            'final_check_queue': 'process_final_check', # Use lowercase key matching the task ID
+            'Pre_release': 'process_pre_release'
         }
 
         # Log the final set of enabled tasks right before starting the scheduling process
@@ -1140,26 +1155,36 @@ class ProgramRunner:
                     data['interval'] = final_interval
 
                 task_name = f'task_{source}_wanted'
-                # Update task_intervals (this defines the task interval for scheduling)
-                self.task_intervals[task_name] = final_interval
-                # Update original intervals map too (used for resets)
+                
+                # Store the calculated default interval (before any custom overrides)
+                calculated_default_interval = final_interval
+                
+                # Check if a custom interval was already loaded for this task (from user's saved preferences)
+                if task_name in self.task_intervals:
+                    # A custom interval exists, preserve it instead of overwriting with defaults
+                    existing_custom_interval = self.task_intervals[task_name]
+                    logging.info(f"Preserving custom interval for content source '{task_name}': {existing_custom_interval}s (would have been {calculated_default_interval}s from source defaults)")
+                    # Update final_interval so the log message below shows the preserved value
+                    final_interval = existing_custom_interval
+                else:
+                    # No custom interval exists, use the calculated default interval
+                    self.task_intervals[task_name] = final_interval
+                
+                # Add to original_task_intervals with the calculated default (not the custom value)
+                # This ensures that resets will go back to the true calculated default
                 if task_name not in self.original_task_intervals:
-                     self.original_task_intervals[task_name] = final_interval
+                    self.original_task_intervals[task_name] = calculated_default_interval
 
                 log_intervals_message.append(f"  {task_name}: {final_interval} seconds")
                 
                 if isinstance(data.get('enabled'), str):
                     data['enabled'] = data['enabled'].lower() == 'true'
                 
-                # Add to enabled tasks if enabled (this happens *after* toggle loading in the new flow)
-                is_enabled = data.get('enabled', False)
-                if is_enabled and task_name not in self.enabled_tasks:
+                # Add content source tasks by default; toggles will disable later if set to False
+                if task_name not in self.enabled_tasks:
                     self.enabled_tasks.add(task_name)
-                    logging.info(f"Enabled content source task based on its settings: {task_name}")
-                # Ensure it's removed if disabled (respecting if it was already removed by toggle)
-                elif not is_enabled and task_name in self.enabled_tasks:
-                     self.enabled_tasks.remove(task_name)
-                     logging.info(f"Disabled content source task based on its settings: {task_name}")
+                    logging.info(f"Enabled content source task by default (ignoring config flag): {task_name}")
+                # Do not remove here based on config; rely solely on saved toggles applied later
 
             # Log the intervals once after processing all sources
             logging.info("\n".join(log_intervals_message))
@@ -1497,6 +1522,11 @@ class ProgramRunner:
         source_media_type = data.get('media_type', 'All')
         raw_cutoff_date = data.get('cutoff_date', '')
         exclude_genres = data.get('exclude_genres', []) # Get exclude_genres setting
+        try:
+            list_length_limit = int(data.get('list_length_limit', 0)) # Get list_length_limit setting and convert to int
+        except (ValueError, TypeError):
+            logging.warning(f"Invalid list_length_limit value for source {source}: {data.get('list_length_limit')}. Using default value 0.")
+            list_length_limit = 0
         parsed_cutoff_date = None
 
         if raw_cutoff_date:
@@ -1538,6 +1568,7 @@ class ProgramRunner:
             media_type_skipped = 0
             genre_skipped = 0
             cutoff_date_skipped = 0
+            list_length_limited = 0
 
             wanted_content = []
             # Pass the original versions_from_config to fetchers, assuming they expect list/dict as per config
@@ -1592,7 +1623,7 @@ class ProgramRunner:
                 # Use self.content_sources which should be populated
                 all_sources = self.get_content_sources() if hasattr(self, 'get_content_sources') else {}
                 for source_id, source_data in all_sources.items():
-                    if source_id.startswith('Other Plex Watchlist_') and source_data.get('enabled', False):
+                    if source_id.startswith('Other Plex Watchlist_'):
                         # Fetch versions specific to this 'Other' source config
                         other_source_versions = source_data.get('versions', []) # Default list
                         other_watchlists.append({
@@ -1621,6 +1652,31 @@ class ProgramRunner:
                 return
 
             if wanted_content:
+                # Apply list length limit if set
+                if list_length_limit > 0:
+                    if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+                        # For tuple format, limit each batch
+                        limited_wanted_content = []
+                        total_items_limited = 0
+                        for items, item_versions_from_source_tuple in wanted_content:
+                            if total_items_limited >= list_length_limit:
+                                logging.info(f"List length limit reached for {source} ({list_length_limit} items), skipping remaining batches")
+                                break
+                            remaining_limit = list_length_limit - total_items_limited
+                            if len(items) > remaining_limit:
+                                items = items[:remaining_limit]
+                                logging.info(f"Limited batch for {source} to {remaining_limit} items due to list length limit")
+                            limited_wanted_content.append((items, item_versions_from_source_tuple))
+                            total_items_limited += len(items)
+                        wanted_content = limited_wanted_content
+                        logging.info(f"Applied list length limit to {source}: processed {total_items_limited} items (limit: {list_length_limit})")
+                    else:
+                        # For single list format, limit the list
+                        original_length = len(wanted_content)
+                        if original_length > list_length_limit:
+                            wanted_content = wanted_content[:list_length_limit]
+                            logging.info(f"Applied list length limit to {source}: limited to {list_length_limit} items from {original_length}")
+                
                 if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
                     # Handle list of tuples
                     for items, item_versions_from_source_tuple in wanted_content:
@@ -1706,9 +1762,16 @@ class ProgramRunner:
                                 if cutoff_date:
                                     items_filtered_date = []
                                     for item in all_items:
-                                        release_date = item.get('release_date')
+                                        # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                        if item.get('media_type') == 'movie':
+                                            release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                        else:
+                                            release_date = item.get('release_date')
+                                        
                                         if not release_date or release_date.lower() == 'unknown':
-                                            items_filtered_date.append(item)
+                                            # Skip items with unknown release dates when cutoff date is set
+                                            cutoff_date_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                             continue
                                         try:
                                             item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1718,9 +1781,9 @@ class ProgramRunner:
                                                 cutoff_date_skipped += 1
                                                 logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                         except ValueError:
-                                            # If we can't parse the date, allow the item through
-                                            items_filtered_date.append(item)
-                                            logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
+                                            # If we can't parse the date, skip the item when cutoff date is set
+                                            cutoff_date_skipped += 1
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
                                     all_items = items_filtered_date
                                     if cutoff_date_skipped > 0:
                                         logging.debug(f"Batch {source}: Skipped {cutoff_date_skipped} items due to cutoff date")
@@ -1729,24 +1792,10 @@ class ProgramRunner:
                                 # Pass the CONVERTED versions dict to add_wanted_items
                                 add_wanted_items(all_items, versions_to_inject or versions_dict)
                                 
-                                # Update cache for items that actually made it through all filtering
-                                # Only cache items that were successfully processed and added
+                                # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                                # This prevents reprocessing the same items repeatedly
                                 for item_raw in items_to_process_raw:
-                                    # Find the corresponding processed item to check if it made it through
-                                    item_title = item_raw.get('title', '')
-                                    item_year = item_raw.get('year', '')
-                                    item_media_type = item_raw.get('media_type', '')
-                                    
-                                    # Check if this item made it through all filtering by looking for it in all_items
-                                    item_made_it_through = any(
-                                        processed_item.get('title') == item_title and 
-                                        processed_item.get('year') == item_year and
-                                        processed_item.get('media_type') == item_media_type
-                                        for processed_item in all_items
-                                    )
-                                    
-                                    if item_made_it_through:
-                                        update_cache_for_item(item_raw, source, source_cache)
+                                    update_cache_for_item(item_raw, source, source_cache)
                                 
                                 total_items += len(all_items)
                                 items_processed += len(items_to_process)
@@ -1824,9 +1873,16 @@ class ProgramRunner:
                             if cutoff_date:
                                 items_filtered_date = []
                                 for item in all_items:
-                                    release_date = item.get('release_date')
+                                    # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                    if item.get('media_type') == 'movie':
+                                        release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                    else:
+                                        release_date = item.get('release_date')
+                                    
                                     if not release_date or release_date.lower() == 'unknown':
-                                        items_filtered_date.append(item)
+                                        # Skip items with unknown release dates when cutoff date is set
+                                        cutoff_date_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to unknown release date (cutoff date is set)")
                                         continue
                                     try:
                                         item_date = datetime.strptime(release_date, '%Y-%m-%d').date()
@@ -1836,35 +1892,21 @@ class ProgramRunner:
                                             cutoff_date_skipped += 1
                                             logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to cutoff date: {release_date} < {cutoff_date}")
                                     except ValueError:
-                                        # If we can't parse the date, allow the item through
-                                        items_filtered_date.append(item)
-                                        logging.debug(f"Item {item.get('title', 'Unknown')} has invalid date format: {release_date}, allowing through")
-                                    all_items = items_filtered_date
-                                    if cutoff_date_skipped > 0:
-                                        logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
+                                        # If we can't parse the date, skip the item when cutoff date is set
+                                        cutoff_date_skipped += 1
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to invalid date format: {release_date} (cutoff date is set)")
+                                all_items = items_filtered_date
+                                if cutoff_date_skipped > 0:
+                                    logging.debug(f"{source}: Skipped {cutoff_date_skipped} items due to cutoff date")
 
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
                             add_wanted_items(all_items, versions_dict)
                             
-                            # Update cache for items that actually made it through all filtering
-                            # Only cache items that were successfully processed and added
+                            # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                            # This prevents reprocessing the same items repeatedly
                             for item_raw in items_to_process_raw:
-                                # Find the corresponding processed item to check if it made it through
-                                item_title = item_raw.get('title', '')
-                                item_year = item_raw.get('year', '')
-                                item_media_type = item_raw.get('media_type', '')
-                                
-                                # Check if this item made it through all filtering by looking for it in all_items
-                                item_made_it_through = any(
-                                    processed_item.get('title') == item_title and 
-                                    processed_item.get('year') == item_year and
-                                    processed_item.get('media_type') == item_media_type
-                                    for processed_item in all_items
-                                )
-                                
-                                if item_made_it_through:
-                                    update_cache_for_item(item_raw, source, source_cache)
+                                update_cache_for_item(item_raw, source, source_cache)
                             
                             total_items += len(all_items)
                             items_processed += len(items_to_process)
@@ -1882,6 +1924,8 @@ class ProgramRunner:
                     stats_msg += f", skipped {genre_skipped} items due to excluded genres"
                 if cutoff_date_skipped > 0:
                     stats_msg += f", skipped {cutoff_date_skipped} items due to cutoff date"
+                if list_length_limit > 0:
+                    stats_msg += f", list length limited to {list_length_limit}"
                 stats_msg += ")"
                 logging.info(stats_msg)
             else:
@@ -2084,9 +2128,15 @@ class ProgramRunner:
             # Pass the is_restart parameter to run_initialization
             self.run_initialization(is_restart=getattr(self, '_is_restart', False))
 
-            # *** START EDIT: Simplified run loop ***
+            # *** START EDIT: Simplified run loop with CPU monitoring ***
             # The main loop now just keeps the script alive while the scheduler runs.
             # We can add checks here if needed (e.g., monitoring scheduler health).
+            
+            # CPU monitoring variables
+            cpu_monitor_start = time.time()
+            cpu_monitor_interval = 300.0  # Log CPU usage every 5 minutes
+            loop_count = 0
+            
             while self._running:
                 try:
                     # Check scheduler status periodically
@@ -2135,7 +2185,54 @@ class ProgramRunner:
                         self.resume_queue()
                     # ... (sleep) ...
 
-                    # --- START EDIT: Fetch and use main loop sleep setting ---
+                    # --- START EDIT: CPU monitoring and main loop sleep ---
+                    loop_count += 1
+                    current_time = time.time()
+                    
+                    # Log CPU usage every 5 seconds
+                    if current_time - cpu_monitor_start >= cpu_monitor_interval:
+                        try:
+                            import psutil
+                            cpu_percent = psutil.cpu_percent(interval=0.1)
+                            memory_percent = psutil.virtual_memory().percent
+                            process = psutil.Process()
+                            process_cpu_percent = process.cpu_percent()
+                            process_memory_mb = process.memory_info().rss / 1024 / 1024
+                            
+                            logging.info(f"CPU MONITORING - Loop #{loop_count}: "
+                                        f"System CPU: {cpu_percent:.1f}%, "
+                                        f"Process CPU: {process_cpu_percent:.1f}%, "
+                                        f"Memory: {memory_percent:.1f}% ({process_memory_mb:.1f}MB), "
+                                        f"Loop rate: {loop_count / (current_time - cpu_monitor_start + cpu_monitor_interval):.1f} loops/sec")
+                            
+                            # If system CPU is high but our process isn't using much, log top processes
+                            if cpu_percent > 50 and process_cpu_percent < 5:
+                                try:
+                                    top_processes = []
+                                    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+                                        try:
+                                            if proc.info['cpu_percent'] > 5:  # Only show processes using >5% CPU
+                                                top_processes.append(proc.info)
+                                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                            pass
+                                    
+                                    # Sort by CPU usage and show top 5
+                                    top_processes.sort(key=lambda x: x['cpu_percent'], reverse=True)
+                                    if top_processes:
+                                        logging.info("TOP CPU PROCESSES (system high, app low):")
+                                        for proc in top_processes[:5]:
+                                            logging.info(f"  PID {proc['pid']}: {proc['name']} - CPU: {proc['cpu_percent']:.1f}%, Memory: {proc['memory_percent']:.1f}%")
+                                except Exception as e:
+                                    logging.error(f"Error getting top processes: {e}")
+                        except ImportError:
+                            logging.info(f"CPU MONITORING - Loop #{loop_count}: psutil not available")
+                        except Exception as e:
+                            logging.error(f"CPU MONITORING - Error getting CPU stats: {e}")
+                        
+                        # Reset monitoring
+                        cpu_monitor_start = current_time
+                        loop_count = 0
+                    
                     # Main loop sleep
                     try:
                         main_loop_sleep_seconds = float(get_setting('Queue', 'main_loop_sleep_seconds', 5.0))
@@ -2352,7 +2449,7 @@ class ProgramRunner:
 
 
         # --- Determine idle state based on Scraping/Adding queues ---
-        # ... (existing idle check logic) ...
+        # ... (rest of the code remains unchanged) ...
 
         with self.scheduler_lock:
             # Get the *currently configured* intervals (could be default or custom)
@@ -3812,8 +3909,8 @@ class ProgramRunner:
             logging.error(f"Error verifying symlinked files: {e}")
 
     def task_verify_plex_removals(self):
-        """Verify that files marked for removal are actually gone from Plex using title-based search."""
-        logging.info("[TASK] Running Plex removal verification task.")
+        """Verify that files marked for removal are actually gone from the configured media server (Plex or Jellyfin/Emby) using title-based search."""
+        logging.info("[TASK] Running media server removal verification task.")
 
         # Determine Plex connection details based on settings
         plex_url, plex_token = None, None
@@ -4668,7 +4765,8 @@ class ProgramRunner:
         logging.info("Initiating scheduled library size cache refresh task.")
         try:
             provider = get_debrid_provider()
-            if isinstance(provider, RealDebridProvider):
+            # Use provider capability or method presence instead of concrete type
+            if hasattr(provider, 'get_total_library_size'):
                 logging.info("Background task: Refreshing library size cache via Debrid provider...")
                 # The provider's get_total_library_size is async, so we run it in a new event loop.
                 # This call is expected to fetch the size and update the cache file itself.
@@ -4678,7 +4776,7 @@ class ProgramRunner:
                 else:
                     logging.warning(f"Background task: Library size cache refresh via provider failed or returned error. Result: {calculated_size}")
             else:
-                logging.info("Background task: Library size cache refresh skipped (provider is not RealDebrid or not configured).")
+                logging.info("Background task: Library size cache refresh skipped (provider does not implement total size API or not configured).")
         except ProviderUnavailableError:
             logging.warning("Background task: Debrid provider unavailable during library size cache refresh.")
         except RuntimeError as e_runtime:
@@ -4714,6 +4812,60 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f"Error during scheduled media file analysis and repair: {e}", exc_info=True)
+    # --- END EDIT ---
+
+    # --- START EDIT: Add bulk subtitle processing task ---
+    def task_process_bulk_subtitles(self):
+        """Scheduled task to process bulk subtitles using the bulk_subs.sh script."""
+        import subprocess
+        import os
+        
+        logging.info("Initiating scheduled bulk subtitle processing task.")
+        
+        try:
+            # Get the collection type setting to determine the scan directory
+            from utilities.settings import get_setting
+            collection_type = get_setting('File Management', 'file_collection_management', 'Plex')
+            
+            if collection_type == 'Symlinked/Local':
+                # For symlinked/local, use the symlinks directory
+                scan_dir = get_setting('File Management', 'symlinked_files_path', '')
+                if not os.path.exists(scan_dir):
+                    logging.warning(f"Symlinks directory not found: {scan_dir}")
+                    return
+            else:
+                logging.warning(f"Unsupported collection type '{collection_type}' for bulk subtitle processing.")
+                return
+
+            # Get the script path
+            script_path = os.path.abspath('utilities/bulk_subs.sh')
+            if not os.path.exists(script_path):
+                logging.error(f"Bulk subtitle script not found: {script_path}")
+                return
+
+            # Make sure the script is executable
+            os.chmod(script_path, 0o755)
+
+            # Run the bulk subtitle processing script with a limit of 200 files
+            max_files = 200
+            logging.info(f"Running bulk subtitle processing on {scan_dir} (max {max_files} files)")
+            
+            cmd = [script_path, scan_dir, str(max_files)]
+            # Don't capture output to allow full visibility of the subtitle processing
+            result = subprocess.run(
+                cmd, 
+                timeout=3600  # 1 hour timeout
+            )
+            
+            if result.returncode == 0:
+                logging.info("Bulk subtitle processing completed successfully.")
+            else:
+                logging.warning(f"Bulk subtitle processing finished with return code: {result.returncode}")
+            
+        except subprocess.TimeoutExpired:
+            logging.error("Bulk subtitle processing timed out after 1 hour")
+        except Exception as e:
+            logging.error(f"Error during bulk subtitle processing: {e}", exc_info=True)
     # --- END EDIT ---
 
     # *** START EDIT: Add the new long-running task method ***

@@ -135,13 +135,13 @@ class MetadataManager:
 
         now = datetime.now(_get_local_timezone())
         
-        # Add random variation to the staleness threshold
-        day_variation = random.choice([-5, -3, -1, 1, 3, 5])
-        hour_variation = random.randint(-12, 12)
+        # Override to much longer periods: enforce a higher minimum base and wider variation
+        min_base_days = 90
+        base_days = max(settings.staleness_threshold, min_base_days)
+        day_variation = random.choice([0, 7, 14, 21, 30])
+        hour_variation = random.randint(-24, 24)
         
-        adjusted_threshold = max(settings.staleness_threshold + day_variation, 1)
-        
-        stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
+        stale_threshold = timedelta(days=base_days + day_variation, hours=hour_variation)
         age = now - last_updated
         is_stale = age > stale_threshold
 
@@ -150,7 +150,7 @@ class MetadataManager:
                 f"Staleness check: last_updated={last_updated.isoformat()}, "
                 f"age={age.days}d {age.seconds//3600}h, "
                 f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
-                f"(base={settings.staleness_threshold}d, variation={day_variation}d {hour_variation}h) "
+                f"(effective_base={base_days}d, variation={day_variation}d {hour_variation}h) "
                 f"-> stale"
             )
                 
@@ -160,10 +160,11 @@ class MetadataManager:
     def is_tmdb_mapping_stale(last_updated):
         """
         Check if a TMDB to IMDB mapping is stale and should be refreshed.
-        Uses a longer threshold than regular metadata since ID mappings change less frequently.
+        Uses a longer base period with wider hour variation for TMDB conversions.
         """
         from metadata.metadata import _get_local_timezone
-
+        import random
+        
         if last_updated is None:
             logger.debug("TMDB mapping has no last_updated timestamp, considering stale")
             return True
@@ -174,13 +175,12 @@ class MetadataManager:
 
         now = datetime.now(_get_local_timezone())
         
-        # Use a longer threshold for ID mappings (30 days base + variation)
-        # ID mappings change less frequently than metadata, so we can cache them longer
-        base_threshold = 30  # days
-        day_variation = random.choice([-7, -3, 0, 3, 7])
-        hour_variation = random.randint(-24, 24)
+        # Use longer base period for TMDB conversions as a fallback safety net
+        base_threshold_variation = random.choice([-10, -5, 0, 5, 10])
+        base_threshold = 21 + base_threshold_variation  # days
+        hour_variation = random.choice([-24, -12, 0, 12, 24])  # up to ±12 hours
         
-        adjusted_threshold = max(base_threshold + day_variation, 7)  # Minimum 7 days
+        adjusted_threshold = max(base_threshold, 1)  # Minimum 1 day
         
         stale_threshold = timedelta(days=adjusted_threshold, hours=hour_variation)
         age = now - last_updated
@@ -191,7 +191,7 @@ class MetadataManager:
                 f"TMDB mapping staleness check: last_updated={last_updated.isoformat()}, "
                 f"age={age.days}d {age.seconds//3600}h, "
                 f"threshold={stale_threshold.days}d {stale_threshold.seconds//3600}h "
-                f"(base={base_threshold}d, variation={day_variation}d {hour_variation}h) "
+                f"(base={base_threshold}d, variation={hour_variation}h) "
                 f"-> stale"
             )
                 
@@ -320,7 +320,7 @@ class MetadataManager:
     @staticmethod
     def refresh_seasons(imdb_id, session: SqlAlchemySession): # Expects a session now
         trakt = TraktMetadata()
-        seasons_data, source = trakt.get_show_seasons_and_episodes(imdb_id)
+        seasons_data, source = trakt.get_show_seasons_and_episodes(imdb_id, include_specials=True)
         if seasons_data:
             # Pass session down - assumes add_or_update handles commit/rollback based on session presence
             MetadataManager.add_or_update_seasons_and_episodes(imdb_id, seasons_data, session=session)
@@ -568,7 +568,7 @@ class MetadataManager:
         if item_type == 'show':
             logger.info(f"Fetching detailed season/episode data for show {imdb_id}")
             # Use the main TraktMetadata instance to potentially reuse cached data
-            seasons_data, seasons_source = trakt.get_show_seasons_and_episodes(imdb_id)
+            seasons_data, seasons_source = trakt.get_show_seasons_and_episodes(imdb_id, include_specials=True)
             if seasons_data and isinstance(seasons_data, dict):
                  logger.info(f"Successfully fetched detailed seasons data for {imdb_id}")
                  data_to_save['seasons'] = seasons_data
@@ -647,8 +647,21 @@ class MetadataManager:
                  return _refresh_logic(session_context)
             else: # Create local session
                  with session_context as local_session:
-                     # _refresh_logic will call _update_metadata_atomic, which handles commit/rollback for local session
-                     return _refresh_logic(local_session)
+                     # Call _refresh_logic to get the refreshed data
+                     result = _refresh_logic(local_session)
+                     if result is not None:
+                         # Explicitly commit the local session to ensure updated_at is saved
+                         try:
+                             local_session.commit()
+                             logger.info(f"Successfully committed local session for {imdb_id} - updated_at timestamp should now be saved to database.")
+                         except Exception as commit_error:
+                             logger.error(f"Failed to commit local session for {imdb_id}: {commit_error}", exc_info=True)
+                             local_session.rollback()
+                             return None
+                     else:
+                         logger.warning(f"_refresh_logic returned None for {imdb_id}, not committing local session.")
+                         local_session.rollback()
+                     return result
         except Exception as e:
              # Catch potential flush error or others from _refresh_logic
              logger.error(f"Error during refresh logic execution for {imdb_id}: {e}", exc_info=True)
@@ -779,16 +792,10 @@ class MetadataManager:
 
                     item.updated_at = current_time
 
-                    # Commit or rollback local transaction
-                    if seasons_update_success:
-                        logger.info(f"Attempting commit for local atomic update {imdb_id}...")
-                        local_session.commit()
-                        logger.info(f"Successfully committed local atomic update for {item.title} ({item.imdb_id})")
-                        return True
-                    else:
-                        logger.error(f"Rolling back local atomic update for {imdb_id} due to season/episode processing failure or invalid season data.")
-                        # Rollback happens automatically via 'with' block on error or if we don't commit
-                        return False
+                    # ** IMPORTANT: DO NOT COMMIT OR ROLLBACK HERE **
+                    # refresh_metadata now handles commit/rollback for local sessions
+                    logger.debug(f"Atomic update logic finished for {imdb_id} (local session). Returning success status: {seasons_update_success}")
+                    return seasons_update_success
         except Exception as e:
             logger.error(f"Error in _update_metadata_atomic for item {imdb_id}: {str(e)}", exc_info=True)
             # If session was provided, DO NOT rollback here, re-raise
@@ -1150,6 +1157,10 @@ class MetadataManager:
 
     @staticmethod
     def get_release_dates(imdb_id, session: Optional[SqlAlchemySession] = None):
+        """
+        Get release dates for a movie. Handles 500 errors gracefully by returning None
+        when Trakt API returns 500 errors (which are now retried in background threads).
+        """
         session_context = session if session else DbSession()
         try:
             if session: # Use provided session
@@ -1189,6 +1200,11 @@ class MetadataManager:
 
     @staticmethod
     def refresh_release_dates(imdb_id, session: SqlAlchemySession): # Expects session
+        """
+        Refresh release dates for a movie. If Trakt API returns 500 errors,
+        the request will be retried in background threads and this method
+        will receive None, which it handles gracefully.
+        """
         trakt = TraktMetadata()
         
         item = session.query(Item).filter_by(imdb_id=imdb_id).first()
@@ -1273,7 +1289,7 @@ class MetadataManager:
                         logger.debug(f"Using cached TMDB mapping for {tmdb_id}: {cached_mapping.imdb_id}")
                         return cached_mapping.imdb_id, 'battery'
 
-                logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt")
+                logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt with media_type: {media_type}")
                 trakt = TraktMetadata()
                 imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
 
@@ -1302,7 +1318,7 @@ class MetadataManager:
                             logger.debug(f"Using cached TMDB mapping for {tmdb_id}: {cached_mapping.imdb_id}")
                             return cached_mapping.imdb_id, 'battery'
 
-                    logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt")
+                    logger.info(f"Fetching fresh TMDB mapping for {tmdb_id} from Trakt with media_type: {media_type}")
                     trakt = TraktMetadata()
                     imdb_id, source = trakt.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
 
@@ -1558,7 +1574,7 @@ class MetadataManager:
                              return refreshed_data, "trakt (refreshed)"
                          else:
                              logger.warning(f"Refresh failed or save failed for {imdb_id}. Returning potentially stale data from Metadata table.")
-                             metadata['seasons'] = {} # Indicate seasons are missing/stale
+                             metadata['seasons'] = MetadataManager.format_seasons_data(item.seasons)
                              return metadata, "battery (stale, refresh failed)"
                      else:
                          # Data is fresh, format from relational
@@ -1664,7 +1680,7 @@ class MetadataManager:
                                  return refreshed_data, "trakt (refreshed)"
                              else:
                                  logger.warning(f"Refresh failed or save failed for {imdb_id}. Returning potentially stale data from Metadata table.")
-                                 metadata['seasons'] = {}
+                                 metadata['seasons'] = MetadataManager.format_seasons_data(item.seasons)
                                  return metadata, "battery (stale, refresh failed)"
                          else:
                              # Data is fresh, format from relational
@@ -1980,6 +1996,12 @@ class MetadataManager:
                  # ... process items ...
                  for item in items:
                      item_metadata = {}
+                     # Handle timezone for updated_at timestamp
+                     item_updated_at = item.updated_at
+                     if item_updated_at and item_updated_at.tzinfo is None:
+                         from metadata.metadata import _get_local_timezone
+                         item_updated_at = item_updated_at.replace(tzinfo=_get_local_timezone())
+                     item_metadata['item_updated_at'] = item_updated_at
                      for m in item.item_metadata:
                          try:
                              try: item_metadata[m.key] = json.loads(m.value)
@@ -2006,6 +2028,12 @@ class MetadataManager:
                       # ... process items ...
                       for item in items:
                           item_metadata = {}
+                          # Handle timezone for updated_at timestamp
+                          item_updated_at = item.updated_at
+                          if item_updated_at and item_updated_at.tzinfo is None:
+                              from metadata.metadata import _get_local_timezone
+                              item_updated_at = item_updated_at.replace(tzinfo=_get_local_timezone())
+                          item_metadata['item_updated_at'] = item_updated_at
                           for m in item.item_metadata:
                               try:
                                   try: item_metadata[m.key] = json.loads(m.value)
@@ -2049,6 +2077,12 @@ class MetadataManager:
                  for item in items:
                       # --- Define and populate item_metadata dict ---\
                       item_metadata = {}
+                      # Handle timezone for updated_at timestamp
+                      item_updated_at = item.updated_at
+                      if item_updated_at and item_updated_at.tzinfo is None:
+                          from metadata.metadata import _get_local_timezone
+                          item_updated_at = item_updated_at.replace(tzinfo=_get_local_timezone())
+                      item_metadata['item_updated_at'] = item_updated_at
                       has_xem = False
                       tvdb_id = None
                       for m in item.item_metadata:
@@ -2160,6 +2194,12 @@ class MetadataManager:
                       for item in items:
                           # --- Define and populate item_metadata dict ---\
                           item_metadata = {}
+                          # Handle timezone for updated_at timestamp
+                          item_updated_at = item.updated_at
+                          if item_updated_at and item_updated_at.tzinfo is None:
+                              from metadata.metadata import _get_local_timezone
+                              item_updated_at = item_updated_at.replace(tzinfo=_get_local_timezone())
+                          item_metadata['item_updated_at'] = item_updated_at
                           has_xem = False
                           tvdb_id = None
                           for m in item.item_metadata:

@@ -83,7 +83,8 @@ def authorize_friend():
             'verification_url': device_data['verification_url'],
             'friend_name': request.form.get('friend_name', 'Friend'),
             'client_id': client_id,
-            'client_secret': client_secret
+            'client_secret': client_secret,
+            'expires_at': int((datetime.now() + timedelta(seconds=device_data['expires_in'])).timestamp())
         }
         
         state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
@@ -123,7 +124,16 @@ def check_auth_status(auth_id):
                 'friend_name': state.get('friend_name')
             })
         
+        # Check if device code has expired
+        if state.get('expires_at') and datetime.now().timestamp() > state['expires_at']:
+            return jsonify({
+                'success': False,
+                'status': 'expired',
+                'error': 'Authorization code has expired. Please start a new authorization.'
+            }), 400
+        
         # Check with Trakt API
+        logging.info(f"Checking Trakt device token for auth_id: {auth_id}")
         response = requests.post(
             f"{TRAKT_API_URL}/oauth/device/token",
             json={
@@ -175,22 +185,46 @@ def check_auth_status(auth_id):
                 'username': state.get('username')
             })
         
-        # If pending, return pending status
-        elif response.status_code == 400 and 'pending' in response.text.lower():
-            return jsonify({
-                'success': True,
-                'status': 'pending',
-                'user_code': state.get('user_code'),
-                'verification_url': state.get('verification_url')
-            })
-        
-        # If expired or other error, return error
+        # Handle non-200 responses with better diagnostics
         else:
+            error_message = None
+            error_code = None
+            error_body_text = None
             try:
                 error_data = response.json()
-                error_message = error_data.get('error_description', 'Unknown error')
+                error_code = error_data.get('error')
+                error_message = error_data.get('error_description')
             except json.JSONDecodeError:
-                error_message = f"Error response from Trakt: {response.text}"
+                error_body_text = response.text or ''
+            
+            # Treat authorization pending and slow down as pending
+            # Also treat empty body 400 errors as pending (common when user hasn't authorized yet)
+            if response.status_code in (400, 401) and (
+                (error_code in ('authorization_pending', 'slow_down')) or
+                (response.text and 'pending' in response.text.lower()) or
+                (response.status_code == 400 and not error_body_text)  # Empty body 400 error
+            ):
+                return jsonify({
+                    'success': True,
+                    'status': 'pending',
+                    'user_code': state.get('user_code'),
+                    'verification_url': state.get('verification_url')
+                })
+            
+            # Build a meaningful error message
+            if not error_message:
+                if error_code:
+                    error_message = error_code.replace('_', ' ').title()
+                elif error_body_text:
+                    error_message = f"Error response from Trakt: {error_body_text}"
+                else:
+                    error_message = f"Unknown error from Trakt (HTTP {response.status_code})"
+            
+            # Log full context for diagnostics
+            logging.error(
+                f"Trakt device token error. HTTP {response.status_code}. "
+                f"Code: {error_code}. Message: {error_message}. Body: {error_body_text!r}"
+            )
             
             return jsonify({
                 'success': False,

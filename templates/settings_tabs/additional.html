@@ -60,23 +60,22 @@
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 step="0.1">
                     {% else %}
-                        <input type="{{ value.type }}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
+                        <input type="{% if value.sensitive or (section == 'TMDB' and key == 'api_key' and environment_mode != 'full') %}password{% else %}{{ value.type }}{% endif %}" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
                                value="{{ settings.get(section, {}).get(key, '') }}" class="settings-input"
                                data-section="{{ section }}" data-key="{{ key }}"
-                               {% if value.sensitive %}type="password"{% endif %}
+                               {% if section == 'TMDB' and key == 'api_key' and environment_mode != 'full' %}readonly disabled{% endif %}
                                {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
                         {% if key == 'content_source_priority' %}
-                        <div id="content-source-priority-container" class="content-source-priority">
+                        <!-- <div id="content-source-priority-container" class="content-source-priority" style="display: none;">
                             <p class="settings-description" style="margin-top: 5px;">
                                 <strong>Drag and drop to reorder enabled content sources:</strong>
                             </p>
                             <ul id="content-source-list" class="content-source-list">
-                                <!-- Content sources will be loaded here dynamically -->
                             </ul>
-                        </div>
+                        </div> -->
                         <style>
                             .content-source-priority {
                                 margin-top: 10px;
@@ -271,12 +270,22 @@
     </div>
     {% elif section == "Queue" %}
     <div class="settings-section">
+
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
             <span class="settings-toggle-icon">+</span>
         </div>
+
         <div class="settings-section-content">
+            <div class="settings-form-group">
+                <div class="settings-warning-text" style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; margin-bottom: 15px; display: block !important;">
+                    <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
+                    Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+                </div>
+            </div>
+
             {% for key, value in section_data.items() %}
+
                 {% if key != 'tab' and key != 'blacklist_duration' and key != 'item_process_delay_seconds' %}
                 <div class="settings-form-group">
                     <label for="additional-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -317,14 +326,13 @@
                     {% if value.description %}
                         <p class="settings-description">{{ value.description }}</p>
                         {% if key == 'content_source_priority' %}
-                        <div id="content-source-priority-container" class="content-source-priority">
+                        <!-- <div id="content-source-priority-container" class="content-source-priority">
                             <p class="settings-description" style="margin-top: 5px;">
                                 <strong>Drag and drop to reorder enabled content sources:</strong>
                             </p>
                             <ul id="content-source-list" class="content-source-list">
-                                <!-- Content sources will be loaded here dynamically -->
                             </ul>
-                        </div>
+                        </div> -->
                         <style>
                             .content-source-priority {
                                 margin-top: 10px;
@@ -384,7 +392,7 @@
                                 opacity: 1;
                             }
                         </style>
-                        <script>
+                        <!-- <script>
                             document.addEventListener('DOMContentLoaded', function() {
                                 const sourceList = document.getElementById('content-source-list');
                                 let draggingElement = null;
@@ -491,7 +499,7 @@
                                 // Load content sources when the page loads
                                 loadEnabledContentSources();
                             });
-                        </script>
+                        </script> -->
                         {% endif %}
                     {% endif %}
                 </div>
@@ -549,6 +557,48 @@
                    data-section="Debug" data-key="symlink_episode_template">
             <div id="symlink_episode_template_imdb_warning" class="settings-warning-text"></div>
             <p class="settings-description">Template for episode symlink filenames</p>
+        </div>
+
+        <!-- Template Tags Reference -->
+        <div class="settings-form-group" style="margin-top: 20px; padding: 15px; background-color: #252525; border-radius: 4px; border-left: 4px solid #4CAF50;">
+            <h5 class="settings-title" style="margin-bottom: 10px; color: #4CAF50;">Supported Template Tags:</h5>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 15px;">
+                <div>
+                    <h6 style="color: #ddd; margin-bottom: 8px; font-size: 0.95em;">Common Tags (Movies & Episodes):</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{title}</code> - Movie/show title</li>
+                        <li><code style="color: #7fddff;">{year}</code> - Release year</li>
+                        <li><code style="color: #7fddff;">{imdb_id}</code> - IMDb ID (recommended)</li>
+                        <li><code style="color: #7fddff;">{tmdb_id}</code> - TMDb ID</li>
+                        <li><code style="color: #7fddff;">{version}</code> - Quality/version info</li>
+                        <li><code style="color: #7fddff;">{original_filename}</code> - Original filename (no ext)</li>
+                        <li><code style="color: #7fddff;">{content_source}</code> - Content source</li>
+                        <li><code style="color: #7fddff;">{resolution}</code> - Video resolution</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h6 style="color: #ddd; margin-bottom: 8px; font-size: 0.95em;">Episode-Only Tags:</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{season_number}</code> - Season number</li>
+                        <li><code style="color: #7fddff;">{episode_number}</code> - Episode number</li>
+                        <li><code style="color: #7fddff;">{episode_title}</code> - Episode title</li>
+                        <li><code style="color: #7fddff;">{season_year}</code> - Year season first aired</li>
+                    </ul>
+                    
+                    <h6 style="color: #ddd; margin: 12px 0 8px 0; font-size: 0.95em;">Number Formatting:</h6>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.85em; line-height: 1.4;">
+                        <li><code style="color: #7fddff;">{season_number:02d}</code> - Zero-padded (01, 02)</li>
+                        <li><code style="color: #7fddff;">{episode_number:02d}</code> - Zero-padded (01, 02)</li>
+                    </ul>
+                </div>
+            </div>
+            
+            <p class="settings-description" style="margin: 0; font-size: 0.85em; color: #aaa;">
+                <i class="fas fa-info-circle" style="margin-right: 5px;"></i>
+                <strong>Important:</strong> Including <code>{imdb_id}</code> in templates is highly recommended for symlink recovery and media server integration.
+            </p>
         </div>
 
         <div class="settings-form-group">
@@ -700,19 +750,19 @@
             <input type="checkbox" id="additional-enable_subtitles" name="Subtitle Settings.enable_subtitles"
                    data-section="Subtitle Settings" data-key="enable_subtitles"
                    {% if settings.get('Subtitle Settings', {}).get('enable_subtitles') %}checked{% endif %}>
-            <p class="settings-description">Enable automatic subtitle downloading for media files using 'Subsource'. Requires Symlink File Management.</p>
+            <p class="settings-description">Enable automatic subtitle downloading for media files. Requires Symlink File Management. Activate with caution as the Subtitle downloader adds 2-3 seconds of overhead per file processed. Consider instead filtering for MULTI releases with the language of your preference.</p>
         </div>
 
         <!-- Hidden settings - no longer used with simplified downsub system -->
         <!-- only_current_file, apply_to_* settings removed as downsub now processes single files only -->
 
-        <!-- OpenSubtitles settings removed
         <div class="settings-form-group">
             <label for="additional-opensubtitles_username" class="settings-title">OpenSubtitles Username:</label>
-            <input type="text" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
+            <input type="{% if environment_mode != 'full' %}password{% else %}text{% endif %}" id="additional-opensubtitles_username" name="Subtitle Settings.opensubtitles_username"
                    value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_username', '') }}" 
                    class="settings-input"
-                   data-section="Subtitle Settings" data-key="opensubtitles_username">
+                   data-section="Subtitle Settings" data-key="opensubtitles_username"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
             <p class="settings-description">OpenSubtitles username for subtitle downloads</p>
         </div>
 
@@ -721,10 +771,10 @@
             <input type="password" id="additional-opensubtitles_password" name="Subtitle Settings.opensubtitles_password"
                    value="{{ settings.get('Subtitle Settings', {}).get('opensubtitles_password', '') }}" 
                    class="settings-input"
-                   data-section="Subtitle Settings" data-key="opensubtitles_password">
+                   data-section="Subtitle Settings" data-key="opensubtitles_password"
+                   {% if environment_mode != 'full' %}readonly disabled{% endif %}>
             <p class="settings-description">OpenSubtitles password for subtitle downloads</p>
         </div>
-        OpenSubtitles settings removed -->
 
         <div class="settings-form-group">
             <label for="additional-subtitle_languages" class="settings-title">Subtitle Languages:</label>
@@ -1348,12 +1398,12 @@ function initializeSymlinkPathExamples() {
         },
         tvEpisode: {
             title: 'Great TV Show', year: '2022', type: 'episode', imdb_id: 'tt9876543', version: 'WEB-DL', resolution: '1080p',
-            season_number: 1, episode_number: 2, episode_title: 'The Second Chapter',
+            season_number: 1, episode_number: 2, episode_title: 'The Second Chapter', season_year: '2022',
             genres: 'Drama,Sci-Fi', original_filename: 'Great.TV.Show.S01E02.WEB-DL.mkv', filled_by_file: 'dummy.mkv'
         },
         animeTvEpisode: {
             title: 'Cool Anime Series', year: '2021', type: 'episode', imdb_id: 'tt1231231', version: 'HDTV', resolution: '720p',
-            season_number: 2, episode_number: 10, episode_title: 'A New Foe Appears',
+            season_number: 2, episode_number: 10, episode_title: 'A New Foe Appears', season_year: '2022',
             genres: 'Animation,Anime,Action', original_filename: 'Cool.Anime.Series.S02E10.HDTV.mkv', filled_by_file: 'dummy.mkv'
         },
         documentaryMovie: {
@@ -1362,7 +1412,7 @@ function initializeSymlinkPathExamples() {
         },
         documentaryTvEpisode: {
             title: 'Planet Life', year: '2022', type: 'episode', imdb_id: 'tt8765432', version: 'BluRay', resolution: '2160p',
-            season_number: 1, episode_number: 3, episode_title: 'The Deep Oceans',
+            season_number: 1, episode_number: 3, episode_title: 'The Deep Oceans', season_year: '2022',
             genres: 'Documentary', original_filename: 'Planet.Life.S01E03.BluRay.mkv', filled_by_file: 'dummy.mkv'
         }
     };
@@ -1434,7 +1484,8 @@ function initializeSymlinkPathExamples() {
             resolution: item.resolution || '',
             season_number: item.season_number !== undefined ? formatNumber(item.season_number, 2) : '',
             episode_number: item.episode_number !== undefined ? formatNumber(item.episode_number, 2) : '',
-            episode_title: item.episode_title || ''
+            episode_title: item.episode_title || '',
+            season_year: item.season_year || item.year || ''
         };
         
         // Process template string: first format season/episode numbers if present in placeholders

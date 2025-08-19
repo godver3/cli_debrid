@@ -274,6 +274,35 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
     episodeResultsDiv.appendChild(gridContainer);
 }
 
+// Back button functionality
+function showBackButton() {
+    const backButtonContainer = document.getElementById('back-button-container');
+    if (backButtonContainer) {
+        backButtonContainer.style.display = 'block';
+    }
+}
+
+function hideBackButton() {
+    const backButtonContainer = document.getElementById('back-button-container');
+    if (backButtonContainer) {
+        backButtonContainer.style.display = 'none';
+    }
+}
+
+function goBackToTrending() {
+    // Hide back button
+    hideBackButton();
+    
+    // Show trending container and hide other sections
+    toggleResultsVisibility('get_trendingMovies');
+    
+    // Clear search form
+    const searchForm = document.querySelector('#search-form input[name="search_term"]');
+    if (searchForm) {
+        searchForm.value = '';
+    }
+}
+
 function toggleResultsVisibility(section) {
     const trendingContainer = document.getElementById('trendingContainer');
     const searchResult = document.getElementById('searchResult');
@@ -296,6 +325,8 @@ function toggleResultsVisibility(section) {
         // Only show season pack button for non-requester users
         seasonPackButton.style.display = isRequester ? 'none' : 'block';
         episodeResultsDiv.style.display = 'block';
+        // Show back button for episode results
+        showBackButton();
     }
     if (section === 'displaySearchResults') {
         trendingContainer.style.display = 'none';
@@ -303,6 +334,8 @@ function toggleResultsVisibility(section) {
         searchResults.style.display = 'block';
         seasonResults.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
+        // Show back button for search results
+        showBackButton();
     }
     if (section === 'get_trendingMovies') {
         trendingContainer.style.display = 'block';
@@ -310,7 +343,29 @@ function toggleResultsVisibility(section) {
         searchResults.style.display = 'none';
         seasonResults.style.display = 'none';
         episodeResultsDiv.style.display = 'none';
+        // Hide back button when showing trending
+        hideBackButton();
     }
+}
+
+// Helper function to format bitrate information
+function formatBitrate(bitrate) {
+    if (!bitrate || bitrate === 0) {
+        return 'Bitrate: N/A';
+    }
+    const bitrateKbps = parseFloat(bitrate);
+    const bitrateMbps = (bitrateKbps / 1000).toFixed(2);
+    return `Bitrate: ~${bitrateMbps} Mbps`;
+}
+
+// Helper function to format bitrate for inline display (mobile)
+function formatBitrateInline(bitrate) {
+    if (!bitrate || bitrate === 0) {
+        return 'N/A mbps';
+    }
+    const bitrateKbps = parseFloat(bitrate);
+    const bitrateMbps = (bitrateKbps / 1000).toFixed(1);
+    return `~${bitrateMbps} mbps`;
 }
 
 function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
@@ -340,11 +395,14 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 const torResDiv = document.createElement('div');
                 torResDiv.className = 'torresult' + (isFilteredOut ? ' filtered-out-item' : '');
                 
+                // Format bitrate for inline display in mobile
+                const bitrateInline = formatBitrateInline(torrent.bitrate);
+                
                 torResDiv.innerHTML = `
-                    <button ${isFilteredOut ? 'disabled style="cursor:default;"' : ''}>
+                    <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                        <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
+                        <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
                         <p class="torresult-item">${torrent.source || 'N/A'}</p>
                         <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                       torrent.cached === 'No' ? 'not-cached' :
@@ -353,16 +411,33 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     </div>
                     </button>             
                 `;
-                if (!isFilteredOut) {
-                    torResDiv.onclick = function() {
-                        const torrentData = {
-                            title: title, year: year, version: version, media_type: mediaType,
-                            season: season || null, episode: episode || null, tmdb_id: mediaId,
-                            genres: genre_ids, original_title: torrent.original_title // Pass original_title
-                        };
-                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                
+                // Add click handler for all items (both filtered and non-filtered)
+                torResDiv.onclick = function() {
+                    const torrentData = {
+                        title: title, year: year, version: version, media_type: mediaType,
+                        season: season || null, episode: episode || null, tmdb_id: mediaId,
+                        genres: genre_ids, original_title: torrent.original_title // Pass original_title
                     };
-                }
+                    
+                    if (isFilteredOut) {
+                        // Show confirmation dialog for filtered items
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        showPopup({
+                            type: POPUP_TYPES.CONFIRM,
+                            title: 'Add Filtered Item?',
+                            message: confirmationMessage,
+                            confirmText: 'Add Anyway',
+                            onConfirm: () => {
+                                addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                            }
+                        });
+                    } else {
+                        // Standard behavior for non-filtered items
+                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                    }
+                };
+                
                 gridContainer.appendChild(torResDiv);
             });
             overlayContent.appendChild(gridContainer);
@@ -411,6 +486,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 });
                 const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
+                // Create bitrate tooltip for desktop
+                const bitrateTooltip = formatBitrate(torrent.bitrate);
+
                 const row = document.createElement('tr');
                 if (isFilteredOut) {
                     row.classList.add('filtered-out-item'); 
@@ -422,24 +500,58 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             ${torrent.title || torrent.original_title || 'N/A'}
                         </div>
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: right;">${(torrent.size || 0).toFixed(1)} GB</td>
+                    <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
                     <td style="color: rgb(191 191 190);">${torrent.source || 'N/A'}</td>
                     <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                        ${!isFilteredOut ? `<button class="action-button add-button" onclick="addToRealDebrid('${torrent.magnet}', ${JSON.stringify({
-                            ...torrent, year, version: torrent.version || version, title,
-                            media_type: mediaType, season: season || null, episode: episode || null,
-                            tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title // Pass original_title
-                        }).replace(/"/g, '&quot;')})">Add</button>` : ''}
+                        <button class="action-button add-button">Add</button>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: center;">
-                         ${!isFilteredOut ? `<button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>` : ''}
+                         <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
                     </td>
                 `;
                 tbody.appendChild(row);
+
+                // Add event listeners to the buttons
+                const addButton = row.querySelector('.add-button');
+                const assignButton = row.querySelector('.assign-button');
+
+                if (isFilteredOut) {
+                    // Make the 'Add' button clickable for filtered items and show a confirmation
+                    addButton.onclick = function() {
+                        const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                        showPopup({
+                            type: POPUP_TYPES.CONFIRM,
+                            title: 'Add Filtered Item?',
+                            message: confirmationMessage,
+                            confirmText: 'Add Anyway',
+                            onConfirm: () => {
+                                addToRealDebrid(torrent.magnet, {
+                                    ...torrent, year, version: torrent.version || version, title,
+                                    media_type: mediaType, season: season || null, episode: episode || null,
+                                    tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
+                                });
+                            }
+                        });
+                    };
+
+                } else {
+                    // Standard behavior for non-filtered items
+                    addButton.onclick = function() {
+                        addToRealDebrid(torrent.magnet, {
+                            ...torrent, year, version: torrent.version || version, title,
+                            media_type: mediaType, season: season || null, episode: episode || null,
+                            tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
+                        });
+                    };
+
+                    assignButton.onclick = function() {
+                        window.location.href = assignUrl;
+                    };
+                }
             });
             table.appendChild(tbody);
             overlayContent.appendChild(table);
@@ -450,6 +562,9 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
 
     document.body.classList.add('modal-open');
     overlay.style.display = 'flex';
+    
+    // Hide back button when overlay is shown
+    hideBackButton();
     
     const closeButton = overlay.querySelector('.close-btn');
     if (closeButton) {
@@ -609,6 +724,13 @@ function closeOverlay() {
     if (overlayElement) {
         overlayElement.style.display = 'none';
         document.body.classList.remove('modal-open');
+        
+        // Show back button when overlay is closed (since overlay shows torrent results)
+        // Check if we're not on the trending page
+        const trendingContainer = document.getElementById('trendingContainer');
+        if (trendingContainer && trendingContainer.style.display === 'none') {
+            showBackButton();
+        }
     }
 }
 
@@ -650,6 +772,12 @@ document.addEventListener('DOMContentLoaded', async function() {
     const cancelScrapeButton = document.getElementById('cancelScrapeVersion');
     if (cancelScrapeButton) {
         cancelScrapeButton.addEventListener('click', closeScrapeVersionModal);
+    }
+    
+    // Set up back button
+    const backButton = document.getElementById('back-button');
+    if (backButton) {
+        backButton.addEventListener('click', goBackToTrending);
     }
     
     // Close modals when clicking outside
@@ -2485,6 +2613,28 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
 
             dropdown.addEventListener('change', function() {
                 const selectedItem = JSON.parse(this.value);
+                
+                // Extract the displayed season number from the option text for Lego Masters US
+                const optionText = this.options[this.selectedIndex].textContent;
+                let displayedSeasonNum = selectedItem.season_num;
+                
+                console.log('Season selection debug:', {
+                    optionText: optionText,
+                    originalSeasonNum: selectedItem.season_num,
+                    selectedItem: selectedItem
+                });
+                
+                // For Lego Masters US, extract season number from display text
+                if (optionText.startsWith('Season: ')) {
+                    const extractedSeason = parseInt(optionText.replace('Season: ', ''));
+                    if (!isNaN(extractedSeason)) {
+                        displayedSeasonNum = extractedSeason;
+                        console.log('Extracted season number from display text:', extractedSeason);
+                    }
+                }
+                
+                console.log('Final season number to be passed to selectEpisode:', displayedSeasonNum);
+                
                 if (tmdb_api_key_set) {
                     // Use the backdrop_path from the selected item or from the parent scope backdrop_path parameter
                     // Same for show_overview
@@ -2493,7 +2643,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                     
                     displaySeasonInfo(
                         selectedItem.title, 
-                        selectedItem.season_num, 
+                        displayedSeasonNum, // Use displayed season number
                         selectedItem.air_date, 
                         selectedItem.season_overview, 
                         selectedItem.poster_path, 
@@ -2503,9 +2653,9 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                         itemShowOverview
                     );
                 } else {
-                    displaySeasonInfoTextOnly(selectedItem.title, selectedItem.season_num);
+                    displaySeasonInfoTextOnly(selectedItem.title, displayedSeasonNum); // Use displayed season number
                 }
-                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, selectedItem.season_num, null, selectedItem.multi, genre_ids);
+                selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, displayedSeasonNum, null, selectedItem.multi, genre_ids); // Use displayed season number
             });
 
             seasonPackButton.onclick = function() {
@@ -2548,6 +2698,9 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
 
             // Show results
             resultsDiv.style.display = 'block';
+
+            // Show back button for season results
+            showBackButton();
 
             // Trigger initial selection
             if (dropdown.options.length > 0) {
@@ -2639,6 +2792,17 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
 
     // Get Allow Specials preference
     const allowSpecials = localStorage.getItem('allowSpecials') === 'true';
+
+    console.log('selectEpisode called with:', {
+        mediaId: mediaId,
+        title: title,
+        year: year,
+        mediaType: mediaType,
+        season: season,
+        episode: episode,
+        multi: multi,
+        genre_ids: genre_ids
+    });
 
     showLoadingState();
     const version = document.getElementById('version-select').value;

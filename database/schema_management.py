@@ -228,6 +228,15 @@ def migrate_schema():
         if 'location_basename' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN location_basename TEXT')
             logging.info("Successfully added location_basename column to media_items table.")
+        if 'ghostlisted' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ghostlisted BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added ghostlisted column to media_items table.")
+        if 'theatrical_release_date' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN theatrical_release_date DATE')
+            logging.info("Successfully added theatrical_release_date column to media_items table.")
+        if 'theatrical_release_date_checked' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN theatrical_release_date_checked BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added theatrical_release_date_checked column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -345,6 +354,7 @@ def migrate_schema():
                     verification_attempts INTEGER DEFAULT 0,
                     last_attempt TIMESTAMP,
                     permanently_failed BOOLEAN DEFAULT FALSE,
+                    failure_reason TEXT,
                     FOREIGN KEY (media_item_id) REFERENCES media_items (id)
                 )
             ''')
@@ -356,6 +366,84 @@ def migrate_schema():
             if 'permanently_failed' not in columns:
                 conn.execute('ALTER TABLE symlinked_files_verification ADD COLUMN permanently_failed BOOLEAN DEFAULT FALSE')
                 logging.info("Successfully added permanently_failed column to symlinked_files_verification table.")
+            if 'failure_reason' not in columns:
+                conn.execute('ALTER TABLE symlinked_files_verification ADD COLUMN failure_reason TEXT')
+                logging.info("Successfully added failure_reason column to symlinked_files_verification table.")
+
+        # Fix future timestamps in statistics_summary table
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='statistics_summary'")
+        if cursor.fetchone():
+            # Check if there are any future timestamps in the statistics_summary table
+            cursor.execute("""
+                SELECT COUNT(*) FROM statistics_summary 
+                WHERE last_updated > datetime('now', 'localtime')
+            """)
+            future_timestamps_count = cursor.fetchone()[0]
+            
+            if future_timestamps_count > 0:
+                logging.warning(f"Found {future_timestamps_count} statistics_summary entries with future timestamps. Fixing...")
+                
+                # Reset future timestamps to current time
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET last_updated = datetime('now', 'localtime')
+                    WHERE last_updated > datetime('now', 'localtime')
+                """)
+                
+                updated_rows = cursor.rowcount
+                logging.info(f"Fixed {updated_rows} statistics_summary entries with future timestamps.")
+            else:
+                logging.debug("No future timestamps found in statistics_summary table.")
+            
+            # Also check and fix other timestamp fields that might have future dates
+            cursor.execute("""
+                SELECT COUNT(*) FROM statistics_summary 
+                WHERE latest_movie_collected > datetime('now', 'localtime')
+                   OR latest_episode_collected > datetime('now', 'localtime')
+                   OR latest_upgraded > datetime('now', 'localtime')
+            """)
+            other_future_timestamps_count = cursor.fetchone()[0]
+            
+            if other_future_timestamps_count > 0:
+                logging.warning(f"Found {other_future_timestamps_count} statistics_summary entries with future timestamps in other fields. Fixing...")
+                
+                # Reset future timestamps to NULL (since we don't know the correct historical time)
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET latest_movie_collected = NULL
+                    WHERE latest_movie_collected > datetime('now', 'localtime')
+                """)
+                
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET latest_episode_collected = NULL
+                    WHERE latest_episode_collected > datetime('now', 'localtime')
+                """)
+                
+                cursor.execute("""
+                    UPDATE statistics_summary 
+                    SET latest_upgraded = NULL
+                    WHERE latest_upgraded > datetime('now', 'localtime')
+                """)
+                
+                logging.info("Fixed future timestamps in other statistics_summary fields.")
+            else:
+                logging.debug("No future timestamps found in other statistics_summary fields.")
+            
+            # Ensure statistics_summary table has at least one row
+            cursor.execute("SELECT COUNT(*) FROM statistics_summary")
+            row_count = cursor.fetchone()[0]
+            
+            if row_count == 0:
+                logging.info("Statistics_summary table is empty. Creating initial row...")
+                cursor.execute("""
+                    INSERT INTO statistics_summary 
+                    (id, total_movies, total_shows, total_episodes, last_updated)
+                    VALUES (1, 0, 0, 0, datetime('now', 'localtime'))
+                """)
+                logging.info("Created initial statistics_summary row.")
+            else:
+                logging.debug(f"Statistics_summary table has {row_count} row(s).")
 
         # Remove the existing index if it exists
         conn.execute('DROP INDEX IF EXISTS unique_media_item_file')
@@ -427,6 +515,17 @@ def verify_database():
     create_tables()
     migrate_schema()
     create_torrent_tracking_table()
+
+    # Ensure plex_removal_queue table exists (handles post-delete without restart)
+    try:
+        from .symlink_verification import (
+            create_plex_removal_queue_table,
+            migrate_plex_removal_database,
+        )
+        create_plex_removal_queue_table()
+        migrate_plex_removal_database()
+    except Exception as e:
+        logging.error(f"Error ensuring plex_removal_queue table: {e}")
     
     # Add statistics indexes
     from .migrations import add_statistics_indexes
@@ -527,7 +626,10 @@ def create_tables():
                 real_debrid_original_title TEXT,
                 rescrape_original_torrent_title TEXT,
                 force_priority BOOLEAN DEFAULT FALSE,
-                location_basename TEXT
+                location_basename TEXT,
+                ghostlisted BOOLEAN DEFAULT FALSE,
+                theatrical_release_date DATE,
+                theatrical_release_date_checked BOOLEAN DEFAULT FALSE
             )
         ''')
 
@@ -556,6 +658,7 @@ def create_tables():
                 verification_attempts INTEGER DEFAULT 0,
                 last_attempt TIMESTAMP,
                 permanently_failed BOOLEAN DEFAULT FALSE,
+                failure_reason TEXT,
                 FOREIGN KEY (media_item_id) REFERENCES media_items (id)
             )
         ''')

@@ -491,7 +491,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'),
                         item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'),
-                        item.get('physical_release_date'), early_release_flag
+                        item.get('physical_release_date'), item.get('theatrical_release_date'), early_release_flag
                     )
                     movies_to_insert.append(movie_data)
                     items_added += 1
@@ -529,8 +529,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         if movies_to_insert:
             conn.executemany('''
                 INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, early_release)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', movies_to_insert)
 
         if episodes_to_insert:

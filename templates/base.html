@@ -33,6 +33,7 @@
     <meta name="theme-color" content="#007bff">
     
     <!-- Stylesheets -->
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" as="style">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/base.css') }}">
     <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}"> -->
@@ -314,7 +315,9 @@
         .support-icon-link {
             color: white;
             font-size: 1.5em;
-            transition: transform 0.3s ease, color 0.3s ease;
+            transition: transform 0.3s ease, color 0.8s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .support-icon-link:hover {
@@ -331,6 +334,27 @@
 
         .support-icon-link.github:hover {
             color: #fe8e86; /* GitHub Sponsors color */
+        }
+
+        .support-icon-link.discord:hover {
+            color: #7289DA; /* Discord brand color */
+        }
+
+        /* Brand color classes for fade effect */
+        .support-icon-link.fade-github {
+            color: #fe8e86 !important; /* GitHub Sponsors color */
+        }
+
+        .support-icon-link.fade-patreon {
+            color: #FF424D !important; /* Patreon brand color */
+        }
+
+        .support-icon-link.fade-kofi {
+            color: #29ABE0 !important; /* Ko-fi brand color */
+        }
+
+        .support-icon-link.fade-discord {
+            color: #7289DA !important; /* Discord brand color */
         }
 
         /* Modal adjustments */
@@ -419,6 +443,168 @@
             margin-top: 15px;
             color: #aaa;
             font-style: italic;
+        }
+
+        .support-modal-actions {
+            margin-top: 20px;
+            text-align: center;
+        }
+
+        .never-show-again-btn {
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 16px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .never-show-again-btn:hover {
+            background-color: #5a6268;
+        }
+
+        .never-show-again-btn i {
+            font-size: 0.9em;
+        }
+
+        /* Mobile responsive styles for support modal */
+        @media (max-width: 768px) {
+            .support-modal {
+                margin: 5vh auto;
+                width: 95%;
+                max-width: 400px;
+            }
+
+            .support-modal-content {
+                padding: 15px;
+            }
+
+            .support-modal-content div[style*="text-align: center"] {
+                text-align: left !important;
+                margin-left: 0px !important;
+                margin-right: 0px !important;
+            }
+
+            .support-modal-content div[style*="text-align: right"] {
+                text-align: right !important;
+                margin-right: 0px !important;
+            }
+
+            .support-modal-content h3 {
+                font-size: 1.2em;
+                margin-bottom: 15px;
+            }
+
+            .support-modal-content p {
+                margin: 10px 0;
+                line-height: 1.5;
+                font-size: 0.95em;
+            }
+
+            .support-modal-content ul {
+                margin: 10px 0;
+                padding-left: 15px;
+            }
+
+            .support-modal-content li {
+                margin: 8px 0;
+                font-size: 0.9em;
+            }
+
+            .support-cta {
+                margin-top: 20px;
+            }
+
+            .patreon-button {
+                padding: 10px 16px;
+                font-size: 0.9em;
+                margin: 5px;
+                flex-direction: column;
+                gap: 5px;
+                min-width: 120px;
+            }
+
+            .patreon-button i {
+                font-size: 1.1em;
+            }
+
+            .support-note {
+                margin-top: 10px;
+                font-size: 0.85em;
+            }
+
+            .support-modal-actions {
+                margin-top: 15px;
+            }
+
+            .never-show-again-btn {
+                padding: 6px 12px;
+                font-size: 0.8em;
+                gap: 6px;
+            }
+
+            .never-show-again-btn i {
+                font-size: 0.8em;
+            }
+        }
+
+        /* Extra small mobile devices */
+        @media (max-width: 480px) {
+            .support-modal {
+                margin: 2vh auto;
+                width: 98%;
+                max-width: 350px;
+            }
+
+            .support-modal-content {
+                padding: 12px;
+            }
+
+            .support-modal-content h3 {
+                font-size: 1.1em;
+                margin-bottom: 12px;
+            }
+
+            .support-modal-content p {
+                font-size: 0.9em;
+                margin: 8px 0;
+            }
+
+            .support-modal-content li {
+                font-size: 0.85em;
+                margin: 6px 0;
+            }
+
+            .patreon-button {
+                padding: 8px 12px;
+                font-size: 0.8em;
+                margin: 3px;
+                min-width: 100px;
+            }
+
+            .patreon-button i {
+                font-size: 1em;
+            }
+
+            .support-note {
+                font-size: 0.8em;
+                margin-top: 8px;
+            }
+
+            .never-show-again-btn {
+                padding: 5px 10px;
+                font-size: 0.75em;
+                gap: 4px;
+            }
+
+            .never-show-again-btn i {
+                font-size: 0.75em;
+            }
         }
 
         .modal-controls {
@@ -805,13 +991,15 @@
                     const data = await response.json();
                     return {
                         hasSeenSupport: data.hasSeenSupport,
-                        pageViews: data.pageViews
+                        pageViews: data.pageViews,
+                        neverShowAgain: data.neverShowAgain
                     };
                 } catch (error) {
                     console.error('Error checking support modal status:', error);
                     return {
                         hasSeenSupport: false,
-                        pageViews: 0
+                        pageViews: 0,
+                        neverShowAgain: false
                     };
                 }
             }
@@ -829,7 +1017,8 @@
                     const data = await response.json();
                     return {
                         pageViews: data.pageViews,
-                        hasSeenSupport: data.hasSeenSupport
+                        hasSeenSupport: data.hasSeenSupport,
+                        neverShowAgain: data.neverShowAgain
                     };
                 } catch (error) {
                     console.error('Error incrementing page views:', error);
@@ -852,36 +1041,106 @@
                 }
             }
 
+            // Mark support modal as never show again via API
+            async function markSupportModalNeverShow() {
+                try {
+                    await fetch('/settings/api/support-modal-never-show', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({})
+                    });
+                } catch (error) {
+                    console.error('Error marking support modal as never show:', error);
+                }
+            }
+
             // Show support modal if conditions are met
             async function handleSupportModal() {
-                let hasPhalanxAccepted = await checkPhalanxStatus();
-                let { hasSeenSupport, pageViews } = await checkSupportModalStatus();
+                console.log('=== Support Modal Check Started ===');
+                
+                // Check if we're in a limited environment - if so, don't show support modal
+                const isLimitedEnvironment = document.body.getAttribute('data-limited-environment') === 'true';
+                if (isLimitedEnvironment) {
+                    console.log('❌ SUPPORT MODAL WILL NOT SHOW - Limited environment detected');
+                    console.log('=== Support Modal Check Completed ===');
+                    return;
+                }
+                
+                let { hasSeenSupport, pageViews, neverShowAgain } = await checkSupportModalStatus();
+                console.log('Initial support modal status:', {
+                    hasSeenSupport,
+                    pageViews,
+                    neverShowAgain
+                });
 
-                // Increment page views if not already seen
-                if (hasPhalanxAccepted && !hasSeenSupport) {
+                // Increment page views if not never show again
+                if (!neverShowAgain) {
+                    console.log('Incrementing page views (neverShowAgain is false)');
                     const result = await incrementPageViews();
                     if (result) {
                         pageViews = result.pageViews;
                         hasSeenSupport = result.hasSeenSupport;
+                        neverShowAgain = result.neverShowAgain;
+                        console.log('Updated values after page view increment:', {
+                            pageViews,
+                            hasSeenSupport,
+                            neverShowAgain
+                        });
                     }
+                } else {
+                    console.log('Skipping page view increment (neverShowAgain is true)');
                 }
 
-                console.log('Support modal conditions:', {
-                    hasPhalanxAccepted,
+                console.log('Final support modal conditions:', {
                     hasSeenSupport,
-                    pageViews
+                    pageViews,
+                    neverShowAgain
                 });
 
-                // Temporarily disable the support modal by adding '&& false'
-                if (hasPhalanxAccepted && !hasSeenSupport && pageViews >= 100 && false) {
+                // Calculate random chance (100% for testing, can be adjusted later)
+                const baseChance = 0.01;
+                const pageViewBonus = pageViews * 0.0005; // 0.05% increase per page view
+                const totalChance = Math.min(baseChance + pageViewBonus, 1.0); // Cap at 100%
+                
+                console.log('Chance calculation:', {
+                    baseChance,
+                    pageViews,
+                    pageViewBonus,
+                    totalChance
+                });
+                
+                // Generate random number and check if we should show the modal
+                const randomValue = Math.random();
+                const shouldShow = randomValue <= totalChance;
+
+                console.log('Support modal random check:', {
+                    randomValue,
+                    totalChance,
+                    shouldShow
+                });
+
+                // Show support modal if conditions are met
+                if (!neverShowAgain && shouldShow) {
+                    console.log('✅ SUPPORT MODAL WILL SHOW - Conditions met!');
                     console.log('Showing support modal in 2 seconds...');
                     setTimeout(() => {
-                        console.log('Attempting to show support modal now');
+                        console.log('🎉 Attempting to show support modal now');
                         supportModal.style.display = 'block';
                         document.body.classList.add('modal-open'); // Add class for support modal
                         markSupportModalSeen();
                     }, 2000);
+                } else {
+                    console.log('❌ SUPPORT MODAL WILL NOT SHOW');
+                    if (neverShowAgain) {
+                        console.log('Reason: neverShowAgain is true');
+                    } else if (!shouldShow) {
+                        console.log('Reason: Random chance check failed');
+                    }
                 }
+                
+                console.log('=== Support Modal Check Completed ===');
             }
 
             // Initialize support modal handling
@@ -896,6 +1155,19 @@
                 });
             } else {
                 console.warn('Support modal close button not found');
+            }
+
+            // Never Show Again Button Handler
+            const neverShowAgainBtn = document.getElementById('neverShowAgainBtn');
+            if (neverShowAgainBtn) {
+                neverShowAgainBtn.addEventListener('click', async function() {
+                    console.log('Never show again button clicked');
+                    await markSupportModalNeverShow();
+                    supportModal.style.display = 'none';
+                    document.body.classList.remove('modal-open');
+                });
+            } else {
+                console.warn('Never show again button not found');
             }
 
             // MDBList Popup Logic
@@ -961,123 +1233,36 @@
                         const mdblistPopupDismissed = localStorage.getItem('mdblistPopupDismissed') === 'true';
                         
                         if (!mdblistPopupDismissed) {
-                            // Create custom popup with invisible close button using notifications.js styling
-                            const popupOverlay = document.createElement('div');
-                            popupOverlay.className = 'universal-popup';
-                            popupOverlay.style.display = 'flex';
-                            
-                            // Add the CSS styles from notifications.js
-                            const style = document.createElement('style');
-                            style.textContent = `
-                                .universal-popup {
-                                    position: fixed;
-                                    top: 0;
-                                    left: 0;
-                                    width: 100%;
-                                    height: 100%;
-                                    background-color: rgba(0, 0, 0, 0.7);
-                                    display: flex;
-                                    justify-content: center;
-                                    align-items: center;
-                                    z-index: 1000;
-                                }
-                                .universal-popup .popup-content {
-                                    background-color: #2a2a2a;
-                                    padding: 35px;
-                                    border-radius: 8px;
-                                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-                                    max-width: 80%;
-                                    max-height: 80%;
-                                    overflow-y: auto;
-                                    color: #f4f4f4;
-                                    position: relative;
-                                }
-                                .universal-popup .popup-content h3 {
-                                    margin: 0 0 15px;
-                                    font-size: 1.2em;
-                                    text-align: center;
-                                }
-                                .universal-popup .popup-content p {
-                                    margin-bottom: 15px;
-                                }
-                                .universal-popup .popup-buttons {
-                                    display: flex;
-                                    justify-content: center;
-                                    gap: 10px;
-                                    margin-top: 20px;
-                                }
-                                .universal-popup button {
-                                    padding: 8px 15px;
-                                    border: none;
-                                    border-radius: 4px;
-                                    cursor: pointer;
-                                    font-size: 14px;
-                                    transition: background-color 0.3s;
-                                }
-                                .universal-popup button:hover {
-                                    opacity: 0.9;
-                                }
-                                .universal-popup .popup-content.confirm { border-left: 4px solid #2196F3; }
-                                .universal-popup .popup-content.confirm h3 { color: #2196F3; }
-                            `;
-                            document.head.appendChild(style);
-                            
-                            popupOverlay.innerHTML = `
-                                <div class="popup-content confirm" style="max-width: 500px;">
-                                    <h3>Add Default MDBLists</h3>
-                                    <p>Would you like to add some default MDBList sources to get started? These will add popular movies and shows to your wanted list.</p>
-                                    <p>You can always add or remove content sources later in Settings.</p>
-                                    <div class="popup-buttons">
-                                        <button id="mdblistConfirmBtn" style="background-color: #4CAF50; color: white;">Yes, Add Default Lists</button>
-                                        <button id="mdblistCancelBtn" style="background-color: #f44336; color: white;">No, Skip</button>
-                                    </div>
-                                    <span id="mdblistPopupClose" style="position: absolute; top: 10px; right: 15px; cursor: pointer; color: #aaa; font-size: 24px; font-weight: bold; line-height: 1; opacity: 0;">&times;</span>
-                                </div>
-                            `;
-                            
-                            document.body.appendChild(popupOverlay);
-                            
-                            // Add event listeners
-                            document.getElementById('mdblistPopupClose').addEventListener('click', () => {
-                                popupOverlay.remove();
-                                style.remove();
-                                // Save to localStorage so it doesn't show again for this user
-                                localStorage.setItem('mdblistPopupDismissed', 'true');
-                            });
-                            
-                            document.getElementById('mdblistConfirmBtn').addEventListener('click', async () => {
-                                const success = await addDefaultMDBLists();
-                                if (success) {
-                                    showPopup({
-                                        type: POPUP_TYPES.SUCCESS,
-                                        title: 'MDBLists Added',
-                                        message: 'Default MDBList sources have been added successfully. You can view and manage them in Settings > Content Sources.',
-                                        autoClose: 5000
-                                    });
-                                } else {
-                                    showPopup({
-                                        type: POPUP_TYPES.ERROR,
-                                        title: 'Error',
-                                        message: 'Failed to add default MDBList sources. You can add them manually in Settings > Content Sources.',
-                                        autoClose: 5000
-                                    });
-                                }
-                                popupOverlay.remove();
-                                style.remove();
-                                markMDBListPopupSeen();
-                            });
-                            
-                            document.getElementById('mdblistCancelBtn').addEventListener('click', () => {
-                                popupOverlay.remove();
-                                style.remove();
-                                markMDBListPopupSeen();
-                            });
-                            
-                            // Close on outside click
-                            popupOverlay.addEventListener('click', (e) => {
-                                if (e.target === popupOverlay) {
-                                    popupOverlay.remove();
-                                    style.remove();
+                            showPopup({
+                                type: POPUP_TYPES.CONFIRM,
+                                title: 'Add Default MDBLists',
+                                message: 'Would you like to add some default MDBList sources to get started? These will add popular movies and shows to your wanted list.<br><br>You can always add or remove content sources later in Settings.',
+                                confirmText: 'Yes, Add Default Lists',
+                                cancelText: 'No, Skip',
+                                hiddenCloseButton: true,
+                                onConfirm: async () => {
+                                    const success = await addDefaultMDBLists();
+                                    if (success) {
+                                        showPopup({
+                                            type: POPUP_TYPES.SUCCESS,
+                                            title: 'MDBLists Added',
+                                            message: 'Default MDBList sources have been added successfully. You can view and manage them in Settings > Content Sources.',
+                                            autoClose: 5000
+                                        });
+                                    } else {
+                                        showPopup({
+                                            type: POPUP_TYPES.ERROR,
+                                            title: 'Error',
+                                            message: 'Failed to add default MDBList sources. You can add them manually in Settings > Content Sources.',
+                                            autoClose: 5000
+                                        });
+                                    }
+                                    markMDBListPopupSeen();
+                                },
+                                onCancel: () => {
+                                    markMDBListPopupSeen();
+                                },
+                                onHiddenClose: () => {
                                     // Save to localStorage so it doesn't show again for this user
                                     localStorage.setItem('mdblistPopupDismissed', 'true');
                                 }
@@ -1320,6 +1505,47 @@
                 });
             })();
             /* --- End Disable Evil Version Button Logic --- */
+
+            /* --- Support Icons Color Fade Effect --- */
+            (function() {
+                const supportIcons = document.querySelectorAll('.support-icon-link');
+                if (supportIcons.length === 0) return;
+
+                const brandColors = ['fade-github', 'fade-patreon', 'fade-kofi', 'fade-discord'];
+
+                function triggerColorFade() {
+                    // Randomly select one or two icons to fade
+                    const iconsToFade = Math.random() < 0.5 ? 1 : 2;
+                    const shuffledIcons = Array.from(supportIcons).sort(() => Math.random() - 0.5);
+                    
+                    for (let i = 0; i < Math.min(iconsToFade, supportIcons.length); i++) {
+                        const icon = shuffledIcons[i];
+                        // Randomly select a brand color
+                        const randomColor = brandColors[Math.floor(Math.random() * brandColors.length)];
+                        
+                        // Add the fade class
+                        icon.classList.add(randomColor);
+                        
+                        // Remove fade class after animation completes (1.5 seconds total)
+                        setTimeout(() => {
+                            icon.classList.remove(randomColor);
+                        }, 1500);
+                    }
+                }
+
+                // Trigger color fade every 10-20 seconds randomly
+                function scheduleNextColorFade() {
+                    const delay = Math.random() * 10000 + 10000; // 10-20 seconds
+                    setTimeout(() => {
+                        triggerColorFade();
+                        scheduleNextColorFade();
+                    }, delay);
+                }
+
+                // Start the color fade cycle after a short initial delay
+                setTimeout(scheduleNextColorFade, 4000);
+            })();
+            /* --- End Support Icons Color Fade Effect --- */
         });
     </script>
 </head>
@@ -1328,6 +1554,7 @@
       data-program-status="{{ get_program_status() }}" 
       data-is-onboarding="{{ 'true' if is_onboarding else 'false' }}"
       data-rate-limited="{{ 'true' if is_rate_limited else 'false' }}"
+      data-limited-environment="{{ 'true' if is_limited_environment() else 'false' }}"
       data-notifications-disabled="false">
     
     <header>
@@ -1386,6 +1613,7 @@
                         ('root.root', 'Home'),
                         ('scraper.index', 'Add Media'),
                         ('queues.index', 'Queues'),
+                        ('program_operation.task_timings', 'Task Manager'),
                         ('statistics.calendar_view', 'Calendar'),
                         ('wiki', 'Wiki', 'https://github.com/godver3/cli_debrid/wiki')
                     ],
@@ -1394,8 +1622,8 @@
                         ('settings.index', 'Settings'),
                         ('database.index', 'Database'),
                         ('database.phalanxdb_status', 'Phalanx DB'),
-                        ('performance.performance_dashboard', 'Performance Dashboard'),
-                        ('torrent_status.torrent_status', 'Torrent Status'),
+                        ('performance.performance_dashboard', 'Performance Dashboard')] + 
+                        ([] if is_limited_environment() else [('torrent_status.torrent_status', 'Torrent Status')]) + [
                         ('connections.index', 'Connections'),
                         ('api_summary.index', 'API Summary'),
                         ('real_time_api.index', 'Real Time API'),
@@ -1405,12 +1633,12 @@
                         ('scraper.scraper_tester', 'Tester'),
                         ('debug.debug_functions', 'Debug'),
                         ('database.reverse_parser', 'R. Parser'),
-                        ('program_operation.task_timings', 'Task Manager'),
                         ('magnet.assign_magnet', 'M. Assign'),
                         ('debug.manual_blacklist', 'M. Blacklist'),
                         ('debug.torrent_tracking', 'T. Tracker'),
                         ('trakt_friends.manage_friends', 'Trakt Friends'),
-                        ('user_token.collect_tokens_page', 'Plex User Token M.')
+                        ('user_token.collect_tokens_page', 'Plex User Token M.'),
+                        ('symlink_tools.index', 'Symlink Tools')
                     ]
                 } %}
                 
@@ -1653,6 +1881,7 @@
 
     <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
@@ -1668,16 +1897,18 @@
             </div>
             <div class="modal-body">
                 <div class="support-modal-content">
-                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. To provide the best possible experience, we utilize:</p>
-                    <ul>
-                        <li>AI models for development</li>
-                        <li>Regular updates and optimizations</li>
-                    </ul>
+                    <div style="text-align: center; margin-left: 150px; margin-right: 150px; text-align: left;">
+                    <p>cli_debrid is a labor of love that requires significant time and resources to develop and maintain. I love supporting this project and have committed countless hours to it. Any support is appreciated!</p>
                     <p>Your support helps cover these costs and enables:</p>
                     <ul>
                         <li>Faster development of new features</li>
                         <li>Continued growth of the project</li>
                     </ul>
+                    <p>If I've made your life easier consider supporting!</p>
+                    </div>
+                    <div style="text-align: right; font-style: italic; margin-right: 150px;">
+                        <p>- godver3</p>
+                    </div>
                     <div class="support-cta">
                         <a href="https://github.com/sponsors/godver3" target="_blank" class="patreon-button" style="background-color: #fe8e86;">
                             <i class="fab fa-github"></i>
@@ -1691,10 +1922,13 @@
                             <i class="fas fa-mug-hot"></i>
                             Support on Ko-fi
                         </a>
-                        <a href="https://discord.gg/ynqnXGJ4hU" target="_blank" class="support-icon-link discord" title="Join our Discord">
-                            <i class="fab fa-discord"></i>
-                        </a>
-                        <p class="support-note">Every contribution helps make cli_debrid better for everyone!<br>If I've made your life easier consider supporting!</p>
+
+                        <div class="support-modal-actions">
+                            <button id="neverShowAgainBtn" class="never-show-again-btn">
+                                <i class="fas fa-ban"></i>
+                                Never Show Again
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

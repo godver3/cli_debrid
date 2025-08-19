@@ -309,6 +309,42 @@ def check_service_connectivity():
                 services_reachable = False
                 failed_services_details.append({"service": "Plex (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
+        # Check Jellyfin/Emby connectivity for symlink updates if enabled
+        jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
+        jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
+        
+        if jellyfin_url and jellyfin_token:
+            try:
+                # Ensure URL ends with a slash
+                if not jellyfin_url.endswith('/'):
+                    jellyfin_url += '/'
+                
+                system_info_url = f"{jellyfin_url}System/Info"
+                
+                headers = {
+                    'X-Emby-Token': jellyfin_token,
+                    'Accept': 'application/json'
+                }
+                
+                response = api.get(system_info_url, headers=headers, timeout=5)
+                response.raise_for_status()
+                
+                # Verify we got a valid Jellyfin/Emby response
+                server_info = response.json()
+                if not server_info.get('ServerName') or not server_info.get('Version'):
+                    error_msg = "Invalid Jellyfin/Emby response for symlink updates - token may be incorrect"
+                    logging.error(error_msg)
+                    services_reachable = False
+                    failed_services_details.append({"service": "Jellyfin/Emby (for symlink updates)", "type": "INVALID_TOKEN", "message": error_msg})
+                else:
+                    services_reachable = True  # Set to True when Jellyfin/Emby is reachable
+                    logging.debug(f"Jellyfin/Emby connectivity check passed (Server: {server_info.get('ServerName', 'Unknown')})")
+            except (RequestException, ValueError) as e:
+                error_msg = f"Cannot connect to Jellyfin/Emby server for symlink updates. Error: {str(e)}"
+                logging.error(error_msg)
+                services_reachable = False
+                failed_services_details.append({"service": "Jellyfin/Emby (for symlink updates)", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
+
     # Check Plex connectivity and libraries
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         try:
@@ -399,40 +435,71 @@ def check_service_connectivity():
             services_reachable = False
             failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
-    # Check Debrid Provider connectivity
-    if debrid_provider.lower() == 'realdebrid':
-        try:
-            response = api.get("https://api.real-debrid.com/rest/1.0/user", headers={"Authorization": f"Bearer {debrid_api_key}"}, timeout=5)
-            response.raise_for_status()
-        except RequestException as e:
-            logging.error(f"Failed to connect to Real-Debrid API: {str(e)}")
-            services_reachable = False
-            error_detail = {"service": "Real-Debrid API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)}
-            if hasattr(e, 'response') and e.response is not None:
-                error_detail["status_code"] = e.response.status_code
-                if e.response.status_code == 401:
-                    error_detail["type"] = "UNAUTHORIZED"
-                    error_detail["message"] = "Real-Debrid API Key is invalid or unauthorized."
-                elif e.response.status_code == 403: # Forbidden, could also be an API key issue or IP block
-                    error_detail["type"] = "FORBIDDEN"
-                    error_detail["message"] = "Real-Debrid API access forbidden. Check API key, IP, or account status."
-                # Add other specific status code checks if needed
-            failed_services_details.append(error_detail)
-    else:
-        logging.error(f"Unknown debrid provider: {debrid_provider}")
+    # Check Debrid Provider connectivity using provider interface
+    try:
+        from debrid import get_debrid_provider
+        provider = get_debrid_provider()
+        if hasattr(provider, 'check_connectivity'):
+            ok, error_detail = provider.check_connectivity()
+            if not ok:
+                services_reachable = False
+                failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
+        else:
+            logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
+    except Exception as e:
+        logging.error(f"Failed to perform provider connectivity check: {e}")
         services_reachable = False
-        failed_services_details.append({"service": f"Unknown debrid provider ({debrid_provider})", "type": "CONFIG_ERROR", "message": "Invalid Debrid provider configured."})
+        failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
 
     # Check Metadata Battery connectivity and Trakt authorization
+    logging.info("=== METADATA BATTERY CONNECTIVITY CHECK START ===")
     try:
+        # Log the URL being used
+        logging.info(f"Metadata Battery URL from settings: {metadata_battery_url_from_settings}")
+        
         # The metadata_battery_url_from_settings should be complete (host and port)
         # No need to reconstruct it.
         if not metadata_battery_url_from_settings:
+            logging.error("Metadata Battery URL not configured in settings")
             raise RequestException("Metadata Battery URL not configured in settings.")
 
-        response = api.get(f"{metadata_battery_url_from_settings}/check_trakt_auth", timeout=5)
+        # Log the exact request being made
+        request_url = f"{metadata_battery_url_from_settings}/check_trakt_auth"
+        logging.info(f"Making request to: {request_url}")
+        logging.info(f"Using APITracker session: {type(api).__name__}")
+        logging.info(f"APITracker session headers: {dict(api.session.headers)}")
+        
+        # Log request timing
+        import time
+        request_start = time.time()
+        
+        response = api.get(request_url, timeout=5)
+        
+        request_duration = time.time() - request_start
+        logging.info(f"Request completed in {request_duration:.3f}s")
+        logging.info(f"Response status: {response.status_code}")
+        logging.info(f"Response headers: {dict(response.headers)}")
+        
+        # Log response details
+        try:
+            response_text = response.text
+            logging.info(f"Response body length: {len(response_text)} characters")
+            logging.info(f"Response body preview: {response_text[:200]}...")
+        except Exception as e:
+            logging.error(f"Error reading response body: {e}")
+        
         response.raise_for_status()
-        trakt_status = response.json().get('status')
+        
+        # Parse JSON response
+        try:
+            response_json = response.json()
+            logging.info(f"Response JSON: {response_json}")
+            trakt_status = response_json.get('status')
+            logging.info(f"Trakt status from response: {trakt_status}")
+        except Exception as e:
+            logging.error(f"Error parsing JSON response: {e}")
+            trakt_status = None
+        
         if trakt_status != 'authorized':
             logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
             
@@ -442,9 +509,17 @@ def check_service_connectivity():
                 logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
                 # Re-check the authorization status
                 try:
-                    response = api.get(f"{metadata_battery_url_from_settings}/check_trakt_auth", timeout=5)
+                    logging.info("Making re-check request after auto-reauth...")
+                    recheck_start = time.time()
+                    response = api.get(request_url, timeout=5)
+                    recheck_duration = time.time() - recheck_start
+                    logging.info(f"Re-check request completed in {recheck_duration:.3f}s")
+                    logging.info(f"Re-check response status: {response.status_code}")
+                    
                     response.raise_for_status()
                     trakt_status = response.json().get('status')
+                    logging.info(f"Re-check Trakt status: {trakt_status}")
+                    
                     if trakt_status == 'authorized':
                         logging.info("Trakt authorization restored after automatic re-authentication.")
                     else:
@@ -457,6 +532,9 @@ def check_service_connectivity():
                         })
                 except Exception as recheck_error:
                     logging.error(f"Error re-checking Trakt authorization after auto-reauth: {recheck_error}")
+                    if hasattr(recheck_error, 'response') and recheck_error.response is not None:
+                        logging.error(f"Re-check error response status: {recheck_error.response.status_code}")
+                        logging.error(f"Re-check error response text: {recheck_error.response.text}")
                     services_reachable = False
                     failed_services_details.append({
                         "service": "Trakt",
@@ -478,15 +556,46 @@ def check_service_connectivity():
                     "type": "UNAUTHORIZED",
                     "message": error_message
                 })
-    except RequestException as e:
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Failed to connect to Metadata Battery: {e.response.status_code} {e.response.reason}")
-            logging.error(f"Response content: {e.response.text}")
         else:
-            logging.error(f"Failed to connect to Metadata Battery: {str(e)}")
+            logging.info("Metadata Battery connectivity check successful - Trakt is authorized")
+            
+    except RequestException as e:
+        logging.error("=== METADATA BATTERY REQUEST EXCEPTION ===")
+        logging.error(f"Exception type: {type(e).__name__}")
+        logging.error(f"Exception message: {str(e)}")
+        
+        if hasattr(e, 'response') and e.response is not None:
+            logging.error(f"Response status code: {e.response.status_code}")
+            logging.error(f"Response reason: {e.response.reason}")
+            logging.error(f"Response URL: {e.response.url}")
+            logging.error(f"Response headers: {dict(e.response.headers)}")
+            logging.error(f"Response content: {e.response.text}")
+            
+            # Log additional response details
+            try:
+                logging.error(f"Response encoding: {e.response.encoding}")
+                logging.error(f"Response apparent encoding: {e.response.apparent_encoding}")
+            except Exception as enc_error:
+                logging.error(f"Error getting response encoding: {enc_error}")
+        else:
+            logging.error("No response object in exception")
+            logging.error(f"Exception args: {e.args}")
+        
         services_reachable = False
         status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
         failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": status_code, "message": str(e)})
+        
+    except Exception as e:
+        logging.error("=== METADATA BATTERY UNEXPECTED EXCEPTION ===")
+        logging.error(f"Unexpected exception type: {type(e).__name__}")
+        logging.error(f"Unexpected exception message: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
+        
+        services_reachable = False
+        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
+    
+    logging.info("=== METADATA BATTERY CONNECTIVITY CHECK END ===")
 
     return services_reachable, failed_services_details
 
@@ -816,7 +925,8 @@ def get_program_status():
 def check_program_conditions():
     config = load_config()
     scrapers_enabled = any(scraper.get('enabled', False) for scraper in config.get('Scrapers', {}).values())
-    content_sources_enabled = any(source.get('enabled', False) for source in config.get('Content Sources', {}).values())
+    # Consider content sources present (ignoring per-source enabled flags); UI toggles control runtime
+    content_sources_enabled = bool(config.get('Content Sources', {}))
     
     required_settings = [
         ('Plex', 'url'),
@@ -900,9 +1010,8 @@ def get_task_timings():
         task_default_interval = original_intervals.get(normalized_name, 0)
         task_custom_saved_interval = saved_intervals_seconds.get(normalized_name) # Raw value from JSON (number or None)
 
-        configured_interval = task_default_interval # Start with default
-        if task_custom_saved_interval is not None: # If a custom value (a number, not None) is saved
-            configured_interval = task_custom_saved_interval
+        # The configured interval is the custom value if set, otherwise the default
+        configured_interval = task_custom_saved_interval if task_custom_saved_interval is not None else task_default_interval
         
         task_info = {
             'enabled': job is not None and job.next_run_time is not None,
@@ -910,9 +1019,9 @@ def get_task_timings():
             'next_run_in': {'hours': 0, 'minutes': 0, 'seconds': 0, 'total_seconds': 0},
             'display_name': _format_task_display_name(normalized_name, queue_map, content_sources_map),
             'current_interval_seconds': 0, # Actual live interval or configured if disabled
-            'default_interval_seconds': task_default_interval,
+            'default_interval_seconds': task_default_interval, # Original default (never changes)
             'custom_interval_seconds': task_custom_saved_interval, # Raw saved value (number or null)
-            'configured_interval_seconds': configured_interval # For the input box
+            'configured_interval_seconds': configured_interval # Current effective interval (custom or default)
         }
 
         if job:
@@ -1342,6 +1451,8 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
         # Special-case display names for specific queue tasks
         if task_name == 'final_check_queue':
             return 'Final Scrape'
+        elif task_name == 'Pre_release':
+            return 'Pre-Release'
         # For other queues, the key itself is usually descriptive enough
         return task_name.capitalize()
 

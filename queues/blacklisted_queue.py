@@ -30,6 +30,34 @@ class BlacklistedQueue:
     def remove_item(self, item: Dict[str, Any]):
         logging.debug(f"BlacklistedQueue.remove_item called for ID {item.get('id', 'N/A')} - item state managed in DB.")
 
+    def _parse_cutoff_date_setting(self, cutoff_date_str: str) -> date:
+        """
+        Parse the cutoff date setting which can be either:
+        - A date in YYYY-MM-DD format
+        - A number representing days ago (e.g., '30' for 30 days ago)
+        
+        Returns the parsed date or None if invalid/empty.
+        """
+        if not cutoff_date_str or not cutoff_date_str.strip():
+            return None
+            
+        cutoff_date_str = cutoff_date_str.strip()
+        
+        try:
+            # Try parsing as YYYY-MM-DD date format first
+            if '-' in cutoff_date_str and len(cutoff_date_str) >= 8:
+                return datetime.strptime(cutoff_date_str, '%Y-%m-%d').date()
+            else:
+                # Try parsing as number of days ago
+                days_ago = int(cutoff_date_str)
+                if days_ago < 0:
+                    logging.warning(f"Negative days value '{cutoff_date_str}' for unblacklisting cutoff date. Using 0.")
+                    days_ago = 0
+                return date.today() - timedelta(days=days_ago)
+        except (ValueError, TypeError) as e:
+            logging.error(f"Invalid unblacklisting cutoff date format '{cutoff_date_str}': {e}. Expected YYYY-MM-DD or number of days.")
+            return None
+
     def process(self, queue_manager):
         logging.debug("Processing blacklisted queue using direct DB query.")
 
@@ -47,34 +75,55 @@ class BlacklistedQueue:
             current_time = datetime.now()
             cutoff_date = current_time - blacklist_duration
 
+            # Parse the unblacklisting cutoff date setting
+            cutoff_date_setting = get_setting("Debug", "unblacklisting_cutoff_date", "")
+            release_date_cutoff = self._parse_cutoff_date_setting(cutoff_date_setting)
+
             conn = get_db_connection()
             cursor = conn.cursor()
 
+            # Build the base query
             query = """
-                SELECT id, title, type, imdb_id, tmdb_id, season_number, episode_number, version, blacklisted_date
+                SELECT id, title, type, imdb_id, tmdb_id, season_number, episode_number, version, blacklisted_date, release_date
                 FROM media_items
                 WHERE state = 'Blacklisted'
                   AND blacklisted_date IS NOT NULL
                   AND blacklisted_date <= ?
+                  AND (ghostlisted = FALSE OR ghostlisted IS NULL)
             """
-            cursor.execute(query, (cutoff_date.isoformat(),))
+            params = [cutoff_date.isoformat()]
+
+            # Add release date filter if cutoff date is specified
+            if release_date_cutoff:
+                query += " AND (release_date IS NULL OR release_date = 'Unknown' OR release_date >= ?)"
+                params.append(release_date_cutoff.isoformat())
+                logging.info(f"Applying release date cutoff filter: only unblacklisting items with release date >= {release_date_cutoff} or unknown release dates.")
+
+            cursor.execute(query, params)
             items_to_unblacklist_rows = cursor.fetchall()
             conn.close()
 
             items_to_unblacklist = [dict(row) for row in items_to_unblacklist_rows]
 
             if not items_to_unblacklist:
-                logging.debug("No items found eligible for unblacklisting.")
+                if release_date_cutoff:
+                    logging.debug(f"No items found eligible for unblacklisting with release date cutoff {release_date_cutoff}.")
+                else:
+                    logging.debug("No items found eligible for unblacklisting.")
                 return
 
-            logging.info(f"Found {len(items_to_unblacklist)} items eligible for unblacklisting.")
+            if release_date_cutoff:
+                logging.info(f"Found {len(items_to_unblacklist)} items eligible for unblacklisting with release date cutoff {release_date_cutoff}.")
+            else:
+                logging.info(f"Found {len(items_to_unblacklist)} items eligible for unblacklisting.")
 
             unblacklisted_count = 0
             for item in items_to_unblacklist:
                 item_identifier = queue_manager.generate_identifier(item)
                 try:
                     blacklisted_date_str = item.get('blacklisted_date', 'N/A')
-                    logging.info(f"Item {item_identifier} blacklisted on {blacklisted_date_str} is eligible for unblacklisting (cutoff: {cutoff_date.isoformat()}).")
+                    release_date_str = item.get('release_date', 'Unknown')
+                    logging.info(f"Item {item_identifier} (release: {release_date_str}) blacklisted on {blacklisted_date_str} is eligible for unblacklisting (cutoff: {cutoff_date.isoformat()}).")
 
                     self.unblacklist_item(queue_manager, item)
                     unblacklisted_count += 1

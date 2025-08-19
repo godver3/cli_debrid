@@ -22,6 +22,11 @@ from collections import defaultdict
 from .trakt_auth import TraktAuth
 import traceback
 from collections import deque
+from datetime import datetime as dt
+import iso8601 as iso8601_pkg
+import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 TRAKT_API_URL = "https://api.trakt.tv"
 CACHE_FILE = 'db_content/trakt_last_activity.pkl'
@@ -33,69 +38,415 @@ class TraktMetadata:
         self.base_url = "https://api.trakt.tv"
         self.trakt_auth = TraktAuth()
         self.request_times = deque()
-        self.max_requests = 1000
-        self.time_window = 300  # 5 minutes in seconds
+        # Trakt API limits:
+        # GET requests: 1000 calls every 5 minutes
+        # POST/PUT/DELETE: 1 call per second
+        self.max_get_requests = 1000
+        self.get_time_window = 300  # 5 minutes in seconds
+        self.post_requests = deque()  # Track POST requests separately
+        self.post_time_window = 1  # 1 second for POST requests
+        # Threaded retry configuration
+        self.enable_threaded_retries = getattr(self.settings, 'enable_threaded_retries', True)
+        self.max_threaded_retry_workers = getattr(self.settings, 'max_threaded_retry_workers', 5)
 
-    def _check_rate_limit(self):
+    def _check_rate_limit(self, method='GET'):
         current_time = time.time()
         
-        # Remove old requests from the deque
-        while self.request_times and current_time - self.request_times[0] > self.time_window:
-            self.request_times.popleft()
+        if method.upper() == 'GET':
+            # Remove old GET requests from the deque
+            while self.request_times and current_time - self.request_times[0] > self.get_time_window:
+                self.request_times.popleft()
+            
+            # Check if we've hit the GET rate limit
+            if len(self.request_times) >= self.max_get_requests:
+                logger.warning(f"GET rate limit reached. Currently at {len(self.request_times)} requests in the last {self.get_time_window} seconds.")
+                return False
+            
+            # Add the current request time
+            self.request_times.append(current_time)
+            
+        else:  # POST, PUT, DELETE
+            # Remove old POST requests from the deque
+            while self.post_requests and current_time - self.post_requests[0] > self.post_time_window:
+                self.post_requests.popleft()
+            
+            # Check if we've hit the POST rate limit (1 per second)
+            if len(self.post_requests) >= 1:
+                logger.warning(f"POST rate limit reached. Currently at {len(self.post_requests)} requests in the last {self.post_time_window} second.")
+                return False
+            
+            # Add the current request time
+            self.post_requests.append(current_time)
         
-        # Check if we've hit the rate limit
-        #if len(self.request_times) >= self.max_requests:
-        #    logger.warning(f"Rate limit reached. Currently at {len(self.request_times)} requests in the last {self.time_window} seconds.")
-        #    return False
-        
-        # Add the current request time
-        self.request_times.append(current_time)
         return True
 
-    def _make_request(self, url):
-        if not self._check_rate_limit():
-            logger.warning("Rate limit reached. Waiting for 5 minutes before retrying.")
-            time.sleep(300)  # Wait for 5 minutes
-            return self._make_request(url)  # Retry the request
+    def _format_updates_start_date(self, since_iso: str) -> str:
+        """Convert ISO datetime string to YYYY-MM-DDTHH:MM:SSZ as required by updates endpoints."""
+        try:
+            parsed = iso8601_pkg.parse_date(since_iso)
+            # Return full ISO format with time, rounded to the hour
+            rounded = parsed.replace(minute=0, second=0, microsecond=0)
+            return rounded.strftime('%Y-%m-%dT%H:%M:%SZ')
+        except Exception:
+            try:
+                # Fallback if already a date string
+                dt_obj = dt.fromisoformat(since_iso)
+                rounded = dt_obj.replace(minute=0, second=0, microsecond=0)
+                return rounded.strftime('%Y-%m-%dT%H:%M:%SZ')
+            except Exception:
+                # As last resort, use today-1
+                fallback = dt.utcnow() - timedelta(days=1)
+                rounded = fallback.replace(minute=0, second=0, microsecond=0)
+                return rounded.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        # Always get fresh auth data before making requests
-        self.trakt_auth.reload_auth()
+    def _fetch_updates_paginated(self, url_base: str, since_iso: str = None) -> list:
+        """Fetch all pages for a Trakt updates endpoint, returning aggregated JSON list."""
+        page = 1
+        limit = 100
+        aggregated = []
         
+        # Add X-Start-Date header for precise filtering if since_iso is provided
+        headers = {}
+        if since_iso:
+            try:
+                # Format the timestamp to the hour as required by Trakt
+                from datetime import datetime
+                dt = datetime.fromisoformat(since_iso.replace('Z', '+00:00'))
+                rounded_time = dt.replace(minute=0, second=0, microsecond=0)
+                start_date_header = rounded_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+                headers['X-Start-Date'] = start_date_header
+                logger.info(f"Using X-Start-Date header: {start_date_header} for URL: {url_base}")
+            except Exception as e:
+                logger.warning(f"Failed to format X-Start-Date header: {e}")
+        
+        while True:
+            url = f"{url_base}?page={page}&limit={limit}"
+            response = self._make_request(url, headers=headers)
+            if not response:
+                break
+            if response.status_code != 200:
+                logger.warning(f"Updates fetch failed for {url} with status {response.status_code}")
+                break
+            data = response.json() or []
+            if not isinstance(data, list):
+                logger.warning(f"Unexpected updates payload type for {url}: {type(data)}")
+                break
+            aggregated.extend(data)
+            # Pagination headers
+            try:
+                page_count = int(response.headers.get('X-Pagination-Page-Count', '1'))
+            except ValueError:
+                page_count = 1
+            if page >= page_count or not data:
+                break
+            page += 1
+        return aggregated
+
+    def get_updated_shows(self, since_iso: str) -> list[dict]:
+        """Return list of dicts with keys: imdb_id, updated_at for shows updated since given ISO time."""
+        start_date = self._format_updates_start_date(since_iso)
+        url_base = f"{self.base_url}/shows/updates/{start_date}"
+        items = self._fetch_updates_paginated(url_base, since_iso)
+        results = []
+        
+        # Comment out local filtering - let Trakt API handle it
+        # since_dt = None
+        # try:
+        #     since_dt = iso8601_pkg.parse_date(since_iso)
+        # except Exception as e:
+        #     logger.warning(f"Failed to parse since_iso {since_iso}: {e}")
+        
+        for entry in items:
+            show_obj = entry.get('show') if isinstance(entry, dict) else None
+            if not show_obj:
+                continue
+            ids = show_obj.get('ids', {})
+            imdb_id = ids.get('imdb')
+            updated_at = entry.get('updated_at') or show_obj.get('updated_at')
+            
+            if imdb_id and updated_at:
+                # Include all results - let Trakt API handle filtering
+                results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                # # Only include items updated after our since timestamp
+                # if since_dt:
+                #     try:
+                #         entry_dt = iso8601_pkg.parse_date(updated_at)
+                #         if entry_dt > since_dt:
+                #             results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                #     except Exception as e:
+                #         logger.warning(f"Failed to parse updated_at {updated_at}: {e}")
+                # else:
+                #     # If we can't parse since_iso, include all results
+                #     results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+        
+        logger.info(f"Fetched {len(results)} updated shows since {start_date}")
+        return results
+
+    def get_updated_movies(self, since_iso: str) -> list[dict]:
+        """Return list of dicts with keys: imdb_id, updated_at for movies updated since given ISO time."""
+        start_date = self._format_updates_start_date(since_iso)
+        url_base = f"{self.base_url}/movies/updates/{start_date}"
+        items = self._fetch_updates_paginated(url_base, since_iso)
+        results = []
+        
+        # Comment out local filtering - let Trakt API handle it
+        # since_dt = None
+        # try:
+        #     since_dt = iso8601_pkg.parse_date(since_iso)
+        # except Exception as e:
+        #     logger.warning(f"Failed to parse since_iso {since_iso}: {e}")
+        
+        for entry in items:
+            movie_obj = entry.get('movie') if isinstance(entry, dict) else None
+            if not movie_obj:
+                continue
+            ids = movie_obj.get('ids', {})
+            imdb_id = ids.get('imdb')
+            updated_at = entry.get('updated_at') or movie_obj.get('updated_at')
+            
+            if imdb_id and updated_at:
+                # Include all results - let Trakt API handle filtering
+                results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                # # Only include items updated after our since timestamp
+                # if since_dt:
+                #     try:
+                #         entry_dt = iso8601_pkg.parse_date(updated_at)
+                #         if entry_dt > since_dt:
+                #             results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+                #     except Exception as e:
+                #         logger.warning(f"Failed to parse updated_at {updated_at}: {e}")
+                # else:
+                #     # If we can't parse since_iso, include all results
+                #     results.append({'imdb_id': imdb_id, 'updated_at': updated_at})
+        
+        logger.info(f"Fetched {len(results)} updated movies since {start_date}")
+        return results
+
+    def _make_request(self, url, method='GET', max_retries=4, initial_delay=5, headers=None):
+        # Check authentication status (this will load auth data if needed)
         if not self.trakt_auth.is_authenticated():
             logger.info("Not authenticated. Attempting to refresh token.")
             if not self.trakt_auth.refresh_access_token():
                 logger.error("Failed to refresh Trakt access token.")
                 return None
 
-        headers = {
+        request_headers = {
             'Content-Type': 'application/json',
             'trakt-api-version': '2',
             'trakt-api-key': self.trakt_auth.client_id,
             'Authorization': f'Bearer {self.trakt_auth.access_token}'
         }
-        try:
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 401:
-                logger.warning("Received 401 Unauthorized. Attempting to refresh token.")
-                # Reload auth data and try to refresh
-                self.trakt_auth.reload_auth()
-                if self.trakt_auth.refresh_access_token():
-                    # Update the header with the new token and retry the request
-                    headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
-                    response = requests.get(url, headers=headers, timeout=10)
+        
+        # Add any additional headers
+        if headers:
+            request_headers.update(headers)
+        
+        delay = initial_delay
+        for attempt in range(max_retries):
+            # Check internal rate limit before each attempt
+            if not self._check_rate_limit(method):
+                logger.warning(f"Internal rate limit check failed on attempt {attempt + 1}. Waiting for 5 minutes.")
+                time.sleep(300)
+                continue # Retry after waiting
+
+            try:
+                if method.upper() == 'GET':
+                    response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                elif method.upper() == 'POST':
+                    response = requests.post(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                elif method.upper() == 'PUT':
+                    response = requests.put(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                elif method.upper() == 'DELETE':
+                    response = requests.delete(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
                 else:
-                    logger.error("Failed to refresh Trakt access token after 401 error.")
+                    response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+
+                if response.status_code == 404:
+                    logger.warning(f"Request to {url} returned 404 Not Found. Not retrying.")
+                    return response # Stop immediately for 404
+
+                if response.status_code == 401:
+                    logger.warning(f"Received 401 Unauthorized on attempt {attempt + 1}. Refreshing token.")
+                    if self.trakt_auth.refresh_access_token():
+                        request_headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
+                        logger.info("Token refreshed. Retrying original request immediately.")
+                        continue # Go to the next attempt immediately with the new token
+                    else:
+                        logger.error("Failed to refresh Trakt access token after 401 error. Aborting.")
+                        return None # Abort if refresh fails
+
+                # Check if this is a 500 error that should be retried in a thread
+                if response.status_code == 500 and attempt < max_retries - 1 and self.enable_threaded_retries:
+                    logger.warning(
+                        f"Received 500 error on attempt {attempt + 1}/{max_retries}. "
+                        f"Retrying in background thread in {delay} seconds. URL: {url}"
+                    )
+                    # Use threaded retry for 500 errors to avoid blocking
+                    return self._retry_500_error_threaded(url, method, request_headers, attempt + 1, max_retries, delay)
+                elif response.status_code == 500 and attempt < max_retries - 1:
+                    logger.warning(
+                        f"Received 500 error on attempt {attempt + 1}/{max_retries}. "
+                        f"Threaded retries disabled, using blocking retry in {delay} seconds. URL: {url}"
+                    )
+
+                # Successful request or non-retriable error
+                if response.status_code not in [429, 502, 503, 504]:
+                    response.raise_for_status() # Raise for other client/server errors
+                    return response
+
+                # Retriable error occurred (non-500)
+                logger.warning(
+                    f"Attempt {attempt + 1}/{max_retries} failed with status {response.status_code}. "
+                    f"Retrying in {delay} seconds. URL: {url}"
+                )
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"RequestException on attempt {attempt + 1}/{max_retries} for URL {url}: {e}")
+                if attempt == max_retries - 1:
+                    logger.error("Max retries reached. Aborting request.")
+                    if hasattr(e, 'response') and e.response is not None:
+                         logger.error(f"Final response status code: {e.response.status_code}")
+                         logger.error(f"Final response text: {e.response.text}")
                     return None
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to Trakt API: {e}")
-            logger.error(f"URL: {url}")
-            logger.error(f"Headers: {headers}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response status code: {e.response.status_code}")
-                logger.error(f"Response text: {e.response.text}")
-            return None
+
+            # Wait before the next retry (only for non-500 errors)
+            time.sleep(delay)
+            delay *= 2  # Exponential backoff
+
+        logger.error(f"Max retries reached for URL {url}. Giving up.")
+        return None
+
+    def _retry_500_error_threaded(self, url, method, request_headers, current_attempt, max_retries, initial_delay):
+        """
+        Retry 500 errors in a background thread to avoid blocking the main application.
+        Returns immediately with None, and the retry happens in the background.
+        """
+        def retry_worker():
+            delay = initial_delay
+            for attempt in range(current_attempt, max_retries):
+                try:
+                    # Sleep in the background thread
+                    time.sleep(delay)
+                    
+                    # Check rate limit
+                    if not self._check_rate_limit(method):
+                        logger.warning(f"Internal rate limit check failed on threaded attempt {attempt + 1}. Waiting for 5 minutes.")
+                        time.sleep(300)
+                        continue
+                    
+                    # Make the request
+                    if method.upper() == 'GET':
+                        response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    elif method.upper() == 'POST':
+                        response = requests.post(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    elif method.upper() == 'PUT':
+                        response = requests.put(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    elif method.upper() == 'DELETE':
+                        response = requests.delete(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    else:
+                        response = requests.get(url, headers=request_headers, timeout=REQUEST_TIMEOUT)
+                    
+                    # Check if we got a successful response
+                    if response.status_code == 200:
+                        logger.info(f"Threaded retry successful for {url} on attempt {attempt + 1}")
+                        return
+                    elif response.status_code == 404:
+                        logger.warning(f"Threaded retry got 404 for {url}. Stopping retries.")
+                        return
+                    elif response.status_code == 401:
+                        logger.warning(f"Threaded retry got 401 for {url}. Attempting token refresh.")
+                        if self.trakt_auth.refresh_access_token():
+                            request_headers['Authorization'] = f'Bearer {self.trakt_auth.access_token}'
+                            continue
+                        else:
+                            logger.error("Failed to refresh token in threaded retry. Stopping.")
+                            return
+                    elif response.status_code == 500:
+                        logger.warning(f"Threaded retry attempt {attempt + 1} still got 500 for {url}")
+                        if attempt == max_retries - 1:
+                            logger.error(f"Threaded retry failed after {max_retries} attempts for {url}")
+                            return
+                    else:
+                        logger.warning(f"Threaded retry got unexpected status {response.status_code} for {url}")
+                        return
+                        
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"Threaded retry RequestException on attempt {attempt + 1} for {url}: {e}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"Threaded retry failed after {max_retries} attempts for {url}")
+                        return
+                
+                delay *= 2  # Exponential backoff
+        
+        # Start the retry worker in a daemon thread
+        retry_thread = threading.Thread(target=retry_worker, daemon=True)
+        retry_thread.start()
+        
+        # Return None immediately to avoid blocking the main thread
+        logger.info(f"Started threaded retry for {url}. Returning None to avoid blocking.")
+        return None
+
+    def _make_request_with_threaded_retry(self, url, method='GET', max_retries=4, initial_delay=5, headers=None):
+        """
+        Make a request with threaded retry for 500 errors.
+        This method returns immediately for 500 errors and handles retries in background threads.
+        """
+        # For non-500 errors, use the regular retry logic
+        response = self._make_request(url, method, max_retries, initial_delay, headers)
+        
+        # If we got None due to a 500 error being handled in a thread, log it
+        if response is None:
+            logger.debug(f"Request to {url} returned None (likely due to 500 error being retried in background)")
+        
+        return response
+
+    def _make_bulk_requests_with_threaded_retries(self, requests_data, max_workers=None):
+        """
+        Make multiple requests with threaded retries for 500 errors.
+        
+        Args:
+            requests_data: List of dicts with keys: url, method, headers, max_retries, initial_delay
+            max_workers: Maximum number of concurrent threads
+        
+        Returns:
+            List of responses (None for failed requests)
+        """
+        def make_single_request(req_data):
+            try:
+                return self._make_request_with_threaded_retry(
+                    req_data['url'],
+                    method=req_data.get('method', 'GET'),
+                    max_retries=req_data.get('max_retries', 4),
+                    initial_delay=req_data.get('initial_delay', 5),
+                    headers=req_data.get('headers')
+                )
+            except Exception as e:
+                logger.error(f"Error in bulk request for {req_data.get('url', 'unknown')}: {e}")
+                return None
+        
+        # Use ThreadPoolExecutor for concurrent requests
+        if max_workers is None:
+            max_workers = self.max_threaded_retry_workers
+            
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all requests
+            future_to_request = {
+                executor.submit(make_single_request, req_data): req_data 
+                for req_data in requests_data
+            }
+            
+            # Collect results as they complete
+            results = []
+            for future in as_completed(future_to_request):
+                req_data = future_to_request[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Exception in bulk request for {req_data.get('url', 'unknown')}: {e}")
+                    results.append(None)
+        
+        return results
 
     def get_metadata(self, imdb_id: str) -> Dict[str, Any]:
         logger.debug(f"Getting metadata for {imdb_id}")
@@ -349,7 +700,7 @@ class TraktMetadata:
                 logger.debug(f"Added aliases for {imdb_id}")
             
             logger.debug(f"Fetching seasons data for {imdb_id}")
-            seasons_data, source = self.get_show_seasons_and_episodes(imdb_id)
+            seasons_data, source = self.get_show_seasons_and_episodes(imdb_id, include_specials=True)
             logger.debug(f"Received seasons data for {imdb_id}: {seasons_data is not None}")
             if seasons_data:
                 logger.debug(f"Season numbers received: {list(seasons_data.keys())}")
@@ -382,7 +733,7 @@ class TraktMetadata:
                 show_imdb_id = show_data['ids']['imdb']
 
                 # Fetch all episodes for this show
-                all_episodes, _ = self.get_show_seasons_and_episodes(show_imdb_id)
+                all_episodes, _ = self.get_show_seasons_and_episodes(show_imdb_id, include_specials=True)
                 
                 # Cache all episodes
                 self.cached_episodes = all_episodes

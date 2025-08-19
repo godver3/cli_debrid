@@ -9,6 +9,7 @@ from content_checkers.plex_watchlist import MyPlexAccount
 import logging
 import feedparser # Keep import for RSS
 from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure
 try:
@@ -277,6 +278,80 @@ def check_plex_connection():
             }
         }
 
+def check_jellyfin_connection():
+    """Check connection to Jellyfin/Emby if configured."""
+    jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
+
+    if not jellyfin_url or not jellyfin_token:
+        return None  # Not configured
+
+    try:
+        # Ensure URL ends with a slash
+        if not jellyfin_url.endswith('/'):
+            jellyfin_url += '/'
+        
+        system_info_url = f"{jellyfin_url}System/Info"
+        
+        headers = {
+            'X-Emby-Token': jellyfin_token,
+            'Accept': 'application/json'
+        }
+        
+        response = requests.get(system_info_url, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            try:
+                server_info = response.json()
+                return {
+                    'name': 'Jellyfin/Emby',
+                    'connected': True,
+                    'error': None,
+                    'details': {
+                        'url': jellyfin_url,
+                        'server_name': server_info.get('ServerName'),
+                        'version': server_info.get('Version')
+                    }
+                }
+            except ValueError:
+                 return {
+                    'name': 'Jellyfin/Emby',
+                    'connected': False,
+                    'error': 'Failed to parse JSON response',
+                    'details': {
+                        'url': jellyfin_url
+                    }
+                }
+        else:
+            return {
+                'name': 'Jellyfin/Emby',
+                'connected': False,
+                'error': f'Status code: {response.status_code}',
+                'details': { 'url': jellyfin_url }
+            }
+
+    except requests.Timeout:
+        return {
+            'name': 'Jellyfin/Emby',
+            'connected': False,
+            'error': 'Connection timed out',
+            'details': { 'url': jellyfin_url }
+        }
+    except requests.ConnectionError:
+        return {
+            'name': 'Jellyfin/Emby',
+            'connected': False,
+            'error': 'Connection refused',
+            'details': { 'url': jellyfin_url }
+        }
+    except Exception as e:
+        return {
+            'name': 'Jellyfin/Emby',
+            'connected': False,
+            'error': str(e),
+            'details': { 'url': jellyfin_url }
+        }
+
 def check_mounted_files_connection():
     """Check if mounted files location is accessible."""
     # Try original_files_path first, then fall back to Plex mounted_file_location
@@ -341,17 +416,23 @@ def check_phalanx_db_connection():
     if not get_setting('UI Settings', 'enable_phalanx_db', default=False):
         return None # Return None if the service is disabled
 
-    # Determine host based on environment mode
-    environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
-    if environment_mode == 'full':
-        host = 'localhost'
+    # --- Use the EXACT same env logic as PhalanxDBClassManager ---
+    try:
+        phalanx_port = int(os.environ.get('CLI_DEBRID_PHALANX_PORT', 8888))
+    except ValueError:
+        phalanx_port = 8888
+
+    # Check for the new host environment variable first (for Docker containers)
+    phalanx_host = os.environ.get('CLI_DEBRID_PHALANX_HOST')
+    if phalanx_host:
+        phalanx_base_url = f'http://{phalanx_host}'
     else:
-        # For non-full environments (e.g., Docker containers), use environment variable or fallback
-        # This follows the same pattern as CLI Battery connection
-        host = os.environ.get('CLI_DEBRID_PHALANX_HOST', 'host.docker.internal')
-    
-    port = 8888
-    url = f'http://{host}:{port}'
+        # Fall back to the old URL environment variable
+        phalanx_base_url = os.environ.get('CLI_DEBRID_PHALANX_URL', 'http://localhost')
+
+    phalanx_base_url = phalanx_base_url.rstrip('/')
+    url = f'{phalanx_base_url}:{phalanx_port}'
+    # --- End env logic ---
 
     try:
         response = requests.get(url, timeout=5) # Increased timeout to 5s
@@ -365,8 +446,8 @@ def check_phalanx_db_connection():
                 'error': None,
                 'details': {
                     'url': url,
-                    'host': host,
-                    'port': port
+                    'host': phalanx_base_url,
+                    'port': phalanx_port
                 }
             }
         else:
@@ -377,8 +458,8 @@ def check_phalanx_db_connection():
                 'error': f'Unexpected response: Status {response.status_code}',
                 'details': {
                     'url': url,
-                    'host': host,
-                    'port': port,
+                    'host': phalanx_base_url,
+                    'port': phalanx_port,
                     'response_text': response.text[:200] # Include beginning of response text
                 }
             }
@@ -390,30 +471,30 @@ def check_phalanx_db_connection():
             'error': 'Connection timed out (5s)',
             'details': {
                 'url': url,
-                'host': host,
-                'port': port
+                'host': phalanx_base_url,
+                'port': phalanx_port
             }
         }
     except requests.ConnectionError:
         return {
             'name': 'Phalanx DB',
             'connected': False,
-            'error': f'Connection refused on {host}',
+            'error': f'Connection refused on {phalanx_base_url}',
             'details': {
                 'url': url,
-                'host': host,
-                'port': port
+                'host': phalanx_base_url,
+                'port': phalanx_port
             }
         }
     except Exception as e:
          return {
             'name': 'Phalanx DB',
             'connected': False,
-            'error': f'Error connecting to {host}: {str(e)}',
+            'error': f'Error connecting to {phalanx_base_url}: {str(e)}',
             'details': {
                 'url': url,
-                'host': host,
-                'port': port
+                'host': phalanx_base_url,
+                'port': phalanx_port
             }
         }
 
@@ -568,20 +649,145 @@ def check_scraper_connection(scraper_id, scraper_config):
         
     return base_response
 
-def check_scrapers_connections():
-    """Check connections to all enabled scrapers."""
+def check_nyaa_scrapers_only():
+    """Check only Nyaa scrapers to avoid proxy conflicts with other connection checks."""
     from queues.config_manager import load_config
     
     config = load_config()
     scrapers = config.get('Scrapers', {})
-    
     scraper_statuses = []
-    for scraper_id, scraper_config in scrapers.items():
-        status = check_scraper_connection(scraper_id, scraper_config)
-        if status:  # Only include if status was returned (scraper is enabled)
-            scraper_statuses.append(status)
-            
+
+    enabled_scrapers = {
+        scraper_id: scraper_config 
+        for scraper_id, scraper_config in scrapers.items() 
+        if scraper_config.get('enabled', False) and scraper_config.get('type') == 'Nyaa'
+    }
+
+    if not enabled_scrapers:
+        return []
+
+    # Run Nyaa scrapers sequentially to avoid proxy conflicts
+    for scraper_id, scraper_config in enabled_scrapers.items():
+        try:
+            status = check_scraper_connection(scraper_id, scraper_config)
+            if status:
+                scraper_statuses.append(status)
+        except Exception as exc:
+            log.error(f'Nyaa scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
+            scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+                
     return scraper_statuses
+
+def check_non_nyaa_scrapers():
+    """Check all scrapers except Nyaa in parallel."""
+    from queues.config_manager import load_config
+    
+    config = load_config()
+    scrapers = config.get('Scrapers', {})
+    scraper_statuses = []
+
+    enabled_scrapers = {
+        scraper_id: scraper_config 
+        for scraper_id, scraper_config in scrapers.items() 
+        if scraper_config.get('enabled', False) and scraper_config.get('type') != 'Nyaa'
+    }
+
+    if not enabled_scrapers:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(enabled_scrapers)) as executor:
+        future_to_scraper = {
+            executor.submit(check_scraper_connection, scraper_id, scraper_config): (scraper_id, scraper_config)
+            for scraper_id, scraper_config in enabled_scrapers.items()
+        }
+        
+        for future in as_completed(future_to_scraper):
+            scraper_id, scraper_config = future_to_scraper[future]
+            try:
+                status = future.result(timeout=10) # 10-second timeout per scraper
+                if status:
+                    scraper_statuses.append(status)
+            except TimeoutError:
+                log.warning(f'Scraper check for {scraper_id} timed out.')
+                scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+            except Exception as exc:
+                log.error(f'Scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
+                scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+                
+    return scraper_statuses
+
+def check_scrapers_connections():
+    """Check connections to all enabled scrapers, running Nyaa first to avoid proxy conflicts."""
+    from queues.config_manager import load_config
+    
+    config = load_config()
+    scrapers = config.get('Scrapers', {})
+    scraper_statuses = []
+
+    enabled_scrapers = {
+        scraper_id: scraper_config 
+        for scraper_id, scraper_config in scrapers.items() 
+        if scraper_config.get('enabled', False)
+    }
+
+    if not enabled_scrapers:
+        return []
+
+    # Separate Nyaa scrapers from others to avoid proxy conflicts
+    nyaa_scrapers = {}
+    other_scrapers = {}
+    
+    for scraper_id, scraper_config in enabled_scrapers.items():
+        if scraper_config.get('type') == 'Nyaa':
+            nyaa_scrapers[scraper_id] = scraper_config
+        else:
+            other_scrapers[scraper_id] = scraper_config
+
+    # Run Nyaa scrapers first (sequentially) to avoid proxy conflicts
+    for scraper_id, scraper_config in nyaa_scrapers.items():
+        try:
+            status = check_scraper_connection(scraper_id, scraper_config)
+            if status:
+                scraper_statuses.append(status)
+        except Exception as exc:
+            log.error(f'Nyaa scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
+            scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+
+    # Run all other scrapers in parallel
+    if other_scrapers:
+        with ThreadPoolExecutor(max_workers=len(other_scrapers)) as executor:
+            future_to_scraper = {
+                executor.submit(check_scraper_connection, scraper_id, scraper_config): (scraper_id, scraper_config)
+                for scraper_id, scraper_config in other_scrapers.items()
+            }
+            
+            # We don't use a timeout on as_completed to avoid raising an exception
+            # that would stop us from processing already completed results.
+            # Instead, future.result(timeout=...) is used inside the loop.
+            for future in as_completed(future_to_scraper):
+                scraper_id, scraper_config = future_to_scraper[future]
+                try:
+                    # Use a timeout for getting the result of each future
+                    status = future.result(timeout=10) # 10-second timeout per scraper
+                    if status:
+                        scraper_statuses.append(status)
+                except TimeoutError:
+                    log.warning(f'Scraper check for {scraper_id} timed out.')
+                    scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+                except Exception as exc:
+                    log.error(f'Scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
+                    scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+                
+    return scraper_statuses
+
+def create_timeout_status(scraper_type: str, scraper_id: str) -> Dict[str, Any]:
+    """Generates a standardized timeout status for scraper checks."""
+    return {
+        'name': f'{scraper_type} ({scraper_id})',
+        'connected': False,
+        'error': 'Check timed out or failed with an exception.',
+        'details': {}
+    }
 
 def check_content_source_connection(source_id: str, source_config: Dict[str, Any]) -> Dict[str, Any]:
     """Check connection to a specific content source and fetch a sample."""
@@ -695,8 +901,8 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                     base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
             # --- End MDBList Sample Fetch ---
 
-        # --- Trakt Sources (Watchlist, Lists, Friends, Collection) ---
-        elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist', 'Trakt Collection']:
+        # --- Trakt Sources (Watchlist, Lists, Friends, Collection, Special Lists) ---
+        elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist', 'Trakt Collection', 'Special Trakt Lists']:
             access_token = ensure_trakt_auth()
             if not access_token:
                 base_response['error'] = 'Failed to authenticate with Trakt'
@@ -813,6 +1019,72 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                                       title = show.get('title', 'Unknown Title')
                                       year = show.get('year')
                                       sample_items.append(f"[Show] {title} ({year})" if year else f"[Show] {title}")
+
+                    # --- Special Trakt Lists Sample ---
+                    elif source_type == 'Special Trakt Lists':
+                        selected_list_types = source_config.get('special_list_type', [])
+                        media_type_filter = source_config.get('media_type', 'All').lower()
+                        
+                        if not selected_list_types:
+                            base_response['details']['sample_error'] = "No special list types configured"
+                        else:
+                            # Sample from the first configured list type
+                            first_list_type = selected_list_types[0]
+                            sample_items = []
+                            
+                            # Define API endpoints for special lists
+                            special_list_api_details = {
+                                "Trending": {"movies": "/movies/trending", "shows": "/shows/trending"},
+                                "Popular": {"movies": "/movies/popular", "shows": "/shows/popular"},
+                                "Anticipated": {"movies": "/movies/anticipated", "shows": "/shows/anticipated"},
+                                "Box Office": {"movies": "/movies/boxoffice", "shows": None},
+                                "Played": {"movies": "/movies/played/weekly", "shows": "/shows/played/weekly"},
+                                "Watched": {"movies": "/movies/watched/weekly", "shows": "/shows/watched/weekly"},
+                                "Collected": {"movies": "/movies/collected/weekly", "shows": "/shows/collected/weekly"},
+                                "Favorited": {"movies": "/movies/favorited/weekly", "shows": "/shows/favorited/weekly"}
+                            }
+                            
+                            if first_list_type in special_list_api_details:
+                                api_paths = special_list_api_details[first_list_type]
+                                endpoints_to_call = []
+                                
+                                if media_type_filter in ['movies', 'all'] and api_paths.get("movies"):
+                                    endpoints_to_call.append(api_paths["movies"])
+                                if media_type_filter in ['shows', 'all'] and api_paths.get("shows"):
+                                    endpoints_to_call.append(api_paths["shows"])
+                                
+                                for endpoint in endpoints_to_call[:2]:  # Limit to 2 endpoints for sample
+                                    if endpoint:
+                                        sample_response = make_trakt_request('get', f"{endpoint}?limit=2")
+                                        if sample_response and sample_response.status_code == 200:
+                                            try:
+                                                data = sample_response.json()
+                                                for item in data:
+                                                    # Handle different response structures
+                                                    item_data = None
+                                                    display_type = "Unknown"
+                                                    
+                                                    if 'movie' in item:
+                                                        item_data = item.get('movie')
+                                                        display_type = "Movie"
+                                                    elif 'show' in item:
+                                                        item_data = item.get('show')
+                                                        display_type = "Show"
+                                                    
+                                                    if item_data:
+                                                        title = item_data.get('title', 'Unknown Title')
+                                                        year = item_data.get('year')
+                                                        display_text = f"{title} ({year})" if year else title
+                                                        sample_items.append(f"[{display_type}] {display_text}")
+                                            except Exception as e:
+                                                log.warning(f"Failed to parse sample data from {endpoint}: {e}")
+                            else:
+                                base_response['details']['sample_error'] = f"Unknown special list type: {first_list_type}"
+                            
+                            if sample_items:
+                                base_response['details']['sample_data'] = sample_items
+                            else:
+                                base_response['details']['sample_data'] = [f"No items found in {first_list_type} list"]
 
                     # Add Friends Trakt Watchlist sample fetch if needed later
 
@@ -1055,7 +1327,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
     return base_response
 
 def check_content_sources_connections():
-    """Check connections to all enabled content sources."""
+    """Check connections to all enabled content sources in parallel."""
     from utilities.settings import get_setting
     
     content_sources = get_setting('Content Sources')
@@ -1063,15 +1335,47 @@ def check_content_sources_connections():
         return []
         
     source_statuses = []
-    for source_id, source_config in content_sources.items():
-        # Skip sources with "Collected" in their name
-        if 'Collected' in source_id:
-            continue
-            
-        status = check_content_source_connection(source_id, source_config)
-        if status:  # Only include if status was returned (source is enabled)
-            source_statuses.append(status)
-            
+    # Ignore per-source enabled flags; check connections for all configured (non-Collected) sources
+    selected_sources = {
+        source_id: source_config 
+        for source_id, source_config in content_sources.items() 
+        if 'Collected' not in source_id
+    }
+
+    if not selected_sources:
+        return []
+
+    with ThreadPoolExecutor(max_workers=len(selected_sources)) as executor:
+        future_to_source = {
+            executor.submit(check_content_source_connection, source_id, source_config): (source_id, source_config)
+            for source_id, source_config in selected_sources.items()
+        }
+        
+        for future in as_completed(future_to_source):
+            source_id, source_config = future_to_source[future]
+            try:
+                # Individual timeout per source check
+                status = future.result(timeout=10) 
+                if status:
+                    source_statuses.append(status)
+            except TimeoutError:
+                log.warning(f'Content source check for {source_id} timed out.')
+                # Create a generic timeout error status
+                source_statuses.append({
+                    'name': source_config.get('display_name', source_id),
+                    'connected': False,
+                    'error': 'Connection check timed out after 10 seconds.',
+                    'details': {'type': source_id.split('_')[0]}
+                })
+            except Exception as exc:
+                log.error(f'Content source {source_id} check generated an exception: {exc}', exc_info=True)
+                source_statuses.append({
+                    'name': source_config.get('display_name', source_id),
+                    'connected': False,
+                    'error': f'An unexpected error occurred: {str(exc)}',
+                    'details': {'type': source_id.split('_')[0]}
+                })
+                
     return source_statuses
 
 def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
@@ -1092,37 +1396,88 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
 @connections_bp.route('/')
 @user_required
 def index():
-    """Render the connections status page."""
-    # Get connection statuses (these now include sample data in details)
-    cli_battery_status = check_cli_battery_connection()
-    plex_status = check_plex_connection()
-    mounted_files_status = check_mounted_files_connection()
-    phalanx_db_status = check_phalanx_db_connection()
-    scraper_statuses = check_scrapers_connections()
-    content_source_statuses = check_content_sources_connections()
+    """Render the connections status page with a timeout."""
+    start_time = datetime.now()
     
-    # Collect failing connections
+    # Initialize all statuses to None
+    results = {
+        'cli_battery_status': None,
+        'plex_status': None,
+        'jellyfin_status': None,
+        'mounted_files_status': None,
+        'phalanx_db_status': None,
+        'scraper_statuses': [],
+        'content_source_statuses': [],
+    }
+
+    # Run Nyaa scraper checks first to avoid proxy conflicts
+    nyaa_scraper_statuses = check_nyaa_scrapers_only()
+    results['scraper_statuses'].extend(nyaa_scraper_statuses)
+
+    # Determine which media server check to run
+    jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
+    
+    # Define tasks for all other connection checks (excluding Nyaa scrapers)
+    tasks = {
+        'cli_battery_status': check_cli_battery_connection,
+        'mounted_files_status': check_mounted_files_connection,
+        'phalanx_db_status': check_phalanx_db_connection,
+        'non_nyaa_scraper_statuses': check_non_nyaa_scrapers,
+        'content_source_statuses': check_content_sources_connections,
+    }
+    
+    if jellyfin_url and jellyfin_token:
+        tasks['jellyfin_status'] = check_jellyfin_connection
+    else:
+        tasks['plex_status'] = check_plex_connection
+
+    # Run all other connection checks in parallel
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
+        
+        try:
+            # Wait for all futures to complete, with a total timeout of 5 seconds
+            for future in as_completed(future_to_task, timeout=5):
+                task_name = future_to_task[future]
+                try:
+                    task_result = future.result()
+                    if task_name == 'non_nyaa_scraper_statuses':
+                        # Add non-Nyaa scraper results to the scraper_statuses list
+                        results['scraper_statuses'].extend(task_result)
+                    else:
+                        results[task_name] = task_result
+                except Exception as exc:
+                    log.error(f"Task {task_name} generated an exception: {exc}", exc_info=True)
+                    # Optionally create an error status for the failed task
+                    if task_name not in ['non_nyaa_scraper_statuses', 'content_source_statuses']:
+                        results[task_name] = {'name': task_name, 'connected': False, 'error': str(exc), 'details': {}}
+
+        except TimeoutError:
+            log.warning("Connections page render timed out after 5 seconds. Rendering with available data.")
+            # The loop is broken, results will contain only completed tasks.
+
+    # Collect failing connections from the results we have
     failing_connections = []
-    if not cli_battery_status['connected']:
-        failing_connections.append(cli_battery_status)
-    if plex_status and not plex_status['connected']:
-        failing_connections.append(plex_status)
-    if mounted_files_status and not mounted_files_status['connected']:
-        failing_connections.append(mounted_files_status)
-    if phalanx_db_status and not phalanx_db_status['connected']:
-        failing_connections.append(phalanx_db_status)
-    
-    # Add any failing scraper connections
-    failing_connections.extend([s for s in scraper_statuses if not s['connected']])
-    
-    # Add any failing content source connections (excluding Collected sources)
-    failing_connections.extend([s for s in content_source_statuses if not s['connected'] and not s['name'].startswith('Collected')])
-    
+    for key, status in results.items():
+        if not status: # Skip if status is None or empty list
+            continue
+            
+        if key in ['scraper_statuses', 'content_source_statuses']:
+            failing_connections.extend([s for s in status if not s.get('connected')])
+        elif isinstance(status, dict) and not status.get('connected'):
+            failing_connections.append(status)
+
+    # Add a flash message if the page timed out
+    if (datetime.now() - start_time).total_seconds() >= 5:
+        flash("Some connection checks timed out and may not be displayed. The page was loaded with available data.", "warning")
+
     return render_template('connections.html', 
-                         cli_battery_status=cli_battery_status,
-                         plex_status=plex_status,
-                         mounted_files_status=mounted_files_status,
-                         phalanx_db_status=phalanx_db_status,
-                         scraper_statuses=scraper_statuses,
-                         content_source_statuses=content_source_statuses,
+                         cli_battery_status=results['cli_battery_status'],
+                         plex_status=results['plex_status'],
+                         jellyfin_status=results['jellyfin_status'],
+                         mounted_files_status=results['mounted_files_status'],
+                         phalanx_db_status=results['phalanx_db_status'],
+                         scraper_statuses=results['scraper_statuses'],
+                         content_source_statuses=results['content_source_statuses'],
                          failing_connections=failing_connections)

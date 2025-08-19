@@ -781,6 +781,8 @@ def verify_database_health():
     Verifies the health of both media_items.db and cli_battery.db databases.
     If corruption is detected, backs up the corrupted database and creates a new one.
     """
+    logging.info("Skipping health verification - task will periodically verify health.")
+    return True
     logging.info("Verifying database health...")
     
     # Get database paths
@@ -1013,6 +1015,264 @@ def migrate_content_source_versions():
     except Exception as e:
         logging.error(f"Unexpected error during content source version migration: {e}", exc_info=True)
 
+def migrate_theatrical_release_dates():
+    """
+    Migrates theatrical release dates for all movie items using the direct API.
+    Runs asynchronously in a background thread to avoid blocking startup.
+    """
+    def _migrate_theatrical_release_dates_async():
+        try:
+            from database.core import get_db_connection
+            from cli_battery.app.direct_api import DirectAPI
+            from metadata.metadata import get_theatrical_release_date
+            import time
+            import threading
+            
+            logging.info("Starting theatrical release date migration for movies (background thread)...")
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Get all movie items that don't have theatrical_release_date set
+            query = """
+                SELECT id, imdb_id, title, year 
+                FROM media_items 
+                WHERE type = 'movie' 
+                AND theatrical_release_date IS NULL
+                AND imdb_id IS NOT NULL
+                AND (theatrical_release_date_checked IS NULL OR theatrical_release_date_checked = 0)
+            """
+            logging.debug(f"Executing query: {query}")
+            cursor.execute(query)
+            
+            movies_to_update = cursor.fetchall()
+            total_movies = len(movies_to_update)
+            
+            logging.debug(f"Query returned {total_movies} movies")
+            
+            # Debug: Check a few sample movies to see their checked status
+            if movies_to_update:
+                sample_ids = [movies_to_update[0][0], movies_to_update[1][0] if len(movies_to_update) > 1 else None]
+                for item_id in sample_ids:
+                    if item_id:
+                        cursor.execute("""
+                            SELECT id, title, theatrical_release_date, theatrical_release_date_checked 
+                            FROM media_items WHERE id = ?
+                        """, (item_id,))
+                        result = cursor.fetchone()
+                        if result:
+                            logging.warning(f"Sample movie from query - ID: {result[0]}, Title: {result[1]}, Theatrical: {result[2]}, Checked: {result[3]} (type: {type(result[3])})")
+            
+            # Debug: Check the actual values in the database
+            cursor.execute("""
+                SELECT theatrical_release_date_checked, COUNT(*) 
+                FROM media_items 
+                WHERE type = 'movie'
+                GROUP BY theatrical_release_date_checked
+            """)
+            checked_counts = cursor.fetchall()
+            logging.info(f"Database check - theatrical_release_date_checked values: {checked_counts}")
+            
+            if total_movies == 0:
+                logging.info("No movies found needing theatrical release date migration.")
+                return
+            
+            # Log a few sample movies to verify the data
+            sample_movies = movies_to_update[:3]
+            logging.info(f"Sample movies to process: {sample_movies}")
+            
+            # Debug: Check if any of the sample movies already have theatrical release dates
+            for item_id, imdb_id, title, year in sample_movies:
+                cursor.execute("SELECT theatrical_release_date FROM media_items WHERE id = ?", (item_id,))
+                result = cursor.fetchone()
+                if result and result[0]:
+                    logging.warning(f"Movie {title} (ID: {item_id}) already has theatrical_release_date: {result[0]} - this shouldn't be in the query results!")
+                else:
+                    logging.debug(f"Movie {title} (ID: {item_id}) has no theatrical_release_date as expected")
+            
+            # Test the API functions with a known movie first
+            test_imdb_id = "tt0111161"  # The Shawshank Redemption
+            logging.info(f"Testing API functions with known movie {test_imdb_id}...")
+            try:
+                test_metadata, test_source = DirectAPI.get_movie_metadata(test_imdb_id)
+                if test_metadata:
+                    logging.info(f"DirectAPI test successful for {test_imdb_id}")
+                    logging.debug(f"Test metadata keys: {list(test_metadata.keys()) if isinstance(test_metadata, dict) else 'Not a dict'}")
+                else:
+                    logging.warning(f"DirectAPI test failed for {test_imdb_id} - no metadata returned")
+                
+                test_theatrical = get_theatrical_release_date(test_imdb_id)
+                if test_theatrical:
+                    logging.info(f"Theatrical date test successful for {test_imdb_id}: {test_theatrical}")
+                else:
+                    logging.warning(f"Theatrical date test failed for {test_imdb_id} - no date returned")
+            except Exception as e:
+                logging.error(f"API test failed for {test_imdb_id}: {str(e)}", exc_info=True)
+            
+            logging.info(f"Found {total_movies} movies to update with theatrical release dates (background processing).")
+            
+            # Test: Check how many movies are already marked as checked
+            cursor.execute("""
+                SELECT COUNT(*) FROM media_items 
+                WHERE type = 'movie' 
+                AND theatrical_release_date_checked = 1
+            """)
+            already_checked = cursor.fetchone()[0]
+            logging.info(f"Movies already marked as checked: {already_checked}")
+            
+            # Test: Check total movie count
+            cursor.execute("""
+                SELECT COUNT(*) FROM media_items 
+                WHERE type = 'movie'
+            """)
+            total_movies_in_db = cursor.fetchone()[0]
+            logging.info(f"Total movies in database: {total_movies_in_db}")
+            
+            # Test: Check how many movies already have theatrical release dates
+            cursor.execute("""
+                SELECT COUNT(*) FROM media_items 
+                WHERE type = 'movie' 
+                AND theatrical_release_date IS NOT NULL
+            """)
+            movies_with_theatrical = cursor.fetchone()[0]
+            logging.info(f"Movies with theatrical release dates: {movies_with_theatrical}")
+            
+            # Thread-safe counters
+            updated_count = 0
+            error_count = 0
+            counter_lock = threading.Lock()
+            
+            # Create a separate connection for each update to avoid blocking
+            def update_movie_theatrical_date(item_id, imdb_id, title, year):
+                nonlocal updated_count, error_count
+                try:
+                    logging.debug(f"Starting processing for {title} ({imdb_id})")
+                    
+                    # Get movie metadata from direct API
+                    logging.debug(f"Attempting to get metadata for {title} ({imdb_id})")
+                    metadata, source = DirectAPI.get_movie_metadata(imdb_id)
+                    
+                    if not metadata:
+                        logging.warning(f"No metadata found for {title} ({imdb_id})")
+                        # Mark as checked even if no metadata found
+                        update_conn = get_db_connection()
+                        update_cursor = update_conn.cursor()
+                        try:
+                            update_cursor.execute("""
+                                UPDATE media_items 
+                                SET theatrical_release_date_checked = 1 
+                                WHERE id = ?
+                            """, (item_id,))
+                            update_conn.commit()
+                            logging.debug(f"Marked {title} ({imdb_id}) as checked (no metadata)")
+                        finally:
+                            update_conn.close()
+                        with counter_lock:
+                            error_count += 1
+                        return False
+                    
+                    logging.debug(f"Got metadata for {title} ({imdb_id}) - source: {source}")
+                    
+                    # Use our new function to get theatrical release date
+                    logging.debug(f"Attempting to get theatrical release date for {title} ({imdb_id})")
+                    theatrical_date = get_theatrical_release_date(imdb_id)
+                    
+                    logging.debug(f"Theatrical date result for {title} ({imdb_id}): {theatrical_date}")
+                    
+                    # Create a new connection for this update to avoid blocking
+                    update_conn = get_db_connection()
+                    update_cursor = update_conn.cursor()
+                    try:
+                        if theatrical_date:
+                            logging.debug(f"Found theatrical date {theatrical_date} for {title} ({imdb_id})")
+                            # Update with theatrical date and mark as checked
+                            update_cursor.execute("""
+                                UPDATE media_items 
+                                SET theatrical_release_date = ?, theatrical_release_date_checked = 1
+                                WHERE id = ?
+                            """, (theatrical_date, item_id))
+                            update_conn.commit()
+                            with counter_lock:
+                                updated_count += 1
+                            logging.debug(f"Successfully updated theatrical date for {title} ({imdb_id})")
+                            return True
+                        else:
+                            logging.debug(f"No theatrical date found for {title} ({imdb_id}) - marking as checked")
+                            # Mark as checked even if no theatrical date found
+                            update_cursor.execute("""
+                                UPDATE media_items 
+                                SET theatrical_release_date_checked = 1 
+                                WHERE id = ?
+                            """, (item_id,))
+                            update_conn.commit()
+                            logging.debug(f"Marked {title} ({imdb_id}) as checked (no theatrical date)")
+                            # Don't count this as an error - it's normal for many movies
+                            return True
+                    finally:
+                        update_conn.close()
+                    
+                except Exception as e:
+                    logging.error(f"Error processing movie {title} ({imdb_id}): {str(e)}", exc_info=True)
+                    with counter_lock:
+                        error_count += 1
+                    return False
+            
+            # Process movies in batches to avoid overwhelming the system
+            batch_size = 5  # Process 5 movies at a time
+            for i in range(0, len(movies_to_update), batch_size):
+                batch = movies_to_update[i:i + batch_size]
+                
+                # Process batch with threading
+                threads = []
+                for item_id, imdb_id, title, year in batch:
+                    thread = threading.Thread(
+                        target=lambda item_id=item_id, imdb_id=imdb_id, title=title, year=year: 
+                        update_movie_theatrical_date(item_id, imdb_id, title, year)
+                    )
+                    thread.daemon = True
+                    thread.start()
+                    threads.append(thread)
+                
+                # Wait for batch to complete
+                for thread in threads:
+                    thread.join()
+                
+                # Log progress every batch
+                processed = min(i + batch_size, total_movies)
+                with counter_lock:
+                    current_updated = updated_count
+                    current_errors = error_count
+                logging.info(f"Theatrical release migration progress: {processed}/{total_movies} (updated: {current_updated}, errors: {current_errors})")
+                
+                # Small delay between batches to avoid overwhelming APIs
+                time.sleep(0.5)
+            
+            with counter_lock:
+                final_updated = updated_count
+                final_errors = error_count
+            logging.info(f"Theatrical release date migration completed (background). Updated: {final_updated}, Processed: {total_movies - final_errors}, Errors: {final_errors}, Total: {total_movies}")
+            
+            # Test: Check how many movies are now marked as checked
+            cursor.execute("""
+                SELECT COUNT(*) FROM media_items 
+                WHERE type = 'movie' 
+                AND theatrical_release_date_checked = 1
+            """)
+            now_checked = cursor.fetchone()[0]
+            logging.info(f"Movies now marked as checked: {now_checked} (increase: {now_checked - already_checked})")
+            
+        except Exception as e:
+            logging.error(f"Error during theatrical release date migration (background): {str(e)}", exc_info=True)
+        finally:
+            if 'conn' in locals():
+                conn.close()
+    
+    # Start the migration in a background thread
+    migration_thread = threading.Thread(target=_migrate_theatrical_release_dates_async)
+    migration_thread.daemon = True
+    migration_thread.start()
+    logging.info("Theatrical release date migration started in background thread.")
+
 def main():
     # Remove global program_runner from here as well
     global metadata_process 
@@ -1082,6 +1342,9 @@ def main():
 
     # Run content source version migration after main schema is ready
     migrate_content_source_versions()
+
+    # Run theatrical release date migration for movies
+    migrate_theatrical_release_dates()
 
     # Initialize statistics tables/indexes AFTER main schema is verified
     try:
@@ -1502,6 +1765,34 @@ def main():
             save_config(config)
             logging.info("Successfully migrated content sources to include exclude_genres setting")
     # --- End exclude_genres migration ---
+
+    # --- Add migration for ignore_tags in Overseerr Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if source_id.startswith('Overseerr') and 'ignore_tags' not in source_config:
+                source_config['ignore_tags'] = ''
+                content_sources_updated = True
+                logging.info(f"Adding default ignore_tags='' to Overseerr source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated Overseerr content sources to include ignore_tags setting")
+    # --- End ignore_tags migration ---
+
+    # --- Add migration for list_length_limit in Content Sources ---
+    if 'Content Sources' in config:
+        content_sources_updated = False
+        for source_id, source_config in config['Content Sources'].items():
+            if 'list_length_limit' not in source_config:
+                source_config['list_length_limit'] = 0  # Default to no limit
+                content_sources_updated = True
+                logging.info(f"Adding default list_length_limit=0 to content source {source_id}")
+
+        if content_sources_updated:
+            save_config(config)
+            logging.info("Successfully migrated content sources to include list_length_limit setting")
+    # --- End list_length_limit migration ---
 
     # --- MIGRATION: Standardize 'Plex Watchlist' type to 'My Plex Watchlist' with fixed key 'My Plex Watchlist_1' ---
     plex_watchlist_migration_updated = False

@@ -21,6 +21,7 @@ from queues.blacklisted_queue import BlacklistedQueue
 from queues.pending_uncached_queue import PendingUncachedQueue
 from queues.upgrading_queue import UpgradingQueue
 from queues.final_check_queue import FinalCheckQueue
+from queues.pre_release_queue import PreReleaseQueue
 from queues.base_queue import BaseQueue
 from utilities.settings import get_setting
 
@@ -35,7 +36,7 @@ class QueueTimer:
         self.queue_stats = {
             queue_name: {'count': 0, 'total_time': 0, 'min_time': float('inf'), 'max_time': 0}
             for queue_name in ['Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping', 
-                             'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading']
+                             'Unreleased', 'Blacklisted', 'Pending Uncached', 'Upgrading', 'Pre_release']
         }
         
         # Initialize queue times
@@ -250,7 +251,8 @@ class QueueManager:
             "Blacklisted": BlacklistedQueue(),
             "Pending Uncached": PendingUncachedQueue(),
             "Upgrading": UpgradingQueue(),
-            "Final_Check": FinalCheckQueue()
+            "Final_Check": FinalCheckQueue(),
+            "Pre_release": PreReleaseQueue()
         }
         self.paused = False
         
@@ -459,6 +461,10 @@ class QueueManager:
         """Process the Final Check queue."""
         self._process_queue_safely("Final_Check")
 
+    def process_pre_release(self):
+        """Process the Pre-Release queue."""
+        self._process_queue_safely("Pre_release")
+
     def blacklist_item(self, item: Dict[str, Any], from_queue: str):
         self.queues["Blacklisted"].blacklist_item(item, self)
         self.queues[from_queue].remove_item(item)
@@ -487,6 +493,11 @@ class QueueManager:
         item_identifier = self.generate_identifier(item)
         logging.debug(f"Moving item to Upgrading: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Upgrading", "Upgrading")
+
+    def move_to_pre_release(self, item: Dict[str, Any], from_queue: str):
+        item_identifier = self.generate_identifier(item)
+        logging.debug(f"Moving item to Pre-Release: {item_identifier}")
+        self._move_item_to_queue(item, from_queue, "Pre_release", "Pre_release")
 
     def move_to_scraping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)

@@ -15,8 +15,57 @@ from flask import request, url_for
 from urllib.parse import urlparse
 from debrid.base import DebridProvider
 from debrid import get_debrid_provider
-from debrid.real_debrid.client import RealDebridProvider
+# Provider-agnostic: avoid direct Real-Debrid import
 import time
+
+# Special case handling for tt9615014 (Lego Masters US)
+# Season 5 is a special holiday season, so we ignore it and renumber subsequent seasons
+LEGO_MASTERS_US_IMDB_ID = "tt9615014"
+
+def _apply_lego_masters_us_season_fix_to_trakt_data(trakt_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply special season renumbering for Lego Masters US (tt9615014) to Trakt API response data.
+    Removes season 5 (holiday special) and renumbers subsequent seasons.
+    """
+    if not trakt_data or not isinstance(trakt_data, list):
+        return trakt_data
+    
+    # Remove season 5 if it exists
+    filtered_data = [item for item in trakt_data if item.get('number') != 5]
+    if len(filtered_data) != len(trakt_data):
+        logging.info(f"Removed season 5 (holiday special) from {LEGO_MASTERS_US_IMDB_ID}")
+    
+    # Renumber seasons 6+ to 5+
+    renumbered_data = []
+    for item in filtered_data:
+        season_num = item.get('number')
+        if season_num and season_num >= 6:
+            new_season_num = season_num - 1
+            item['number'] = new_season_num
+            logging.info(f"Renumbered season {season_num} to {new_season_num} for {LEGO_MASTERS_US_IMDB_ID}")
+        renumbered_data.append(item)
+    
+    return renumbered_data
+
+def _apply_lego_masters_us_episode_fix_to_trakt_data(trakt_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply special season renumbering for Lego Masters US (tt9615014) to Trakt episode data.
+    Renumbers episodes from season 6+ to season 5+.
+    """
+    if not trakt_data or not isinstance(trakt_data, list):
+        return trakt_data
+    
+    # Renumber episodes from season 6+ to season 5+
+    renumbered_data = []
+    for item in trakt_data:
+        season_num = item.get('season')
+        if season_num and season_num >= 6:
+            new_season_num = season_num - 1
+            item['season'] = new_season_num
+            logging.info(f"Renumbered episode from season {season_num} to {new_season_num} for {LEGO_MASTERS_US_IMDB_ID}")
+        renumbered_data.append(item)
+    
+    return renumbered_data
 
 # NEW ASYNC HELPER FUNCTION
 async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, media_type: str, tmdb_api_key: Optional[str]) -> Optional[Tuple[Optional[str], str, list, float, str]]:
@@ -42,6 +91,13 @@ async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, 
         details_response = await asyncio.to_thread(api.get, details_url)
         details_response.raise_for_status()
         details_data = details_response.json()
+    except api.exceptions.HTTPError as e:
+        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+        if status_code == 404:
+            logging.warning(f"TMDB details not found (404) for {media_type} {tmdb_id}: {e}")
+        else:
+            logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
+        return None 
     except Exception as e:
         logging.error(f"Error fetching TMDB details for {media_type} {tmdb_id}: {e}")
         return None 
@@ -96,6 +152,28 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     while attempt < max_retries:
         try:
             response = api.get(search_url, headers=headers, timeout=30)
+            # Detect unexpected HTML (e.g., Cloudflare or gateway page) and honor Retry-After if present
+            content_type = response.headers.get('Content-Type', '')
+            if 'html' in content_type.lower():
+                attempt += 1
+                retry_after_header = response.headers.get('Retry-After')
+                wait_time = None
+                if retry_after_header:
+                    try:
+                        wait_time = int(retry_after_header)
+                    except (ValueError, TypeError):
+                        wait_time = None
+                if wait_time is None:
+                    wait_time = max(1, retry_delay * (2 ** (attempt - 1)))
+                if attempt < max_retries:
+                    logging.warning(f"Received HTML response from Trakt. Waiting {wait_time} seconds before retry {attempt}/{max_retries}")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logging.error("Received HTML response from Trakt after maximum retries")
+                    logging.error(f"Response Headers: {response.headers}")
+                    return []
+
             response.raise_for_status()
             
             if 'X-RateLimit-Remaining' in response.headers:
@@ -122,6 +200,24 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
 
         except api.exceptions.RequestException as e:
             attempt += 1
+            status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+            error_headers = getattr(getattr(e, 'response', None), 'headers', {}) or {}
+            retry_after_header = error_headers.get('Retry-After')
+
+            if status_code == 429 and attempt <= max_retries:
+                wait_time = None
+                if retry_after_header:
+                    try:
+                        wait_time = int(retry_after_header)
+                    except (ValueError, TypeError):
+                        wait_time = None
+                if wait_time is None:
+                    wait_time = max(1, retry_delay * (2 ** (attempt - 1)))
+                if attempt < max_retries:
+                    logging.warning(f"Rate limit hit (429). Waiting {wait_time} seconds before retry {attempt}/{max_retries}")
+                    time.sleep(wait_time)
+                    continue
+
             if attempt < max_retries:
                 wait_time = retry_delay * (2 ** (attempt - 1)) 
                 logging.warning(f"Attempt {attempt} failed. Retrying in {wait_time} seconds. Error: {str(e)}")
@@ -129,7 +225,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                 continue
             else:
                 logging.error(f"Error searching Trakt after {max_retries} attempts: {str(e)}")
-                if isinstance(e, api.exceptions.HTTPError):
+                if isinstance(e, api.exceptions.HTTPError) and getattr(e, 'response', None) is not None:
                     logging.error(f"HTTP Status Code: {e.response.status_code}")
                     logging.error(f"Response Headers: {e.response.headers}")
                 return [] 
@@ -277,7 +373,7 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
              continue
 
         converted_results.append({
-            'mediaType': media_type,
+            'media_type': 'show' if media_type == 'tv' else media_type,
             'id': tmdb_id_str, # Use tmdb_id_str which is confirmed to be string
             'title': item['title'],
             'year': item['year'],
@@ -358,6 +454,13 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         logging.info(f"Cached metadata for {media_type} {tmdb_id}")
 
         return media_meta
+    except api.exceptions.HTTPError as e:
+        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
+        if status_code == 404:
+            logging.warning(f"TMDb details not found (404) for {media_type} {tmdb_id}: {e}")
+        else:
+            logging.error(f"Error fetching media meta from TMDb: {e}")
+        return None
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching media meta from TMDb: {e}")
         return None
@@ -449,9 +552,9 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
 
     detailed_results = []
     for result in search_results:
-        if result['mediaType'] != 'person':
+        if result['media_type'] != 'person':
             tmdb_id = result['id']
-            media_type = result['mediaType']
+            media_type = result['media_type']
             title_for_logging = result['title']
             logging.info(f"Processing media tmdb_id: {tmdb_id}, type: {media_type}, title: {title_for_logging}")
 
@@ -503,7 +606,7 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 "id": tmdb_id,
                 "title": result['title'],
                 "year": result['year'],
-                "media_type": media_type,
+                "media_type": 'show' if media_type == 'tv' else media_type,
                 "show_overview": media_meta[1],
                 "poster_path": poster_path,
                 "genre_ids": media_meta[2],
@@ -555,7 +658,7 @@ def get_tmdb_data(tmdb_id: int, media_type: str, season: Optional[int] = None, e
 
 def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int] = None, allow_specials: bool = False) -> Dict[str, Any]:
     from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
-    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, allow_specials: {allow_specials}")
+    logging.info(f"Starting web scrape for TV Show: {title}, media_id: {media_id}, season: {season}, allow_specials: {allow_specials}")
     
     trakt_client_id = get_setting('Trakt', 'client_id')
     
@@ -569,7 +672,7 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
         'trakt-api-key': trakt_client_id
     }
 
-    # First, convert TMDB ID to Trakt ID
+    # First, convert TMDB ID to Trakt ID and get IMDb ID
     tmdb_to_trakt_url = f"https://api.trakt.tv/search/tmdb/{media_id}?type=show"
     
     try:
@@ -582,13 +685,27 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             return {"error": "Show not found on Trakt"}
         
         trakt_id = search_data[0]['show']['ids']['trakt']
+        imdb_id = search_data[0]['show']['ids'].get('imdb')
+        
+        if not imdb_id:
+            logging.warning(f"No IMDb ID found for TMDB ID {media_id}, cannot apply season renumbering")
     except api.exceptions.RequestException as e:
         logging.error(f"Error converting TMDB ID to Trakt ID: {e}")
         return {"error": f"Error converting TMDB ID to Trakt ID: {str(e)}"}
 
+    # Handle season renumbering for Lego Masters US - redirect seasons 5+ to seasons 6+
+    adjusted_season = season
+    # Convert season to int for comparison if it's a string
+    season_int = int(season) if season is not None else None
+    if imdb_id == LEGO_MASTERS_US_IMDB_ID and season_int is not None and season_int >= 5:
+        adjusted_season = season_int + 1
+        logging.info(f"Redirecting season {season_int} request to season {adjusted_season} for {LEGO_MASTERS_US_IMDB_ID}")
+    
+    logging.info(f"Season adjustment: original={season} (type: {type(season)}), adjusted={adjusted_season}, imdb_id={imdb_id}")
+    
     # Now use the Trakt ID for further requests
-    if season is not None:
-        search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons/{season}?extended=full"
+    if adjusted_season is not None:
+        search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons/{adjusted_season}?extended=full"
     else:
         search_url = f"https://api.trakt.tv/shows/{trakt_id}/seasons?extended=full"
 
@@ -601,31 +718,69 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
             logging.warning(f"No results found for show: {title}")
             return {"error": "No results found"}
 
+        # Apply season renumbering for Lego Masters US
+        if imdb_id == LEGO_MASTERS_US_IMDB_ID:
+            original_count = len(trakt_data)
+            if season is not None:
+                # For episode data, apply episode fix
+                trakt_data = _apply_lego_masters_us_episode_fix_to_trakt_data(trakt_data)
+                # Additional filtering for Lego Masters US - remove holiday special episodes
+                if season_int == 5:  # User requested season 5, which we redirected to season 6 (original season 6 content)
+                    # Filter out episodes that are clearly holiday specials
+                    filtered_trakt_data = []
+                    logging.info(f"Starting holiday episode filtering for season 5. Original episodes: {len(trakt_data)}")
+                    for episode in trakt_data:
+                        episode_title = episode.get('title', '').lower()
+                        logging.info(f"Checking episode: '{episode.get('title')}' (lowercase: '{episode_title}')")
+                        # Skip episodes that are clearly holiday specials
+                        if any(holiday_term in episode_title for holiday_term in ['holiday', 'christmas', 'winter', 'snow']):
+                            logging.info(f"Filtering out holiday special episode: {episode.get('title')}")
+                            continue
+                        logging.info(f"Keeping episode: {episode.get('title')}")
+                        filtered_trakt_data.append(episode)
+                    trakt_data = filtered_trakt_data
+                    logging.info(f"After holiday filtering: {len(trakt_data)} episodes remaining")
+            else:
+                # For season data, apply season fix
+                trakt_data = _apply_lego_masters_us_season_fix_to_trakt_data(trakt_data)
+            new_count = len(trakt_data)
+            logging.info(f"Applied season renumbering for {LEGO_MASTERS_US_IMDB_ID}: {original_count} -> {new_count} items")
+
         # Fetch TMDB data
-        tmdb_data = get_tmdb_data(media_id, 'tv', season)
+        tmdb_data = get_tmdb_data(media_id, 'tv', adjusted_season)
 
         if season is not None:
             # Fetch episode details
+            episode_results = []
+            for episode in trakt_data:
+                # Use adjusted_season for TMDB API calls, but keep original season for display
+                tmdb_season_for_api = adjusted_season if adjusted_season != season else episode['season']
+                
+                episode_result = {
+                    "id": media_id,
+                    "title": title,
+                    "episode_title": episode.get('title', ''),
+                    "season_id": episode['ids']['trakt'],
+                    "season_num": episode['season'],  # Keep original for display
+                    "episode_num": episode['number'],
+                    "year": year,
+                    "media_type": 'tv',
+                    "still_path": get_tmdb_data(media_id, 'tv', tmdb_season_for_api, episode['number']).get('still_path'),
+                    "air_date": episode.get('first_aired'),
+                    "vote_average": episode.get('rating', 0),
+                    "multi": False
+                }
+                
+                # Only add if not a special episode (unless allow_specials is True)
+                if allow_specials or episode['number'] != 0:
+                    episode_results.append(episode_result)
+            
+            logging.info(f"Returning {len(episode_results)} episodes to frontend:")
+            for ep in episode_results:
+                logging.info(f"  - Episode {ep['episode_num']}: {ep['episode_title']} (Season {ep['season_num']})")
+            
             return {
-                "episode_results": [
-                    {
-                        "id": media_id,
-                        "title": title,
-                        "episode_title": episode.get('title', ''),
-                        "season_id": episode['ids']['trakt'],
-                        "season_num": episode['season'],
-                        "episode_num": episode['number'],
-                        "year": year,
-                        "media_type": 'tv',
-                        "still_path": get_tmdb_data(media_id, 'tv', episode['season'], episode['number']).get('still_path'),
-                        "air_date": episode.get('first_aired'),
-                        "vote_average": episode.get('rating', 0),
-                        "multi": False
-                    }
-                    for episode in trakt_data
-                    # Conditionally filter out special episodes (number 0) based on allow_specials flag
-                    if allow_specials or episode['number'] != 0 
-                ]
+                "episode_results": episode_results
             }
         else:
             # Fetch season details
@@ -1050,8 +1205,8 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     supports_cache_check = debrid_provider.supports_direct_cache_check
     supports_bulk_check = debrid_provider.supports_bulk_cache_checking
     
-    # Check if this is a RealDebridProvider
-    is_real_debrid = isinstance(debrid_provider, RealDebridProvider)
+    # Determine behavior from provider capability flags
+    is_real_debrid = getattr(debrid_provider, 'supports_direct_cache_check', False)
     
     logging.info(f"Debrid provider: supports_cache_check={supports_cache_check}, supports_bulk_check={supports_bulk_check}, is_real_debrid={is_real_debrid}")
 
@@ -1146,7 +1301,7 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         else:
             # If provider doesn't support direct checking but is RealDebrid, check first 5 results
             if is_real_debrid:
-                logging.info("Using RealDebridProvider's is_cached method for exactly 5 results")
+                logging.info("Using provider's is_cached method for exactly 5 results based on capability flags")
                 torrent_ids_to_remove = []  # Track torrent IDs for removal
                 
                 # Only check first 5 results
@@ -1208,29 +1363,29 @@ def get_available_versions():
     return list(scraping_versions.keys())
 
 def get_media_details(media_id: str, media_type: str) -> Dict[str, Any]:
-    from metadata.metadata import get_metadata, get_imdb_id_if_missing
+    from metadata.metadata import get_metadata
     #logging.info(f"Fetching media details for ID: {media_id}, Type: {media_type}")
 
-    # If media_id is a TMDB ID, convert it to IMDb ID
-    if media_type == 'movie':
-        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
-    else:
-        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(media_id)})
-
-    if not imdb_id:
-        logging.error(f"Could not find IMDB ID for TMDB ID: {media_id}")
-        return {}
-
-    # Fetch metadata using the IMDb ID
-    metadata = get_metadata(imdb_id=imdb_id, item_media_type=media_type)
+    # Fetch metadata using the TMDB ID, specifying the media type
+    metadata = get_metadata(tmdb_id=int(media_id), item_media_type=media_type)
 
     if not metadata:
-        logging.error(f"Could not fetch metadata for IMDb ID: {imdb_id}")
+        logging.error(f"Could not fetch metadata for TMDB ID: {media_id}")
+        return {}
+
+    # The get_metadata function now correctly handles the conversion and fetching.
+    # We can retrieve the imdb_id from the returned metadata.
+    imdb_id = metadata.get('imdb_id')
+    
+    if not imdb_id:
+        logging.error(f"Could not resolve IMDb ID for TMDB ID: {media_id}")
+        # Depending on requirements, you might still return partial metadata
+        # return metadata or {} 
         return {}
 
     # Add additional details that might be needed
     metadata['media_type'] = media_type
-    if media_type == 'tv':
+    if media_type in ['tv', 'show']: # More robust check
         from metadata.metadata import get_all_season_episode_counts, get_show_airtime_by_imdb_id
         metadata['seasons'] = get_all_season_episode_counts(imdb_id)
         metadata['airtime'] = get_show_airtime_by_imdb_id(imdb_id)

@@ -1,5 +1,67 @@
 import logging
+import os
+
+# --- Temporary logging setup for debugging the patch ---
+LOG_FLAG_PATCH = "[PLEX_PATCH_DEBUG]"
+patch_logger = logging.getLogger('plex_patch_debugger')
+patch_logger.setLevel(logging.INFO)
+log_dir_debug = os.environ.get('USER_LOGS', '/user/logs')
+os.makedirs(log_dir_debug, exist_ok=True)
+debug_log_path = os.path.join(log_dir_debug, 'patch_debug.log')
+fh = logging.FileHandler(debug_log_path)
+fh.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(formatter)
+patch_logger.addHandler(fh)
+patch_logger.propagate = False
+
+patch_logger.info(f"{LOG_FLAG_PATCH} Logger initialized in plex_watchlist.py")
+# --- End temporary logging setup ---
+
+patch_logger.info(f"{LOG_FLAG_PATCH} Attempting to patch plexapi query methods for logging...")
+try:
+    import plexapi.myplex
+    
+    # Patch PlexServer.query
+    original_plexserver_query = plexapi.myplex.PlexServer.query
+    def patched_plexserver_query(self, key, method=None, headers=None, params=None, timeout=None, **kwargs):
+        # Fix the endpoint URL if it's using the old metadata.provider.plex.tv
+        if 'metadata.provider.plex.tv' in str(key):
+            fixed_key = str(key).replace('metadata.provider.plex.tv', 'discover.provider.plex.tv')
+            patch_logger.info(f"{LOG_FLAG_PATCH} PLEXSERVER QUERY: FIXED ENDPOINT - Original: {key} -> Fixed: {fixed_key}")
+            patch_logger.info(f"{LOG_FLAG_PATCH} PLEXSERVER QUERY: method={method}, params={params}, kwargs={kwargs}")
+            return original_plexserver_query(self, fixed_key, method, headers, params, timeout, **kwargs)
+        else:
+            patch_logger.info(f"{LOG_FLAG_PATCH} PLEXSERVER QUERY: key={key}, method={method}, params={params}, kwargs={kwargs}")
+            return original_plexserver_query(self, key, method, headers, params, timeout, **kwargs)
+
+    plexapi.myplex.PlexServer.query = patched_plexserver_query
+    patch_logger.info(f"{LOG_FLAG_PATCH} SUCCESS: Patched plexapi.myplex.PlexServer.query to log requests.")
+
+    # Patch MyPlexAccount.query
+    original_myplex_query = plexapi.myplex.MyPlexAccount.query
+    def patched_myplex_query(self, url, method=None, headers=None, timeout=None, **kwargs):
+        # Fix the endpoint URL if it's using the old metadata.provider.plex.tv
+        if 'metadata.provider.plex.tv' in url:
+            fixed_url = url.replace('metadata.provider.plex.tv', 'discover.provider.plex.tv')
+            patch_logger.info(f"{LOG_FLAG_PATCH} MYPLEX QUERY: FIXED ENDPOINT - Original: {url} -> Fixed: {fixed_url}")
+            patch_logger.info(f"{LOG_FLAG_PATCH} MYPLEX QUERY: method={method}, kwargs={kwargs}")
+            return original_myplex_query(self, fixed_url, method, headers, timeout, **kwargs)
+        else:
+            patch_logger.info(f"{LOG_FLAG_PATCH} MYPLEX QUERY: url={url}, method={method}, kwargs={kwargs}")
+            return original_myplex_query(self, url, method, headers, timeout, **kwargs)
+
+    plexapi.myplex.MyPlexAccount.query = patched_myplex_query
+    patch_logger.info(f"{LOG_FLAG_PATCH} SUCCESS: Patched plexapi.myplex.MyPlexAccount.query to log requests.")
+
+except (ImportError, AttributeError) as e:
+    patch_logger.error(f"{LOG_FLAG_PATCH} FAILED: Could not patch plexapi query methods. Error: {e}", exc_info=True)
+
+patch_logger.info(f"{LOG_FLAG_PATCH} plex_watchlist.py module execution continues...")
+
 from plexapi.myplex import MyPlexAccount
+patch_logger.info(f"{LOG_FLAG_PATCH} Imported MyPlexAccount from plexapi.myplex.")
+
 from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence

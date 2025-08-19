@@ -148,6 +148,19 @@ def index():
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_magnet'] = item.get('filled_by_magnet', 'Unknown')
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
+        elif queue_name == 'Pre_release':
+            for item in items:
+                # Add pre-release specific data
+                item['time_added'] = item.get('time_added', datetime.now())
+                # Get pre-release data if available
+                pre_release_queue = queue_manager.queues.get('Pre_release')
+                if pre_release_queue and hasattr(pre_release_queue, 'pre_release_data'):
+                    pre_release_info = pre_release_queue.pre_release_data.get(item['id'], {})
+                    item['scrape_count'] = pre_release_info.get('scrape_count', 0)
+                    item['last_scrape'] = pre_release_info.get('last_scrape', 'Never')
+                else:
+                    item['scrape_count'] = 0
+                    item['last_scrape'] = 'Never'
 
     for queue_name, items in queue_contents.items():
         if queue_name == 'Unreleased':
@@ -348,6 +361,23 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
         elif queue_name == 'Final_Check':
             display_timestamp = item.get('final_check_add_timestamp') or item.get('last_updated')
             item['final_check_display_time'] = display_timestamp
+        elif queue_name == 'Pre_release':
+            # Add pre-release specific data
+            time_added = item.get('time_added', datetime.now())
+            if isinstance(time_added, datetime):
+                item['time_added'] = time_added.strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                item['time_added'] = str(time_added)
+            
+            # Get pre-release data if available
+            pre_release_queue = queue_manager.queues.get('Pre_release')
+            if pre_release_queue and hasattr(pre_release_queue, 'pre_release_data'):
+                pre_release_info = pre_release_queue.pre_release_data.get(item['id'], {})
+                item['scrape_count'] = pre_release_info.get('scrape_count', 0)
+                item['last_scrape'] = pre_release_info.get('last_scrape', 'Never')
+            else:
+                item['scrape_count'] = 0
+                item['last_scrape'] = 'Never'
         
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']
@@ -487,7 +517,10 @@ def queue_stream():
 
     # Apply a hard maximum limit to prevent abuse.
     ITEMS_LIMIT = min(limit, 500)
-    DB_FETCH_QUEUES = {"Wanted", "Blacklisted", "Unreleased", "Final_Check"}
+    # Special limit for Checking queue to improve performance
+    CHECKING_QUEUE_LIMIT = 20
+    DB_FETCH_QUEUES = {"Wanted", "Final_Check"}  # Removed Blacklisted and Unreleased
+    COUNT_ONLY_QUEUES = {"Blacklisted", "Unreleased"}  # New set for count-only queues
     
     # Performance optimization: Track last sent data to avoid redundant updates
     last_sent_hash = None
@@ -510,6 +543,8 @@ def queue_stream():
                     if current_time - last_heartbeat > HEARTBEAT_INTERVAL:
                         yield f"data: {json.dumps({'heartbeat': True, 'timestamp': current_time})}\n\n"
                         last_heartbeat = current_time
+                    
+                    program_status_start = time.time()
                     program_status = get_program_status()
 
                     if program_status in ["Stopped", "Stopping"]:
@@ -519,6 +554,7 @@ def queue_stream():
 
                     initialization_status = None
                     if program_status == "Starting":
+                        init_status_start = time.time()
                         status = get_initialization_status()
                         if status:
                             initialization_status = {
@@ -537,10 +573,12 @@ def queue_stream():
 
                     # If program is running, proceed to send queue data
                     fetch_start = time.time()
+                    queue_manager_start = time.time()
                     queue_manager = QueueManager()
                     
                     currently_processing_upgrade_id = None
                     if 'Upgrading' in queue_manager.queues:
+                        upgrade_id_start = time.time()
                         currently_processing_upgrade_id = queue_manager.queues['Upgrading'].get_currently_processing_item_id()
 
                     mem_start = time.time()
@@ -551,21 +589,30 @@ def queue_stream():
                     hidden_counts = {}
 
                     # Process in-memory queues first
+                    in_memory_start = time.time()
                     for queue_name, items in in_memory_queue_contents.items():
-                        if queue_name not in DB_FETCH_QUEUES:
+                        if queue_name not in DB_FETCH_QUEUES and queue_name not in COUNT_ONLY_QUEUES:
+                            queue_process_start = time.time()
                             total_count = len(items)
                             queue_counts[queue_name] = total_count
-                            hidden_count = max(0, total_count - ITEMS_LIMIT)
-                            if hidden_count > 0:
-                                hidden_counts[queue_name] = hidden_count
+                            
+                            # Use special limit for Checking queue to improve performance
+                            # Checking queue is limited to 20 items regardless of general page size
+                            if queue_name == 'Checking':
+                                limit_for_queue = CHECKING_QUEUE_LIMIT
+                                # Don't show hidden counts for Checking queue
+                                hidden_count = 0
+                            else:
+                                limit_for_queue = ITEMS_LIMIT
+                                hidden_count = max(0, total_count - ITEMS_LIMIT)
+                                if hidden_count > 0:
+                                    hidden_counts[queue_name] = hidden_count
 
-                            limited_items = items[:ITEMS_LIMIT]
-                            # For Blacklisted and Unreleased queues, consolidate FIRST to reduce item count
-                            if queue_name in ['Blacklisted', 'Unreleased']:
-                                limited_items, _ = consolidate_items(limited_items)
+                            limited_items = items[:limit_for_queue]
 
                             # Process items in batches for better performance
                             processed_items = []
+                            batch_start = time.time()
                             for i in range(0, len(limited_items), 25):  # Process 25 items at a time
                                 batch = limited_items[i:i+25]
                                 batch_processed = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in batch]
@@ -573,11 +620,26 @@ def queue_stream():
                             
                             final_contents[queue_name] = processed_items
 
-                    # Process database-backed queues
+                    # Process count-only queues (Blacklisted and Unreleased)
+                    count_only_start = time.time()
+                    for queue_name in COUNT_ONLY_QUEUES:
+                        try:
+                            count_start = time.time()
+                            total_count = get_item_count_by_state(queue_name)
+                            queue_counts[queue_name] = total_count
+                            # No items sent for count-only queues
+                            final_contents[queue_name] = []
+                        except Exception as db_err:
+                            logging.error(f"Error fetching count for queue '{queue_name}': {db_err}")
+                            final_contents[queue_name] = []
+                            queue_counts[queue_name] = 0
+                    
+                    # Process database-backed queues (only Wanted and Final_Check now)
                     db_start = time.time()
                     for queue_name in DB_FETCH_QUEUES:
                         qp_start = time.time()
                         try:
+                            count_query_start = time.time()
                             total_count = get_item_count_by_state(queue_name)
                             queue_counts[queue_name] = total_count
                             hidden_count = max(0, total_count - ITEMS_LIMIT)
@@ -589,12 +651,9 @@ def queue_stream():
                             limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
                             limited_items = [dict(item) for item in limited_items_raw]
 
-                            # For Blacklisted and Unreleased queues, consolidate FIRST to reduce item count
-                            if queue_name in ['Blacklisted', 'Unreleased']:
-                                limited_items, _ = consolidate_items(limited_items)
-
                             # Process items in batches for better performance
                             processed_items = []
+                            batch_start = time.time()
                             for i in range(0, len(limited_items), 25):  # Process 25 items at a time
                                 batch = limited_items[i:i+25]
                                 batch_processed = [process_item_for_response(item, queue_name, currently_processing_upgrade_id) for item in batch]
@@ -644,6 +703,8 @@ def queue_stream():
                         consecutive_identical_sends = 0
 
                     payload_str = json.dumps(data_to_send, default=str)
+                    payload_size = len(payload_str)
+                    
                     yield f"data: {payload_str}\n\n"
 
                 except Exception as e:
@@ -680,6 +741,7 @@ def get_items_processed_per_hour():
         return _items_per_hour_cache['value']
 
     try:
+        query_start = time.time()
         from database.core import get_db_connection  # Local import to avoid circular imports
         conn = get_db_connection()
         query = (
@@ -714,19 +776,15 @@ def _format_remaining_time(hours_float: float) -> str:
 # Helper: count Wanted items whose *computed* scrape time has passed
 # ---------------------------------------------------------------------------
 def get_ready_wanted_items_count() -> int:
-    """Return number of Wanted-queue entries that are ready to be scraped.
-
-    The *media_items* schema does not store a literal ``scrape_time`` column; that
-    value is derived at runtime (see ``compute_scrape_time_cached``).  To avoid
-    relying on absent columns we fetch the Wanted items, compute their scrape time
-    with the existing helper, and compare to *now*.
-    """
+    """Return number of Wanted-queue entries that are ready to be scraped."""
     try:
+        count_start = time.time()
         from database.database_reading import get_all_media_items  # Lazy import
         now = datetime.now()
         ready_count = 0
 
         # Wanted queue tends to be small; fetching all rows is acceptable here.
+        query_start = time.time()
         for raw in get_all_media_items(state="Wanted", limit=None):
             item = dict(raw)
 

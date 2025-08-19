@@ -62,6 +62,7 @@ from scraper.functions.ptt_parser import parse_with_ptt
 from database.database_writing import add_media_item
 from routes.program_operation_routes import get_program_runner
 from utilities.plex_removal_cache import cache_plex_removal
+import subprocess
 
 debug_bp = Blueprint('debug', __name__)
 
@@ -849,6 +850,11 @@ def get_and_add_wanted_content(source_id):
     source_media_type = source_data.get('media_type', 'All')
     raw_cutoff_date = source_data.get('cutoff_date', '')
     exclude_genres = source_data.get('exclude_genres', []) # Get exclude_genres setting
+    try:
+        list_length_limit = int(source_data.get('list_length_limit', 0)) # Get list_length_limit setting and convert to int
+    except (ValueError, TypeError):
+        logging.warning(f"Invalid list_length_limit value for source {source_id}: {source_data.get('list_length_limit')}. Using default value 0.")
+        list_length_limit = 0
     parsed_cutoff_date = None
 
     if raw_cutoff_date:
@@ -942,6 +948,31 @@ def get_and_add_wanted_content(source_id):
 
     logging.debug(f"Fetched {len(wanted_content)} raw items for {source_id}")
 
+    # Apply list length limit if set
+    if list_length_limit > 0:
+        if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
+            # For tuple format, limit each batch
+            limited_wanted_content = []
+            total_items_limited = 0
+            for items, item_versions_from_source_tuple in wanted_content:
+                if total_items_limited >= list_length_limit:
+                    logging.info(f"List length limit reached for {source_id} ({list_length_limit} items), skipping remaining batches")
+                    break
+                remaining_limit = list_length_limit - total_items_limited
+                if len(items) > remaining_limit:
+                    items = items[:remaining_limit]
+                    logging.info(f"Limited batch for {source_id} to {remaining_limit} items due to list length limit")
+                limited_wanted_content.append((items, item_versions_from_source_tuple))
+                total_items_limited += len(items)
+            wanted_content = limited_wanted_content
+            logging.info(f"Applied list length limit to {source_id}: processed {total_items_limited} items (limit: {list_length_limit})")
+        else:
+            # For single list format, limit the list
+            original_length = len(wanted_content)
+            if original_length > list_length_limit:
+                wanted_content = wanted_content[:list_length_limit]
+                logging.info(f"Applied list length limit to {source_id}: limited to {list_length_limit} items from {original_length}")
+
     if wanted_content:
         try: # Add try block for processing
             if isinstance(wanted_content, list) and len(wanted_content) > 0 and isinstance(wanted_content[0], tuple):
@@ -1034,7 +1065,12 @@ def get_and_add_wanted_content(source_id):
                                 current_batch_cutoff_skipped = 0 # Local counter for this batch iteration's date skips
                                 if cutoff_date:
                                     for item in all_items_meta_processed_batch:
-                                        release_date = item.get('release_date')
+                                        # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                        if item.get('media_type') == 'movie':
+                                            release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                        else:
+                                            release_date = item.get('release_date')
+                                        
                                         if not release_date or release_date.lower() == 'unknown':
                                             final_items_for_db_batch.append(item)
                                             continue
@@ -1062,24 +1098,10 @@ def get_and_add_wanted_content(source_id):
                                     added_count = add_wanted_items(final_items_for_db_batch, versions_to_inject or versions_from_config)
                                     batch_total_items_added += added_count or 0
                                     
-                                    # Update cache for items that actually made it through all filtering
-                                    # Only cache items that were successfully processed and added
+                                    # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                                    # This prevents reprocessing the same items repeatedly
                                     for item_original in items_to_process_raw:
-                                        # Find the corresponding processed item to check if it made it through
-                                        item_title = item_original.get('title', '')
-                                        item_year = item_original.get('year', '')
-                                        item_media_type = item_original.get('media_type', '')
-                                        
-                                        # Check if this item made it through all filtering by looking for it in final_items_for_db_batch
-                                        item_made_it_through = any(
-                                            processed_item.get('title') == item_title and 
-                                            processed_item.get('year') == item_year and
-                                            processed_item.get('media_type') == item_media_type
-                                            for processed_item in final_items_for_db_batch
-                                        )
-                                        
-                                        if item_made_it_through:
-                                            update_cache_for_item(item_original, source_id, source_cache)
+                                        update_cache_for_item(item_original, source_id, source_cache)
 
                     except Exception as batch_error:
                         logging.error(f"Error processing batch from {source_id}: {str(batch_error)}", exc_info=True)
@@ -1164,7 +1186,12 @@ def get_and_add_wanted_content(source_id):
                         current_non_batch_cutoff_skipped = 0 # Local counter for this section's date skips
                         if cutoff_date:
                             for item in all_items_meta_processed_non_batch:
-                                release_date = item.get('release_date')
+                                # For movies, use theatrical_release_date if available, otherwise fall back to release_date
+                                if item.get('media_type') == 'movie':
+                                    release_date = item.get('theatrical_release_date') or item.get('release_date')
+                                else:
+                                    release_date = item.get('release_date')
+                                
                                 if not release_date or release_date.lower() == 'unknown':
                                     final_items_for_db_non_batch.append(item)
                                     continue
@@ -1193,24 +1220,10 @@ def get_and_add_wanted_content(source_id):
                             added_count = add_wanted_items(final_items_for_db_non_batch, versions_from_config) 
                             total_items_added += added_count or 0
                             
-                            # Update cache for items that actually made it through all filtering
-                            # Only cache items that were successfully processed and added
+                            # Update cache for all items that were processed (regardless of whether they made it through filtering)
+                            # This prevents reprocessing the same items repeatedly
                             for item_original in items_to_process_raw:
-                                # Find the corresponding processed item to check if it made it through
-                                item_title = item_original.get('title', '')
-                                item_year = item_original.get('year', '')
-                                item_media_type = item_original.get('media_type', '')
-                                
-                                # Check if this item made it through all filtering by looking for it in final_items_for_db_non_batch
-                                item_made_it_through = any(
-                                    processed_item.get('title') == item_title and 
-                                    processed_item.get('year') == item_year and
-                                    processed_item.get('media_type') == item_media_type
-                                    for processed_item in final_items_for_db_non_batch
-                                )
-                                
-                                if item_made_it_through:
-                                    update_cache_for_item(item_original, source_id, source_cache)
+                                update_cache_for_item(item_original, source_id, source_cache)
 
             # Save the updated cache
             save_source_cache(source_id, source_cache)
@@ -1222,6 +1235,7 @@ def get_and_add_wanted_content(source_id):
             if media_type_skipped > 0: stats_msg += f", Skipped {media_type_skipped} (media type)"
             if genre_skipped > 0: stats_msg += f", Skipped {genre_skipped} (excluded genres)"
             if cutoff_date_skipped > 0: stats_msg += f", Skipped {cutoff_date_skipped} (cutoff date)"
+            if list_length_limit > 0: stats_msg += f", list length limited to {list_length_limit}"
             logging.info(stats_msg)
 
         except Exception as process_error:
@@ -2540,13 +2554,20 @@ def parse_symlink(symlink_path: Path):
         'is_anime': False # Populated by get_metadata
     }
 
-    # 1. Extract IMDb ID (tt#######)
+    # 1. Extract IMDb ID (tt#######) - try filename first, then full path
     imdb_match = re.search(r'(tt\d{7,})', filename, re.IGNORECASE)
     if imdb_match:
         parsed_data['imdb_id'] = imdb_match.group(1)
     else:
-        logging.warning(f"Could not extract IMDb ID from filename: {filename}")
-        return None # Cannot proceed without IMDb ID
+        # Try searching in the full path as fallback
+        full_path_str = str(symlink_path)
+        imdb_match = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+        if imdb_match:
+            parsed_data['imdb_id'] = imdb_match.group(1)
+            logging.info(f"Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+        else:
+            logging.warning(f"Could not extract IMDb ID from filename or full path: {filename}")
+            return None # Cannot proceed without IMDb ID
 
     # 2. Extract Season and Episode Numbers (S##E## or similar)
     # More robust regex to handle variations like S01E01, S1E1, Season 1 Episode 1, 1x01 etc.
@@ -2669,6 +2690,7 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                 component_map['version'].append("Default")
 
 
+        # Build paths based on current settings
         paths_to_scan_tuples = [(symlink_root_path, symlink_root_path.name)] # (Path, description_for_logging)
 
         for component_key in folder_order_components:
@@ -2689,6 +2711,12 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                             )
                 if current_level_new_paths: 
                     paths_to_scan_tuples = current_level_new_paths
+
+        # Add comprehensive fallback scanning - scan the entire symlink root recursively
+        # This ensures we don't miss items that don't match the current settings
+        comprehensive_scan_path = (symlink_root_path, f"{symlink_root_path.name} (comprehensive)")
+        if comprehensive_scan_path not in paths_to_scan_tuples:
+            paths_to_scan_tuples.append(comprehensive_scan_path)
         
         total_items_scanned = 0
         total_symlinks_processed = 0
@@ -2699,6 +2727,10 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
         recoverable_items_preview = []
 
         update_progress(status='scanning', message='Starting directory scan...')
+        
+        # Log what paths we're going to scan
+        scan_paths_info = [f"{desc}: {path}" for path, desc in paths_to_scan_tuples]
+        logging.info(f"Analysis will scan the following paths: {scan_paths_info}")
 
         for current_search_path, scan_target_name in paths_to_scan_tuples:
             if current_search_path.is_dir():
@@ -2722,6 +2754,9 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                             continue
 
                         if item_path.is_file() or item_path.is_symlink():
+                            # Log some items for debugging (but not too many)
+                            if total_items_scanned % 1000 == 0:
+                                logging.debug(f"Scanning item: {item_path}")
                             if item_path.is_symlink():
                                 total_symlinks_processed += 1
                             else:
@@ -2796,6 +2831,10 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                                         
                                         items_found += 1
                                         
+                                        # Log successful item found
+                                        if items_found % 100 == 0:  # Log every 100th item to avoid spam
+                                            logging.info(f"Found item #{items_found}: {parsed_data.get('title', 'Unknown')} ({parsed_data.get('imdb_id', 'No IMDb')})")
+                                        
                                         # --- Write item to recovery file ---
                                         try:
                                             recovery_file.write(json.dumps(parsed_data) + '\n')
@@ -2818,7 +2857,9 @@ def _run_analysis_thread(symlink_root_path_str, original_root_path_str, task_id)
                                     metadata_errors += 1
                         else: # No IMDb ID was parsed
                             parser_errors += 1 # This case should be caught by parse_symlink returning None now
-                            logging.warning(f"Skipping {item_path.name} as no IMDb ID was parsed (should have been caught earlier).")
+                            # Log parser errors but limit frequency to avoid spam
+                            if parser_errors % 50 == 0:  # Log every 50th parser error
+                                logging.warning(f"Parser error #{parser_errors}: Skipping {item_path.name} as no IMDb ID was parsed")
 
                 except Exception as e_rglob:
                     logging.error(f"Error during rglob scan of {current_search_path}: {e_rglob}", exc_info=True)
@@ -4012,8 +4053,15 @@ def parse_riven_symlink(symlink_path: Path):
         if imdb_match:
             parsed_data['imdb_id'] = imdb_match.group(1)
         else:
-            logging.warning(f"RIVEN (EPISODE): IMDb ID not found in grandfather directory '{grandfather_dir_name}' for episode file '{symlink_path}'.")
-            return None
+            # Try searching in the full path as fallback for episodes
+            full_path_str = str(symlink_path)
+            imdb_match_full = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+            if imdb_match_full:
+                parsed_data['imdb_id'] = imdb_match_full.group(1)
+                logging.info(f"RIVEN (EPISODE): Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+            else:
+                logging.warning(f"RIVEN (EPISODE): IMDb ID not found in grandfather directory '{grandfather_dir_name}' or full path for episode file '{symlink_path}'.")
+                return None
         
         # Final check for S/E numbers for episodes
         if parsed_data.get('season_number') is None or parsed_data.get('episode_number') is None:
@@ -4031,11 +4079,25 @@ def parse_riven_symlink(symlink_path: Path):
             if imdb_match_parent:
                 parsed_data['imdb_id'] = imdb_match_parent.group(1)
             else:
-                logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' or parent directory '{parent_dir_name}' for movie file '{symlink_path}'.")
-                return None
+                # Try searching in the full path as final fallback
+                full_path_str = str(symlink_path)
+                imdb_match_full = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+                if imdb_match_full:
+                    parsed_data['imdb_id'] = imdb_match_full.group(1)
+                    logging.info(f"RIVEN (MOVIE): Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+                else:
+                    logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}', parent directory '{parent_dir_name}', or full path for movie file '{symlink_path}'.")
+                    return None
         else: # No parent, and not in filename
-            logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' and no parent directory for movie file '{symlink_path}'.")
-            return None
+            # Try searching in the full path as final fallback
+            full_path_str = str(symlink_path)
+            imdb_match_full = re.search(r'(tt\d{7,})', full_path_str, re.IGNORECASE)
+            if imdb_match_full:
+                parsed_data['imdb_id'] = imdb_match_full.group(1)
+                logging.info(f"RIVEN (MOVIE): Found IMDb ID in full path: {parsed_data['imdb_id']} for {filename}")
+            else:
+                logging.warning(f"RIVEN (MOVIE): IMDb ID not found in filename '{filename}' or full path for movie file '{symlink_path}'.")
+                return None
     else: # Should not happen if media_type is always set
         logging.error(f"RIVEN: media_type not determined for {symlink_path}")
         return None
@@ -4594,3 +4656,318 @@ def resync_symlinks_route():
     except Exception as e:
         logging.error(f"Error during symlink resynchronization trigger: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
+
+def async_run_bulk_subs():
+    """Asynchronously run the bulk subtitle downloader script."""
+    try:
+        symlink_path = get_setting('File Management', 'symlinked_files_path')
+        if not symlink_path or not os.path.isdir(symlink_path):
+            message = f"Symlink path not found or not a directory: {symlink_path}"
+            logging.error(message)
+            return {'success': False, 'error': message}
+
+        script_path = os.path.abspath('utilities/bulk_subs.sh')
+        if not os.path.exists(script_path):
+            message = f"Bulk subtitle script not found at: {script_path}"
+            logging.error(message)
+            return {'success': False, 'error': message}
+        
+        logging.info(f"Starting bulk subtitle scan on: {symlink_path}")
+        
+        # We need to execute with shell=True if we want to use shell features like pipes
+        # but it's safer to call bash directly. The script has a shebang, so it can be run directly.
+        process = subprocess.run(
+            [script_path, symlink_path],
+            capture_output=True,
+            text=True,
+            check=False # Do not throw exception on non-zero exit codes
+        )
+
+        log_output = process.stdout.strip()
+        log_error = process.stderr.strip()
+
+        if log_output:
+            logging.info(f"Bulk subtitle scan stdout:\n{log_output}")
+        if log_error:
+            logging.error(f"Bulk subtitle scan stderr:\n{log_error}")
+
+        if process.returncode == 0:
+            message = "Bulk subtitle scan completed successfully."
+            logging.info(message)
+            return {'success': True, 'message': message}
+        else:
+            message = f"Bulk subtitle scan failed with exit code {process.returncode}."
+            logging.error(message)
+            return {'success': False, 'error': f"{message} See logs for details."}
+
+    except Exception as e:
+        logging.error(f"Exception during bulk subtitle scan: {e}", exc_info=True)
+        return {'success': False, 'error': f"An unexpected error occurred: {str(e)}"}
+
+@debug_bp.route('/run_bulk_subtitle_scan', methods=['POST'])
+@admin_required
+def run_bulk_subtitle_scan():
+    """API endpoint to trigger the bulk subtitle scan task."""
+    from routes.extensions import task_queue
+    task_id = task_queue.add_task(async_run_bulk_subs)
+    return jsonify({'task_id': task_id}), 202
+
+@debug_bp.route('/api/fix_zurg_symlinks', methods=['POST'])
+@admin_required
+def fix_zurg_symlinks():
+    """Fix Zurg symlinks where folder structure changed from having file extensions to not having them."""
+    import os
+    from pathlib import Path
+    from database import get_db_connection
+    
+    dry_run = request.form.get('dry_run') == 'on'
+    
+    logging.info(f"Zurg symlink fix requested. Dry run: {dry_run}")
+    
+    conn = None
+    items_checked = 0
+    items_needing_fix = 0
+    items_fixed = 0
+    errors = []
+    preview_items = []
+    MAX_PREVIEW = 20
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all collected items with both location_on_disk and original_path_for_symlink
+        cursor.execute("""
+            SELECT 
+                id,
+                title,
+                location_on_disk,
+                original_path_for_symlink,
+                filled_by_file
+            FROM media_items 
+            WHERE state IN ('Collected', 'Upgrading')
+            AND location_on_disk IS NOT NULL
+            AND original_path_for_symlink IS NOT NULL
+        """)
+        items = cursor.fetchall()
+        
+        logging.info(f"Found {len(items)} items to check for Zurg symlink issues")
+        
+        for item in items:
+            items_checked += 1
+            item_id = item['id']
+            title = item['title'] or f"Item {item_id}"
+            location_on_disk = item['location_on_disk']
+            original_path = item['original_path_for_symlink']
+            filled_by_file = item['filled_by_file']
+            
+            # Check if the original file exists at the stored path
+            if os.path.exists(original_path):
+                continue  # File exists, no fix needed
+            
+            # File doesn't exist - check if we have a Zurg extension folder issue
+            original_path_obj = Path(original_path)
+            parent_dir = original_path_obj.parent
+            filename = original_path_obj.name
+            
+            # Check if parent directory name has file extension that shouldn't be there
+            parent_name = parent_dir.name
+            
+            # Look for common video extensions in the parent directory name
+            video_extensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.mpeg', '.mpg']
+            
+            fixed_parent_name = None
+            for ext in video_extensions:
+                if parent_name.endswith(ext):
+                    # Remove the extension from the folder name
+                    fixed_parent_name = parent_name[:-len(ext)]
+                    break
+            
+            if not fixed_parent_name:
+                # No extension found in parent name, skip this item
+                continue
+            
+            # Construct the new path without the extension in folder name
+            new_parent_dir = parent_dir.parent / fixed_parent_name
+            new_original_path = new_parent_dir / filename
+            
+            # Check if file exists at the new path
+            if not os.path.exists(new_original_path):
+                errors.append(f"Item {item_id} ({title}): Neither original path nor fixed path exists")
+                continue
+            
+            items_needing_fix += 1
+            
+            if dry_run:
+                if len(preview_items) < MAX_PREVIEW:
+                    preview_items.append({
+                        'id': item_id,
+                        'title': title,
+                        'old_original_path': original_path,
+                        'new_original_path': str(new_original_path),
+                        'symlink_path': location_on_disk
+                    })
+                continue
+            
+            # Update the original_path_for_symlink in database
+            cursor.execute("""
+                UPDATE media_items 
+                SET original_path_for_symlink = ?
+                WHERE id = ?
+            """, (str(new_original_path), item_id))
+            
+            # Update the symlink to point to the new location
+            if os.path.islink(location_on_disk):
+                try:
+                    # Remove old symlink
+                    os.unlink(location_on_disk)
+                    
+                    # Create new symlink pointing to correct location
+                    os.symlink(str(new_original_path), location_on_disk)
+                    
+                    items_fixed += 1
+                    logging.info(f"Fixed symlink for item {item_id} ({title}): {original_path} -> {new_original_path}")
+                    
+                except Exception as e:
+                    errors.append(f"Item {item_id} ({title}): Updated DB but failed to recreate symlink: {str(e)}")
+            else:
+                errors.append(f"Item {item_id} ({title}): Updated DB but location_on_disk is not a symlink: {location_on_disk}")
+        
+        if not dry_run:
+            conn.commit()
+        
+        if dry_run:
+            return jsonify({
+                'success': True,
+                'dry_run': True,
+                'message': f'Dry run complete. Found {items_needing_fix} items that need fixing out of {items_checked} checked.',
+                'items_checked': items_checked,
+                'items_needing_fix': items_needing_fix,
+                'preview': preview_items,
+                'errors': errors
+            })
+        else:
+            message = f"Fixed {items_fixed} items out of {items_checked} checked. Found {items_needing_fix} items needing fixes."
+            if errors:
+                message += f" {len(errors)} errors encountered."
+            
+            return jsonify({
+                'success': True,
+                'dry_run': False,
+                'message': message,
+                'items_checked': items_checked,
+                'items_needing_fix': items_needing_fix,
+                'items_fixed': items_fixed,
+                'errors': errors
+            })
+    
+    except Exception as e:
+        logging.error(f"Error fixing Zurg symlinks: {e}", exc_info=True)
+        if conn and not dry_run:
+            try:
+                conn.rollback()
+            except Exception as rb_err:
+                logging.error(f"Rollback failed: {rb_err}")
+        return jsonify({'success': False, 'error': f'An error occurred: {str(e)}'}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@debug_bp.route('/api/remove_duplicate_items', methods=['POST'])
+@admin_required
+def remove_duplicate_items():
+    try:
+        dry_run = request.form.get('dry_run') == 'on'
+        
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Find all items with filled_by_file that have duplicates
+        cursor.execute("""
+            SELECT filled_by_file, COUNT(*) as count, GROUP_CONCAT(id) as ids
+            FROM media_items 
+            WHERE filled_by_file IS NOT NULL 
+            AND filled_by_file != ''
+            GROUP BY filled_by_file 
+            HAVING COUNT(*) > 1
+            ORDER BY count DESC
+        """)
+        duplicate_groups = cursor.fetchall()
+        
+        total_duplicates = 0
+        items_to_delete = []
+        preview = []
+        
+        for group in duplicate_groups:
+            filled_by_file = group['filled_by_file']
+            count = group['count']
+            ids = [int(id_str) for id_str in group['ids'].split(',')]
+            
+            # Get details for all items with this filled_by_file
+            cursor.execute("""
+                SELECT id, title, type, state, collected_at, version, imdb_id, tmdb_id
+                FROM media_items 
+                WHERE id IN ({})
+                ORDER BY collected_at ASC, id ASC
+            """.format(','.join(['?'] * len(ids))), ids)
+            
+            items = cursor.fetchall()
+            
+            # Keep the first item (oldest collected_at, then lowest ID)
+            keep_item = items[0]
+            delete_items = items[1:]
+            
+            total_duplicates += len(delete_items)
+            items_to_delete.extend([item['id'] for item in delete_items])
+            
+            if len(preview) < 10:  # Limit preview to 10 groups
+                preview.append({
+                    'filled_by_file': filled_by_file,
+                    'count': count,
+                    'keep_item': {
+                        'id': keep_item['id'],
+                        'title': keep_item['title'],
+                        'type': keep_item['type'],
+                        'state': keep_item['state']
+                    },
+                    'delete_items': [
+                        {
+                            'id': item['id'],
+                            'title': item['title'],
+                            'type': item['type'],
+                            'state': item['state']
+                        } for item in delete_items
+                    ]
+                })
+        
+        if not dry_run and items_to_delete:
+            # Delete the duplicate items
+            placeholders = ','.join(['?'] * len(items_to_delete))
+            cursor.execute(f"DELETE FROM media_items WHERE id IN ({placeholders})", items_to_delete)
+            conn.commit()
+        
+        conn.close()
+        
+        message = f"Found {len(duplicate_groups)} files with duplicates, totaling {total_duplicates} duplicate items."
+        if not dry_run and items_to_delete:
+            message += f" Deleted {len(items_to_delete)} duplicate items."
+        elif dry_run:
+            message += " (Dry run - no items deleted)"
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'dry_run': dry_run,
+            'duplicate_groups': len(duplicate_groups),
+            'total_duplicates': total_duplicates,
+            'items_deleted': len(items_to_delete) if not dry_run else 0,
+            'preview': preview
+        })
+        
+    except Exception as e:
+        logging.error(f"Error in remove_duplicate_items: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'An error occurred: {str(e)}'
+        })

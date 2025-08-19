@@ -148,8 +148,16 @@ def _fetch_trakt_season_data_directly(imdb_id: str) -> dict | None:
             else:
                 logging.warning(f"Skipping season with null number for IMDb ID {imdb_id}")
 
+        # Convert to the expected format (list of dictionaries)
+        formatted_seasons = []
+        for season_num, episode_count in season_counts.items():
+            formatted_seasons.append({
+                'number': season_num,
+                'episode_count': episode_count
+            })
+        
         logging.debug(f"Directly fetched season counts for {imdb_id}: {season_counts}")
-        return season_counts
+        return formatted_seasons
 
     except requests.exceptions.RequestException as e:
         logging.error(f"Error fetching season data directly from Trakt for {imdb_id}: {e}")
@@ -171,30 +179,57 @@ def get_versions():
 @magnet_bp.route('/get_season_data')
 def get_season_data():
     tmdb_id = request.args.get('tmdb_id')
-    if not tmdb_id:
-        return jsonify({'error': 'No TMDB ID provided'}), 400
+    allow_specials_str = request.args.get('allow_specials', 'true').lower()
+    allow_specials = allow_specials_str == 'true'
 
+    if not tmdb_id:
+        return jsonify({'error': 'tmdb_id is required'}), 400
+    
     try:
-        # Convert TMDB ID to IMDb ID (Keep using DirectAPI for consistency)
-        imdb_id, _ = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='show') 
+        from metadata.metadata import get_imdb_id_if_missing
+        imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
+
         if not imdb_id:
-            logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}")
+            logging.error(f"Could not find IMDb ID for TMDB ID: {tmdb_id}")
             return jsonify({'error': 'Could not find IMDb ID'}), 404
 
-        # --- MODIFICATION: Call new helper function ---
-        season_counts = _fetch_trakt_season_data_directly(imdb_id)
-        # --- END MODIFICATION ---
-
-        if season_counts is None: # Check for None explicitly
-            logging.error(f"Could not fetch season data directly from Trakt for IMDb ID: {imdb_id}")
-            return jsonify({'error': 'Could not fetch season data'}), 500 # Use 500 for internal fetch error
-
-        # season_counts is already in the desired format {str(season_num): count}
-        return jsonify(season_counts)
+        # Now we should have an IMDb ID. Let's try to fetch season data.
+        try:
+            # First, try to get seasons from the battery, which is faster.
+            seasons_data, source = DirectAPI.get_show_seasons(imdb_id)
+            if seasons_data and source == 'battery':
+                logging.info(f"Successfully fetched season data from battery for IMDb ID: {imdb_id}")
+                # Convert battery format to expected object format for frontend
+                formatted_seasons = {}
+                for season_num, season_data in seasons_data.items():
+                    # Filter based on allow_specials
+                    if allow_specials or season_num != 0:
+                        formatted_seasons[str(season_num)] = season_data.get('episode_count', 0)
+                logging.info(f"Returning {len(formatted_seasons)} seasons from battery for IMDb ID {imdb_id} (Allow Specials: {allow_specials}). Original count: {len(seasons_data)}")
+                return jsonify(formatted_seasons)
+            else:
+                logging.info(f"Could not fetch season data from battery for {imdb_id}, trying Trakt directly.")
+                season_data = _fetch_trakt_season_data_directly(imdb_id)
+                if season_data:
+                    # Convert to expected object format for frontend
+                    formatted_seasons = {}
+                    for season in season_data:
+                        season_num = season.get('number')
+                        # Filter based on allow_specials
+                        if allow_specials or season_num != 0:
+                            formatted_seasons[str(season_num)] = season.get('episode_count', 0)
+                    logging.info(f"Returning {len(formatted_seasons)} seasons from Trakt for IMDb ID {imdb_id} (Allow Specials: {allow_specials}). Original count: {len(season_data)}")
+                    return jsonify(formatted_seasons)
+                else:
+                    logging.error(f"Could not fetch season data directly from Trakt for IMDb ID: {imdb_id}")
+                    return jsonify({"error": f"Could not fetch season data from Trakt for IMDb ID: {imdb_id}"}), 404
+        except Exception as e:
+            logging.error(f"An unexpected error occurred while fetching season data for IMDb ID {imdb_id}: {e}", exc_info=True)
+            return jsonify({"error": "An unexpected error occurred"}), 500
         
     except Exception as e:
         logging.error(f"Error in get_season_data endpoint: {str(e)}", exc_info=True)
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'An internal error occurred'}), 500
 
 @magnet_bp.route('/assign_magnet', methods=['GET', 'POST'])
 @admin_required
@@ -240,9 +275,22 @@ def assign_magnet():
                 
                 # Filter results based on content type if not 'all'
                 if content_type != 'all':
-                    # Handle 'tv' as well as 'show' from Trakt's mediaType
+                    # Handle 'tv' as well as 'show' from Trakt's media_type
                     normalized_content_type = 'show' if content_type == 'tv' else content_type
-                    search_results = [result for result in search_results if result['mediaType'] == normalized_content_type]
+                    search_results = [result for result in search_results if result.get('media_type') == normalized_content_type]
+                
+                # Convert search results to template-expected format
+                formatted_search_results = []
+                for result in search_results:
+                    formatted_result = {
+                        'id': result.get('id'),
+                        'title': result.get('title'),
+                        'year': result.get('year'),
+                        'posterPath': result.get('posterPath'),
+                        'mediaType': result.get('media_type', 'movie')  # Convert media_type to mediaType for template
+                    }
+                    formatted_search_results.append(formatted_result)
+                search_results = formatted_search_results
             
             if not search_results:
                 flash(f'No results found for "{search_term}".', 'info')

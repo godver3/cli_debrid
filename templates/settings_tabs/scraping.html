@@ -8,7 +8,9 @@
     <button id="add-version-btn" class="add-version-link">Add New Version</button>
     <button id="add-default-version-btn" class="add-version-link">Add Default Version</button>
     <button id="add-separate-versions-btn" class="add-version-link">Add Separate 1080p/4K Versions</button>
+    {% if not is_limited_environment() %}
     <button id="import-default-versions-btn" class="import-versions-link">Add Alternate Default Versions</button>
+    {% endif %}
 </div>
 
 <script>
@@ -830,8 +832,11 @@
     </div>
     <div class="settings-section-content">
         <div class="settings-subsection">
+            <!-- Debug: environment_mode = {{ environment_mode }} -->
             {% for key, value in settings_schema.Scraping.items() %}
                 {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold', 'hybrid_mode', 'jackett_seeders_only', 'ultimate_sort_order', 'soft_max_size_gb', 'enable_upgrading_cleanup'] %}
+                    <!-- Debug: Processing key "{{ key }}" -->
+                    {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
                     <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' or key == 'ultimate_sort_order' or key == 'soft_max_size_gb' or key == 'enable_upgrading_cleanup' %}style="display: none !important;"{% endif %}>
                         <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         {% if value.type == 'boolean' %}
@@ -902,6 +907,7 @@
                             {% endif %}
                         {% endif %}
                     </div>
+                    {% endif %}
                 {% endif %}
             {% endfor %}
         </div>

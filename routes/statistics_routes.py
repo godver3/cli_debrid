@@ -15,7 +15,7 @@ from .program_operation_routes import get_program_status
 import json
 import math
 from functools import wraps
-from debrid.real_debrid.client import RealDebridProvider
+# Provider-agnostic: avoid direct Real-Debrid import
 from typing import Optional, Dict, List, Any
 import calendar
 
@@ -433,6 +433,10 @@ def root():
     overall_start_time = time.perf_counter()
     logging.info("Statistics page load: START")
 
+    # Check if running in limited environment
+    from utilities.set_supervisor_env import is_limited_environment
+    limited_env = is_limited_environment()
+
     # Get view preferences from settings
     settings_fetch_start = time.perf_counter()
     use_24hour_format = get_setting('UI Settings', 'use_24hour_format', True)
@@ -471,27 +475,32 @@ def root():
     stats['total_episodes'] = counts['total_episodes']
     logging.info(f"Statistics page load: Collection counts took {(time.perf_counter() - collection_start)*1000:.2f}ms")
     
-    # Get active downloads and usage stats
+    # Get active downloads and usage stats (skip in limited environment)
     downloads_start = time.perf_counter()
-    try:
-        from database import get_cached_download_stats
-        active_downloads, usage_stats = get_cached_download_stats()
-        stats['active_downloads_data'] = active_downloads
-        stats['usage_stats_data'] = usage_stats
-    except Exception as e:
-        logging.error(f"Error getting download stats: {str(e)}")
-        stats['active_downloads_data'] = {
-            'count': 0,
-            'limit': 15,  # Default fallback limit
-            'percentage': 0,
-            'status': 'error'
-        }
-        stats['usage_stats_data'] = {
-            'used': '0 GB',
-            'limit': '2000 GB',
-            'percentage': 0,
-            'error': 'provider_error'
-        }
+    if not limited_env:
+        try:
+            from database import get_cached_download_stats
+            active_downloads, usage_stats = get_cached_download_stats()
+            stats['active_downloads_data'] = active_downloads
+            stats['usage_stats_data'] = usage_stats
+        except Exception as e:
+            logging.error(f"Error getting download stats: {str(e)}")
+            stats['active_downloads_data'] = {
+                'count': 0,
+                'limit': 15,  # Default fallback limit
+                'percentage': 0,
+                'status': 'error'
+            }
+            stats['usage_stats_data'] = {
+                'used': '0 GB',
+                'limit': '2000 GB',
+                'percentage': 0,
+                'error': 'provider_error'
+            }
+    else:
+        # In limited environment, provide empty stats
+        stats['active_downloads_data'] = None
+        stats['usage_stats_data'] = None
     logging.info(f"Statistics page load: Download stats check took {(time.perf_counter() - downloads_start)*1000:.2f}ms")
     
     # --- Read Cached Library Size for Initial Display ---
@@ -623,7 +632,8 @@ def root():
                          recently_added=recently_added,
                          recently_upgraded=recently_upgraded,
                          use_24hour_format=use_24hour_format,
-                         compact_view=compact_view)
+                         compact_view=compact_view,
+                         limited_env=limited_env)
     logging.info(f"Statistics page load: render_template call took {(time.perf_counter() - render_start_time)*1000:.2f}ms")
     logging.info(f"Statistics page load: Total route processing took {(time.perf_counter() - overall_start_time)*1000:.2f}ms. END")
 
@@ -1003,6 +1013,10 @@ def index_api():
     """API endpoint that returns the same data as the index route but in JSON format"""
     stats = {}
     
+    # Check if running in limited environment
+    from utilities.set_supervisor_env import is_limited_environment
+    limited_env = is_limited_environment()
+    
     # Get timezone using our robust function
     from metadata.metadata import _get_local_timezone
     local_tz = _get_local_timezone()
@@ -1019,11 +1033,15 @@ def index_api():
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
     
-    # Get active downloads and usage stats
-    active_downloads = get_cached_active_downloads()
-    usage_stats = get_cached_user_traffic()
-    stats['active_downloads_data'] = active_downloads
-    stats['usage_stats_data'] = usage_stats
+    # Get active downloads and usage stats (skip in limited environment)
+    if not limited_env:
+        active_downloads = get_cached_active_downloads()
+        usage_stats = get_cached_user_traffic()
+        stats['active_downloads_data'] = active_downloads
+        stats['usage_stats_data'] = usage_stats
+    else:
+        stats['active_downloads_data'] = None
+        stats['usage_stats_data'] = None
     
     # Get recently aired and airing soon
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
@@ -1247,7 +1265,8 @@ def get_library_size_api():
 
     try:
         provider = get_debrid_provider()
-        if isinstance(provider, RealDebridProvider):
+        # Gate behavior using capability flags rather than concrete type
+        if hasattr(provider, 'get_total_library_size'):
             logging.info("Fetching library size via API request...")
             try:
                 # Run the async function which now writes cache on success

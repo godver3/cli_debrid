@@ -13,6 +13,7 @@ from .metadata_manager import MetadataManager
 from .settings import Settings
 from metadata.metadata import _get_local_timezone
 from .trakt_auth import TraktAuth
+from .trakt_metadata import TraktMetadata
 
 class BackgroundJobManager:
     def __init__(self):
@@ -20,6 +21,9 @@ class BackgroundJobManager:
         self.settings = Settings()
         self.app = None
         self.engine = None
+        # Rate limiting for Trakt API
+        self.last_api_call = 0
+        self.min_call_interval = 3.0  # Minimum 1 second between API calls
 
     def init_app(self, app):
         """Initialize with Flask app context"""
@@ -49,10 +53,10 @@ class BackgroundJobManager:
 
         # Add jobs here
         self.scheduler.add_job(
-            func=self.refresh_stale_metadata,
+            func=self.refresh_trakt_updates,
             trigger=IntervalTrigger(hours=6),
-            id='refresh_stale_metadata',
-            name='Refresh Stale Metadata',
+            id='refresh_trakt_updates',
+            name='Refresh Metadata via Trakt Updates',
             replace_existing=True
         )
         
@@ -63,13 +67,13 @@ class BackgroundJobManager:
             # Schedule initial refresh to run after a delay
             local_tz = _get_local_timezone()
             self.scheduler.add_job(
-                func=self.refresh_stale_metadata,
+                func=self.refresh_trakt_updates,
                 trigger='date',  # Run once
                 run_date=datetime.now(local_tz) + timedelta(seconds=5),
                 id='initial_refresh',
-                name='Initial Metadata Refresh'
+                name='Initial Trakt Updates Refresh'
             )
-            logger.info("Initial metadata refresh scheduled in 5 seconds")
+            logger.info("Initial Trakt updates refresh scheduled in 5 seconds")
             
         except Exception as e:
             logger.error(f"Failed to start background job scheduler: {e}")
@@ -80,9 +84,150 @@ class BackgroundJobManager:
             self.scheduler.shutdown()
             logger.info("Background job scheduler stopped")
 
+    def _enforce_rate_limit(self):
+        """Enforce minimum interval between API calls"""
+        current_time = time.time()
+        time_since_last_call = current_time - self.last_api_call
+        
+        if time_since_last_call < self.min_call_interval:
+            sleep_time = self.min_call_interval - time_since_last_call
+            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+        
+        self.last_api_call = time.time()
+
+    def _round_timestamp_to_hour(self, timestamp_str):
+        """Round timestamp to the hour as required by Trakt API"""
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            # Round down to the hour
+            rounded = dt.replace(minute=0, second=0, microsecond=0)
+            return rounded.isoformat().replace('+00:00', 'Z')
+        except Exception as e:
+            logger.warning(f"Failed to round timestamp {timestamp_str}: {e}")
+            return timestamp_str
+
+    def refresh_trakt_updates(self):
+        """Fetch Trakt updated shows/movies since last cursor and refresh only those items."""
+        try:
+            trakt = TraktMetadata()
+            cursors = self.settings.trakt_updates or {}
+            # Bootstrap: if no cursors, do a single 3-month backfill, then continue incrementally
+            now_iso = datetime.now(_get_local_timezone()).isoformat()
+            default_since = (datetime.now(_get_local_timezone()) - timedelta(days=90)).isoformat()
+            shows_since = cursors.get('shows_last_updated_at') or default_since
+            movies_since = cursors.get('movies_last_updated_at') or default_since
+
+            # Round current cursors to the hour as required by Trakt API
+            rounded_shows_since = self._round_timestamp_to_hour(shows_since)
+            rounded_movies_since = self._round_timestamp_to_hour(movies_since)
+
+            logger.info(f"Fetching Trakt updated shows since {rounded_shows_since} and movies since {rounded_movies_since}")
+
+            # Fetch updates
+            updated_shows = trakt.get_updated_shows(rounded_shows_since) or []
+            updated_movies = trakt.get_updated_movies(rounded_movies_since) or []
+
+            logger.info(f"Received {len(updated_shows)} show updates and {len(updated_movies)} movie updates from Trakt")
+
+            # Filter for items that exist in our database
+            with DbSession() as session:
+                # Get all existing imdb_ids from our database
+                existing_items = session.query(Item.imdb_id).all()
+                existing_imdb_ids = {item[0] for item in existing_items}
+                logger.info(f"Found {len(existing_imdb_ids)} existing items in database")
+
+            # Filter updates to only include items we're monitoring
+            relevant_shows = [entry for entry in updated_shows if entry.get('imdb_id') in existing_imdb_ids]
+            relevant_movies = [entry for entry in updated_movies if entry.get('imdb_id') in existing_imdb_ids]
+            
+            logger.info(f"Filtered to {len(relevant_shows)} relevant show updates and {len(relevant_movies)} relevant movie updates")
+
+            # Process updates; collect max updated_at to advance cursors
+            max_show_updated = shows_since
+            max_movie_updated = movies_since
+
+            # Refresh shows
+            processed_shows = 0
+            for entry in relevant_shows:
+                imdb_id = entry.get('imdb_id')
+                if not imdb_id:
+                    continue
+                self._enforce_rate_limit()
+                try:
+                    result = MetadataManager.refresh_metadata(imdb_id)
+                    if result is not None:
+                        logger.info(f"Updated show metadata via Trakt updates for {imdb_id}")
+                    else:
+                        logger.warning(f"Refresh returned no data for updated show {imdb_id}")
+                except Exception as e:
+                    logger.error(f"Error refreshing updated show {imdb_id}: {e}", exc_info=True)
+                # Track cursor
+                updated_at = entry.get('updated_at')
+                if updated_at and updated_at > (max_show_updated or ''):
+                    max_show_updated = updated_at
+                processed_shows += 1
+
+            logger.info(f"Processed {processed_shows}/{len(relevant_shows)} relevant show updates")
+
+            # Refresh movies
+            processed_movies = 0
+            for entry in relevant_movies:
+                imdb_id = entry.get('imdb_id')
+                if not imdb_id:
+                    continue
+                self._enforce_rate_limit()
+                try:
+                    result = MetadataManager.refresh_metadata(imdb_id)
+                    if result is not None:
+                        logger.info(f"Updated movie metadata via Trakt updates for {imdb_id}")
+                    else:
+                        logger.warning(f"Refresh returned no data for updated movie {imdb_id}")
+                except Exception as e:
+                    logger.error(f"Error refreshing updated movie {imdb_id}: {e}", exc_info=True)
+                # Track cursor
+                updated_at = entry.get('updated_at')
+                if updated_at and updated_at > (max_movie_updated or ''):
+                    max_movie_updated = updated_at
+                processed_movies += 1
+
+            logger.info(f"Processed {processed_movies}/{len(relevant_movies)} relevant movie updates")
+
+            # Advance cursors if we processed anything
+            if relevant_shows or relevant_movies:
+                # Fallback to now if max not set properly
+                if not max_show_updated:
+                    max_show_updated = now_iso
+                if not max_movie_updated:
+                    max_movie_updated = now_iso
+                
+                # Round timestamps to the hour as required by Trakt API
+                rounded_show_cursor = self._round_timestamp_to_hour(max_show_updated)
+                rounded_movie_cursor = self._round_timestamp_to_hour(max_movie_updated)
+                
+                self.settings.update_trakt_updates(
+                    shows_last_updated_at=rounded_show_cursor,
+                    movies_last_updated_at=rounded_movie_cursor,
+                )
+                logger.info(
+                    f"Advanced Trakt update cursors to shows={rounded_show_cursor}, movies={rounded_movie_cursor}"
+                )
+            else:
+                logger.info(f"No relevant Trakt updates to process (received {len(updated_shows)} shows, {len(updated_movies)} movies, {len(relevant_shows)} relevant shows, {len(relevant_movies)} relevant movies)")
+
+        except Exception as e:
+            logger.error(f"Error in refresh_trakt_updates: {e}", exc_info=True)
+
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""
         try:
+            # Rate limiting strategy:
+            # - Trakt allows 1000 GET requests per 5 minutes (~3.33 requests/second)
+            # - We enforce 1-second minimum intervals between API calls
+            # - This ensures we stay well within the rate limits
+            # - Additional 5-second delays between batches provide extra breathing room
+            
             # Use a session ONLY for querying item IDs and timestamps
             with DbSession() as query_session:
                 query_session.autoflush = False # Still useful for query-only session
@@ -129,39 +274,26 @@ class BackgroundJobManager:
                                 if MetadataManager.is_metadata_stale(item_updated_at):
                                     stale_count += 1
                                     logger.info(f"Item {log_identifier} is stale. Attempting refresh.")
-                                    retry_count = 0
-                                    max_retries = 3
-                                    success = False
-                                    while retry_count < max_retries:
-                                        try:
-                                            # Call refresh_metadata using only the IMDb ID
-                                            result = MetadataManager.refresh_metadata(item_imdb_id)
+                                    
+                                    # Enforce rate limiting before the remote call.
+                                    self._enforce_rate_limit()
+                                    
+                                    try:
+                                        # The underlying refresh_metadata call now has its own retry logic.
+                                        # We will call it once and let it handle transient errors.
+                                        result = MetadataManager.refresh_metadata(item_imdb_id)
 
-                                            if result is not None:
-                                                success = True
-                                                refreshed_count += 1
-                                                logger.info(f"Successfully refreshed and saved metadata for {log_identifier}")
-                                                break
-                                            else:
-                                                logger.warning(f"Refresh attempt {retry_count + 1} failed for {log_identifier}. Save might have failed.")
+                                        if result is not None:
+                                            refreshed_count += 1
+                                            logger.info(f"Successfully refreshed and saved metadata for {log_identifier}")
+                                        else:
+                                            # This log now indicates that the refresh operation failed after all its internal retries.
+                                            logger.error(f"Failed to refresh metadata for {log_identifier} after multiple attempts.")
 
-                                        except requests.exceptions.HTTPError as e:
-                                            if e.response is not None and e.response.status_code == 429:
-                                                 logger.warning(f"Rate limit hit (429) while refreshing {log_identifier}. Attempt {retry_count + 1}/{max_retries}")
-                                            else:
-                                                 logger.error(f"HTTP error refreshing metadata for {log_identifier}: {e}")
-                                                 break
-                                        except Exception as e:
-                                            logger.error(f"Unexpected error during refresh attempt for {log_identifier}: {e}")
-                                            # break # Consider breaking on unexpected errors
-
-                                        retry_count += 1
-                                        if not success and retry_count < max_retries:
-                                            logger.info(f"Pausing for 30 seconds before retry attempt {retry_count + 1} for {log_identifier}...")
-                                            time.sleep(30)
-
-                                    if not success:
-                                        logger.error(f"Max retries reached or non-retriable error occurred for {log_identifier}")
+                                    except Exception as e:
+                                        logger.error(f"An unexpected error occurred during the refresh process for {log_identifier}: {e}", exc_info=True)
+                                
+                                # No rate-limiting for non-stale items.
 
                             except Exception as e:
                                 # Log error using the fetched imdb_id
@@ -174,9 +306,9 @@ class BackgroundJobManager:
                         if (offset + batch_size) % (batch_size * 5) == 0:
                              logger.info(f"Progress: {min(offset + batch_size, total_items)}/{total_items} items checked ({refreshed_count}/{stale_count} stale refreshed so far)")
 
-                        # Delay between batches
-                        logger.debug(f"Sleeping for 3 seconds after processing batch offset {offset}")
-                        time.sleep(3)
+                        # Additional delay between batches to give the API a breather
+                        logger.debug(f"Sleeping for 0.1 seconds after processing batch offset {offset}")
+                        time.sleep(0.1)
 
                     logger.info(
                         f"Metadata refresh complete: {refreshed_count}/{stale_count} stale items refreshed "

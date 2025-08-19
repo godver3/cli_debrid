@@ -36,11 +36,29 @@ class MediaMatcher:
             return None
         if 'specials' in file_basename.lower(): # Check basename for 'specials'
              return None
+        
+        # --- Anime Special Content Detection ---
+        # Instead of filtering here, we'll tag it and decide later
+        is_anime_special_content = False
+        basename_lower = file_basename.lower()
+        anime_special_patterns = [
+            'ncop', 'nced',  # No Credit Opening/Ending
+            'opening', 'ending',
+            'ova'
+        ]
+        
+        for pattern in anime_special_patterns:
+            if pattern in basename_lower:
+                is_anime_special_content = True
+                logging.debug(f"Tagged as potential anime special content: '{file_basename}' (matched pattern: {pattern})")
+                break # Found a match, no need to check others
 
         ptt_result = parse_title(file_basename) # Parse only the basename
         
         # Ensure ptt_result is a dict, even if parse_title returns None or an unexpected type
         parsed_info = ptt_result if isinstance(ptt_result, dict) else {}
+
+        parsed_info['is_anime_special_content'] = is_anime_special_content
 
         parsed_info['original_filename'] = file_basename # Store basename
 
@@ -51,6 +69,24 @@ class MediaMatcher:
              fallback_episode = self._extract_episode_from_filename(file_basename) # Use basename for fallback
              if fallback_episode is not None:
                   parsed_info['fallback_episode'] = fallback_episode
+        
+        # Additional check for anime openings/endings that might have been parsed as episodes
+        # Look for patterns like NCOP1, NCED2, OP1, ED1, etc.
+        if parsed_info.get('episodes'):
+            episode_list = parsed_info.get('episodes', [])
+            original_filename = parsed_info.get('original_filename', '')
+            
+            # Check if any "episode" numbers are actually opening/ending identifiers
+            anime_op_ed_patterns = [
+                r'\b(ncop|nced|op|ed)\d+\b',  # NCOP1, NCED2, OP1, ED1, etc.
+                r'\bopening\s*\d+\b',         # Opening 1, etc.
+                r'\bending\s*\d+\b',          # Ending 1, etc.
+            ]
+            
+            for pattern in anime_op_ed_patterns:
+                if re.search(pattern, original_filename.lower()):
+                    logging.debug(f"Filtered out anime opening/ending with episode-like numbering: '{original_filename}' (matched pattern: {pattern})")
+                    return None
         
         return {
             'path': file_path, # Store original full path
@@ -121,11 +157,98 @@ class MediaMatcher:
                 episode_match = True
                 logging.debug("Relaxed match: Fallback episode matched target episode.")
 
-            # Season matching (allows missing season in filename or item, or season 0)
-            season_match = (target_season is None or # If target season is None (only possible with XEM if mapping had None?)
-                          not ptt_result.get('seasons') or # Filename has no season
-                          target_season in ptt_result.get('seasons', []) or # Target season is in filename seasons
-                          (0 in ptt_result.get('seasons', []))) # Filename has season 0
+            # Season matching - apply more restrictive logic for anime, similar to filter_results.py
+            season_match = False
+            lenient_season_pass = False
+            explicit_season_mismatch = False
+            
+            # Determine if parsed season info is missing or defaulted
+            parsed_season_is_missing_or_default = not ptt_result.get('seasons') or ptt_result.get('seasons') == [1]
+            
+            if target_season in ptt_result.get('seasons', []):
+                # Parsed season explicitly matches the target season
+                season_match = True
+            elif is_anime and parsed_season_is_missing_or_default and target_season > 1:
+                # Check if title explicitly mentions a different season before applying leniency
+                # Example: Searching S7, title says "S01". We should NOT be lenient here.
+                import re
+                filename_for_check = ptt_result.get('original_filename', '')
+                if not re.search(rf'[Ss](?!{target_season:02d})\d\d?', filename_for_check):
+                    season_match = True
+                    lenient_season_pass = True
+                    logging.debug(f"Allowing anime result ({filename_for_check}) parsed as S1/None when target is S{target_season} (no conflicting season found in title)")
+                else:
+                    explicit_season_mismatch = True
+                    logging.debug(f"Anime result ({filename_for_check}) parsed as S1/None has conflicting season info when target is S{target_season}. Not applying leniency.")
+            elif not ptt_result.get('seasons'):
+                # Allow titles with NO season info at all (might be absolute)
+                # BUT: For anime with XEM mapping, be more restrictive
+                # If we're searching for a specific season (not S1) and the torrent has no season info,
+                # we should be more cautious to avoid grabbing episodes from wrong seasons
+                import re
+                if is_anime and target_season > 1:
+                    # For anime S2+, if no season info, be more restrictive
+                    # This prevents grabbing "Episode 07" from any season when we want S02E07
+                    # Only allow if we have absolute episode numbers or other strong indicators
+                    has_absolute_episode = False
+                    # Calculate absolute episode number on the fly (similar to filter_results.py)
+                    try:
+                        from database.database_reading import get_all_season_episode_counts
+                        tmdb_id = item.get('tmdb_id')
+                        if tmdb_id:
+                            season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                            if season_episode_counts:
+                                # Calculate target absolute episode number
+                                abs_target = 0
+                                sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
+                                for s_num in sorted_seasons:
+                                    abs_target += season_episode_counts.get(s_num, 0)
+                                abs_target += target_episode
+                                
+                                # Check if absolute episode appears in the original filename
+                                filename_for_abs_check = ptt_result.get('original_filename', '')
+                                if filename_for_abs_check and re.search(rf'\b{abs_target}\b', filename_for_abs_check):
+                                    has_absolute_episode = True
+                    except Exception as e:
+                        logging.debug(f"Could not calculate absolute episode for anime matching: {e}")
+                    
+                    original_filename = ptt_result.get('original_filename', '')
+                    has_episode_in_title = bool(re.search(rf'\b{target_episode}\b', original_filename))
+                    
+                    # Additional check: if the title only contains episode number without season,
+                    # and we're searching for a specific season (not S1), be more restrictive
+                    # This catches cases like "Dandadan - 07" when we want S02E07
+                    title_has_only_episode = (
+                        has_episode_in_title and 
+                        not re.search(r'[Ss]\d+', original_filename) and  # No season info in title
+                        not has_absolute_episode  # No absolute episode number
+                    )
+                    
+                    if title_has_only_episode:
+                        season_match = False
+                        logging.info(f"Rejecting anime result with only episode number (no season/absolute) when searching for S{target_season}E{target_episode}: '{original_filename}'")
+                    elif not has_absolute_episode and not has_episode_in_title:
+                        season_match = False
+                        logging.info(f"Rejecting anime result with no season info when searching for S{target_season}E{target_episode}: '{original_filename}' (no absolute episode or strong episode indicator)")
+                    else:
+                        # Even if we have episode indicator, be more restrictive for S2+
+                        # Only allow if we have absolute episode numbers that provide proper context
+                        if has_absolute_episode:
+                            season_match = True
+                            lenient_season_pass = True
+                            logging.info(f"Allowing anime result with no season info but with absolute episode evidence for S{target_season}E{target_episode}: '{original_filename}'")
+                        else:
+                            season_match = False
+                            logging.info(f"Rejecting anime result with episode indicator but no absolute episode evidence for S{target_season}E{target_episode}: '{original_filename}'")
+                else:
+                    season_match = True
+                    lenient_season_pass = True # Mark as lenient pass
+                    logging.debug(f"Allowing result ({ptt_result.get('original_filename', '')}) with no season info to pass season check")
+            else:
+                # Original fallback logic for other cases
+                season_match = (target_season is None or # If target season is None (only possible with XEM if mapping had None?)
+                              target_season in ptt_result.get('seasons', []) or # Target season is in filename seasons
+                              (0 in ptt_result.get('seasons', []))) # Filename has season 0
 
             # --- ANIME ABSOLUTE EPISODE MATCHING ---
             # Special handling for anime where season numbering might differ due to absolute episode formats
@@ -392,6 +515,11 @@ class MediaMatcher:
             logging.debug(f"Episode matching mode: {'Relaxed' if use_relaxed_matching else 'Strict'}")
 
             for parsed_file_info in parsed_files:
+                # If the item is anime, skip files that are tagged as anime special content
+                if is_anime and parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
+                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' because item is anime.")
+                    continue
+
                 # Pass xem_mapping down to _check_match
                 if self._check_match(parsed_file_info, item, use_relaxed_matching, xem_mapping=xem_mapping):
                     # Return the first match found
@@ -615,6 +743,12 @@ class MediaMatcher:
                 item_season = item.get('season') or item.get('season_number')
                 if item_season != pack_season:
                     continue
+            
+            # Check if this specific candidate item is anime
+            candidate_genres = item.get('genres', [])
+            if isinstance(candidate_genres, str):
+                candidate_genres = [candidate_genres]
+            candidate_is_anime = any('anime' in g.lower() for g in candidate_genres)
 
             # --- Build per-candidate XEM mapping (season-offset only) ---
             candidate_xem_mapping = None
@@ -655,6 +789,11 @@ class MediaMatcher:
             # --- Find Match in Parsed Files ---
             found_match_for_this_item = False
             for parsed_file_info in parsed_torrent_files:
+                # If the candidate item is anime, skip files tagged as anime special content
+                if candidate_is_anime and parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
+                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' for related anime item ID {item_id}.")
+                    continue
+                
                 # Pass per-candidate mapping (if available) so scene numbering is considered correctly
                 if self._check_match(
                     parsed_file_info,

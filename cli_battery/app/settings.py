@@ -25,6 +25,14 @@ class Settings:
         self._staleness_threshold = None  # Initialize as None
         self.max_entries = 1000  # default value, adjust as needed
         self.log_level = 'INFO'
+        # New: cursors for Trakt updates endpoints
+        self.trakt_updates = {
+            'shows_last_updated_at': None,
+            'movies_last_updated_at': None,
+        }
+        # Threaded retry configuration for 500 errors
+        self.enable_threaded_retries = True
+        self.max_threaded_retry_workers = 5
         self.load()
 
     @property
@@ -85,6 +93,14 @@ class Settings:
             except (json.JSONDecodeError, Exception) as e:
                 logger.warning(f"Error loading settings for Trakt update: {e}")
         
+        # Get current Trakt settings, if they exist
+        current_trakt_settings = config.get('Trakt', {})
+        
+        # Check if the new data is different from the current settings
+        if current_trakt_settings == trakt_data:
+            logger.debug("Trakt settings are already up-to-date. No changes made.")
+            return
+
         # Update Trakt section
         if 'Trakt' not in config:
             config['Trakt'] = {}
@@ -133,7 +149,12 @@ class Settings:
             'staleness_threshold': self._staleness_threshold if self._staleness_threshold is not None else self.staleness_threshold,
             'max_entries': self.max_entries,
             'log_level': self.log_level,
-            'Trakt': self.Trakt # Saves the cached Trakt details
+            'Trakt': self.Trakt, # Saves the cached Trakt details
+            # New: persist Trakt updates cursors
+            'TraktUpdates': self.trakt_updates,
+            # Threaded retry configuration
+            'enable_threaded_retries': self.enable_threaded_retries,
+            'max_threaded_retry_workers': self.max_threaded_retry_workers,
         }
         try:
             # Ensure the directory exists
@@ -193,6 +214,11 @@ class Settings:
         self._staleness_threshold = config.get('staleness_threshold', None)
         self.max_entries = config.get('max_entries', 1000)
         self.log_level = config.get('log_level', 'INFO')
+        # New: load Trakt updates cursors
+        self.trakt_updates = config.get('TraktUpdates', self.trakt_updates)
+        # Load threaded retry configuration
+        self.enable_threaded_retries = config.get('enable_threaded_retries', True)
+        self.max_threaded_retry_workers = config.get('max_threaded_retry_workers', 5)
 
     def get_all(self):
         return {
@@ -201,7 +227,12 @@ class Settings:
             "max_entries": self.max_entries,
             "providers": self.providers,
             "log_level": self.log_level,
-            "Trakt": self.Trakt # Use the property getter
+            "Trakt": self.Trakt, # Use the property getter
+            # Expose Trakt updates cursors
+            "TraktUpdates": self.trakt_updates,
+            # Threaded retry configuration
+            "enable_threaded_retries": self.enable_threaded_retries,
+            "max_threaded_retry_workers": self.max_threaded_retry_workers,
         }
 
     def update(self, new_settings):
@@ -267,6 +298,22 @@ class Settings:
             # Clean up the temporary file if replace failed
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def update_trakt_updates(self, **kwargs):
+        """Update Trakt updates cursors and persist."""
+        # Merge provided keys into the dict
+        for key, value in kwargs.items():
+            if key in self.trakt_updates:
+                self.trakt_updates[key] = value
+        self.save()
+
+    def update_threaded_retry_settings(self, enable_threaded_retries=None, max_threaded_retry_workers=None):
+        """Update threaded retry settings and persist."""
+        if enable_threaded_retries is not None:
+            self.enable_threaded_retries = enable_threaded_retries
+        if max_threaded_retry_workers is not None:
+            self.max_threaded_retry_workers = max_threaded_retry_workers
+        self.save()
 
     def toggle_provider(self, provider_name, enable):
         for provider in self.providers:

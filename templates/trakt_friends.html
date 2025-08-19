@@ -186,7 +186,6 @@
         <p>Add your friend's Trakt account to use their watchlist as a content source.</p>
         
         <form class="friend-auth-form" id="friend-auth-form">
-            <input type="text" id="friend-name" name="friend_name" placeholder="Friend's Name (optional)" />
             <input type="text" id="client-id" name="client_id" placeholder="Trakt Client ID (required)" required />
             <input type="text" id="client-secret" name="client_secret" placeholder="Trakt Client Secret (required)" required />
             <button type="submit" id="start-auth-btn">Start Authorization</button>
@@ -238,12 +237,10 @@
         friendAuthForm.addEventListener('submit', function(event) {
             event.preventDefault();
             
-            const friendName = document.getElementById('friend-name').value;
             const clientId = document.getElementById('client-id').value;
             const clientSecret = document.getElementById('client-secret').value;
             
             const formData = new FormData();
-            formData.append('friend_name', friendName);
             formData.append('client_id', clientId);
             formData.append('client_secret', clientSecret);
             
@@ -286,10 +283,13 @@
                         }
                     }, 60000);
                 } else {
+                    const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                        ? data.error
+                        : 'Trakt returned an error without details. Please try again or check server logs.';
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         title: 'Authorization Error',
-                        message: data.error || 'An error occurred during authorization.'
+                        message: fallbackMessage
                     });
                 }
             })
@@ -330,14 +330,25 @@
                     clearInterval(checkAuthInterval);
                     clearInterval(countdownInterval);
                     
-                    authStatusElement.textContent = 'Authorization failed: ' + data.error;
-                    authStatusElement.className = 'auth-status error';
-                    
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        title: 'Authorization Failed',
-                        message: data.error || 'An error occurred during authorization.'
-                    });
+                    if (data.status === 'expired') {
+                        authStatusElement.textContent = 'Authorization code expired. Please try again.';
+                        authStatusElement.className = 'auth-status error';
+                        
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Authorization Expired',
+                            message: 'The authorization code has expired. Please start a new authorization process.'
+                        });
+                    } else {
+                        authStatusElement.textContent = 'Authorization failed: ' + data.error;
+                        authStatusElement.className = 'auth-status error';
+                        
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            title: 'Authorization Failed',
+                            message: data.error || 'An error occurred during authorization.'
+                        });
+                    }
                 }
             })
             .catch(error => {
@@ -366,7 +377,7 @@
                         });
                     }
                 } else {
-                    console.error('Error loading friends:', data.error);
+                    console.error('Error loading friends:', data.error || 'Unknown error');
                 }
             })
             .catch(error => {
@@ -431,10 +442,13 @@
                     });
                     loadAuthorizedFriends();
                 } else {
+                    const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                        ? data.error
+                        : 'Trakt returned an error without details while refreshing. Please try again or check server logs.';
                     showPopup({
                         type: POPUP_TYPES.ERROR,
                         title: 'Error Refreshing Token',
-                        message: data.error || 'An error occurred while refreshing the token.'
+                        message: fallbackMessage
                     });
                 }
             })
@@ -467,10 +481,13 @@
                             });
                             loadAuthorizedFriends();
                         } else {
+                            const fallbackMessage = (typeof data.error === 'string' && data.error.trim().length > 0)
+                                ? data.error
+                                : 'Trakt returned an error without details while deleting. Please try again or check server logs.';
                             showPopup({
                                 type: POPUP_TYPES.ERROR,
                                 title: 'Error Deleting Friend',
-                                message: data.error || 'An error occurred while deleting the friend.'
+                                message: fallbackMessage
                             });
                         }
                     })

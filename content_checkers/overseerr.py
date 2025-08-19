@@ -14,6 +14,53 @@ DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 OVERSEERR_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'overseerr_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
 
+def parse_bool(value: Any) -> bool:
+    """Safely parse various truthy/falsey representations into a boolean."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "yes", "on", "y", "t"}
+
+def normalize_tag_to_string(tag: Any) -> str:
+    """Normalize a tag value that may be a dict, int, or str into a lowercase string."""
+    if isinstance(tag, dict):
+        for key in ("tag", "name", "label", "id"):
+            if key in tag and tag[key] is not None:
+                return str(tag[key]).strip().lower()
+        return ""
+    if isinstance(tag, int):
+        return str(tag)
+    if isinstance(tag, str):
+        return tag.strip().lower()
+    return ""
+
+def extract_requested_seasons(raw_seasons: Any) -> List[int]:
+    """Extract season numbers from a list that may contain dicts or ints."""
+    seasons: List[int] = []
+    if not isinstance(raw_seasons, list):
+        return seasons
+    for season_entry in raw_seasons:
+        season_number: Any = None
+        if isinstance(season_entry, dict):
+            season_number = season_entry.get("seasonNumber")
+            if season_number is None:
+                season_number = season_entry.get("season")
+            if season_number is None:
+                season_number = season_entry.get("number")
+        elif isinstance(season_entry, int):
+            season_number = season_entry
+        elif isinstance(season_entry, str):
+            if season_entry.isdigit():
+                season_number = int(season_entry)
+        # Coerce to int if possible
+        if isinstance(season_number, str) and season_number.isdigit():
+            season_number = int(season_number)
+        if isinstance(season_number, int):
+            seasons.append(season_number)
+    return seasons
+
 def load_overseerr_cache():
     try:
         if os.path.exists(OVERSEERR_CACHE_FILE):
@@ -96,7 +143,7 @@ def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, t
 def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     content_sources = get_all_settings().get('Content Sources', {})
     overseerr_sources = [data for source, data in content_sources.items() if source.startswith('Overseerr') and data.get('enabled', False)]
-    allow_partial = get_setting('Debug', 'allow_partial_overseerr_requests', 'False')
+    allow_partial = parse_bool(get_setting('Debug', 'allow_partial_overseerr_requests', 'False'))
     disable_caching = True  # Hardcoded to True
     logging.info(f"allow_partial: {allow_partial}")
     
@@ -107,6 +154,8 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
     for source in overseerr_sources:
         overseerr_url = source.get('url')
         overseerr_api_key = source.get('api_key')
+        ignore_tags_str = source.get('ignore_tags', '')
+        ignore_tags = {tag.strip().lower() for tag in ignore_tags_str.split(',') if tag.strip()} if ignore_tags_str else set()
         
         if not overseerr_url or not overseerr_api_key:
             logging.error(f"Overseerr URL or API key not set for source: {source}. Please configure in settings.")
@@ -116,8 +165,19 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
             wanted_content_raw = fetch_overseerr_wanted_content(overseerr_url, overseerr_api_key)
             wanted_items = []
             cache_skipped = 0
+            ignored_by_tag = 0
 
             for item in wanted_content_raw:
+                raw_tags = item.get('tags') or []
+                item_tags: set[str] = set()
+                for raw_tag in raw_tags:
+                    normalized = normalize_tag_to_string(raw_tag)
+                    if normalized:
+                        item_tags.add(normalized)
+                if ignore_tags and not item_tags.isdisjoint(ignore_tags):
+                    ignored_by_tag += 1
+                    continue
+                
                 media = item.get('media', {})
 
                 if media.get('mediaType') in ['movie', 'tv']:
@@ -130,10 +190,7 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
 
                     # Handle season information for TV shows when partial requests are allowed
                     if allow_partial and media.get('mediaType') == 'tv' and 'seasons' in item:
-                        requested_seasons_os = []
-                        for season_os in item.get('seasons', []):
-                            if season_os.get('seasonNumber') is not None:
-                                requested_seasons_os.append(season_os.get('seasonNumber'))
+                        requested_seasons_os = extract_requested_seasons(item.get('seasons'))
                         if requested_seasons_os:
                             wanted_item['requested_seasons'] = requested_seasons_os
 
@@ -162,6 +219,8 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                     
                     wanted_items.append(wanted_item)
 
+            if ignored_by_tag > 0:
+                logging.info(f"Ignored {ignored_by_tag} items from Overseerr source based on tags.")
             all_wanted_items.append((wanted_items, versions))
             logging.info(f"Retrieved {len(wanted_items)} wanted items from Overseerr source")
         except Exception as e:
