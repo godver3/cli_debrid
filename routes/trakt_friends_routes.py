@@ -171,8 +171,39 @@ def check_auth_status(auth_id):
             user_response = requests.get(f"{TRAKT_API_URL}/users/me", headers=headers, timeout=REQUEST_TIMEOUT)
             if user_response.status_code == 200:
                 user_data = user_response.json()
-                state['username'] = user_data.get('username')
+                logging.info(f"Trakt user data received for auth_id {auth_id}: username='{user_data.get('username')}', name='{user_data.get('name')}', ids={user_data.get('ids', {})}")
+                logging.debug(f"Full Trakt user data: {json.dumps(user_data, indent=2)}")
+                
+                # Ensure we get the correct username (not email)
+                username = user_data.get('username')
+                if username and '@' in username:
+                    # If username looks like an email, prioritize the slug
+                    # The slug is the URL-friendly version of the username
+                    slug = user_data.get('ids', {}).get('slug')
+                    if slug:
+                        username = slug
+                        logging.info(f"Using slug '{slug}' instead of email-like username '{user_data.get('username')}'")
+                    else:
+                        # Fallback: try to extract username from email (remove domain part)
+                        email_username = username.split('@')[0]
+                        logging.warning(f"Username appears to be an email address '{username}' but no slug available. Using email username part: '{email_username}'")
+                        username = email_username
+                else:
+                    # Even if username is not an email, check if we have a slug available
+                    # as it might be more reliable
+                    slug = user_data.get('ids', {}).get('slug')
+                    if slug:
+                        logging.info(f"Using slug '{slug}' instead of username '{username}'")
+                        username = slug
+                    else:
+                        logging.info(f"Using username from Trakt API: '{username}'")
+                
+                state['username'] = username
                 state['friend_name'] = user_data.get('name') or state['friend_name']
+                # Also store the user ID for potential fallback use
+                state['user_id'] = user_data.get('ids', {}).get('trakt')
+                # Store the slug for reliable API access
+                state['slug'] = user_data.get('ids', {}).get('slug')
                 
                 # Save the updated state again
                 with open(state_file, 'w') as f:
@@ -182,7 +213,9 @@ def check_auth_status(auth_id):
                 'success': True,
                 'status': 'authorized',
                 'friend_name': state.get('friend_name'),
-                'username': state.get('username')
+                'username': state.get('username'),
+                'user_id': state.get('user_id'),
+                'slug': state.get('slug')
             })
         
         # Handle non-200 responses with better diagnostics

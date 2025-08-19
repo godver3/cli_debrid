@@ -805,8 +805,13 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
     username = list_info['username']
     list_id = list_info['list_id']
     
+    # Clean username for API use (handle email-based usernames)
+    clean_username = clean_username_for_api(username)
+    if clean_username != username:
+        logging.info(f"Cleaned username for list access: '{username}' -> '{clean_username}'")
+    
     # Get list items
-    endpoint = f"/users/{username}/lists/{list_id}/items"
+    endpoint = f"/users/{clean_username}/lists/{list_id}/items"
     list_items = fetch_items_from_trakt(endpoint)
     
     processed_items = process_trakt_items(list_items)
@@ -838,6 +843,36 @@ def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[Li
     all_wanted_items.append((processed_items, versions))
     
     return all_wanted_items
+
+def clean_username_for_api(username: str, auth_id: str = None) -> str:
+    """Clean username for use in Trakt API endpoints"""
+    if not username:
+        return username
+    
+    # If we have an auth_id, try to get the slug from the auth state first
+    if auth_id:
+        try:
+            state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
+            if os.path.exists(state_file):
+                with open(state_file, 'r') as file:
+                    state = json.load(file)
+                
+                # Check if we have a slug stored in the auth state
+                slug = state.get('slug')
+                if slug:
+                    logging.info(f"Using slug '{slug}' from auth state instead of username '{username}'")
+                    return slug
+        except Exception as e:
+            logging.debug(f"Could not read auth state for slug lookup: {str(e)}")
+    
+    # If username contains @, it's likely an email address
+    if '@' in username:
+        # Try to extract the username part before the @
+        username_part = username.split('@')[0]
+        logging.warning(f"Cleaning email-like username '{username}' to '{username_part}'")
+        return username_part
+    
+    return username
 
 def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Get wanted items from a friend's Trakt watchlist"""
@@ -873,10 +908,13 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         logging.error(f"No username available for friend's Trakt account: {auth_id}")
         return []
     
-    logging.info(f"Fetching watchlist for friend's Trakt account: {username}")
+    # Clean the username for API use
+    clean_username = clean_username_for_api(username, auth_id)
+    logging.info(f"Fetching watchlist for friend's Trakt account: {username} (cleaned: {clean_username})")
+    
     try:
         # Get the watchlist from Trakt
-        endpoint = f"/users/{username}/watchlist"
+        endpoint = f"/users/{clean_username}/watchlist"
         logging.debug(f"Making watchlist request to endpoint: {endpoint}")
         logging.debug(f"Using headers: {headers}")
         items = fetch_items_from_trakt(endpoint, headers)
@@ -889,7 +927,30 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         return [(processed_items, versions)]
         
     except Exception as e:
-        logging.error(f"Error fetching friend's Trakt watchlist: {str(e)}")
+        logging.error(f"Error fetching friend's Trakt watchlist using cleaned username '{clean_username}' (original: '{username}'): {str(e)}")
+        
+        # Try fallback: use user ID instead of username
+        try:
+            # Get user ID from auth state
+            state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
+            with open(state_file, 'r') as file:
+                state = json.load(file)
+            
+            # Try to get user ID from the user data we fetched during authorization
+            user_id = state.get('user_id')
+            if user_id:
+                logging.info(f"Trying fallback with user ID: {user_id}")
+                endpoint = f"/users/{user_id}/watchlist"
+                items = fetch_items_from_trakt(endpoint, headers)
+                
+                processed_items = process_trakt_items(items)
+                logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist using user ID: {user_id}")
+                return [(processed_items, versions)]
+            else:
+                logging.error("No user ID available for fallback")
+        except Exception as fallback_error:
+            logging.error(f"Fallback attempt also failed: {str(fallback_error)}")
+        
         return []
 
 def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_profile: Dict[str, Any]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
@@ -1089,8 +1150,14 @@ def fetch_liked_trakt_lists_details() -> List[Dict[str, str]]:
 
             username = list_user['username']
             list_id = list_ids['trakt']
+            
+            # Clean username for URL construction (handle email-based usernames)
+            clean_username = clean_username_for_api(username)
+            if clean_username != username:
+                logging.debug(f"Cleaned username for URL construction: '{username}' -> '{clean_username}'")
+            
             # Construct the standard Trakt list URL
-            list_url = f"https://trakt.tv/users/{username}/lists/{list_id}"
+            list_url = f"https://trakt.tv/users/{clean_username}/lists/{list_id}"
 
             liked_lists_details.append({
                 'name': list_name,
