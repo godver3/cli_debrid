@@ -102,6 +102,22 @@
             <p class="settings-description">{{ settings_schema['Debug']['truncate_episode_notifications'].description }}</p>
             {% endif %}
         </div>
+        <div class="settings-form-group">
+            <label for="notifications-general-enabled-content-sources" class="settings-title">
+                Enabled Content Sources:
+            </label>
+            <select id="notifications-general-enabled-content-sources" 
+                    name="Notifications.General.enabled_content_sources" 
+                    class="settings-input"
+                    data-section="Notifications" 
+                    data-key="General.enabled_content_sources"
+                    data-current-value="{{ settings.get('Notifications', {}).get('General', {}).get('enabled_content_sources', '') }}"
+                    multiple
+                    style="min-height: 120px;">
+                <!-- Options will be populated by JavaScript -->
+            </select>
+            <p class="settings-description">Select content sources to include in notifications. Leave empty to include all sources. Hold Ctrl/Cmd to select multiple sources. The filtering works with both backend IDs and display names.</p>
+        </div>
     </div>
 </div>
 
@@ -167,6 +183,30 @@
     .delete-notification-btn {
         padding: 3px 4px; /* Reduced padding for smaller screens */
     }
+}
+
+/* Multi-select styling */
+#notifications-general-enabled-content-sources {
+    border: 1px solid #555;
+    background-color: #2a2a2a;
+    color: #fff;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+#notifications-general-enabled-content-sources option {
+    padding: 4px 8px;
+    background-color: #2a2a2a;
+    color: #fff;
+}
+
+#notifications-general-enabled-content-sources option:checked {
+    background-color: #4CAF50;
+    color: white;
+}
+
+#notifications-general-enabled-content-sources option:hover {
+    background-color: #3a3a3a;
 }
 </style>
 
@@ -424,5 +464,82 @@ function updateNotificationsTab() {
 
 document.addEventListener('DOMContentLoaded', function() {
     initializeNotificationsFunctionality();
+    initializeContentSourceFilter();
 });
+
+function initializeContentSourceFilter() {
+    const selectElement = document.getElementById('notifications-general-enabled-content-sources');
+    if (!selectElement) return;
+
+    // Get current selected values
+    const currentValue = selectElement.getAttribute('data-current-value') || '';
+    const selectedSources = currentValue ? currentValue.split(',').map(s => s.trim()).filter(s => s) : [];
+    
+    // Create hidden input for form submission
+    let hiddenInput = document.getElementById('notifications-general-enabled-content-sources-hidden');
+    if (!hiddenInput) {
+        hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.id = 'notifications-general-enabled-content-sources-hidden';
+        hiddenInput.name = 'Notifications.General.enabled_content_sources';
+        hiddenInput.setAttribute('data-section', 'Notifications');
+        hiddenInput.setAttribute('data-key', 'General.enabled_content_sources');
+        hiddenInput.value = currentValue;
+        selectElement.parentNode.appendChild(hiddenInput);
+    }
+
+    // Fetch content sources from the API
+    fetch('/settings/api/enabled_content_sources')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.sources) {
+                // Clear existing options
+                selectElement.innerHTML = '';
+                
+                // Add options for each content source
+                data.sources.forEach(source => {
+                    const option = document.createElement('option');
+                    option.value = source.id;
+                    
+                    // Show display name with backend ID in parentheses for clarity
+                    const displayText = source.display_name || source.id;
+                    option.textContent = source.display_name && source.display_name !== source.id 
+                        ? `${displayText} (${source.id})`
+                        : displayText;
+                    
+                    // Mark as selected if it was previously selected
+                    if (selectedSources.includes(source.id)) {
+                        option.selected = true;
+                    }
+                    
+                    selectElement.appendChild(option);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error loading content sources:', error);
+        });
+
+    // Handle change events to update the hidden input for form submission
+    selectElement.addEventListener('change', function() {
+        const selectedOptions = Array.from(this.selectedOptions).map(option => option.value);
+        const selectedValue = selectedOptions.join(', ');
+        
+        // Update the data attribute to preserve the value
+        this.setAttribute('data-current-value', selectedValue);
+        
+        // Create or update a hidden input for form submission
+        let hiddenInput = document.getElementById('notifications-general-enabled-content-sources-hidden');
+        if (!hiddenInput) {
+            hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.id = 'notifications-general-enabled-content-sources-hidden';
+            hiddenInput.name = 'Notifications.General.enabled_content_sources';
+            hiddenInput.setAttribute('data-section', 'Notifications');
+            hiddenInput.setAttribute('data-key', 'General.enabled_content_sources');
+            selectElement.parentNode.appendChild(hiddenInput);
+        }
+        hiddenInput.value = selectedValue;
+    });
+}
 </script>

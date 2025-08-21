@@ -1338,6 +1338,13 @@ SETTINGS_SCHEMA = {
         "description": "Notification configurations",
         "default": {},
         "schema": {
+            "General": {
+                "enabled_content_sources": {
+                    "type": "string",
+                    "description": "Comma-separated list of content sources to include in notifications. Leave empty to include all sources.",
+                    "default": ""
+                }
+            },
             "Telegram": {
                 "enabled": {"type": "boolean", "default": False},
                 "bot_token": {"type": "string", "default": "", "sensitive": True},

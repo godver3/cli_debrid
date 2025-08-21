@@ -60,12 +60,19 @@ def get_cached_download_stats():
         download_stats_cache['active_downloads'] is None or 
         download_stats_cache['usage_stats'] is None):
         
+        logging.debug("Download stats cache expired, fetching fresh data...")
+        
         try:
+            # Add timeout protection for provider initialization
             provider = get_debrid_provider()
+            logging.debug("Debrid provider initialized successfully")
             
-            # Get active downloads
+            # Get active downloads with timeout protection
             try:
+                logging.debug("Fetching active downloads...")
                 active_count, limit = provider.get_active_downloads()
+                logging.debug(f"Active downloads fetched: {active_count}/{limit}")
+                
                 raw_limit = limit if limit else provider.MAX_DOWNLOADS
                 adjusted_limit = round(raw_limit)
                 percentage = round((active_count / adjusted_limit * 100) if adjusted_limit > 0 else 0)
@@ -84,6 +91,7 @@ def get_cached_download_stats():
                     'error': None
                 }
             except TooManyDownloadsError as e:
+                logging.debug(f"TooManyDownloadsError caught: {str(e)}")
                 import re
                 match = re.search(r'(\d+)/(\d+)', str(e))
                 if match:
@@ -113,9 +121,12 @@ def get_cached_download_stats():
                     'error': str(e)
                 }
             
-            # Get usage stats
+            # Get usage stats with timeout protection
             try:
+                logging.debug("Fetching usage stats...")
                 usage = provider.get_user_traffic()
+                logging.debug(f"Usage stats fetched: {usage}")
+                
                 if not usage or usage.get('limit') is None:
                     download_stats_cache['usage_stats'] = {
                         'used': '0 GB',
@@ -172,6 +183,7 @@ def get_cached_download_stats():
                 }
 
             download_stats_cache['last_update'] = current_time
+            logging.debug("Download stats cache updated successfully")
             
         except ProviderUnavailableError as e:
             logging.error(f"Provider unavailable: {str(e)}")

@@ -3078,12 +3078,35 @@ class ProgramRunner:
 
     def task_refresh_download_stats(self):
         """Task to refresh the download stats cache"""
+        import threading
+        import time
         from database.statistics import get_cached_download_stats
-        try:
-            get_cached_download_stats()
-            logging.debug("Download stats cache refreshed")
-        except Exception as e:
-            logging.error(f"Error refreshing download stats cache: {str(e)}")
+        
+        result = [None]
+        exception = [None]
+        
+        def run_with_timeout():
+            try:
+                get_cached_download_stats()
+                result[0] = "success"
+                logging.debug("Download stats cache refreshed")
+            except Exception as e:
+                exception[0] = e
+                logging.error(f"Error refreshing download stats cache: {str(e)}")
+        
+        # Start the operation in a separate thread
+        thread = threading.Thread(target=run_with_timeout)
+        thread.daemon = True
+        thread.start()
+        
+        # Wait for up to 30 seconds
+        thread.join(timeout=30.0)
+        
+        if thread.is_alive():
+            logging.error("Download stats refresh timed out after 30 seconds")
+            # Note: The thread will continue running in the background as a daemon thread
+        elif exception[0]:
+            logging.error(f"Download stats refresh failed: {str(exception[0])}")
 
     def task_refresh_plex_tokens(self):
         logging.info("Performing periodic Plex token validation")

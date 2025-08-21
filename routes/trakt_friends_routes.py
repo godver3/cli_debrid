@@ -184,10 +184,10 @@ def check_auth_status(auth_id):
                         username = slug
                         logging.info(f"Using slug '{slug}' instead of email-like username '{user_data.get('username')}'")
                     else:
-                        # Fallback: try to extract username from email (remove domain part)
-                        email_username = username.split('@')[0]
-                        logging.warning(f"Username appears to be an email address '{username}' but no slug available. Using email username part: '{email_username}'")
-                        username = email_username
+                        # Fallback: convert email to Trakt slug format (replace dots and @ with hyphens)
+                        slug_username = username.replace('.', '-').replace('@', '-')
+                        logging.warning(f"Username appears to be an email address '{username}' but no slug available. Converting to slug format: '{slug_username}'")
+                        username = slug_username
                 else:
                     # Even if username is not an email, check if we have a slug available
                     # as it might be more reliable

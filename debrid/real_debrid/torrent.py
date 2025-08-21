@@ -34,9 +34,9 @@ def get_torrent_info_status(api_key: str, torrent_id: str) -> TorrentInfoStatus:
     Tries to distinguish between success, various error types (404, 429),
     and cases where the underlying make_request handles errors and returns None.
     """
-    # Add retry mechanism for rate limit errors
-    max_retries = 3
-    retry_delay = 5  # Start with 5 seconds delay
+    # Add retry mechanism for rate limit errors with more aggressive backoff
+    max_retries = 2  # Reduced from 3 to be less aggressive
+    retry_delay = 10  # Increased from 5 to 10 seconds delay
     
     try:
         for retry_attempt in range(max_retries):

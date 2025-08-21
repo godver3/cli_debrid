@@ -756,6 +756,99 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
 
             content_input = filtered_items # Use the filtered list for formatting
 
+        # --- Content Source Filtering ---
+        if isinstance(content_input, list):
+            # Get the enabled content sources setting
+            from utilities.settings import get_setting
+            notifications_config = get_setting('Notifications', None, {})
+            enabled_content_sources_str = notifications_config.get('General', {}).get('enabled_content_sources', '')
+            
+            # Initialize enabled_sources as empty set
+            enabled_sources = set()
+            
+            if enabled_content_sources_str:
+                logging.debug(f"Content source filtering setting found: '{enabled_content_sources_str}'")
+                # Parse the comma-separated list and create a set for efficient lookup
+                enabled_sources = {source.strip() for source in enabled_content_sources_str.split(',') if source.strip()}
+                logging.debug(f"Parsed enabled sources: {enabled_sources}")
+            else:
+                logging.debug("No content source filtering setting found - all sources will be included")
+            
+            if enabled_sources:
+                    logging.debug(f"Content source filtering enabled for {notification_id}. Allowed sources: {enabled_sources}")
+                    
+                    # Get content source mapping for better logging and potential display name matching
+                    try:
+                        from queues.config_manager import get_enabled_content_sources
+                        content_source_mapping = {}
+                        for source in get_enabled_content_sources():
+                            content_source_mapping[source['id']] = source['display_name']
+                            # Also allow matching by display name (case-insensitive)
+                            content_source_mapping[source['display_name'].lower()] = source['id']
+                    except Exception as e:
+                        logging.warning(f"Could not load content source mapping for filtering: {e}")
+                        content_source_mapping = {}
+                    
+                    # Filter items based on content source
+                    source_filtered_items = []
+                    filtered_out_count = 0
+                    
+                    for item in content_input:
+                        if not isinstance(item, dict):
+                            source_filtered_items.append(item)  # Keep non-dict items
+                            continue
+                            
+                        item_content_source = item.get('content_source', '')
+                        
+                        # If content source is missing, try to look it up from the database
+                        if not item_content_source and item.get('id'):
+                            try:
+                                from database import get_db_connection
+                                conn = get_db_connection()
+                                cursor = conn.cursor()
+                                cursor.execute('SELECT content_source FROM media_items WHERE id = ?', (item['id'],))
+                                result = cursor.fetchone()
+                                if result and result[0]:
+                                    item_content_source = result[0]
+                                    logging.debug(f"Retrieved content_source '{item_content_source}' from database for item {item['id']}")
+                                conn.close()
+                            except Exception as db_error:
+                                logging.warning(f"Failed to look up content_source from database for item {item.get('id')}: {db_error}")
+                        
+                        # Check if the item's content source is in the enabled list
+                        # We check both the direct match and potential display name match
+                        is_allowed = False
+                        if not item_content_source:
+                            is_allowed = True  # Items without content source are included
+                        else:
+                            # Direct ID match
+                            if item_content_source in enabled_sources:
+                                is_allowed = True
+                            else:
+                                # Check if it's a display name match
+                                display_name_lower = item_content_source.lower()
+                                if display_name_lower in content_source_mapping:
+                                    mapped_id = content_source_mapping[display_name_lower]
+                                    if mapped_id in enabled_sources:
+                                        is_allowed = True
+                        
+                        if is_allowed:
+                            source_filtered_items.append(item)
+                        else:
+                            filtered_out_count += 1
+                            display_name = content_source_mapping.get(item_content_source, item_content_source)
+                            logging.debug(f"Filtered out notification for {item.get('title', 'Unknown')} from source '{display_name}' (not in allowed list)")
+                    
+                    content_input = source_filtered_items
+                    
+                    if filtered_out_count > 0:
+                        logging.info(f"Content source filtering: {filtered_out_count} items filtered out for {notification_id}")
+                    
+                    if not source_filtered_items:
+                        logging.debug(f"No items remain after content source filtering for {notification_id}")
+                        continue  # Skip this target if no items remain after content source filtering
+
+        # --- End Content Source Filtering ---
         # --- End Item-Level Filtering ---
 
 

@@ -867,10 +867,11 @@ def clean_username_for_api(username: str, auth_id: str = None) -> str:
     
     # If username contains @, it's likely an email address
     if '@' in username:
-        # Try to extract the username part before the @
-        username_part = username.split('@')[0]
-        logging.warning(f"Cleaning email-like username '{username}' to '{username_part}'")
-        return username_part
+        # Convert email to Trakt slug format: replace dots and @ with hyphens
+        # e.g., liam.d.hughes@gmail.com becomes liam-d-hughes-gmail-com
+        slug_username = username.replace('.', '-').replace('@', '-')
+        logging.info(f"Converting email-like username '{username}' to slug format '{slug_username}'")
+        return slug_username
     
     return username
 

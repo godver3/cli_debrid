@@ -263,6 +263,12 @@ def migrate_schema():
             conn.execute('CREATE INDEX idx_media_items_original_path_for_symlink ON media_items(original_path_for_symlink);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_original_path_for_symlink.")
 
+        # Add index for collected_at to fix slow queries in get_items_processed_per_hour
+        if 'idx_media_items_collected_at' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_collected_at...")
+            conn.execute('CREATE INDEX idx_media_items_collected_at ON media_items(collected_at);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_collected_at.")
+
         # Add indexes for optimizing get_episode_runtime and get_episode_count
         if 'idx_media_items_tmdb_type_runtime' not in existing_indexes:
             logging.info("Attempting to create index idx_media_items_tmdb_type_runtime...")
