@@ -360,7 +360,14 @@ def assign_magnet():
         prefill_version = request.args.get('prefill_version')
 
         if prefill_id and prefill_type and prefill_title and prefill_year:
-            logging.info(f"Attempting to prefill magnet assigner for TMDB ID: {prefill_id}, Type: {prefill_type}")
+            # Determine if prefill_id is IMDb ID or TMDB ID
+            id_kind = 'tmdb'  # Default to TMDB
+            if prefill_id.startswith('tt'):
+                id_kind = 'imdb'
+                logging.info(f"Attempting to prefill magnet assigner for IMDb ID: {prefill_id}, Type: {prefill_type}")
+            else:
+                logging.info(f"Attempting to prefill magnet assigner for TMDB ID: {prefill_id}, Type: {prefill_type}")
+            
             if prefill_magnet:
                  logging.info(f"Prefill magnet link provided: {prefill_magnet[:60]}...")
             if prefill_version:
@@ -370,7 +377,7 @@ def assign_magnet():
             # prefill_type could be 'movie' or 'tv' (from scraper) or 'show'
             type_hint_for_helper = 'tv' if prefill_type == 'show' else prefill_type
             
-            prefill_results = asyncio.run(_fetch_media_details_for_assigner(prefill_id, 'tmdb', type_hint_for_helper))
+            prefill_results = asyncio.run(_fetch_media_details_for_assigner(prefill_id, id_kind, type_hint_for_helper))
             
             if prefill_results:
                 # _fetch_media_details_for_assigner returns a list, take the first (and only) item
@@ -387,7 +394,7 @@ def assign_magnet():
                                     prefill_magnet=prefill_magnet,
                                     prefill_version=prefill_version)
             else:
-                logging.warning(f"Could not fetch details via helper for prefill ID: {prefill_id}, Type: {prefill_type}")
+                logging.warning(f"Could not fetch details via helper for prefill ID: {prefill_id} ({id_kind.upper()}), Type: {prefill_type}")
                 flash(f'Could not find details for {prefill_title} ({prefill_year}). Please search manually.', 'warning')
                 
             # Fallback to standard search page if prefill fails
