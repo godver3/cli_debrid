@@ -839,9 +839,22 @@
                     document.querySelectorAll('.notification.unread').forEach(notif => {
                         notif.addEventListener('click', async () => {
                             const id = notif.dataset.id;
+                            
+                            // Immediately update UI for better user experience
+                            notif.classList.remove('unread');
+                            notif.classList.add('read');
+                            
+                            // Update local notification state
+                            const notification = notifications.find(n => n.id === id);
+                            if (notification) {
+                                notification.read = true;
+                            }
+                            
+                            // Update indicator immediately
+                            updateNotificationIndicator();
+                            
+                            // Then send request to server
                             await markNotificationRead(id);
-                            // Re-fetch and update display to ensure consistency
-                            await fetchNotifications(); 
                         });
                     });
                 }
@@ -868,12 +881,12 @@
                         },
                         body: JSON.stringify({ id }),
                     });
-                    const notification = notifications.find(n => n.id === id);
-                    if (notification) {
-                        notification.read = true;
-                    }
+                    // Note: UI is already updated immediately, so no need to refresh here
+                    // The periodic refresh will ensure consistency with server state
                 } catch (error) {
                     console.error('Error marking notification as read:', error);
+                    // If the request fails, we could revert the UI changes here
+                    // For now, we'll let the periodic refresh handle any inconsistencies
                 }
             }
 
@@ -934,7 +947,7 @@
             fetchNotifications();
             
             // Refresh notifications periodically
-            setInterval(fetchNotifications, 30000); // Every 30 seconds
+            setInterval(fetchNotifications, 10000); // Every 10 seconds instead of 30
 
             // ---- Disable Notifications Toggle Logic ----
             const disableNotificationsToggle = document.getElementById('disableNotificationsToggle');
@@ -1317,7 +1330,7 @@
                 markAllAsReadBtn.addEventListener('click', async () => {
                     try {
                         await fetch('/base/api/notifications/mark-all-read', { method: 'POST' });
-                        // Refresh notifications after marking all as read
+                        // Immediately refresh notifications to get updated read status
                         await fetchNotifications(); 
                     } catch (error) {
                         console.error('Error marking all notifications as read:', error);

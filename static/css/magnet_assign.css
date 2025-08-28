@@ -98,6 +98,68 @@
     box-shadow: 0 0 5px rgba(102, 102, 102, 0.5);
 }
 
+/* File upload styling */
+.input-group {
+    align-items: stretch;
+}
+
+.input-group-append {
+    display: none;
+    align-items: center;
+}
+
+.input-group-text {
+    background: #444;
+    border: 1px solid #555;
+    color: #f4f4f4;
+    padding: 8px 12px;
+    border-radius: 0 4px 4px 0;
+    border-left: none;
+    white-space: nowrap;
+}
+
+.custom-file {
+    position: relative;
+    display: inline-block;
+    width: auto;
+    height: 100%;
+    margin-bottom: 0;
+}
+
+.custom-file-input {
+    position: absolute;
+    left: -9999px;
+    opacity: 0;
+}
+
+.custom-file-label {
+    display: block;
+    padding: 8px 12px;
+    background: #333;
+    border: 1px solid #555;
+    border-radius: 0 4px 4px 0;
+    color: #f4f4f4;
+    cursor: pointer;
+    white-space: nowrap;
+    min-width: 140px;
+    text-align: center;
+    transition: background-color 0.2s;
+}
+
+.custom-file-label:hover {
+    background: #444;
+}
+
+.custom-file-label:active {
+    background: #555;
+}
+
+.form-text {
+    font-size: 0.875em;
+    color: #aaa;
+    margin-top: 5px;
+}
+
 .btn-primary {
     background-color: #2196F3;
     color: white;

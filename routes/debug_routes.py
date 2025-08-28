@@ -283,6 +283,14 @@ def delete_database():
         from database.schema_management import verify_database
         verify_database()  # This will recreate all tables including torrent_additions
         
+        # Recreate battery database tables
+        try:
+            from cli_battery.app.database import init_db
+            init_db()
+            logging.info("Successfully recreated battery database tables")
+        except Exception as e:
+            logging.error(f"Error recreating battery database: {str(e)}")
+        
         # Delete cache files and not wanted files
         db_content_dir = os.environ['USER_DB_CONTENT']
         
@@ -2571,13 +2579,24 @@ def parse_symlink(symlink_path: Path):
 
     # 2. Extract Season and Episode Numbers (S##E## or similar)
     # More robust regex to handle variations like S01E01, S1E1, Season 1 Episode 1, 1x01 etc.
-    se_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3})|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
+    # Also handles multi-episode formats like S11E17-E18 or S11E17E18
+    se_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3}(?:[EeXx]\d{1,3})*)|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
     if se_match:
         parsed_data['media_type'] = 'episode'
         # Extract numbers from the first matching group that isn't None
         if se_match.group(1) is not None and se_match.group(2) is not None:
             parsed_data['season_number'] = int(se_match.group(1))
-            parsed_data['episode_number'] = int(se_match.group(2))
+            episode_match = se_match.group(2)
+            # Handle multi-episode format (e.g., "17E18" or "17-18")
+            if 'E' in episode_match or '-' in episode_match:
+                # Extract all episode numbers and create a range format
+                episode_numbers = re.findall(r'\d+', episode_match)
+                if len(episode_numbers) > 1:
+                    parsed_data['episode_number'] = f"E{episode_numbers[0]}-E{episode_numbers[-1]}"
+                else:
+                    parsed_data['episode_number'] = int(episode_numbers[0])
+            else:
+                parsed_data['episode_number'] = int(episode_match)
         elif se_match.group(3) is not None and se_match.group(4) is not None:
              parsed_data['season_number'] = int(se_match.group(3))
              parsed_data['episode_number'] = int(se_match.group(4))
@@ -3437,7 +3456,13 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             parsed_season = parsed_season_folder_val if parsed_season_folder_val is not None else parsed_season_file_val
             parsed_episode = parsed_episode_folder_val if parsed_episode_folder_val is not None else parsed_episode_file_val
             if isinstance(parsed_season, list) and parsed_season: parsed_season = parsed_season[0]
-            if isinstance(parsed_episode, list) and parsed_episode: parsed_episode = parsed_episode[0]
+            
+            # Handle multi-episode files properly
+            if isinstance(parsed_episode, list) and len(parsed_episode) > 1:
+                # For multi-episode files, create a range format like "E17-E18"
+                parsed_episode = f"E{parsed_episode[0]}-E{parsed_episode[-1]}"
+            elif isinstance(parsed_episode, list) and parsed_episode:
+                parsed_episode = parsed_episode[0]
 
             is_version_folder_empty = parsed_version_folder is None or not str(parsed_version_folder).strip()
             is_version_file_empty = parsed_version_file is None or not str(parsed_version_file).strip()
@@ -4013,7 +4038,8 @@ def parse_riven_symlink(symlink_path: Path):
     }
 
     # Robust S/E matching from filename
-    se_filename_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3})|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
+    # Also handles multi-episode formats like S11E17-E18 or S11E17E18
+    se_filename_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3}(?:[EeXx]\d{1,3})*)|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
 
     parent_dir_name = symlink_path.parent.name if symlink_path.parent else ""
     season_from_parent_match = re.search(r'[Ss](?:eason)?\s?(\d+)', parent_dir_name)
@@ -4024,7 +4050,17 @@ def parse_riven_symlink(symlink_path: Path):
         # Extract S/E from filename groups
         if se_filename_match.group(1) is not None and se_filename_match.group(2) is not None: # SxxExx
             parsed_data['season_number'] = int(se_filename_match.group(1))
-            parsed_data['episode_number'] = int(se_filename_match.group(2))
+            episode_match = se_filename_match.group(2)
+            # Handle multi-episode format (e.g., "17E18" or "17-18")
+            if 'E' in episode_match or '-' in episode_match:
+                # Extract all episode numbers and create a range format
+                episode_numbers = re.findall(r'\d+', episode_match)
+                if len(episode_numbers) > 1:
+                    parsed_data['episode_number'] = f"E{episode_numbers[0]}-E{episode_numbers[-1]}"
+                else:
+                    parsed_data['episode_number'] = int(episode_numbers[0])
+            else:
+                parsed_data['episode_number'] = int(episode_match)
         elif se_filename_match.group(3) is not None and se_filename_match.group(4) is not None: # Season xx Episode xx
             parsed_data['season_number'] = int(se_filename_match.group(3))
             parsed_data['episode_number'] = int(se_filename_match.group(4))

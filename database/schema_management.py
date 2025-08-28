@@ -842,6 +842,14 @@ def create_statistics_summary_table():
             WHERE collected_at IS NOT NULL AND upgraded = 1
         ''')
         
+        # Create index for all_blacklisted filter optimization
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_all_blacklisted')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_items_all_blacklisted
+            ON media_items(imdb_id, type, state, season_number, episode_number, ghostlisted)
+            WHERE imdb_id IS NOT NULL AND imdb_id != ''
+        ''')
+        
         conn.commit()
     except Exception as e:
         logging.error(f"Error creating statistics summary table or its indexes: {str(e)}")

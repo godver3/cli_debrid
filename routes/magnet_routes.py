@@ -66,6 +66,40 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
                         metadata_result = get_metadata(tmdb_id=tmdb_id_int, item_media_type='tv')
                         if metadata_result and metadata_result.get('tmdb_id'):
                             determined_media_type = 'tv'
+                
+                # If get_metadata failed (returned empty dict), try with dummy IMDb ID
+                if not metadata_result or not metadata_result.get('tmdb_id'):
+                    logging.warning(f"Could not get metadata for TMDB ID {tmdb_id_int}. Trying with dummy IMDb ID...")
+                    # Generate a dummy IMDb ID and try to get basic metadata
+                    dummy_imdb_id = f"tt{tmdb_id_int:07d}"
+                    logging.info(f"Generated dummy IMDb ID: {dummy_imdb_id} for TMDB ID {tmdb_id_int}")
+                    
+                    # Try to get basic TMDB metadata using get_media_meta
+                    try:
+                        media_type_for_meta = content_type_hint or 'movie'
+                        media_meta_tuple = await asyncio.to_thread(
+                            get_media_meta, str(tmdb_id_int), media_type_for_meta
+                        )
+                        
+                        if media_meta_tuple:
+                            poster_path, overview, genres, vote_average, backdrop_path = media_meta_tuple
+                            # Create minimal metadata with dummy IMDb ID
+                            metadata_result = {
+                                'tmdb_id': tmdb_id_int,
+                                'imdb_id': dummy_imdb_id,
+                                'title': f'TMDB {tmdb_id_int}',  # Fallback title
+                                'year': None,
+                                'genres': genres or [],
+                                'overview': overview or '',
+                                'poster': poster_path
+                            }
+                            determined_media_type = 'movie' if media_type_for_meta == 'movie' else 'tv'
+                            logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id_int}")
+                        else:
+                            logging.warning(f"Could not get media meta for TMDB ID {tmdb_id_int} with dummy IMDb ID")
+                    except Exception as meta_error:
+                        logging.error(f"Error getting media meta for TMDB ID {tmdb_id_int}: {meta_error}")
+                        
             except ValueError:
                 logging.error(f"Invalid TMDb ID format: {id_value}")
                 return []
@@ -190,8 +224,11 @@ def get_season_data():
         imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
 
         if not imdb_id:
-            logging.error(f"Could not find IMDb ID for TMDB ID: {tmdb_id}")
-            return jsonify({'error': 'Could not find IMDb ID'}), 404
+            logging.warning(f"Could not find IMDb ID for TMDB ID: {tmdb_id}. Trying with dummy IMDb ID...")
+            # Generate a dummy IMDb ID for testing purposes
+            dummy_imdb_id = f"tt{tmdb_id.zfill(7)}"
+            logging.info(f"Generated dummy IMDb ID: {dummy_imdb_id} for TMDB ID {tmdb_id}")
+            imdb_id = dummy_imdb_id
 
         # Now we should have an IMDb ID. Let's try to fetch season data.
         try:
@@ -366,7 +403,7 @@ def prepare_manual_assignment():
     # Get form data (same as original 'assign' action)
     tmdb_id = request.form.get('tmdb_id')
     media_type = request.form.get('media_type')
-    magnet_link = request.form.get('magnet_link')
+    magnet_link = request.form.get('magnet_link', '').strip()
     title = request.form.get('title')
     year = request.form.get('year')
     version = request.form.get('version')
@@ -374,25 +411,86 @@ def prepare_manual_assignment():
     selected_seasons = request.form.get('selected_seasons', '').split(',') if request.form.get('selected_seasons') else []
     season = request.form.get('season')
     episode = request.form.get('episode')
+    
+    # Check for torrent file upload
+    torrent_file = request.files.get('torrent_file')
 
     # Basic validation
-    if not all([tmdb_id, media_type, magnet_link, title, year, version]):
+    if not all([tmdb_id, media_type, title, year, version]):
         # Return JSON error for fetch request
         return jsonify({'success': False, 'error': 'Missing required information'}), 400
+    
+    # Validate that either magnet link or torrent file is provided, but not both
+    if not magnet_link and not torrent_file:
+        return jsonify({'success': False, 'error': 'Please provide either a magnet link or a torrent file'}), 400
+    
+    if magnet_link and torrent_file:
+        return jsonify({'success': False, 'error': 'Please provide either a magnet link OR a torrent file, not both'}), 400
 
     try:
+        # Handle torrent file upload if provided
+        temp_file_path = None
+        actual_magnet_link = magnet_link
+        
+        if torrent_file:
+            # Save uploaded torrent file to temporary location
+            import tempfile
+            temp_fd, temp_file_path = tempfile.mkstemp(suffix='.torrent')
+            os.close(temp_fd)
+            torrent_file.save(temp_file_path)
+            logging.info(f"Saved uploaded torrent file to: {temp_file_path}")
+            actual_magnet_link = None  # Use None for magnet link when using torrent file
+        
         # Get file list, filename, and torrent_id from debrid provider
         debrid_provider = get_debrid_provider()
-        result = debrid_provider.get_torrent_file_list(magnet_link)
         
-        if result is None:
-            error_msg = 'Failed to retrieve file list from debrid service. Torrent might be invalid or provider error.'
-            logging.error(f"get_torrent_file_list returned None for magnet: {magnet_link[:60]}")
-            # Return JSON error
-            return jsonify({'success': False, 'error': error_msg}), 503 # Service Unavailable
-
-        files, torrent_filename, torrent_id = result
-        logging.info(f"Retrieved {len(files)} files for manual assignment. Torrent ID: {torrent_id}, Filename: {torrent_filename}")
+        try:
+            if actual_magnet_link:
+                result = debrid_provider.get_torrent_file_list(actual_magnet_link)
+                if result is None:
+                    error_msg = 'Failed to retrieve file list from debrid service. Torrent might be invalid or provider error.'
+                    logging.error(f"get_torrent_file_list returned None for magnet: {actual_magnet_link[:60]}")
+                    return jsonify({'success': False, 'error': error_msg}), 503
+                
+                files, torrent_filename, torrent_id = result
+            else:
+                # For torrent files, we need to add it first, then get file list
+                torrent_id = debrid_provider.add_torrent(None, temp_file_path)
+                if not torrent_id:
+                    error_msg = 'Failed to add torrent file to debrid service.'
+                    logging.error(f"add_torrent returned None for torrent file: {temp_file_path}")
+                    return jsonify({'success': False, 'error': error_msg}), 503
+                
+                # Wait a moment for RD to process the torrent before getting info
+                import time
+                time.sleep(3)
+                
+                # Get torrent info which contains the file list
+                torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                if not torrent_info:
+                    error_msg = 'Failed to get torrent info from debrid service.'
+                    logging.error(f"get_torrent_info returned None for torrent ID: {torrent_id}")
+                    return jsonify({'success': False, 'error': error_msg}), 503
+                
+                files = torrent_info.get('files', [])
+                torrent_filename = torrent_info.get('filename', 'Unknown Filename')
+                
+                # Ensure files is a list
+                if isinstance(files, dict):
+                    files = list(files.values())
+                elif not isinstance(files, list):
+                    files = []
+            
+            logging.info(f"Retrieved {len(files)} files for manual assignment. Torrent ID: {torrent_id}, Filename: {torrent_filename}")
+            
+        finally:
+            # Clean up temporary file if it was created
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                    logging.info(f"Cleaned up temporary torrent file: {temp_file_path}")
+                except Exception as cleanup_error:
+                    logging.warning(f"Failed to clean up temporary file {temp_file_path}: {cleanup_error}")
 
         # Filter for video files (.mkv, .mp4, .avi)
         video_files = []
@@ -423,10 +521,61 @@ def prepare_manual_assignment():
         from metadata.metadata import get_metadata
         metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type)
         if not metadata:
-            error_msg = 'Failed to get metadata for the selected item.'
-            logging.error(f"Metadata fetch failed for tmdb_id: {tmdb_id}, type: {media_type}")
-            # Return JSON error
-            return jsonify({'success': False, 'error': error_msg}), 500
+            logging.warning(f"Could not get metadata for TMDB ID {tmdb_id}. Trying with dummy IMDb ID...")
+            # Generate a dummy IMDb ID and try to get basic metadata
+            dummy_imdb_id = f"tt{tmdb_id.zfill(7)}"
+            logging.info(f"Generated dummy IMDb ID: {dummy_imdb_id} for TMDB ID {tmdb_id}")
+            
+            # Try to get basic TMDB metadata using get_media_meta
+            try:
+                media_meta_tuple = asyncio.run(asyncio.to_thread(
+                    get_media_meta, str(tmdb_id), media_type
+                ))
+                
+                if media_meta_tuple:
+                    poster_path, overview, genres, vote_average, backdrop_path = media_meta_tuple
+                    # Create minimal metadata with dummy IMDb ID
+                    metadata = {
+                        'tmdb_id': tmdb_id,
+                        'imdb_id': dummy_imdb_id,
+                        'title': title,  # Use the title from the form
+                        'year': year,    # Use the year from the form
+                        'genres': genres or [],
+                        'overview': overview or '',
+                        'poster': poster_path,
+                        'runtime': None,
+                        'release_date': None
+                    }
+                    logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id}")
+                else:
+                    # Create even more minimal metadata if get_media_meta fails
+                    metadata = {
+                        'tmdb_id': tmdb_id,
+                        'imdb_id': dummy_imdb_id,
+                        'title': title,  # Use the title from the form
+                        'year': year,    # Use the year from the form
+                        'genres': [],
+                        'overview': '',
+                        'poster': None,
+                        'runtime': None,
+                        'release_date': None
+                    }
+                    logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id} (no TMDB meta available)")
+            except Exception as meta_error:
+                logging.error(f"Error getting media meta for TMDB ID {tmdb_id}: {meta_error}")
+                # Create minimal metadata as fallback
+                metadata = {
+                    'tmdb_id': tmdb_id,
+                    'imdb_id': dummy_imdb_id,
+                    'title': title,  # Use the title from the form
+                    'year': year,    # Use the year from the form
+                    'genres': [],
+                    'overview': '',
+                    'poster': None,
+                    'runtime': None,
+                    'release_date': None
+                }
+                logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id} (fallback)")
         
         # Fetch TV show season data if needed
         if media_type in ['tv', 'show']:
@@ -709,10 +858,11 @@ def prepare_manual_assignment():
         session['manual_assignment_data'] = {
             'target_items': target_items,
             'video_files': video_files,
-            'magnet_link': magnet_link,
+            'magnet_link': actual_magnet_link,  # Use the actual magnet link (could be None for torrent files)
             'torrent_filename': torrent_filename,
             'torrent_id': torrent_id,
-            'version': version
+            'version': version,
+            'is_torrent_file': torrent_file is not None  # Flag to indicate if this was a torrent file upload
         }
         
         # **MODIFICATION**: Return success JSON pointing to the new GET route
@@ -751,16 +901,23 @@ def confirm_manual_assignment():
         torrent_filename = assignments.pop('torrent_filename', [None])[0]
         initial_torrent_id = assignments.pop('torrent_id', [None])[0]
         version = assignments.pop('version', [None])[0]
+        is_torrent_file = assignments.pop('is_torrent_file', [False])[0]
 
-        if not all([magnet_link, torrent_filename, initial_torrent_id, version]):
+        if not all([torrent_filename, initial_torrent_id, version]):
              return jsonify({'success': False, 'error': 'Missing essential torrent information in submission.'}), 400
 
         # Extract torrent hash
         torrent_hash = None
-        if magnet_link.startswith('magnet:'):
+        if magnet_link and magnet_link.startswith('magnet:'):
             hash_match = re.search(r'btih:([a-fA-F0-9]{40})', magnet_link)
             if hash_match:
                 torrent_hash = hash_match.group(1).lower()
+        elif is_torrent_file:
+            # For torrent files, we need to extract hash from the torrent ID
+            # This is a limitation - we don't have the original torrent file to extract hash
+            # We'll use the torrent ID as a fallback for tracking purposes
+            logging.info(f"Using torrent ID {initial_torrent_id} as hash for torrent file tracking")
+            torrent_hash = f"torrent_file_{initial_torrent_id}"
         
         added_items_count = 0
         failed_items_count = 0
@@ -790,16 +947,69 @@ def confirm_manual_assignment():
                 from metadata.metadata import get_metadata
                 metadata = get_metadata(tmdb_id=tmdb_id, item_media_type=media_type_lookup)
                 if not metadata:
-                    logging.error(f"Could not re-fetch metadata for {item_key}")
-                    failed_items_count += 1
-                    continue
+                    logging.warning(f"Could not re-fetch metadata for {item_key}. Trying with dummy IMDb ID...")
+                    # Generate a dummy IMDb ID and create minimal metadata
+                    dummy_imdb_id = f"tt{tmdb_id.zfill(7)}"
+                    logging.info(f"Generated dummy IMDb ID: {dummy_imdb_id} for TMDB ID {tmdb_id}")
+                    
+                    # Try to get TMDB metadata first, then create metadata with dummy IMDb ID
+                    try:
+                        from metadata.metadata import get_tmdb_metadata
+                        media_meta_tuple = get_tmdb_metadata(str(tmdb_id), media_type_lookup)
+
+                        logging.info(f"Media meta tuple: {media_meta_tuple}")
+                        title = media_meta_tuple.get('title')
+                        year = media_meta_tuple.get('year')
+                        genres = media_meta_tuple.get('genres')
+                        
+                        if media_meta_tuple:
+                            # Create metadata with TMDB data and dummy IMDb ID
+                            metadata = {
+                                'tmdb_id': tmdb_id,
+                                'imdb_id': 'tt0000000',
+                                'title': title, 
+                                'year': year,
+                                'genres': genres or [],
+                            }
+                            logging.info(f"Created metadata with TMDB data and dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id}")
+                        else:
+                            # Fallback to minimal metadata if get_media_meta fails
+                            metadata = {
+                                'tmdb_id': tmdb_id,
+                                'imdb_id': dummy_imdb_id,
+                                'title': f'TMDB {tmdb_id}',  # Fallback title
+                                'year': None,
+                                'genres': [],
+                                'overview': '',
+                                'poster': None,
+                                'runtime': None,
+                                'release_date': None
+                            }
+                            logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id} (no TMDB meta available)")
+                    except Exception as meta_error:
+                        logging.error(f"Error getting media meta for TMDB ID {tmdb_id}: {meta_error}")
+                        # Create minimal metadata as fallback
+                        metadata = {
+                            'tmdb_id': tmdb_id,
+                            'imdb_id': dummy_imdb_id,
+                            'title': f'TMDB {tmdb_id}',  # Fallback title
+                            'year': None,
+                            'genres': [],
+                            'overview': '',
+                            'poster': None,
+                            'runtime': None,
+                            'release_date': None
+                        }
+                        logging.info(f"Created minimal metadata with dummy IMDb ID {dummy_imdb_id} for TMDB ID {tmdb_id} (fallback)")
                 
                 # Base data
                 title = metadata.get('title')
                 year = metadata.get('year')
 
                 if item_type == 'movie':
-                    item_data = create_movie_item(metadata, title, year, version, initial_torrent_id, magnet_link)
+                    # Use magnet_link if available, otherwise use None for torrent files
+                    item_magnet_link = magnet_link if magnet_link else None
+                    item_data = create_movie_item(metadata, title, year, version, initial_torrent_id, item_magnet_link)
                 elif item_type == 'ep':
                     # Expecting format like 's01e13' in parts[2]
                     if len(parts) < 3:
@@ -843,7 +1053,9 @@ def confirm_manual_assignment():
                              logging.warning(f"Could not re-fetch season data from Trakt for {item_key}: {e}")
                              # Proceed cautiously without detailed episode info
                     
-                    item_data = create_episode_item(metadata, title, year, version, initial_torrent_id, magnet_link, season_number, episode_number)
+                    # Use magnet_link if available, otherwise use None for torrent files
+                    item_magnet_link = magnet_link if magnet_link else None
+                    item_data = create_episode_item(metadata, title, year, version, initial_torrent_id, item_magnet_link, season_number, episode_number)
                 else:
                     logging.warning(f"Unrecognized item key format: {item_key}")
                     failed_items_count += 1
@@ -903,26 +1115,35 @@ def confirm_manual_assignment():
         final_torrent_id = initial_torrent_id
         if added_items_count > 0:
             try:
-                logging.info(f"Re-adding torrent to debrid service after successful manual assignment: {magnet_link[:60]}...")
-                debrid_provider = get_debrid_provider() # Get provider instance
-                # Re-add the torrent. The add_torrent method should handle file selection.
-                readd_result_id = debrid_provider.add_torrent(magnet_link)
-                if readd_result_id:
-                    final_torrent_id = readd_result_id
-                    logging.info(f"Successfully re-added torrent with final ID: {final_torrent_id}")
-                    
-                    # Check if the final ID is different from the initial ID
-                    if final_torrent_id != initial_torrent_id:
-                        logging.info(f"Torrent ID changed from {initial_torrent_id} to {final_torrent_id}. Updating {len(successfully_added_items)} database items.")
-                        for item_id in successfully_added_items:
-                            update_media_item_torrent_id(item_id, final_torrent_id)
+                if magnet_link:
+                    logging.info(f"Re-adding magnet torrent to debrid service after successful manual assignment: {magnet_link[:60]}...")
+                    debrid_provider = get_debrid_provider() # Get provider instance
+                    # Re-add the magnet torrent. The add_torrent method should handle file selection.
+                    readd_result_id = debrid_provider.add_torrent(magnet_link)
+                    if readd_result_id:
+                        final_torrent_id = readd_result_id
+                        logging.info(f"Successfully re-added magnet torrent with final ID: {final_torrent_id}")
+                        
+                        # Check if the final ID is different from the initial ID
+                        if final_torrent_id != initial_torrent_id:
+                            logging.info(f"Torrent ID changed from {initial_torrent_id} to {final_torrent_id}. Updating {len(successfully_added_items)} database items.")
+                            for item_id in successfully_added_items:
+                                update_media_item_torrent_id(item_id, final_torrent_id)
+                        else:
+                            logging.info(f"Torrent ID {final_torrent_id} remains the same, no DB update needed.")
                     else:
-                        logging.info(f"Torrent ID {final_torrent_id} remains the same, no DB update needed.")
+                        logging.warning(f"Failed to re-add magnet torrent {magnet_link[:60]}... It might already exist or an error occurred. Using initial ID: {initial_torrent_id}")
                 else:
-                    logging.warning(f"Failed to re-add torrent {magnet_link[:60]}... It might already exist or an error occurred. Using initial ID: {initial_torrent_id}")
+                    # For torrent files, we can't re-add since we don't have the original file
+                    # The torrent should already be in the debrid service from the initial upload
+                    logging.info(f"Using existing torrent ID {initial_torrent_id} for torrent file (no re-add needed)")
+                    final_torrent_id = initial_torrent_id
             except Exception as readd_error:
                 # Log the error but don't fail the overall success response
-                logging.error(f"Error re-adding torrent {magnet_link[:60]} after confirmation: {readd_error}", exc_info=True)
+                if magnet_link:
+                    logging.error(f"Error re-adding magnet torrent {magnet_link[:60]} after confirmation: {readd_error}", exc_info=True)
+                else:
+                    logging.error(f"Error handling torrent file re-add after confirmation: {readd_error}", exc_info=True)
 
             # Now, update torrent tracking with the final ID
             if torrent_hash and representative_tracking_item_data:

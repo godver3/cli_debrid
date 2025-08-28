@@ -1983,6 +1983,29 @@ class ProgramRunner:
         else:
             logging.info("Initialization disabled, skipping...")
         
+        # Sync config file with runtime state after initialization is complete
+        try:
+            from utilities.settings import get_all_settings, save_config
+            config = get_all_settings()
+            content_sources = config.get('Content Sources', {})
+            config_updated = False
+            
+            for source, data in content_sources.items():
+                task_name = f'task_{source}_wanted'
+                current_enabled = task_name in self.enabled_tasks
+                
+                if data.get('enabled') != current_enabled:
+                    data['enabled'] = current_enabled
+                    config_updated = True
+                    logging.info(f"Updated config for {source}: enabled = {current_enabled} (to match runtime state)")
+            
+            if config_updated:
+                save_config(config)
+                logging.info("Updated content source enabled states in config file to match runtime state after initialization")
+                
+        except Exception as e:
+            logging.error(f"Failed to update config file with runtime enabled states after initialization: {e}")
+        
         self._initializing = False
 
     def start(self, is_restart=False):
@@ -5066,7 +5089,7 @@ def process_overseerr_webhook(data):
         content_sources = ProgramRunner().get_content_sources(force_refresh=False) # Don't need full refresh usually
         # Find the first enabled Overseerr source (assuming only one usually)
         overseerr_source_key = next((source for source, data in content_sources.items()
-                                     if source.startswith('Overseerr') and data.get('enabled')), None)
+                                     if source.startswith('Overseerr')), None)
 
         versions = {}
         source_name = 'overseerr_webhook' # Default source name

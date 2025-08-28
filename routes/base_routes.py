@@ -356,7 +356,7 @@ def check_for_update():
         }
 
 @base_bp.route('/api/notifications')
-@cache_for_seconds(30)  # Cache for 30 seconds
+@cache_for_seconds(5)  # Cache for 5 seconds instead of 30
 def get_notifications():
     """Get notifications via the centralized notification handler."""
     result_data, status_code = get_notifications_data()
@@ -376,6 +376,11 @@ def mark_notification_read():
         return jsonify({"error": "Notification ID required"}), 400
     
     result, status_code = mark_single_notification_read(notification_id)
+    
+    # Clear the notifications cache to ensure fresh data is returned
+    if hasattr(get_notifications, 'clear'):
+        get_notifications.clear()
+    
     return jsonify(result), status_code
 
 @base_bp.route('/api/notifications/mark-all-read', methods=['POST'])
@@ -383,6 +388,11 @@ def mark_notification_read():
 def mark_all_notifications_read():
     """Mark all notifications as read via the centralized handler."""
     result, status_code = mark_all_read()
+    
+    # Clear the notifications cache to ensure fresh data is returned
+    if hasattr(get_notifications, 'clear'):
+        get_notifications.clear()
+    
     return jsonify(result), status_code
 
 @base_bp.route('/api/task-stream')

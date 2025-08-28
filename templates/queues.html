@@ -524,7 +524,7 @@
 
     function generateQueueContent(queueName, items) {
         // For count-only queues, return empty content since we only show the count
-        if (queueName === 'Blacklisted' || queueName === 'Unreleased') {
+        if (queueName === 'Blacklisted' || queueName === 'Unreleased' || queueName === 'Collected') {
             return ''; // Return empty string for count-only queues
         } else {
             return generateRegularItems(queueName, items);
@@ -893,7 +893,7 @@
             
             let hasContent = false;
             // Backend names; Order defines display sequence
-            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Pre_release', 'Sleeping', 'Unreleased', 'Blacklisted'];
+            let queueOrder = ['Upgrading', 'Wanted', 'Scraping', 'Adding', 'Checking', 'Pending Uncached', 'Final_Check', 'Pre_release', 'Sleeping', 'Collected', 'Unreleased', 'Blacklisted'];
             // Mapping for display and tooltip IDs
             const queueDisplayMapping = {
                 "Final_Check": "Final Scrape",
@@ -950,7 +950,7 @@
                 // Check if queue has items OR if it's a count-only queue with a count > 0
                 const hasItems = data.contents && data.contents[backendQueueName] && data.contents[backendQueueName].length > 0;
                 const hasCount = data.queue_counts && data.queue_counts[backendQueueName] && data.queue_counts[backendQueueName] > 0;
-                const isCountOnlyQueue = backendQueueName === 'Blacklisted' || backendQueueName === 'Unreleased';
+                                    const isCountOnlyQueue = backendQueueName === 'Blacklisted' || backendQueueName === 'Unreleased' || backendQueueName === 'Collected';
                 
                 if (hasItems || (isCountOnlyQueue && hasCount)) {
                     queueCount++;

@@ -272,19 +272,143 @@ def get_episode_count(tmdb_id):
 def get_all_season_episode_counts(tmdb_id):
     conn = get_db_connection()
     try:
+        # First, get all episodes with their release dates to detect duplicates
         query = '''
-            SELECT season_number, COUNT(DISTINCT episode_number) as episode_count
+            SELECT id, season_number, episode_number, release_date, airtime, episode_title
             FROM media_items
             WHERE tmdb_id = ? AND type = "episode"
-            GROUP BY season_number
-            ORDER BY season_number
+            ORDER BY season_number, episode_number
         '''
         cursor = conn.execute(query, (tmdb_id,))
-        results = cursor.fetchall()
-        return {row['season_number']: row['episode_count'] for row in results}
+        all_episodes = cursor.fetchall()
+        
+        # Detect duplicates based on release date and episode title
+        duplicate_groups = _detect_duplicate_episodes(all_episodes)
+        
+        if duplicate_groups:
+            logging.warning(f"Found duplicate episodes for tmdb_id {tmdb_id}: {duplicate_groups}")
+            # Use the deduplicated episode list for counting
+            deduplicated_episodes = _deduplicate_episodes(all_episodes, duplicate_groups)
+        else:
+            deduplicated_episodes = all_episodes
+        
+        # Count episodes per season from deduplicated list
+        season_counts = {}
+        for episode in deduplicated_episodes:
+            season = episode['season_number']
+            if season not in season_counts:
+                season_counts[season] = 0
+            season_counts[season] += 1
+        
+        return season_counts
     except Exception as e:
         logging.error(f"Error retrieving season episode counts (TMDB ID: {tmdb_id}): {str(e)}")
         return {}
+    finally:
+        conn.close()
+
+def _detect_duplicate_episodes(episodes):
+    """
+    Detect duplicate episodes based on release date and episode title.
+    Returns a list of duplicate groups.
+    """
+    duplicate_groups = []
+    seen_dates = {}
+    
+    for episode in episodes:
+        release_date = episode['release_date']
+        episode_title = episode['episode_title']
+        
+        # Create a key based on release date and episode title
+        key = (release_date, episode_title)
+        
+        if key in seen_dates:
+            # Found a duplicate
+            if key not in [group['key'] for group in duplicate_groups]:
+                duplicate_groups.append({
+                    'key': key,
+                    'episodes': [seen_dates[key], episode]
+                })
+            else:
+                # Add to existing group
+                for group in duplicate_groups:
+                    if group['key'] == key:
+                        group['episodes'].append(episode)
+                        break
+        else:
+            seen_dates[key] = episode
+    
+    return duplicate_groups
+
+def _deduplicate_episodes(episodes, duplicate_groups):
+    """
+    Deduplicate episodes by keeping the one with the lower season number
+    (assuming season 1 is the canonical season).
+    """
+    # Create a set of episode IDs to exclude
+    exclude_ids = set()
+    
+    for group in duplicate_groups:
+        # Sort episodes by season number, keep the one with lower season
+        sorted_episodes = sorted(group['episodes'], key=lambda x: x['season_number'])
+        
+        # Mark all but the first (lowest season) for exclusion
+        for episode in sorted_episodes[1:]:
+            exclude_ids.add(episode['id'])
+    
+    # Filter out excluded episodes
+    return [ep for ep in episodes if ep['id'] not in exclude_ids]
+
+def cleanup_duplicate_episodes(tmdb_id):
+    """
+    Clean up duplicate episodes from the database by removing entries with higher season numbers
+    when episodes have the same release date and title.
+    """
+    conn = get_db_connection()
+    try:
+        # Get all episodes for this show
+        query = '''
+            SELECT id, season_number, episode_number, release_date, airtime, episode_title
+            FROM media_items
+            WHERE tmdb_id = ? AND type = "episode"
+            ORDER BY season_number, episode_number
+        '''
+        cursor = conn.execute(query, (tmdb_id,))
+        all_episodes = cursor.fetchall()
+        
+        # Detect duplicates
+        duplicate_groups = _detect_duplicate_episodes(all_episodes)
+        
+        if not duplicate_groups:
+            logging.info(f"No duplicate episodes found for tmdb_id {tmdb_id}")
+            return 0
+        
+        # Find IDs to delete (keep lower season numbers)
+        ids_to_delete = []
+        for group in duplicate_groups:
+            sorted_episodes = sorted(group['episodes'], key=lambda x: x['season_number'])
+            # Keep the first (lowest season), delete the rest
+            for episode in sorted_episodes[1:]:
+                ids_to_delete.append(episode['id'])
+        
+        if ids_to_delete:
+            # Delete the duplicate entries
+            placeholders = ','.join(['?' for _ in ids_to_delete])
+            delete_query = f'''
+                DELETE FROM media_items 
+                WHERE id IN ({placeholders})
+            '''
+            cursor.execute(delete_query, ids_to_delete)
+            conn.commit()
+            
+            logging.info(f"Deleted {len(ids_to_delete)} duplicate episodes for tmdb_id {tmdb_id}")
+            return len(ids_to_delete)
+        
+        return 0
+        
+    except Exception as e:
+        logging.error(f"Error cleaning up duplicate episodes (TMDB ID: {tmdb_id}): {str(e)}")
+        return 0
     finally:
         conn.close()
 
@@ -737,7 +861,13 @@ def get_item_count_by_state(state: str) -> int:
     conn = None
     try:
         conn = get_db_connection()
-        query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
+        
+        # Special handling for Blacklisted state to exclude ghostlisted items
+        if state == 'Blacklisted':
+            query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
+        else:
+            query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
+            
         cursor = conn.execute(query, (state,))
         result = cursor.fetchone()
         return result['count'] if result else 0
@@ -1266,6 +1396,67 @@ def get_season_year(imdb_id: str = None, tmdb_id: str = None, season_number: int
         if conn:
             conn.close()
 
+def get_items_with_all_blacklisted_versions() -> List[int]:
+    """
+    Get a list of item IDs where all versions of that item have a state of Blacklisted.
+    This identifies items that are completely blacklisted across all their versions.
+    
+    Returns:
+        List of item IDs where all versions are Blacklisted
+    """
+    conn = get_db_connection()
+    try:
+        # For movies: find imdb_ids where all versions are Blacklisted
+        # For episodes: find (imdb_id, season_number, episode_number) combinations where all versions are Blacklisted
+        query = """
+            WITH item_versions AS (
+                -- Movies: group by imdb_id
+                SELECT 
+                    id,
+                    imdb_id,
+                    tmdb_id,
+                    type,
+                    state,
+                    season_number,
+                    episode_number,
+                    CASE 
+                        WHEN type = 'movie' THEN imdb_id
+                        WHEN type = 'episode' THEN imdb_id || '|' || COALESCE(season_number, 0) || '|' || COALESCE(episode_number, 0)
+                        ELSE NULL
+                    END as item_key
+                FROM media_items
+                WHERE imdb_id IS NOT NULL 
+                  AND imdb_id != ''
+                  AND (ghostlisted IS NULL OR ghostlisted = FALSE)
+            ),
+            blacklisted_items AS (
+                SELECT 
+                    item_key,
+                    COUNT(*) as total_versions,
+                    SUM(CASE WHEN state = 'Blacklisted' THEN 1 ELSE 0 END) as blacklisted_versions
+                FROM item_versions
+                GROUP BY item_key
+                HAVING total_versions > 0 
+                   AND total_versions = blacklisted_versions
+            )
+            SELECT DISTINCT iv.id
+            FROM item_versions iv
+            INNER JOIN blacklisted_items bi ON iv.item_key = bi.item_key
+        """
+        
+        cursor = conn.execute(query)
+        item_ids = [row['id'] for row in cursor.fetchall()]
+        
+        logging.debug(f"Found {len(item_ids)} items where all versions are Blacklisted")
+        return item_ids
+        
+    except Exception as e:
+        logging.error(f"Error getting items with all blacklisted versions: {str(e)}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'normalize_string_for_comparison',
@@ -1300,5 +1491,7 @@ __all__ = [
     'get_media_item_presence_overall',
     'get_distinct_imdb_ids',
     'is_any_file_in_db_for_item',
-    'get_season_year'
+    'get_season_year',
+    'get_items_with_all_blacklisted_versions',
+    'cleanup_duplicate_episodes'
 ]

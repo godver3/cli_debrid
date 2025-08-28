@@ -461,6 +461,100 @@ class UpgradingQueue:
         """Returns the ID of the item currently being processed, or None."""
         return self.currently_processing_item_id
 
+    def calculate_current_item_score(self, item: Dict[str, Any], version_settings: Dict[str, Any]) -> float:
+        """Calculate a score for the current item when current_score is 0"""
+        from scraper.functions.rank_results import rank_result_key
+        from scraper.functions.file_processing import parse_torrent_info
+        from utilities.settings import get_setting
+        
+        # Get the current item's title for scoring
+        current_title = item.get('original_scraped_torrent_title') or item.get('filled_by_file', '')
+        if not current_title:
+            logging.warning(f"Cannot calculate score for item {item['id']} - no title available")
+            return 0.0
+        
+        # Parse the current item's title using PTT
+        try:
+            parsed_info = parse_torrent_info(current_title)
+            if not parsed_info or parsed_info.get('parsing_error'):
+                logging.warning(f"Failed to parse current item title '{current_title}' for scoring")
+                return 0.0
+        except Exception as e:
+            logging.error(f"Error parsing current item title '{current_title}': {e}")
+            return 0.0
+        
+        # Create a synthetic result object for the current item
+        current_result = {
+            'title': current_title,
+            'size': item.get('size', 0.0),  # Use item's size if available
+            'source': 'Current Item',
+            'magnet': '',  # Not needed for scoring
+            'seeders': 0,  # Not needed for scoring
+            'parsed_info': parsed_info,
+            'additional_metadata': {
+                'filename': item.get('filled_by_file', '')
+            }
+        }
+        
+        # Get version settings for scoring
+        if not version_settings:
+            from utilities.settings import get_setting
+            version_name = item.get('version', 'default')
+            try:
+                from queues.config_manager import load_config
+                config = load_config()
+                version_settings = config.get('Scraping', {}).get('versions', {}).get(version_name, {})
+            except Exception as e:
+                logging.warning(f"Could not load version settings for '{version_name}': {e}")
+                version_settings = {}
+        
+        # Get additional parameters for scoring
+        query_title = item.get('title', '')
+        query_year = item.get('year')
+        query_season = item.get('season_number')
+        query_episode = item.get('episode_number')
+        content_type = item.get('type', 'movie')
+        multi = False  # Current item is not a multi-pack
+        
+        # Get preferred language and translated title if available
+        preferred_language = get_setting('Scraping', 'preferred_language', None)
+        translated_title = None  # Could be enhanced to get from item if available
+        
+        # Get show season episode counts for TV shows
+        show_season_episode_counts = None
+        if content_type == 'episode' and query_season:
+            try:
+                from metadata.metadata import get_show_season_episode_counts
+                show_season_episode_counts = get_show_season_episode_counts(item.get('tmdb_id'))
+            except Exception as e:
+                logging.debug(f"Could not get season episode counts for scoring: {e}")
+        
+        # Calculate score using rank_result_key
+        try:
+            score_key = rank_result_key(
+                current_result, 
+                [current_result],  # Single item list
+                query_title, 
+                query_year, 
+                query_season, 
+                query_episode, 
+                multi, 
+                content_type, 
+                version_settings,
+                preferred_language=preferred_language,
+                translated_title=translated_title,
+                show_season_episode_counts=show_season_episode_counts
+            )
+            
+            # Extract the total score from the result
+            total_score = current_result.get('score_breakdown', {}).get('total_score', 0.0)
+            logging.info(f"Calculated score for current item '{current_title}': {total_score:.2f}")
+            return total_score
+            
+        except Exception as e:
+            logging.error(f"Error calculating score for current item '{current_title}': {e}")
+            return 0.0
+
     def hourly_scrape(self, item: Dict[str, Any], queue_manager=None):
         item_identifier = self.generate_identifier(item)
         logging.info(f"Starting hourly scrape for {item_identifier}")
@@ -472,8 +566,11 @@ class UpgradingQueue:
                 max_upgrading_score = float(get_setting('Debug', 'max_upgrading_score', 0.0))
             except Exception as e:
                 logging.warning(f"Could not parse max_upgrading_score setting: {e}. Defaulting to 0.0 (disabled)")
-            if max_upgrading_score > 0 and item.get('current_score', 0) >= max_upgrading_score:
-                logging.info(f"Skipping upgrade for {item_identifier}: current_score {item.get('current_score', 0)} >= max_upgrading_score {max_upgrading_score}")
+            
+            # Get current score for max upgrading score check
+            current_score_for_check = item.get('current_score', 0)
+            if max_upgrading_score > 0 and current_score_for_check >= max_upgrading_score:
+                logging.info(f"Skipping upgrade for {item_identifier}: current_score {current_score_for_check} >= max_upgrading_score {max_upgrading_score}")
                 return
             # --- End Max Upgrading Score Check ---
 
@@ -505,6 +602,28 @@ class UpgradingQueue:
                  # Potentially reset upgrading flag if no results consistently? Or just wait.
                  # update_media_item(item['id'], upgrading=False) # Optional: Reset if no results?
                  return
+
+            # --- Calculate Current Item Score if needed ---
+            current_score = item.get('current_score', 0)
+            if current_score <= 0:
+                # Get version settings for scoring
+                version_name = item.get('version', 'default')
+                try:
+                    from queues.config_manager import load_config
+                    config = load_config()
+                    version_settings = config.get('Scraping', {}).get('versions', {}).get(version_name, {})
+                except Exception as e:
+                    logging.warning(f"Could not load version settings for '{version_name}': {e}")
+                    version_settings = {}
+                
+                calculated_score = self.calculate_current_item_score(item, version_settings)
+                if calculated_score > 0:
+                    current_score = calculated_score
+                    logging.info(f"Updated current score for {item_identifier} from 0 to {current_score:.2f}")
+                    # Update the item's current_score in the database
+                    update_media_item(item['id'], current_score=current_score)
+                    # Update local item dict
+                    item['current_score'] = current_score
 
             # --- Start Filtering ---
 
@@ -574,7 +693,7 @@ class UpgradingQueue:
 
             # --- Find Best Upgrade Candidate ---
 
-            logging.info(f"[{item_identifier}] Comparing {len(filtered_results)} filtered results against current score {item.get('current_score', 0):.2f}")
+            logging.info(f"[{item_identifier}] Comparing {len(filtered_results)} filtered results against current score {current_score:.2f}")
 
             better_results = []
             for result in filtered_results:
@@ -582,26 +701,26 @@ class UpgradingQueue:
 
                 # Check if the result score is actually better than the stored score
                 is_better_score = False
-                if result_score > item.get('current_score', 0):
-                    if item.get('current_score', 0) <= 0:
+                if result_score > current_score:
+                    if current_score <= 0:
                         # Any positive score is better than non-positive
                         is_better_score = True
-                        logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) is better than non-positive current score ({item.get('current_score', 0):.2f}).")
+                        logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) is better than non-positive current score ({current_score:.2f}).")
                     else:
                         # Check percentage increase threshold for positive scores
-                        score_increase_percent = (result_score - item.get('current_score', 0)) / item.get('current_score', 0)
+                        score_increase_percent = (result_score - current_score) / current_score
                         if score_increase_percent > upgrading_score_percentage_threshold:
                             is_better_score = True
-                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) meets score threshold ({score_increase_percent:+.2%} > {upgrading_score_percentage_threshold:.2%}) compared to current ({item.get('current_score', 0):.2f}).")
+                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) meets score threshold ({score_increase_percent:+.2%} > {upgrading_score_percentage_threshold:.2%}) compared to current ({current_score:.2f}).")
                         else:
-                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) score increase ({score_increase_percent:+.2%}) does NOT meet threshold ({upgrading_score_percentage_threshold:.2%}) compared to current ({item.get('current_score', 0):.2f}).")
+                            logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) score increase ({score_increase_percent:+.2%}) does NOT meet threshold ({upgrading_score_percentage_threshold:.2%}) compared to current ({current_score:.2f}).")
 
                 if is_better_score:
                     better_results.append(result)
                 else:
                     # Log why it wasn't considered better if score wasn't higher
-                    if result_score <= item.get('current_score', 0):
-                         logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) score is not higher than current ({item.get('current_score', 0):.2f}).")
+                    if result_score <= current_score:
+                         logging.debug(f"  -> Result '{result.get('title', 'N/A')}' ({result_score:.2f}) score is not higher than current ({current_score:.2f}).")
 
 
             # Sort better_results by score descending to pick the best
@@ -611,7 +730,7 @@ class UpgradingQueue:
                 best_result = better_results[0]
                 best_score = best_result.get('score_breakdown', {}).get('total_score', 0)
                 logging.info(f"Found {len(better_results)} potential upgrade(s) for {item_identifier}.")
-                logging.info(f"Best candidate: '{best_result.get('title', 'N/A')}' with score {best_score:.2f} (Current score: {item.get('current_score', 0):.2f})")
+                logging.info(f"Best candidate: '{best_result.get('title', 'N/A')}' with score {best_score:.2f} (Current score: {current_score:.2f})")
 
                 # --- Proceed with Upgrade Attempt ---
                 self.save_item_state(item) # Save state before attempting
@@ -686,9 +805,9 @@ class UpgradingQueue:
                             'upgrade_check': True,
                             'current_version': item.get('version'),
                             'target_version': best_result.get('version'),
-                            'score_improvement': best_score - item.get('current_score', 0) # Calculate diff
+                            'score_improvement': best_score - current_score # Calculate diff
                         }
-                        rationale = f"Upgrading from version {item.get('version')} (score {item.get('current_score', 0):.2f}) to {best_result.get('version')} (score {best_score:.2f})"
+                        rationale = f"Upgrading from version {item.get('version')} (score {current_score:.2f}) to {best_result.get('version')} (score {best_score:.2f})"
 
                         if history:
                             update_torrent_tracking(

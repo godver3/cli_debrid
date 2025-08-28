@@ -317,21 +317,77 @@ def analyze_and_repair_media_files(collection_type, max_files_to_check_this_run=
     files_to_process_this_run = []
     hit_max_files_limit_for_batch = False
 
-    def file_walker(root_path): # Removed last_known_file, not needed with direct comparison
-        for root, dirs, files in os.walk(root_path, topdown=True):
-            dirs.sort()
-            files.sort()
-            for file_name in files:
-                yield os.path.join(root, file_name)
-
-    for abs_file_path in file_walker(base_path):
-        if Path(abs_file_path).suffix.lower() not in ANALYSIS_VIDEO_EXTENSIONS:
-            continue
-
-        if abs_file_path > last_processed_path_from_file:
-            files_to_process_this_run.append(abs_file_path)
+    # Collect files starting from the last processed location
+    files_to_process_this_run = []
+    hit_max_files_limit_for_batch = False
+    
+    def get_video_files_from_directory(directory):
+        """Get all video files from a directory, sorted alphabetically"""
+        if not os.path.exists(directory):
+            return []
+        
+        video_files = []
+        try:
+            for file_name in sorted(os.listdir(directory)):
+                file_path = os.path.join(directory, file_name)
+                if os.path.isfile(file_path) and Path(file_path).suffix.lower() in ANALYSIS_VIDEO_EXTENSIONS:
+                    video_files.append(file_path)
+        except (OSError, PermissionError) as e:
+            logging.warning(f"Cannot read directory {directory}: {e}")
+        return video_files
+    
+    def get_next_directories(current_dir, base_path):
+        """Get next directories to check after current_dir"""
+        if current_dir == base_path:
+            return []
+        
+        # Get all subdirectories of base_path, sorted
+        all_dirs = []
+        try:
+            for root, dirs, files in os.walk(base_path, topdown=True):
+                dirs.sort()
+                for dir_name in dirs:
+                    all_dirs.append(os.path.join(root, dir_name))
+        except (OSError, PermissionError) as e:
+            logging.warning(f"Error walking directories: {e}")
+            return []
+        
+        # Find directories that come after current_dir
+        next_dirs = []
+        for dir_path in all_dirs:
+            if dir_path > current_dir:
+                next_dirs.append(dir_path)
+        
+        return sorted(next_dirs)
+    
+    # Start from the directory containing the last processed file
+    current_dir = base_path
+    if last_processed_path_from_file and os.path.exists(last_processed_path_from_file):
+        current_dir = os.path.dirname(last_processed_path_from_file)
+        logging.info(f"Starting from directory: {current_dir}")
+    else:
+        logging.info(f"Starting from base directory: {current_dir}")
+    
+    # Get files from current directory
+    current_files = get_video_files_from_directory(current_dir)
+    for file_path in current_files:
+        if not last_processed_path_from_file or file_path > last_processed_path_from_file:
+            files_to_process_this_run.append(file_path)
             if len(files_to_process_this_run) >= max_files_to_check_this_run:
                 hit_max_files_limit_for_batch = True
+                break
+    
+    # If we need more files, check next directories
+    if not hit_max_files_limit_for_batch:
+        next_dirs = get_next_directories(current_dir, base_path)
+        for next_dir in next_dirs:
+            if len(files_to_process_this_run) >= max_files_to_check_this_run:
+                break
+            next_files = get_video_files_from_directory(next_dir)
+            files_to_process_this_run.extend(next_files)
+            if len(files_to_process_this_run) >= max_files_to_check_this_run:
+                hit_max_files_limit_for_batch = True
+                files_to_process_this_run = files_to_process_this_run[:max_files_to_check_this_run]
                 break 
 
     logging.info(f"Identified {len(files_to_process_this_run)} files to process in this run for {collection_type}. Hit batch limit: {hit_max_files_limit_for_batch}")

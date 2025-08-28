@@ -20,8 +20,11 @@ import sys
 from PTT import parse_title
 from pathlib import Path
 from scraper.functions import *
+from scraper.functions.anime_utils import convert_anime_episode_format_smart, detect_absolute_numbering
 from cli_battery.app.direct_api import DirectAPI
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 except ImportError:
@@ -32,6 +35,24 @@ except ImportError:
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
+
+def normalize_episode_format_for_dedup(episode_format: str) -> str:
+    """
+    Normalize episode format for deduplication purposes.
+    Considers E123 and 123 as the same format.
+    """
+    if not episode_format:
+        return ""
+    
+    # Remove leading 'E' and leading zeros
+    normalized = episode_format.strip()
+    if normalized.startswith('E'):
+        normalized = normalized[1:]
+    
+    # Remove leading zeros
+    normalized = normalized.lstrip('0')
+    
+    return normalized
 
 def convert_anime_episode_format(season: int, episode: int, season_episode_counts: Dict[int, int]) -> Dict[str, str]:
     """Convert anime episode numbers into different formats, including correctly padded absolute numbers."""
@@ -52,8 +73,8 @@ def convert_anime_episode_format(season: int, episode: int, season_episode_count
     padding = 4 if total_show_episodes > 999 else 3
     logging.info(f"Total show episodes: {total_show_episodes}, using padding: {padding}")
     
-    # No leading zeros format (x)
-    no_zeros_format = f"{episode}"
+    # No leading zeros format (x) - use absolute episode number for anime
+    no_zeros_format = f"{absolute_episode}"
     logging.info(f"No leading zeros format: {no_zeros_format}")
 
     # Regular season/episode format (SXXEXX)
@@ -169,7 +190,12 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             logging.info(f"Detected anime content: {title}")
             season_episode_counts = get_all_season_episode_counts(tmdb_id)
-            episode_formats = convert_anime_episode_format(season, target_episode, season_episode_counts)
+            
+            # Use smart format conversion that detects absolute numbering
+            episode_formats = convert_anime_episode_format_smart(
+                season, target_episode, season_episode_counts,
+                title=title, tmdb_id=tmdb_id, imdb_id=imdb_id
+            )
             
             if multi:
                 logging.info(f"Generated episode formats for anime season pack search (using E{target_episode}): {episode_formats}")
@@ -273,7 +299,106 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
                     if isinstance(xem_mapping_list, list):
                         logging.info(f"Found XEM mapping list with {len(xem_mapping_list)} entries in metadata.")
+                        
+                        # Debug: Log the full XEM mapping list
+                        if xem_mapping_list:
+                            logging.info("Full XEM mapping list:")
+                            for i, mapping_entry in enumerate(xem_mapping_list):
+                                logging.info(f"  Entry {i+1}: {mapping_entry}")
+                            
+                            # Also search for any mappings that might point to S2E5
+                            logging.info("Searching for mappings that point to S2E5:")
+                            for i, mapping_entry in enumerate(xem_mapping_list):
+                                scene_info = mapping_entry.get('scene')
+                                anidb_info = mapping_entry.get('anidb')
+                                if scene_info and scene_info.get('season') == 2 and scene_info.get('episode') == 5:
+                                    logging.info(f"  Found S2E5 in scene mapping at entry {i+1}: {mapping_entry}")
+                                if anidb_info and anidb_info.get('season') == 2 and anidb_info.get('episode') == 5:
+                                    logging.info(f"  Found S2E5 in AniDB mapping at entry {i+1}: {mapping_entry}")
+                            
+                            # Search for mappings that might point to S1E15
+                            logging.info("Searching for mappings that point to S1E15:")
+                            for i, mapping_entry in enumerate(xem_mapping_list):
+                                scene_info = mapping_entry.get('scene')
+                                anidb_info = mapping_entry.get('anidb')
+                                tvdb_info = mapping_entry.get('tvdb')
+                                if scene_info and scene_info.get('season') == 1 and scene_info.get('episode') == 15:
+                                    logging.info(f"  Found S1E15 in scene mapping at entry {i+1}: {mapping_entry}")
+                                if anidb_info and anidb_info.get('season') == 1 and anidb_info.get('episode') == 15:
+                                    logging.info(f"  Found S1E15 in AniDB mapping at entry {i+1}: {mapping_entry}")
+                                if tvdb_info and tvdb_info.get('season') == 1 and tvdb_info.get('episode') == 15:
+                                    logging.info(f"  Found S1E15 in TVDB mapping at entry {i+1}: {mapping_entry}")
+                        
                         found_mapping = False
+
+                        # --- Deterministic mapping using global air-date order -> TVDB absolute ---
+                        # For robust anime mapping, derive global absolute position from Trakt air dates,
+                        # then map that absolute index via XEM's tvdb.absolute to scene/anidb S/E.
+                        try:
+                            if not found_mapping and isinstance(trakt_seasons_data, dict):
+                                all_episodes_by_airdate = []
+                                for s_num, s_data in trakt_seasons_data.items():
+                                    if not isinstance(s_num, int) or not isinstance(s_data, dict):
+                                        continue
+                                    eps_dict = s_data.get('episodes', {})
+                                    if not isinstance(eps_dict, dict):
+                                        continue
+                                    for e_num, e_data in eps_dict.items():
+                                        if not isinstance(e_num, int) or not isinstance(e_data, dict):
+                                            continue
+                                        aired_str = e_data.get('first_aired')
+                                        if isinstance(aired_str, str) and aired_str:
+                                            try:
+                                                # Normalize Z to +00:00 for fromisoformat
+                                                if aired_str.endswith('Z'):
+                                                    aired_str = aired_str[:-1] + '+00:00'
+                                                aired_dt = datetime.fromisoformat(aired_str)
+                                                all_episodes_by_airdate.append((aired_dt, (s_num, e_num)))
+                                            except Exception:
+                                                continue
+
+                                if all_episodes_by_airdate:
+                                    all_episodes_by_airdate.sort(key=lambda x: x[0])
+                                    # Locate the index of the original episode in air-date order
+                                    air_index = None
+                                    for i, (_, (s_num, e_num)) in enumerate(all_episodes_by_airdate):
+                                        if s_num == original_season and e_num == original_episode:
+                                            air_index = i
+                                            break
+
+                                    if air_index is not None:
+                                        tvdb_abs_from_air = air_index + 1  # Convert to 1-based absolute index
+                                        logging.info(f"Using air-date order derived TVDB absolute index: {tvdb_abs_from_air} for S{original_season}E{original_episode}")
+
+                                        # Find XEM entry with matching tvdb.absolute
+                                        for mapping_entry in xem_mapping_list:
+                                            tvdb_info = mapping_entry.get('tvdb')
+                                            if not (tvdb_info and tvdb_info.get('absolute') == tvdb_abs_from_air):
+                                                continue
+                                            scene_info = mapping_entry.get('scene')
+                                            anidb_info = mapping_entry.get('anidb')
+
+                                            target_season_num = None
+                                            target_episode_num = None
+
+                                            if scene_info and scene_info.get('season') is not None and scene_info.get('episode') is not None:
+                                                target_season_num = scene_info.get('season')
+                                                target_episode_num = scene_info.get('episode')
+                                                mapping_origin = 'SCENE'
+                                            elif is_anime and anidb_info and anidb_info.get('season') is not None and anidb_info.get('episode') is not None:
+                                                target_season_num = anidb_info.get('season')
+                                                target_episode_num = anidb_info.get('episode')
+                                                mapping_origin = 'ANIDB'
+
+                                            if target_season_num is not None and target_episode_num is not None:
+                                                logging.info(f"XEM Air-Order Mapping: TVDB abs {tvdb_abs_from_air} -> {mapping_origin} S{target_season_num}E{target_episode_num}")
+                                                season = target_season_num
+                                                episode = target_episode_num
+                                                found_mapping = True
+                                                xem_applied = True
+                                                break
+                        except Exception as air_abs_err:
+                            logging.error(f"Error during air-order absolute mapping: {air_abs_err}")
                         
                         # --- 1. Attempt Standard SxxExx Lookup --- 
                         logging.debug(f"Attempting standard XEM lookup for TVDB S{season}E{original_episode}")
@@ -335,46 +460,113 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                             
                             if calculated_trakt_abs:
                                 logging.info(f"Calculated Trakt absolute episode: {trakt_absolute_ep}. Attempting absolute XEM lookup.")
+                                
+                                # Debug: Log all mappings with this absolute episode number
+                                matching_mappings = []
+                                anidb_mappings = []
+                                
                                 for mapping_entry in xem_mapping_list:
                                     tvdb_info = mapping_entry.get('tvdb')
                                     scene_info = mapping_entry.get('scene')
-                                    # Match based on TVDB absolute number
+                                    anidb_info = mapping_entry.get('anidb')  # Check for AniDB mappings
+                                    
+                                    # Collect scene mappings
                                     if tvdb_info and scene_info and tvdb_info.get('absolute') == trakt_absolute_ep:
-                                        scene_season = scene_info.get('season')
-                                        scene_ep = scene_info.get('episode')
-                                        tvdb_abs = tvdb_info.get('absolute') # Get TVDB absolute from mapping
-
-                                        # --- Prioritize TVDB Absolute for Anime --- 
-                                        if is_anime and tvdb_abs is not None:
-                                            if tvdb_abs != original_episode or scene_season != season:
-                                                 logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}. Targeting TVDB ABS number {tvdb_abs}.")
-                                                 season = scene_season # Still use scene season
-                                                 episode = scene_ep # CORRECT: Use the scene episode number from the mapping
-                                                 found_mapping = True
-                                                 xem_applied = True # Mark XEM as applied
-                                                 break 
-                                            else:
-                                                 logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}. Using TVDB ABS {tvdb_abs} (no change needed). ")
-                                                 # Ensure episode is set correctly even if no change needed in S/E for consistency
-                                                 season = scene_season
-                                                 episode = scene_ep
-                                                 found_mapping = True
-                                                 xem_applied = True # Mark XEM as confirmed
-                                                 break
-                                        # --- Fallback/Non-Anime: Use Scene SxxExx ---
-                                        elif scene_season is not None and scene_ep is not None: 
-                                            if scene_season != season or scene_ep != original_episode:
-                                                logging.info(f"XEM Absolute Mapping (Standard): TVDB Absolute {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep}")
-                                                season = scene_season
-                                                episode = scene_ep
-                                                found_mapping = True
-                                                xem_applied = True # Mark XEM as applied
-                                                break
-                                            else:
-                                                logging.info(f"XEM Absolute Mapping (Standard): TVDB Absolute {trakt_absolute_ep} maps to Scene S{scene_season}E{scene_ep} (no S/E change needed). ")
-                                                found_mapping = True
-                                                xem_applied = True # Mark XEM as confirmed
-                                                break
+                                        matching_mappings.append({
+                                            'tvdb': tvdb_info,
+                                            'scene': scene_info,
+                                            'type': 'scene'
+                                        })
+                                    
+                                    # Collect AniDB mappings for anime
+                                    if is_anime and tvdb_info and anidb_info and tvdb_info.get('absolute') == trakt_absolute_ep:
+                                        anidb_mappings.append({
+                                            'tvdb': tvdb_info,
+                                            'anidb': anidb_info,
+                                            'type': 'anidb'
+                                        })
+                                
+                                if matching_mappings:
+                                    logging.info(f"Found {len(matching_mappings)} scene XEM mappings for absolute episode {trakt_absolute_ep}:")
+                                    for i, mapping in enumerate(matching_mappings):
+                                        tvdb_info = mapping['tvdb']
+                                        scene_info = mapping['scene']
+                                        logging.info(f"  Scene Mapping {i+1}: TVDB S{tvdb_info.get('season')}E{tvdb_info.get('episode')} (abs:{tvdb_info.get('absolute')}) -> Scene S{scene_info.get('season')}E{scene_info.get('episode')}")
+                                
+                                if anidb_mappings:
+                                    logging.info(f"Found {len(anidb_mappings)} AniDB XEM mappings for absolute episode {trakt_absolute_ep}:")
+                                    for i, mapping in enumerate(anidb_mappings):
+                                        tvdb_info = mapping['tvdb']
+                                        anidb_info = mapping['anidb']
+                                        logging.info(f"  AniDB Mapping {i+1}: TVDB S{tvdb_info.get('season')}E{tvdb_info.get('episode')} (abs:{tvdb_info.get('absolute')}) -> AniDB S{anidb_info.get('season')}E{anidb_info.get('episode')}")
+                                
+                                # Prefer a direct mapping from the calculated absolute; choose scene first, then anidb for anime
+                                best_mapping = None
+                                for mapping_entry in xem_mapping_list:
+                                    tvdb_info = mapping_entry.get('tvdb')
+                                    scene_info = mapping_entry.get('scene')
+                                    if tvdb_info and scene_info and tvdb_info.get('absolute') == trakt_absolute_ep:
+                                        best_mapping = mapping_entry
+                                        break
+                                if not best_mapping and is_anime:
+                                    for mapping_entry in xem_mapping_list:
+                                        tvdb_info = mapping_entry.get('tvdb')
+                                        anidb_info = mapping_entry.get('anidb')
+                                        if tvdb_info and anidb_info and tvdb_info.get('absolute') == trakt_absolute_ep:
+                                            best_mapping = mapping_entry
+                                            break
+                                
+                                if best_mapping:
+                                    tvdb_info = best_mapping.get('tvdb')
+                                    scene_info = best_mapping.get('scene')
+                                    anidb_info = best_mapping.get('anidb')
+                                    tvdb_abs = tvdb_info.get('absolute') # Get TVDB absolute from mapping
+                                    
+                                    # Determine which mapping type we're using
+                                    mapping_type = 'scene'
+                                    target_season = None
+                                    target_episode = None
+                                    
+                                    if scene_info and scene_info.get('season') is not None and scene_info.get('episode') is not None:
+                                        target_season = scene_info.get('season')
+                                        target_episode = scene_info.get('episode')
+                                        mapping_type = 'scene'
+                                    elif is_anime and anidb_info and anidb_info.get('season') is not None and anidb_info.get('episode') is not None:
+                                        target_season = anidb_info.get('season')
+                                        target_episode = anidb_info.get('episode')
+                                        mapping_type = 'anidb'
+                                    else:
+                                        logging.warning("No valid scene or AniDB mapping found in best_mapping")
+                                        best_mapping = None
+                                
+                                if best_mapping and target_season is not None and target_episode is not None:
+                                    # --- Prioritize TVDB Absolute for Anime --- 
+                                    if is_anime and tvdb_abs is not None:
+                                        if tvdb_abs != original_episode or target_season != season:
+                                             logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to {mapping_type.upper()} S{target_season}E{target_episode}. Targeting TVDB ABS number {tvdb_abs}.")
+                                             season = target_season
+                                             episode = target_episode
+                                             found_mapping = True
+                                             xem_applied = True # Mark XEM as applied
+                                        else:
+                                             logging.info(f"XEM Absolute Mapping (Anime Priority): Trakt Abs {trakt_absolute_ep} maps to {mapping_type.upper()} S{target_season}E{target_episode}. Using TVDB ABS {tvdb_abs} (no change needed). ")
+                                             # Ensure episode is set correctly even if no change needed in S/E for consistency
+                                             season = target_season
+                                             episode = target_episode
+                                             found_mapping = True
+                                             xem_applied = True # Mark XEM as confirmed
+                                    # --- Fallback/Non-Anime: Use Scene SxxExx ---
+                                    elif target_season is not None and target_episode is not None: 
+                                        if target_season != season or target_episode != original_episode:
+                                            logging.info(f"XEM Absolute Mapping (Standard): TVDB Absolute {trakt_absolute_ep} maps to {mapping_type.upper()} S{target_season}E{target_episode}")
+                                            season = target_season
+                                            episode = target_episode
+                                            found_mapping = True
+                                            xem_applied = True # Mark XEM as applied
+                                        else:
+                                            logging.info(f"XEM Absolute Mapping (Standard): TVDB Absolute {trakt_absolute_ep} maps to {mapping_type.upper()} S{target_season}E{target_episode} (no S/E change needed). ")
+                                            found_mapping = True
+                                            xem_applied = True # Mark XEM as confirmed
                         
                         if not found_mapping:
                              logging.info(f"No specific XEM mapping entry found for Trakt S{season}E{original_episode} via standard or absolute lookup.")
@@ -404,40 +596,146 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 logging.info(f"Regenerating anime episode formats after XEM mapping for S{season}E{episode}")
                 season_episode_counts = get_all_season_episode_counts(tmdb_id)
                 
-                # Generate formats for XEM-mapped season/episode (S2E1)
-                xem_episode_formats = convert_anime_episode_format(season, target_episode, season_episode_counts)
-                logging.info(f"XEM-mapped episode formats: {xem_episode_formats}")
+                # Check if this is an absolute episode (not in XEM mapping)
+                is_absolute_episode = False
+                if isinstance(xem_mapping_list, list):
+                    episode_in_xem = False
+                    for mapping_entry in xem_mapping_list:
+                        tvdb_info = mapping_entry.get('tvdb')
+                        if tvdb_info and tvdb_info.get('season') == original_season and tvdb_info.get('episode') == original_episode:
+                            episode_in_xem = True
+                            break
+                    is_absolute_episode = not episode_in_xem
                 
-                # Also generate formats for original season/episode (S1E13) 
-                original_target_episode = original_episode if original_episode is not None else 1
-                original_episode_formats = convert_anime_episode_format(original_season, original_target_episode, season_episode_counts)
-                logging.info(f"Original episode formats: {original_episode_formats}")
-                
-                # For rate limiting, use a minimal approach:
-                # Only use the most essential formats - XEM-mapped regular format and original regular format
-                episode_formats = {}
-                
-                # Primary: XEM-mapped regular format (most likely to work)
-                if 'regular' in xem_episode_formats:
-                    episode_formats['regular'] = xem_episode_formats['regular']
-                
-                # Fallback: Original regular format (only if different from XEM)
-                if 'regular' in original_episode_formats and original_episode_formats['regular'] != xem_episode_formats.get('regular'):
-                    episode_formats['orig_regular'] = original_episode_formats['regular']
-                
-                # Only add one more format if we have space - prefer no_zeros for anime
-                if 'no_zeros' in xem_episode_formats:
-                    episode_formats['no_zeros'] = xem_episode_formats['no_zeros']
-                
-                logging.info(f"Minimal episode formats (rate limiting): {episode_formats}")
+                if is_absolute_episode:
+                    # This is an absolute episode number, generate formats for absolute episode
+                    logging.info(f"Generating formats for absolute episode {episode}")
+                    episode_formats = convert_anime_episode_format_smart(
+                        1, episode, season_episode_counts,  # Use season 1, episode as absolute
+                        title=title, tmdb_id=tmdb_id, imdb_id=imdb_id
+                    )
+                    logging.info(f"Absolute episode formats: {episode_formats}")
+                else:
+                    # This is a regular XEM-mapped episode
+                    # Generate formats for XEM-mapped season/episode (S2E1)
+                    xem_episode_formats = convert_anime_episode_format_smart(
+                        season, target_episode, season_episode_counts,
+                        title=title, tmdb_id=tmdb_id, imdb_id=imdb_id
+                    )
+                    logging.info(f"XEM-mapped episode formats: {xem_episode_formats}")
+                    
+                    # Also generate formats for original season/episode (S1E13) 
+                    original_target_episode = original_episode if original_episode is not None else 1
+                    original_episode_formats = convert_anime_episode_format_smart(
+                        original_season, original_target_episode, season_episode_counts,
+                        title=title, tmdb_id=tmdb_id, imdb_id=imdb_id
+                    )
+                    logging.info(f"Original episode formats: {original_episode_formats}")
+                    
+                    # For rate limiting, use a minimal approach:
+                    # Only use the most essential formats - XEM-mapped regular format and original regular format
+                    episode_formats = {}
+                    
+                    # Primary: XEM-mapped regular format (most likely to work)
+                    if 'regular' in xem_episode_formats:
+                        episode_formats['regular'] = xem_episode_formats['regular']
+                    
+                    # Fallback: Original regular format (only if different from XEM)
+                    if 'regular' in original_episode_formats and original_episode_formats['regular'] != xem_episode_formats.get('regular'):
+                        episode_formats['orig_regular'] = original_episode_formats['regular']
+                    
+                    # Only add one more format if we have space - prefer no_zeros for anime
+                    # Use original episode formats for no_zeros since anime uses absolute numbering
+                    if 'no_zeros' in original_episode_formats:
+                        episode_formats['no_zeros'] = original_episode_formats['no_zeros']
+                    
+                    logging.info(f"Minimal episode formats (rate limiting): {episode_formats}")
             # --- END REGENERATE ANIME EPISODE FORMATS ---
         else:
             # --- START ADDED LOGGING ---
             logging.info(f"Pre-Scrape Check: No XEM mapping applied. Using original season={original_season}, episode={original_episode} for scraping.")
             # --- END ADDED LOGGING ---
-            # Ensure season/episode passed to _do_scrape are the originals if no XEM
-            season = original_season
-            episode = original_episode
+            
+            # --- HANDLE ABSOLUTE EPISODE NUMBERS WHEN NOT IN XEM MAPPING ---
+            if is_anime and content_type.lower() == 'episode' and original_episode is not None:
+                # Check if this episode number exists in the XEM mapping
+                episode_in_xem = False
+                if isinstance(xem_mapping_list, list):
+                    for mapping_entry in xem_mapping_list:
+                        tvdb_info = mapping_entry.get('tvdb')
+                        if tvdb_info and tvdb_info.get('season') == original_season and tvdb_info.get('episode') == original_episode:
+                            episode_in_xem = True
+                            break
+                
+                if not episode_in_xem:
+                    logging.info(f"Episode S{original_season}E{original_episode} not found in XEM mapping. Treating as absolute episode {original_episode}.")
+                    # For anime, when episode is not in XEM mapping, treat it as absolute episode number
+                    # Now check if this absolute episode maps to a different season/episode in XEM
+                    
+                    # Look for XEM mapping where tvdb.absolute matches our episode number
+                    mapped_season = None
+                    mapped_episode = None
+                    mapping_origin = None
+                    
+                    if xem_mapping_list is not None:
+                        for mapping_entry in xem_mapping_list:
+                            tvdb_info = mapping_entry.get('tvdb')
+                            scene_info = mapping_entry.get('scene')
+                            anidb_info = mapping_entry.get('anidb')
+                            
+                            if tvdb_info and tvdb_info.get('absolute') == original_episode:
+                                # Found a mapping for this absolute episode
+                                if scene_info and scene_info.get('season') is not None and scene_info.get('episode') is not None:
+                                    mapped_season = scene_info.get('season')
+                                    mapped_episode = scene_info.get('episode')
+                                    mapping_origin = 'SCENE'
+                                    break
+                                elif is_anime and anidb_info and anidb_info.get('season') is not None and anidb_info.get('episode') is not None:
+                                    mapped_season = anidb_info.get('season')
+                                    mapped_episode = anidb_info.get('episode')
+                                    mapping_origin = 'ANIDB'
+                                    break
+                    
+                    if mapped_season is not None and mapped_episode is not None:
+                        logging.info(f"Absolute episode {original_episode} maps to {mapping_origin} S{mapped_season}E{mapped_episode}")
+                        season = mapped_season
+                        episode = mapped_episode
+                        xem_applied = True
+                        # Set the scene mapping variables that will be passed to _do_scrape
+                        scene_season = mapped_season
+                        scene_episode = mapped_episode
+                        logging.info(f"Set scene mapping: scene_season={scene_season}, scene_episode={scene_episode}")
+                    else:
+                        logging.info(f"Absolute episode {original_episode} not found in XEM mapping. Using as-is.")
+                        # No XEM mapping found for this absolute episode, use it as-is
+                        season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                        
+                        # Generate formats for absolute episode number
+                        absolute_episode_formats = convert_anime_episode_format_smart(
+                            1, original_episode, season_episode_counts,  # Use season 1, episode as absolute
+                            title=title, tmdb_id=tmdb_id, imdb_id=imdb_id
+                        )
+                        logging.info(f"Absolute episode formats for episode {original_episode}: {absolute_episode_formats}")
+                        
+                        # Override the episode_formats to use absolute episode formats
+                        episode_formats = absolute_episode_formats
+                        
+                        # Mark that we're using absolute episode numbering
+                        xem_applied = True  # This will trigger the format regeneration logic
+                        season = 1  # Use season 1 for absolute episodes
+                        episode = original_episode  # Keep the original episode number as absolute
+                        # Set the scene mapping variables for absolute episode numbering
+                        scene_season = 1  # Use season 1 for absolute episodes
+                        scene_episode = original_episode  # Use original episode as absolute
+                        logging.info(f"Set absolute episode mapping: scene_season={scene_season}, scene_episode={scene_episode}")
+                else:
+                    # Episode is in XEM mapping, use original season/episode
+                    season = original_season
+                    episode = original_episode
+            else:
+                # Ensure season/episode passed to _do_scrape are the originals if no XEM
+                season = original_season
+                episode = original_episode
 
         # Initialize results lists
         all_filtered_results = []
@@ -709,6 +1007,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             tried_titles_lower.add(translated_title.lower())
 
         # 3. Add original language title from metadata (especially important for anime)
+        # For anime content, we always try both original and romanized titles to ensure comprehensive results
         if is_anime:
             try:
                 metadata, _ = direct_api.get_show_metadata(imdb_id) if content_type.lower() != 'movie' else direct_api.get_movie_metadata(imdb_id)
@@ -749,43 +1048,42 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                         if romanized_found:
                             break
                     
-                    # Fallback: use original_title from metadata
-                    if not romanized_found:
-                        original_title_from_metadata = metadata.get('original_title') or metadata.get('originalTitle')
-                        if original_title_from_metadata:
-                            if isinstance(original_title_from_metadata, list):
-                                original_title_from_metadata = original_title_from_metadata[0]
-                            
-                            # Check if title contains Japanese characters and attempt romanization
-                            has_japanese = bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]', original_title_from_metadata))
-                            
-                            if has_japanese:
-                                try:
-                                    from scraper.functions.other_functions import romanize_japanese
-                                    romanized_title = romanize_japanese(original_title_from_metadata)
-                                    
-                                    # Try to fix spacing and capitalization
-                                    words = romanized_title.split()
-                                    if len(words) > 1:
-                                        # Capitalize first letter of each word and ensure proper spacing
-                                        romanized_title = ' '.join(word.capitalize() for word in words)
-                                    else:
-                                        # If no spaces, try to split on common patterns and capitalize
-                                        romanized_title = romanized_title.title()
-                                    
-                                    logging.info(f"Romanized Japanese title '{original_title_from_metadata}' to '{romanized_title}'")
-                                    if romanized_title.lower() not in tried_titles_lower:
-                                        logging.info(f"Adding romanized title for anime: {romanized_title}")
-                                        titles_to_try.append(('original_language_romanized', romanized_title))
-                                        tried_titles_lower.add(romanized_title.lower())
-                                except Exception as romanize_err:
-                                    logging.warning(f"Failed to romanize Japanese title '{original_title_from_metadata}': {romanize_err}")
-                            else:
-                                # Not Japanese, use as-is
-                                if original_title_from_metadata.lower() not in tried_titles_lower:
-                                    logging.info(f"Adding original language title from metadata for anime: {original_title_from_metadata}")
-                                    titles_to_try.append(('original_language', original_title_from_metadata))
-                                    tried_titles_lower.add(original_title_from_metadata.lower())
+                    # Always try to add original language title from metadata for anime (regardless of romanized alias found)
+                    original_title_from_metadata = metadata.get('original_title') or metadata.get('originalTitle')
+                    if original_title_from_metadata:
+                        if isinstance(original_title_from_metadata, list):
+                            original_title_from_metadata = original_title_from_metadata[0]
+                        
+                        # Check if title contains Japanese characters and attempt romanization
+                        has_japanese = bool(re.search(r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]', original_title_from_metadata))
+                        
+                        if has_japanese:
+                            try:
+                                from scraper.functions.other_functions import romanize_japanese
+                                romanized_title = romanize_japanese(original_title_from_metadata)
+                                
+                                # Try to fix spacing and capitalization
+                                words = romanized_title.split()
+                                if len(words) > 1:
+                                    # Capitalize first letter of each word and ensure proper spacing
+                                    romanized_title = ' '.join(word.capitalize() for word in words)
+                                else:
+                                    # If no spaces, try to split on common patterns and capitalize
+                                    romanized_title = romanized_title.title()
+                                
+                                logging.info(f"Romanized Japanese title '{original_title_from_metadata}' to '{romanized_title}'")
+                                if romanized_title.lower() not in tried_titles_lower:
+                                    logging.info(f"Adding romanized title for anime: {romanized_title}")
+                                    titles_to_try.append(('original_language_romanized', romanized_title))
+                                    tried_titles_lower.add(romanized_title.lower())
+                            except Exception as romanize_err:
+                                logging.warning(f"Failed to romanize Japanese title '{original_title_from_metadata}': {romanize_err}")
+                        else:
+                            # Not Japanese, use as-is
+                            if original_title_from_metadata.lower() not in tried_titles_lower:
+                                logging.info(f"Adding original language title from metadata for anime: {original_title_from_metadata}")
+                                titles_to_try.append(('original_language', original_title_from_metadata))
+                                tried_titles_lower.add(original_title_from_metadata.lower())
             except Exception as e:
                 logging.warning(f"Failed to get original title from metadata for {imdb_id}: {e}")
 
@@ -803,58 +1101,97 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     titles_to_try.append(('country_alias', alias))
                     tried_titles_lower.add(alias.lower())
 
-        # Execute scraping based on the determined titles
-        for source, search_title in titles_to_try:
+        # Execute scraping based on the determined titles with threading and deduplication protection
+        logging.info(f"Will search with {len(titles_to_try)} titles: {[source for source, _ in titles_to_try]}")
+        
+        # Track already scraped episode formats to avoid duplicates
+        scraped_episode_formats = set()
+        all_results_lock = threading.Lock()
+        
+        def scrape_single_title(args):
+            """Helper function to scrape a single title with deduplication protection"""
+            source, search_title = args
+            
+            # For anime, check if we've already scraped this episode format
+            if is_anime and episode_formats:
+                # Create a key based on the episode formats to avoid duplicate scraping
+                format_key = tuple(sorted(episode_formats.values()))
+                with all_results_lock:
+                    if format_key in scraped_episode_formats:
+                        logging.info(f"Skipping duplicate episode format scrape for {source}: {search_title}")
+                        return [], [], {}
+                    scraped_episode_formats.add(format_key)
+            
             logging.info(f"Scraping with {source}: {search_title}")
             logging.debug(f"[scrape_main] Calling _do_scrape for '{search_title}' (source: {source}).")
-
-            # Add small delay between searches to prevent rate limiting
-            if source != 'original':  # Skip delay for first search
-                time.sleep(0.5)  # 500ms delay
 
             # --- START ADDED LOGGING ---
             logging.info(f"Calling _do_scrape with: search_title='{search_title}', original_media_title='{title}', season={season}, episode={episode}, target_air_date='{target_air_date}'")
             # --- END ADDED LOGGING ---
 
-            filtered_results, filtered_out_results, task_timings = _do_scrape(
-                search_title=search_title,
-                original_media_title=title, # Pass the original title here
-                content_type=content_type,
-                version=version,
-                version_settings=version_settings,
-                season=season, # Use potentially XEM-modified season
-                episode=episode, # Use potentially XEM-modified episode
-                multi=multi,
-                genres=genres,
-                episode_formats=episode_formats,
-                is_anime=is_anime,
-                imdb_id_for_fallback=imdb_id,
-                direct_api_instance=direct_api,
-                is_alias=(source not in ['original', 'original_language', 'original_language_romanized', 'romanized_alias']),
-                alias_country=media_country_code if source not in ['original', 'original_language', 'original_language_romanized', 'romanized_alias'] else None,
-                preferred_language=preferred_language,
-                translated_title=translated_title, # Always pass the actual translation
-                target_air_date=target_air_date, # Pass target_air_date here
-                # Pass the determined scene mapping (or None) to _do_scrape
-                scene_season_map=scene_season, # This is the XEM-mapped season (or None)
-                scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
-                check_pack_wantedness=check_pack_wantedness, # Pass parameter
-                original_episode=original_episode  # Pass the original episode number for filtering
-            )
-            logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
+            try:
+                filtered_results, filtered_out_results, task_timings = _do_scrape(
+                    search_title=search_title,
+                    original_media_title=title, # Pass the original title here
+                    content_type=content_type,
+                    version=version,
+                    version_settings=version_settings,
+                    season=season, # Use potentially XEM-modified season
+                    episode=episode, # Use potentially XEM-modified episode
+                    multi=multi,
+                    genres=genres,
+                    episode_formats=episode_formats,
+                    is_anime=is_anime,
+                    imdb_id_for_fallback=imdb_id,
+                    direct_api_instance=direct_api,
+                    is_alias=(source not in ['original', 'original_language', 'original_language_romanized', 'romanized_alias']),
+                    alias_country=media_country_code if source not in ['original', 'original_language', 'original_language_romanized', 'romanized_alias'] else None,
+                    preferred_language=preferred_language,
+                    translated_title=translated_title, # Always pass the actual translation
+                    target_air_date=target_air_date, # Pass target_air_date here
+                    # Pass the determined scene mapping (or None) to _do_scrape
+                    scene_season_map=scene_season, # This is the XEM-mapped season (or None)
+                    scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
+                    check_pack_wantedness=check_pack_wantedness, # Pass parameter
+                    original_episode=original_episode  # Pass the original episode number for filtering
+                )
+                logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
+                
+                return filtered_results, filtered_out_results or [], task_timings
+            except Exception as e:
+                logging.error(f"Error scraping {source} '{search_title}': {e}", exc_info=True)
+                return [], [], {}
+        
+        # Use ThreadPoolExecutor for parallel scraping
+        max_workers = min(len(titles_to_try), 4)  # Limit to 4 concurrent threads to avoid overwhelming scrapers
+        logging.info(f"Starting parallel scraping with {max_workers} workers for {len(titles_to_try)} titles")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all scraping tasks
+            future_to_title = {executor.submit(scrape_single_title, (source, search_title)): (source, search_title) 
+                              for source, search_title in titles_to_try}
             
-            # Always collect filtered out results, regardless of whether we found good results
-            if filtered_out_results: # Ensure filtered_out_results is not None
-                all_filtered_out_results.extend(filtered_out_results)
-                logging.debug(f"Collected {len(filtered_out_results)} filtered out results from '{search_title}' search")
-            
-            if filtered_results:
-                all_filtered_results.extend(filtered_results)
-                if is_anime:
-                    # For anime, skip remaining titles to avoid rate limiting
-                    logging.info(f"Anime: Found {len(filtered_results)} good results with '{search_title}', skipping remaining titles to avoid rate limiting")
-                    break
-                # For non-anime, continue to try all titles/aliases
+            # Collect results as they complete
+            for future in as_completed(future_to_title):
+                source, search_title = future_to_title[future]
+                try:
+                    filtered_results, filtered_out_results, task_timings = future.result()
+                    
+                    # Thread-safe collection of results
+                    with all_results_lock:
+                        # Always collect filtered out results, regardless of whether we found good results
+                        if filtered_out_results:
+                            all_filtered_out_results.extend(filtered_out_results)
+                            logging.debug(f"Collected {len(filtered_out_results)} filtered out results from '{search_title}' search")
+                        
+                        if filtered_results:
+                            all_filtered_results.extend(filtered_results)
+                            # Always continue searching all titles for both anime and non-anime content
+                            # This ensures we get comprehensive results from both original and romanized titles
+                            logging.info(f"Found {len(filtered_results)} good results with '{search_title}', continuing to search remaining titles for comprehensive results")
+                
+                except Exception as e:
+                    logging.error(f"Error processing results for {source} '{search_title}': {e}", exc_info=True)
 
         # Log summary of filtered out results collection
         logging.info(f"[scrape_main] Total filtered out results collected: {len(all_filtered_out_results)}")
@@ -863,11 +1200,32 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
         logging.debug(f"[scrape_main] Before final deduplication: all_filtered_results: {len(all_filtered_results)}")
         seen = set()
         deduplicated_results = []
+        
         for result in all_filtered_results:
-            result_key = result.get('original_title', '')
+            # For anime, use normalized episode format for deduplication
+            if is_anime and episode_formats:
+                # Create a more sophisticated key that includes title and normalized episode format
+                title = result.get('parsed_title', result.get('original_title', ''))
+                episode_info = result.get('parsed_info', {})
+                
+                # Try to extract episode number from parsed info
+                episode_num = episode_info.get('episode')
+                if episode_num:
+                    normalized_ep = normalize_episode_format_for_dedup(str(episode_num))
+                    result_key = f"{title.lower()}_{normalized_ep}"
+                else:
+                    # Fallback to original title if no episode info
+                    result_key = result.get('original_title', '')
+            else:
+                # For non-anime, use original title
+                result_key = result.get('original_title', '')
+            
             if result_key not in seen:
                 seen.add(result_key)
                 deduplicated_results.append(result)
+            else:
+                logging.debug(f"Dropping duplicate result: {result.get('original_title', '')}")
+        
         logging.debug(f"[scrape_main] After final deduplication (these are 'passed' results): deduplicated_results: {len(deduplicated_results)}")
 
         # Parse scraping settings for final sorting
@@ -934,6 +1292,10 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # Final summary of all filtered out results
         logging.info(f"[scrape_main] Final summary: {len(deduplicated_results)} passed results, {len(all_filtered_out_results)} filtered out results")
+        
+        # Log total scrape time
+        total_time = time.time() - start_time
+        logging.info(f"Total scrape time for '{title}' ({year}): {total_time:.2f} seconds")
         
         logging.info(f"[scrape_main] Returning: passed_results={len(deduplicated_results)}, filtered_out_results={len(all_filtered_out_results)}")
         return deduplicated_results, all_filtered_out_results

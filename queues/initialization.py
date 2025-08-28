@@ -274,18 +274,17 @@ def initialize(skip_initial_plex_update=False):
         runner = ProgramRunner()
         get_all_wanted_from_enabled_sources(runner)
         complete_phase('sources')
-        
-        # Refresh Release Dates Phase (30 seconds)
-        #start_phase('release', 'Refresh Release Dates', 'Starting release date refresh')
-        #refresh_release_dates()
-        #complete_phase('release')
     else:
-        logging.info("Skipping content sources and release date refresh due to Plex update status.")
-        # Manually set progress past these skipped phases
+        logging.info("Skipping content sources due to Plex update status.")
+        # Manually set progress past the skipped sources phase
         if 'sources' in PROGRESS_RANGES:
             initialization_status['progress_value'] = PROGRESS_RANGES['sources'][1]
-        if 'release' in PROGRESS_RANGES:
-            initialization_status['progress_value'] = PROGRESS_RANGES['release'][1]
+    
+    # Always refresh release dates regardless of content sources status
+    # Refresh Release Dates Phase (30 seconds)
+    start_phase('release', 'Refresh Release Dates', 'Starting release date refresh')
+    refresh_release_dates()
+    complete_phase('release')
 
     # Keep for now: Disable database maintenance
     # from database.maintenance import update_show_ids, update_show_titles, update_movie_ids, update_movie_titles

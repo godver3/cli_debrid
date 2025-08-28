@@ -724,7 +724,7 @@ def queue_stream():
     # Special limit for Checking queue to improve performance
     CHECKING_QUEUE_LIMIT = 20
     DB_FETCH_QUEUES = {"Wanted", "Final_Check"}  # Removed Blacklisted and Unreleased
-    COUNT_ONLY_QUEUES = {"Blacklisted", "Unreleased"}  # New set for count-only queues
+    COUNT_ONLY_QUEUES = {"Blacklisted", "Unreleased", "Collected"}  # New set for count-only queues
     
     # Performance optimization: Track last sent data to avoid redundant updates
     last_sent_hash = None

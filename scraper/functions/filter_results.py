@@ -136,7 +136,7 @@ def filter_results(
     # Determine base similarity threshold
     # Override anime similarity threshold to be more restrictive to prevent false matches
     original_anime_setting = version_settings.get('similarity_threshold_anime', 0.60)
-    anime_threshold = max(0.60, float(original_anime_setting))
+    anime_threshold = max(0.80, float(original_anime_setting))
     base_similarity_threshold = anime_threshold if is_anime else float(version_settings.get('similarity_threshold', 0.8))
     
     # Debug logging for threshold issues
@@ -873,6 +873,12 @@ def filter_results(
 
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'N/A':
+                        # Add detailed logging to understand why this is considered a single episode
+                        logging.info(f"SINGLE EPISODE DEBUG: '{original_title}' rejected because season_pack='N/A'")
+                        logging.info(f"SINGLE EPISODE DEBUG: season_episode_info: {season_episode_info}")
+                        logging.info(f"SINGLE EPISODE DEBUG: episodes: {season_episode_info.get('episodes', [])}")
+                        logging.info(f"SINGLE EPISODE DEBUG: seasons: {season_episode_info.get('seasons', [])}")
+                        logging.info(f"SINGLE EPISODE DEBUG: parsed_info: {parsed_info}")
                         result['filter_reason'] = "Single episode result when searching for multi"
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
@@ -1600,6 +1606,49 @@ def filter_results(
                 continue
             # logging.debug("✓ Passed adult content check")
             # --- End Adult Content Check ---
+            
+            # --- F1 Movie Specific Filtering for tt16311594 ---
+            if imdb_id == 'tt16311594':
+                title_lower = original_title.lower()
+                
+                # Check for race-related terms that indicate this is not the movie
+                race_indicators = [
+                    'race', 'grand prix', 'round', 'fp', 'qualifying', 'sprint', 'testing',
+                    'pre-race', 'post-race', 'pre-qualifying', 'post-qualifying', 'pre-sprint', 'post-sprint',
+                    'weekend warm-up', 'drivers press conference', 'jolyon palmers analysis',
+                    'australian grand prix', 'chinese grand prix', 'japanese grand prix', 'bahrain grand prix',
+                    'saudi arabian grand prix', 'emilia romagna grand prix', 'monaco grand prix', 'spanish grand prix',
+                    'british grand prix', 'belgian grand prix', 'hungarian grand prix', 'miami grand prix',
+                    'austrian grand prix', 'dutch grand prix', 'italian grand prix', 'azerbaijan grand prix',
+                    'singapore grand prix', 'united states grand prix', 'mexico grand prix', 'sao paulo grand prix',
+                    'las vegas grand prix', 'qatar grand prix', 'abu dhabi grand prix'
+                ]
+                
+                # Check if title contains any race indicators
+                has_race_indicators = any(indicator in title_lower for indicator in race_indicators)
+                
+                # Check for movie-specific terms that indicate this IS the movie
+                movie_indicators = [
+                    'the movie', 'il film', 'la película', 'la pelicula', 'película', 'pelicula'
+                ]
+                
+                # Check if title contains movie indicators
+                has_movie_indicators = any(indicator in title_lower for indicator in movie_indicators)
+                
+                # Reject if it has race indicators and no movie indicators
+                if has_race_indicators and not has_movie_indicators:
+                    result['filter_reason'] = "F1 race content filtered out for movie search"
+                    logging.info(f"Rejected: F1 race content detected for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
+                
+                # Also reject if it has round numbers but no movie indicators
+                if re.search(r'\br\d+\b', title_lower) and not has_movie_indicators:
+                    result['filter_reason'] = "F1 round content filtered out for movie search"
+                    logging.info(f"Rejected: F1 round content detected for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
+                
+                logging.info(f"F1 Movie filter: Accepted '{original_title}' (has_movie_indicators={has_movie_indicators}, has_race_indicators={has_race_indicators})")
+            # --- End F1 Movie Specific Filtering ---
             
             filtered_results.append(result)
             logging.info(f"Accepted: '{original_title}' (Size: {result['size']:.2f}GB)")
