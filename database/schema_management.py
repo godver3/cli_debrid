@@ -280,6 +280,17 @@ def migrate_schema():
             conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_ep_info ON media_items(tmdb_id, type, season_number, episode_number, version);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_ep_info.")
 
+        # Add indexes for get_season_year function performance
+        if 'idx_media_items_imdb_type_season_release' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_imdb_type_season_release...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_imdb_type_season_release ON media_items(imdb_id, type, season_number, release_date);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_imdb_type_season_release.")
+
+        if 'idx_media_items_tmdb_type_season_release' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_tmdb_type_season_release...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_season_release ON media_items(tmdb_id, type, season_number, release_date);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_season_release.")
+
         # New Suggested Index for get_distinct_library_shows
         if 'idx_media_items_imdb_type_state_title' not in existing_indexes:
             logging.info("Attempting to create index idx_media_items_imdb_type_state_title...")

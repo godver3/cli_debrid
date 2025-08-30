@@ -358,8 +358,42 @@ def assign_magnet():
         prefill_year = request.args.get('prefill_year')
         prefill_magnet = request.args.get('prefill_magnet')
         prefill_version = request.args.get('prefill_version')
+        prefill_selection_raw = request.args.get('prefill_selection')
+        prefill_seasons_raw = request.args.get('prefill_seasons')
+        prefill_selection = None
+        prefill_seasons_csv = None
 
-        if prefill_id and prefill_type and prefill_title and prefill_year:
+        # Normalize selection type to expected values: 'all', 'seasons', 'episode'
+        if prefill_selection_raw:
+            try:
+                sel = prefill_selection_raw.strip().lower()
+                selection_mapping = {
+                    'all': 'all', 'full': 'all', 'full_series': 'all', 'series': 'all',
+                    'seasons': 'seasons', 'season': 'seasons',
+                    'episode': 'episode', 'single': 'episode', 'single_episode': 'episode'
+                }
+                prefill_selection = selection_mapping.get(sel)
+                if prefill_selection:
+                    logging.info(f"Prefill selection provided: {prefill_selection_raw} -> {prefill_selection}")
+                else:
+                    logging.warning(f"Ignoring unrecognized prefill_selection: {prefill_selection_raw}")
+            except Exception as e:
+                logging.warning(f"Error processing prefill_selection '{prefill_selection_raw}': {e}")
+
+        # Parse seasons CSV (e.g., "1,2,0") and normalize to comma-separated digits
+        if prefill_seasons_raw:
+            try:
+                tokens = re.split(r'[\s,]+', prefill_seasons_raw.strip())
+                seasons = [t for t in tokens if t.isdigit()]
+                if seasons:
+                    prefill_seasons_csv = ','.join(seasons)
+                    logging.info(f"Prefill seasons provided: {prefill_seasons_raw} -> {prefill_seasons_csv}")
+                else:
+                    logging.warning(f"No valid season numbers found in prefill_seasons: '{prefill_seasons_raw}'")
+            except Exception as e:
+                logging.warning(f"Error processing prefill_seasons '{prefill_seasons_raw}': {e}")
+
+        if prefill_id and prefill_type:
             # Determine if prefill_id is IMDb ID or TMDB ID
             id_kind = 'tmdb'  # Default to TMDB
             if prefill_id.startswith('tt'):
@@ -387,12 +421,14 @@ def assign_magnet():
                 logging.info(f"Prefilled data via helper: {single_result}, Version: {prefill_version}")
                 return render_template('magnet_assign.html', 
                                     search_results=[single_result], # Pass as a list
-                                    search_term=prefill_title, 
+                                    search_term=prefill_title or single_result['title'], 
                                     content_type=single_result['mediaType'], # Use mediaType from helper
                                     step='results',
                                     is_prefilled=True,
                                     prefill_magnet=prefill_magnet,
-                                    prefill_version=prefill_version)
+                                    prefill_version=prefill_version,
+                                    prefill_selection=prefill_selection,
+                                    prefill_seasons=prefill_seasons_csv)
             else:
                 logging.warning(f"Could not fetch details via helper for prefill ID: {prefill_id} ({id_kind.upper()}), Type: {prefill_type}")
                 flash(f'Could not find details for {prefill_title} ({prefill_year}). Please search manually.', 'warning')

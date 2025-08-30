@@ -782,8 +782,7 @@
                                   class="settings-input"
                                   data-section="Content Sources"
                                   data-key="{{ source_id }}.username"
-                                  placeholder="Assign user via button ->"
-                                  readonly>
+                                  placeholder="Enter username or assign user via button ->">
                             {# Add description if available in schema #}
                             {% if settings_schema['Content Sources'].schema is defined and
                                   config.type in settings_schema['Content Sources'].schema and
@@ -806,8 +805,7 @@
                                   class="settings-input"
                                   data-section="Content Sources"
                                   data-key="{{ source_id }}.token"
-                                  placeholder="Assign user via button ->"
-                                  readonly>
+                                  placeholder="Enter token or assign user via button ->">
                             {# Add description if available in schema #}
                            {% if settings_schema['Content Sources'].schema is defined and
                                  config.type in settings_schema['Content Sources'].schema and

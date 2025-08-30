@@ -43,13 +43,13 @@ class MediaMatcher:
         is_anime_special_content = False
         basename_lower = file_basename.lower()
         anime_special_patterns = [
-            'ncop', 'nced',  # No Credit Opening/Ending
-            'opening', 'ending',
-            'ova'
+            r'\bncop\b', r'\bnced\b',  # No Credit Opening/Ending
+            r'\bopening\b', r'\bending\b',
+            r'\bova\b'
         ]
         
         for pattern in anime_special_patterns:
-            if pattern in basename_lower:
+            if re.search(pattern, basename_lower):
                 is_anime_special_content = True
                 logging.debug(f"Tagged as potential anime special content: '{file_basename}' (matched pattern: {pattern})")
                 break # Found a match, no need to check others

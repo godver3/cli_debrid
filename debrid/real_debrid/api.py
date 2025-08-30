@@ -90,6 +90,10 @@ def make_request(
     headers = {'Authorization': f'Bearer {api_key}'}
     kwargs['headers'] = headers
     
+    # Add timeout if not already specified
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 30  # 30 second timeout
+    
     # Apply rate limiting
     _wait_for_rate_limit()
     

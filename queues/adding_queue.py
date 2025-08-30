@@ -25,7 +25,7 @@ class AddingQueue:
         self.media_matcher = MediaMatcher(relaxed_matching=get_setting('Matching', 'relaxed_matching', False))
         self.items: List[Dict] = []
         self.last_process_time = {}
-        logging.info("Initialized AddingQueue")
+        # logging.info("Initialized AddingQueue")
         
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""

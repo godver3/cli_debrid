@@ -817,7 +817,6 @@ def get_statistics_summary():
         conn = get_db_connection()
         cursor = conn.cursor()
         db_connect_time = time.perf_counter() - db_connect_start
-        logging.info(f"Database connection took {db_connect_time*1000:.2f}ms")
 
         # Time table existence check
         table_check_start = time.perf_counter()
@@ -834,7 +833,6 @@ def get_statistics_summary():
                     from database.schema_management import create_statistics_summary_table
                     create_statistics_summary_table()
                     create_time = time.perf_counter() - create_start
-                    logging.info(f"Creating statistics table took {create_time*1000:.2f}ms")
                     
                     # Instead of recursively calling, continue with the logic inline
                     conn = get_db_connection()
@@ -844,7 +842,6 @@ def get_statistics_summary():
                     counts_start = time.perf_counter()
                     initial_counts = get_collected_counts()
                     counts_time = time.perf_counter() - counts_start
-                    logging.info(f"Initial counts calculation took {counts_time*1000:.2f}ms")
 
                     insert_start = time.perf_counter()
                     conn.execute('''
@@ -858,7 +855,6 @@ def get_statistics_summary():
                     ))
                     conn.commit()
                     insert_time = time.perf_counter() - insert_start
-                    logging.info(f"Initial data insertion took {insert_time*1000:.2f}ms")
                     
                     # Return the counts we just calculated
                     return initial_counts
@@ -866,7 +862,6 @@ def get_statistics_summary():
                     logging.error(f"Error creating statistics table: {str(e)}")
                     fallback_start = time.perf_counter()
                     result = get_collected_counts()  # Fallback on error
-                    logging.info(f"Fallback counts took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                     return result
         except sqlite3.OperationalError as e:
             if "no such table: sqlite_master" in str(e):
@@ -875,10 +870,8 @@ def get_statistics_summary():
                 logging.error(f"SQLite error checking for statistics_summary table: {str(e)}")
             fallback_start = time.perf_counter()
             result = get_collected_counts()
-            logging.info(f"Fallback counts after error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
             return result
         table_check_time = time.perf_counter() - table_check_start
-        logging.info(f"Table existence check took {table_check_time*1000:.2f}ms")
         
         # Time data retrieval and update check
         query_start = time.perf_counter()
@@ -897,16 +890,13 @@ def get_statistics_summary():
                 logging.error("statistics_summary table doesn't exist despite earlier check")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after table error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
             else:
                 logging.error(f"SQLite error querying statistics_summary: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after query error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
         query_time = time.perf_counter() - query_start
-        logging.info(f"Data retrieval query took {query_time*1000:.2f}ms")
         
         if not result:
             # No data yet, initialize it
@@ -915,7 +905,6 @@ def get_statistics_summary():
                 counts_start = time.perf_counter()
                 counts = get_collected_counts()
                 counts_time = time.perf_counter() - counts_start
-                logging.info(f"Fresh counts calculation took {counts_time*1000:.2f}ms")
                 
                 # Insert the initial data
                 insert_start = time.perf_counter()
@@ -926,14 +915,12 @@ def get_statistics_summary():
                 ''', (counts['total_movies'], counts['total_shows'], counts['total_episodes']))
                 conn.commit()
                 insert_time = time.perf_counter() - insert_start
-                logging.info(f"Data insertion took {insert_time*1000:.2f}ms")
                 
                 return counts
             except sqlite3.Error as e:
                 logging.error(f"SQLite error initializing statistics_summary: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after initialization error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
                 
         elif result[3] < result[4]:
@@ -947,7 +934,6 @@ def get_statistics_summary():
                 update_start = time.perf_counter()
                 update_statistics_summary(force=True)
                 update_time = time.perf_counter() - update_start
-                logging.info(f"Statistics update took {update_time*1000:.2f}ms")
                 
                 # Open a new connection to get the fresh data
                 new_conn_start = time.perf_counter()
@@ -961,7 +947,6 @@ def get_statistics_summary():
                 ''')
                 updated_result = cursor.fetchone()
                 new_conn_time = time.perf_counter() - new_conn_start
-                logging.info(f"New connection and data fetch took {new_conn_time*1000:.2f}ms")
                 
                 if updated_result:
                     return {
@@ -974,13 +959,11 @@ def get_statistics_summary():
                     logging.error("Failed to retrieve updated statistics")
                     fallback_start = time.perf_counter()
                     result = get_collected_counts()
-                    logging.info(f"Fallback counts after update failure took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                     return result
             except Exception as e:
                 logging.error(f"Error updating statistics: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
                 
         elif result[3] > result[5]:
@@ -995,7 +978,6 @@ def get_statistics_summary():
                 update_start = time.perf_counter()
                 update_statistics_summary(force=True)
                 update_time = time.perf_counter() - update_start
-                logging.info(f"Statistics update took {update_time*1000:.2f}ms")
                 
                 # Open a new connection to get the fresh data
                 new_conn_start = time.perf_counter()
@@ -1009,7 +991,6 @@ def get_statistics_summary():
                 ''')
                 updated_result = cursor.fetchone()
                 new_conn_time = time.perf_counter() - new_conn_start
-                logging.info(f"New connection and data fetch took {new_conn_time*1000:.2f}ms")
                 
                 if updated_result:
                     return {
@@ -1022,13 +1003,11 @@ def get_statistics_summary():
                     logging.error("Failed to retrieve updated statistics")
                     fallback_start = time.perf_counter()
                     result = get_collected_counts()
-                    logging.info(f"Fallback counts after update failure took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                     return result
             except Exception as e:
                 logging.error(f"Error updating statistics: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
         else:
             # Data exists and is current - return it
@@ -1036,7 +1015,7 @@ def get_statistics_summary():
             
         # Return the valid data we found
         overall_time = time.perf_counter() - overall_start
-        logging.info(f"Total get_statistics_summary execution took {overall_time*1000:.2f}ms")
+        logging.debug(f"Total get_statistics_summary execution took {overall_time*1000:.2f}ms")
         return {
             'total_movies': result[0],
             'total_shows': result[1],
@@ -1047,7 +1026,6 @@ def get_statistics_summary():
         logging.error(f"Unexpected error getting statistics summary: {str(e)}", exc_info=True)
         fallback_start = time.perf_counter()
         result = get_collected_counts()  # Fallback to direct count
-        logging.info(f"Final fallback counts took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
         return result
     finally:
         if conn:

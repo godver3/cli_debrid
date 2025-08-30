@@ -21,11 +21,49 @@ from debrid.base import ProviderUnavailableError
 import requests
 from database.database_reading import get_media_item_by_id
 from database.core import get_db_connection
+import threading
+import functools
 
 # Define a constant for clarity when get_torrent_progress signals a missing torrent
 PROGRESS_RESULT_MISSING = "MISSING_TORRENT"
 DEFAULT_MAX_UNKNOWN_STRIKES = 5
 DEFAULT_CHECKING_GRACE_PERIOD_SECONDS = 60 * 5
+
+def with_timeout(timeout_seconds=45):
+    """Decorator to add timeout to a function using threading.Timer"""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            result = [None]
+            exception = [None]
+            completed = threading.Event()
+            
+            def target():
+                try:
+                    result[0] = func(*args, **kwargs)
+                except Exception as e:
+                    exception[0] = e
+                finally:
+                    completed.set()
+            
+            # Start the function in a separate thread
+            thread = threading.Thread(target=target)
+            thread.daemon = True
+            thread.start()
+            
+            # Wait for completion or timeout
+            if completed.wait(timeout=timeout_seconds):
+                # Function completed
+                if exception[0]:
+                    raise exception[0]
+                return result[0]
+            else:
+                # Timeout occurred
+                logging.error(f"Function {func.__name__} timed out after {timeout_seconds} seconds")
+                raise TimeoutError(f"Function {func.__name__} timed out after {timeout_seconds} seconds")
+        
+        return wrapper
+    return decorator
 
 class CheckingQueue:
     _instance = None
@@ -262,6 +300,7 @@ class CheckingQueue:
             logging.debug(f"Cleared unknown strikes for missing torrent {torrent_id}")
 
     @timed_lru_cache(seconds=60)
+    @with_timeout(45)  # 45 second timeout for the entire progress check
     def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
         """
         Get the current progress percentage for a torrent or a status string.
@@ -308,6 +347,9 @@ class CheckingQueue:
                 logging.error(f"Unhandled TorrentFetchStatus {status_result.status} for torrent {torrent_id}")
                 return None
 
+        except TimeoutError:
+            logging.error(f"Timeout in get_torrent_progress for {torrent_id} after 45 seconds")
+            return None # Treat timeout as temporary error for retry
         except Exception as e:
             logging.error(f"Exception in get_torrent_progress for {torrent_id}: {str(e)}", exc_info=True)
             return None # General error, treat as temporary for retry

@@ -371,7 +371,7 @@ def deserialize_config(config):
 
 def validate_url(url):
     if not url or not isinstance(url, str): # Check type
-        logging.debug(f"Empty or non-string URL provided: {url}")
+        # logging.debug(f"Empty or non-string URL provided: {url}")
         return ''
     if not url.startswith(('http://', 'https://')):
         url = f'http://{url}'

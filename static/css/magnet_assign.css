@@ -181,6 +181,13 @@
     padding: 20px;
 }
 
+/* When there's only one item (prefilled), make it wider */
+.results-grid.single-item {
+    grid-template-columns: 1fr;
+    max-width: 600px;
+    margin: 0 auto;
+}
+
 .media-card {
     background: rgba(40, 40, 40, 0.9);
     border-radius: 8px;
@@ -317,6 +324,27 @@
 
 .media-card select[multiple]::-webkit-scrollbar-thumb:hover {
     background: #888;
+}
+
+/* Styling for selected options in multi-select */
+.media-card select[multiple] option:checked {
+    background: linear-gradient(0deg, #4CAF50 0%, #45a049 100%);
+    color: white;
+    font-weight: bold;
+    padding: 8px;
+}
+
+.media-card select[multiple] option:hover {
+    background: #555;
+    cursor: pointer;
+}
+
+/* Alternative styling for selected options (fallback) */
+.media-card select[multiple] option[selected] {
+    background: linear-gradient(0deg, #4CAF50 0%, #45a049 100%);
+    color: white;
+    font-weight: bold;
+    padding: 8px;
 }
 
 .media-card .form-text {

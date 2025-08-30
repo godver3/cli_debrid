@@ -60,6 +60,19 @@
         color: #007bff; 
     }
 
+    /* Disable cursor pointer and hover effects for count-only queues */
+    .queue[data-queue-name="Collected"] .queue-title,
+    .queue[data-queue-name="Unreleased"] .queue-title,
+    .queue[data-queue-name="Blacklisted"] .queue-title {
+        cursor: default;
+    }
+
+    .queue[data-queue-name="Collected"] .queue-title:hover,
+    .queue[data-queue-name="Unreleased"] .queue-title:hover,
+    .queue[data-queue-name="Blacklisted"] .queue-title:hover {
+        color: inherit;
+    }
+
     .queue-count {
         margin-left: auto;
     }

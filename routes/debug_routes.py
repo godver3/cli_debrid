@@ -3514,31 +3514,58 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 final_search_results = None
                 title_that_yielded_search_results = None
 
-                # Attempt 1: Search using cleaned filename title
-                if cleaned_filename_title:
-                    logging.info(f"[RcloneScan {task_id}] Attempting primary search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
-                    search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
-                    if search_results_file:
-                        final_search_results = search_results_file
-                        title_that_yielded_search_results = cleaned_filename_title
-                        logging.info(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' was successful.")
-                    else:
-                        logging.warning(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' yielded no results.")
-                else:
-                    logging.debug(f"[RcloneScan {task_id}] No valid cleaned filename title to attempt primary search.")
-
-                # Attempt 2: If primary search failed or wasn't possible, try folder title (if different and valid)
-                if not final_search_results and cleaned_folder_title and cleaned_folder_title != cleaned_filename_title:
-                    logging.info(f"[RcloneScan {task_id}] Attempting fallback search with folder title: '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                # For episodes, prioritize folder title (show name) over filename title (episode title)
+                # For movies, prioritize filename title over folder title
+                if current_parsed_type == 'episode' and cleaned_folder_title:
+                    # Attempt 1: Search using folder title (show name) for episodes
+                    logging.info(f"[RcloneScan {task_id}] Attempting primary search with folder title (show name): '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
                     search_results_folder, _ = direct_api.search_media(query=cleaned_folder_title, year=parsed_year, media_type=search_type_for_api)
                     if search_results_folder:
                         final_search_results = search_results_folder
                         title_that_yielded_search_results = cleaned_folder_title
-                        logging.info(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' was successful.")
+                        logging.info(f"[RcloneScan {task_id}] Primary search with folder title '{cleaned_folder_title}' was successful.")
                     else:
-                        logging.warning(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' also yielded no results.")
-                elif not final_search_results and cleaned_folder_title and cleaned_folder_title == cleaned_filename_title:
-                    logging.debug(f"[RcloneScan {task_id}] Folder title is same as filename title, already attempted or filename title was null; no separate folder title search needed.")
+                        logging.warning(f"[RcloneScan {task_id}] Primary search with folder title '{cleaned_folder_title}' yielded no results.")
+                        
+                    # Attempt 2: If folder title search failed, try filename title as fallback
+                    if not final_search_results and cleaned_filename_title and cleaned_filename_title != cleaned_folder_title:
+                        logging.info(f"[RcloneScan {task_id}] Attempting fallback search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                        search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
+                        if search_results_file:
+                            final_search_results = search_results_file
+                            title_that_yielded_search_results = cleaned_filename_title
+                            logging.info(f"[RcloneScan {task_id}] Fallback search with filename title '{cleaned_filename_title}' was successful.")
+                        else:
+                            logging.warning(f"[RcloneScan {task_id}] Fallback search with filename title '{cleaned_filename_title}' also yielded no results.")
+                    elif not final_search_results and cleaned_filename_title and cleaned_filename_title == cleaned_folder_title:
+                        logging.debug(f"[RcloneScan {task_id}] Filename title is same as folder title, already attempted or folder title was null; no separate filename title search needed.")
+                else:
+                    # For movies, use original logic: filename title first, then folder title
+                    # Attempt 1: Search using cleaned filename title
+                    if cleaned_filename_title:
+                        logging.info(f"[RcloneScan {task_id}] Attempting primary search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                        search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
+                        if search_results_file:
+                            final_search_results = search_results_file
+                            title_that_yielded_search_results = cleaned_filename_title
+                            logging.info(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' was successful.")
+                        else:
+                            logging.warning(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' yielded no results.")
+                    else:
+                        logging.debug(f"[RcloneScan {task_id}] No valid cleaned filename title to attempt primary search.")
+
+                    # Attempt 2: If primary search failed or wasn't possible, try folder title (if different and valid)
+                    if not final_search_results and cleaned_folder_title and cleaned_folder_title != cleaned_filename_title:
+                        logging.info(f"[RcloneScan {task_id}] Attempting fallback search with folder title: '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                        search_results_folder, _ = direct_api.search_media(query=cleaned_folder_title, year=parsed_year, media_type=search_type_for_api)
+                        if search_results_folder:
+                            final_search_results = search_results_folder
+                            title_that_yielded_search_results = cleaned_folder_title
+                            logging.info(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' was successful.")
+                        else:
+                            logging.warning(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' also yielded no results.")
+                    elif not final_search_results and cleaned_folder_title and cleaned_folder_title == cleaned_filename_title:
+                        logging.debug(f"[RcloneScan {task_id}] Folder title is same as filename title, already attempted or filename title was null; no separate folder title search needed.")
                 
                 if not final_search_results:
                     logging.warning(f"[RcloneScan {task_id}] All search attempts failed for file '{item_path.name}'. Parsed folder title: '{cleaned_folder_title}', Parsed filename title: '{cleaned_filename_title}'.")

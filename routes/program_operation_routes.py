@@ -452,10 +452,8 @@ def check_service_connectivity():
         failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
 
     # Check Metadata Battery connectivity and Trakt authorization
-    logging.info("=== METADATA BATTERY CONNECTIVITY CHECK START ===")
     try:
         # Log the URL being used
-        logging.info(f"Metadata Battery URL from settings: {metadata_battery_url_from_settings}")
         
         # The metadata_battery_url_from_settings should be complete (host and port)
         # No need to reconstruct it.
@@ -465,9 +463,6 @@ def check_service_connectivity():
 
         # Log the exact request being made
         request_url = f"{metadata_battery_url_from_settings}/check_trakt_auth"
-        logging.info(f"Making request to: {request_url}")
-        logging.info(f"Using APITracker session: {type(api).__name__}")
-        logging.info(f"APITracker session headers: {dict(api.session.headers)}")
         
         # Log request timing
         import time
@@ -476,15 +471,10 @@ def check_service_connectivity():
         response = api.get(request_url, timeout=5)
         
         request_duration = time.time() - request_start
-        logging.info(f"Request completed in {request_duration:.3f}s")
-        logging.info(f"Response status: {response.status_code}")
-        logging.info(f"Response headers: {dict(response.headers)}")
         
         # Log response details
         try:
             response_text = response.text
-            logging.info(f"Response body length: {len(response_text)} characters")
-            logging.info(f"Response body preview: {response_text[:200]}...")
         except Exception as e:
             logging.error(f"Error reading response body: {e}")
         
@@ -493,9 +483,7 @@ def check_service_connectivity():
         # Parse JSON response
         try:
             response_json = response.json()
-            logging.info(f"Response JSON: {response_json}")
             trakt_status = response_json.get('status')
-            logging.info(f"Trakt status from response: {trakt_status}")
         except Exception as e:
             logging.error(f"Error parsing JSON response: {e}")
             trakt_status = None
@@ -509,16 +497,12 @@ def check_service_connectivity():
                 logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
                 # Re-check the authorization status
                 try:
-                    logging.info("Making re-check request after auto-reauth...")
                     recheck_start = time.time()
                     response = api.get(request_url, timeout=5)
                     recheck_duration = time.time() - recheck_start
-                    logging.info(f"Re-check request completed in {recheck_duration:.3f}s")
-                    logging.info(f"Re-check response status: {response.status_code}")
                     
                     response.raise_for_status()
                     trakt_status = response.json().get('status')
-                    logging.info(f"Re-check Trakt status: {trakt_status}")
                     
                     if trakt_status == 'authorized':
                         logging.info("Trakt authorization restored after automatic re-authentication.")
@@ -556,8 +540,6 @@ def check_service_connectivity():
                     "type": "UNAUTHORIZED",
                     "message": error_message
                 })
-        else:
-            logging.info("Metadata Battery connectivity check successful - Trakt is authorized")
             
     except RequestException as e:
         logging.error("=== METADATA BATTERY REQUEST EXCEPTION ===")
@@ -595,8 +577,6 @@ def check_service_connectivity():
         services_reachable = False
         failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
     
-    logging.info("=== METADATA BATTERY CONNECTIVITY CHECK END ===")
-
     return services_reachable, failed_services_details
 
 def attempt_trakt_auto_reauth():

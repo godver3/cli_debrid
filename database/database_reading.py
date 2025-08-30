@@ -283,15 +283,17 @@ def get_all_season_episode_counts(tmdb_id):
         all_episodes = cursor.fetchall()
         
         # Detect duplicates based on release date and episode title
-        duplicate_groups = _detect_duplicate_episodes(all_episodes)
+        # duplicate_groups = _detect_duplicate_episodes(all_episodes)
         
-        if duplicate_groups:
-            logging.warning(f"Found duplicate episodes for tmdb_id {tmdb_id}: {duplicate_groups}")
+        # if duplicate_groups:
+        #     logging.warning(f"Found duplicate episodes for tmdb_id {tmdb_id}: {duplicate_groups}")
             # Use the deduplicated episode list for counting
-            deduplicated_episodes = _deduplicate_episodes(all_episodes, duplicate_groups)
-        else:
-            deduplicated_episodes = all_episodes
+        #     deduplicated_episodes = _deduplicate_episodes(all_episodes, duplicate_groups)
+        # else:
+        #     deduplicated_episodes = all_episodes
         
+        deduplicated_episodes = all_episodes
+
         # Count episodes per season from deduplicated list
         season_counts = {}
         for episode in deduplicated_episodes:

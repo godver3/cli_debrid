@@ -1172,7 +1172,7 @@ def refresh_release_dates():
                 logging.info(f"Processing metadata for {title} S{season_number}E{episode_number}")
 
                 new_airtime = get_episode_airtime(imdb_id, season_number, episode_number)
-                logging.info(f"New airtime from metadata: {new_airtime}")
+                # logging.info(f"New airtime from metadata: {new_airtime}")
 
                 if not metadata or not isinstance(metadata, dict):
                     logging.warning(f"Invalid or missing metadata for show {imdb_id}")
@@ -1205,17 +1205,6 @@ def refresh_release_dates():
                                     episode_data = episodes.get(str(episode_number)) # Fallback
 
                                 if not episode_data or not isinstance(episode_data, dict):
-                                    logging.debug(f"Lookup Failure Details for DB ID: {db_item_id}")
-                                    logging.debug(f"  IMDb ID: {imdb_id}")
-                                    logging.debug(f"  DB Season Number: {season_number!r} (Type: {type(season_number).__name__})")
-                                    logging.debug(f"  DB Episode Number: {episode_number!r} (Type: {type(episode_number).__name__})")
-                                    logging.debug(f"  Season Key Used: '{season_key_lookup}'")
-                                    logging.debug(f"  Episode Key Used (for logging): '{episode_key_lookup_for_log}'")
-                                    logging.debug(f"  (Actual episode keys attempted for lookup: {episode_number} (int), then {str(episode_number)} (str))")
-                                    logging.debug(f"  Metadata Source: {source}")
-                                    logging.debug(f"  Available Season Keys in Battery: {list(seasons.keys())}")
-                                    logging.debug(f"  Available Episode Keys for Season '{season_key_lookup}': {list(episodes.keys())}")
-                                    logging.debug(f"  Result of episodes.get({episode_number}) (int key) then episodes.get({str(episode_number)}) (str key): {episode_data!r}")
 
                                     logging.warning(f"No valid data found for S{season_number}E{episode_number} in fetched metadata.")
                                     if is_valid_date_str(existing_release_date):
@@ -1226,7 +1215,7 @@ def refresh_release_dates():
                                         logging.warning("Episode data lookup failed and no valid existing date found. Setting to Unknown.")
                                 else:
                                     first_aired_str = episode_data.get('first_aired')
-                                    logging.info(f"First aired date from metadata: {first_aired_str}")
+                                    # logging.info(f"First aired date from metadata: {first_aired_str}")
                                     if first_aired_str:
                                         try:
                                             # Use iso8601 library for robust parsing
@@ -1239,7 +1228,7 @@ def refresh_release_dates():
                                             local_tz = _get_local_timezone()
                                             local_dt = first_aired_dt_obj.astimezone(local_tz)
                                             new_release_date = local_dt.strftime("%Y-%m-%d")
-                                            logging.info(f"Calculated local release date {new_release_date} from original aired string {first_aired_str}")
+                                            # logging.info(f"Calculated local release date {new_release_date} from original aired string {first_aired_str}")
                                         except (ValueError, iso8601.ParseError) as e: # Catch iso8601.ParseError as well
                                             logging.error(f"Invalid datetime format or conversion error: {first_aired_str} - Error: {e}")
                                             if is_valid_date_str(existing_release_date):
@@ -1253,7 +1242,7 @@ def refresh_release_dates():
                                             logging.warning(f"No first_aired found for S{season_number}E{episode_number}, preserving existing valid release date: {new_release_date}")
                                         else: new_release_date = 'Unknown'
 
-                logging.info(f"New release date: {new_release_date}")
+                # logging.info(f"New release date: {new_release_date}")
 
                 new_state = item_dict['state']
                 if new_release_date == "Unknown" or new_release_date is None:
@@ -1474,7 +1463,7 @@ def get_episode_airtime(imdb_id: str, season_number: Optional[int] = None, episo
                                 local_tz = _get_local_timezone()
                                 local_dt = dt.astimezone(local_tz)
                                 airtime_str = local_dt.strftime("%H:%M")
-                                logging.info(f"[Airtime] Used first_aired for {imdb_id} S{season_number}E{episode_number}: {first_aired} → {airtime_str} (local)")
+                                # logging.info(f"[Airtime] Used first_aired for {imdb_id} S{season_number}E{episode_number}: {first_aired} → {airtime_str} (local)")
                                 return airtime_str
                             except (iso8601.ParseError, ValueError) as e:
                                 logging.warning(f"Failed to parse first_aired '{first_aired}' for {imdb_id} S{season_number}E{episode_number}: {e}")
