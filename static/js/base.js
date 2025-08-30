@@ -574,23 +574,116 @@ document.addEventListener('DOMContentLoaded', function() {
     // Notifications Modal Logic
     const notificationsModal = document.getElementById('notificationsModal');
     const notificationsBtn = document.getElementById('notifications_button');
-    const notificationsCloseBtn = notificationsModal.querySelector('.close');
+    const notificationsCloseBtn = notificationsModal ? notificationsModal.querySelector('.close') : null;
     const notificationsContainer = document.getElementById('notifications-container');
     const markAllAsReadBtn = document.getElementById('markAllAsReadBtn');
     const disableNotificationsToggle = document.getElementById('disableNotificationsToggle');
+    const disableToastsToggle = document.getElementById('disableToastsToggle');
     let notifications = [];
+    let lastNotificationCount = 0;
+    let isFirstLoad = true; // Track if this is the first load
+    let notificationEventSource = null; // SSE connection
     
+    // Initialize notification streaming
+    function initNotificationStream() {
+        if (notificationEventSource) {
+            notificationEventSource.close();
+        }
+
+        try {
+            notificationEventSource = new EventSource('/base/api/notifications/stream');
+            
+            notificationEventSource.onopen = function(event) {
+                console.log('Connected to notification stream');
+            };
+            
+            notificationEventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'new_notification') {
+                        handleNewNotification(data.notification);
+                    } else if (data.type === 'connection') {
+                        console.log('Notification stream connected:', data.message);
+                    } else if (data.type === 'heartbeat') {
+                        // Keep connection alive
+                        console.debug('Notification stream heartbeat');
+                    }
+                } catch (error) {
+                    console.error('Error parsing notification stream data:', error);
+                }
+            };
+            
+            notificationEventSource.onerror = function(event) {
+                console.error('Notification stream error:', event);
+                // Reconnect after a delay
+                setTimeout(() => {
+                    console.log('Reconnecting to notification stream...');
+                    initNotificationStream();
+                }, 5000);
+            };
+        } catch (error) {
+            console.error('Failed to initialize notification stream:', error);
+        }
+    }
+
+    // Handle new notification from stream
+    function handleNewNotification(notificationData) {
+        // Add to notifications array
+        notifications.unshift(notificationData);
+        
+        // Show toast for new notification
+        if (!isFirstLoad) {
+            // Determine toast type based on notification type
+            let toastType = 'info';
+            switch (notificationData.notification_type) {
+                case 'success':
+                    toastType = 'success';
+                    break;
+                case 'error':
+                    toastType = 'error';
+                    break;
+                case 'warning':
+                    toastType = 'warning';
+                    break;
+                default:
+                    toastType = 'info';
+            }
+
+            // Show toast for new notification
+            toastManager.show(
+                notificationData.title,
+                notificationData.message,
+                toastType
+            );
+        }
+        
+        updateNotificationDisplay();
+        updateNotificationIndicator();
+    }
+
     // Check if notifications are disabled in localStorage and update UI accordingly
     function initializeNotificationPreferences() {
         const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+        const toastsDisabled = localStorage.getItem('toastsDisabled') === 'true';
         
-        // Update the toggle state
+        // Update the notification toggle state
         if (disableNotificationsToggle) {
             disableNotificationsToggle.checked = notificationsDisabled;
         }
         
+        // Update the toast toggle state
+        if (disableToastsToggle) {
+            disableToastsToggle.checked = toastsDisabled;
+        }
+        
         // Update the body attribute to control CSS
         document.body.setAttribute('data-notifications-disabled', notificationsDisabled);
+        
+        // Update mark all as read button visibility
+        if (markAllAsReadBtn) {
+            markAllAsReadBtn.style.display = notificationsDisabled ? 'none' : 'inline-block';
+        }
         
         // If notifications are disabled, automatically mark all as read
         if (notificationsDisabled) {
@@ -598,12 +691,25 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Fetch notifications
+    // Fetch notifications (for initial load and fallback)
     async function fetchNotifications() {
         try {
             const response = await fetch('/base/api/notifications');
             const data = await response.json();
-            notifications = data.notifications || [];
+            const newNotifications = data.notifications || [];
+            
+            // On first load, just set the notifications and don't show toasts
+            if (isFirstLoad) {
+                notifications = newNotifications;
+                lastNotificationCount = notifications.length;
+                isFirstLoad = false;
+                updateNotificationDisplay();
+                updateNotificationIndicator();
+                return;
+            }
+            
+            // For subsequent loads, update the notifications array
+            notifications = newNotifications;
             updateNotificationDisplay();
             
             // Only update indicator if notifications are not disabled
@@ -617,6 +723,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Update notification display in modal
     function updateNotificationDisplay() {
+        const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
+
         if (notifications.length === 0) {
             notificationsContainer.innerHTML = '<div class="no-notifications">No notifications</div>';
             return;
@@ -624,8 +732,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
         notificationsContainer.innerHTML = notifications
             .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-            .map(notification => `
-                <div class="notification ${notification.read ? 'read' : 'unread'}" data-id="${notification.id}">
+            .map(notification => {
+                // Determine read status based on toggle state
+                const isEffectivelyRead = notificationsDisabled || notification.read;
+                const readClass = isEffectivelyRead ? 'read' : 'unread';
+
+                return `
+                <div class="notification ${readClass}" data-id="${notification.id}">
                     <div class="notification-header">
                         <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
                         <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
@@ -634,30 +747,33 @@ document.addEventListener('DOMContentLoaded', function() {
                     <div class="notification-message">${notification.message}</div>
                     ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
                 </div>
-            `).join('');
+            `;
+            }).join('');
 
-        // Add click handlers for marking as read
-        document.querySelectorAll('.notification.unread').forEach(notif => {
-            notif.addEventListener('click', async () => {
-                const id = notif.dataset.id;
-                
-                // Immediately update UI for better user experience
-                notif.classList.remove('unread');
-                notif.classList.add('read');
-                
-                // Update local notification state
-                const notification = notifications.find(n => n.id === id);
-                if (notification) {
-                    notification.read = true;
-                }
-                
-                // Update indicator immediately
-                updateNotificationIndicator();
-                
-                // Then send request to server
-                await markNotificationRead(id);
+        // Add click handlers for marking as read ONLY IF notifications are NOT disabled
+        if (!notificationsDisabled) {
+            document.querySelectorAll('.notification.unread').forEach(notif => {
+                notif.addEventListener('click', async () => {
+                    const id = notif.dataset.id;
+                    
+                    // Immediately update UI for better user experience
+                    notif.classList.remove('unread');
+                    notif.classList.add('read');
+                    
+                    // Update local notification state
+                    const notification = notifications.find(n => n.id === id);
+                    if (notification) {
+                        notification.read = true;
+                    }
+                    
+                    // Update indicator immediately
+                    updateNotificationIndicator();
+                    
+                    // Then send request to server
+                    await markNotificationRead(id);
+                });
             });
-        });
+        }
     }
 
     // Update the notification indicator (red dot)
@@ -740,6 +856,16 @@ document.addEventListener('DOMContentLoaded', function() {
         // Update body attribute for CSS
         document.body.setAttribute('data-notifications-disabled', isDisabled);
         
+        // Update mark all as read button visibility
+        if (markAllAsReadBtn) {
+            markAllAsReadBtn.style.display = isDisabled ? 'none' : 'inline-block';
+        }
+        
+        // Re-render notifications to apply read status if modal is open
+        if (notificationsModal && notificationsModal.style.display === 'block') {
+            updateNotificationDisplay();
+        }
+        
         // If toggling to disabled, mark all as read
         if (isDisabled) {
             markAllNotificationsAsRead(false); // Don't show popup when auto-marking
@@ -753,6 +879,27 @@ document.addEventListener('DOMContentLoaded', function() {
             type: POPUP_TYPES.INFO,
             title: isDisabled ? 'Notifications Disabled' : 'Notifications Enabled',
             message: isDisabled ? 'Notifications will be automatically marked as read.' : 'You will now receive notifications.',
+            autoClose: 2000
+        });
+    }
+
+    // Toggle toasts enabled/disabled
+    function toggleToastsEnabled() {
+        const isDisabled = disableToastsToggle.checked;
+        
+        // Save preference to localStorage
+        localStorage.setItem('toastsDisabled', isDisabled);
+        
+        // Clear existing toasts if toasts are being disabled
+        if (isDisabled && window.toastManager) {
+            window.toastManager.clearAll();
+        }
+        
+        // Show feedback
+        showPopup({
+            type: POPUP_TYPES.INFO,
+            title: isDisabled ? 'Toast Notifications Disabled' : 'Toast Notifications Enabled',
+            message: isDisabled ? 'Toast notifications will no longer appear.' : 'You will now receive toast notifications.',
             autoClose: 2000
         });
     }
@@ -773,14 +920,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Modal controls
-    notificationsBtn.addEventListener('click', function() {
-        notificationsModal.style.display = 'block';
-        fetchNotifications(); // Refresh notifications when opening modal
-    });
+    if (notificationsBtn && notificationsModal) {
+        notificationsBtn.addEventListener('click', function() {
+            notificationsModal.style.display = 'block';
+            document.body.classList.add('modal-open'); // Add class to body
+            fetchNotifications(); // Refresh notifications when opening modal
+        });
+    }
 
-    notificationsCloseBtn.addEventListener('click', function() {
-        notificationsModal.style.display = 'none';
-    });
+    if (notificationsCloseBtn) {
+        notificationsCloseBtn.addEventListener('click', function() {
+            notificationsModal.style.display = 'none';
+            document.body.classList.remove('modal-open'); // Remove class from body
+        });
+    }
 
     // Mark all as read button handler
     if (markAllAsReadBtn) {
@@ -792,9 +945,15 @@ document.addEventListener('DOMContentLoaded', function() {
         disableNotificationsToggle.addEventListener('change', toggleNotificationsEnabled);
     }
 
+    // Disable toasts toggle handler
+    if (disableToastsToggle) {
+        disableToastsToggle.addEventListener('change', toggleToastsEnabled);
+    }
+
     window.addEventListener('click', function(event) {
-        if (event.target == notificationsModal) {
+        if (notificationsModal && event.target == notificationsModal) {
             notificationsModal.style.display = 'none';
+            document.body.classList.remove('modal-open'); // Remove class from body
         }
     });
 
@@ -803,6 +962,16 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initial fetch
     fetchNotifications();
+    
+    // Initialize real-time notification streaming
+    initNotificationStream();
+
+    // Cleanup EventSource on page unload
+    window.addEventListener('beforeunload', function() {
+        if (notificationEventSource) {
+            notificationEventSource.close();
+        }
+    });
 
     initializeHelpModal();
 

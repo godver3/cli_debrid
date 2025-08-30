@@ -30,6 +30,11 @@ _function_cache = {}
 _function_last_modified = {}
 _function_etags = {}
 
+# Global notification stream subscribers
+_notification_subscribers = set()
+_notification_lock = threading.Lock()
+_notification_queues = {}  # Store queues for each connection
+
 def generate_etag(data):
     """Generate an ETag for the given data using MD5"""
     # Use json.dumps with sort_keys=True for consistent hashing
@@ -395,6 +400,54 @@ def mark_all_notifications_read():
     
     return jsonify(result), status_code
 
+@base_bp.route('/api/notifications/stream')
+def notification_stream():
+    """Stream real-time notifications via Server-Sent Events."""
+    import queue
+    import uuid
+    
+    def generate():
+        # Create a unique connection ID and queue
+        connection_id = str(uuid.uuid4())
+        notification_queue = queue.Queue()
+        
+        # Add this connection to subscribers
+        with _notification_lock:
+            _notification_queues[connection_id] = notification_queue
+        
+        try:
+            # Send initial connection message
+            yield f"data: {json.dumps({'type': 'connection', 'message': 'Connected to notification stream'})}\n\n"
+            
+            # Keep connection alive and check for notifications
+            while True:
+                try:
+                    # Check for notifications with a timeout
+                    message = notification_queue.get(timeout=30)
+                    yield message
+                except queue.Empty:
+                    # Send heartbeat if no notifications
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'timestamp': time.time()})}\n\n"
+                    
+        except GeneratorExit:
+            # Client disconnected
+            pass
+        finally:
+            # Remove from subscribers when connection closes
+            with _notification_lock:
+                if connection_id in _notification_queues:
+                    del _notification_queues[connection_id]
+    
+    response = Response(generate(), mimetype='text/event-stream')
+    response.headers.update({
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'X-Accel-Buffering': 'no'
+    })
+    return response
+
 @base_bp.route('/api/task-stream')
 def task_stream():
     """Stream task updates. No caching for streaming endpoints."""
@@ -576,3 +629,21 @@ def get_help_content():
 # Clear check-update cache on startup
 clear_cache()
 logging.info("Cleared check-update cache on startup")
+
+def broadcast_notification(notification_data):
+    """Broadcast a notification to all connected subscribers"""
+    with _notification_lock:
+        if _notification_queues:
+            message = f"data: {json.dumps(notification_data)}\n\n"
+            dead_connections = set()
+            
+            for connection_id, queue in _notification_queues.items():
+                try:
+                    queue.put(message, timeout=1)  # 1 second timeout
+                except Exception as e:
+                    logging.debug(f"Notification subscriber disconnected: {e}")
+                    dead_connections.add(connection_id)
+            
+            # Clean up dead connections
+            for connection_id in dead_connections:
+                del _notification_queues[connection_id]

@@ -5,6 +5,8 @@
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
 
+<div class="toast-container" style="display: none !important;"></div>
+
 <div class="debug-container">    
     <h2>Debug Functions</h2>
     {% if environment_mode != 'full' %}
